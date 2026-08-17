@@ -1,0 +1,30 @@
+export const colors = {
+  brand: {
+    primary: "#2272B4",
+    primaryHover: "#0E538B",
+    primaryPress: "#04355D",
+    secondary: "#464644",
+    accent: "#2374BB",
+  },
+  neutral: {
+    0: "#FFFFFF",
+    25: "#FAFAFA",
+    50: "#F7F7F7",
+    100: "#F5F5F5",
+    150: "#EEEEEE",
+    200: "#EBEBEB",
+    300: "#CCCCCC",
+    400: "#A2A2A2",
+    500: "#6B7280",
+    600: "#6F6F6F",
+    700: "#555555",
+    800: "#333333",
+    900: "#161616",
+  },
+  semantic: {
+    success: { bg: "#F3FCF6", text: "#277C43", border: "#97C459" },
+    warning: { bg: "#FFF9EB", text: "#BE501E", border: "#F8D4A5" },
+    error: { bg: "#FFF5F7", text: "#C82D4C", border: "#FBD0D8" },
+    info: { bg: "#EAF6FF", text: "#2374BB", border: "#64C3FF" },
+  },
+} as const;

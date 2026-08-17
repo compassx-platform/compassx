@@ -1,0 +1,48 @@
+# Everything runs in Kubernetes (AKS, EKS, GKE, managed clusters, ...).
+# Cloud profile assumes images are available in a registry and does not
+# use minikube image loading or port-forwards.
+profile: kubernetes-cloud
+
+defaults:
+  mode: kubernetes
+
+services:
+  backend: { mode: kubernetes }
+  frontend: { mode: kubernetes }
+  postgres: { mode: kubernetes }
+  redis: { mode: kubernetes }
+  minio: { mode: kubernetes }
+  minio-console: { mode: kubernetes }
+  airflow: { mode: kubernetes }
+  enterprise-gateway: { mode: kubernetes }
+  jupyter-server: { mode: kubernetes }
+  prometheus: { mode: kubernetes }
+
+compute:
+  driver: kubernetes
+  overrides: {}
+
+docker:
+  compose_file: docker/docker-compose.yml
+  project_name: compassx
+
+kubernetes:
+  namespace: compassx
+  # Cloud clusters pull images from a registry; do not build/load into minikube.
+  ensure_images: false
+  ensure_rbac: true
+  # Cloud clusters expose services via ingress/load balancer; no port-forwards.
+  port_forwards: false
+
+startup_order:
+  - postgres
+  - redis
+  - minio
+  - airflow
+  - enterprise-gateway
+  - backend
+  - frontend
+
+required_healthy:
+  - postgres
+  - minio

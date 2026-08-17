@@ -1,0 +1,26 @@
+FROM python:3.11-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PYTHONPATH=/opt/compassx
+
+RUN pip install --no-cache-dir \
+    duckdb \
+    ipykernel \
+    fsspec \
+    adlfs \
+    s3fs \
+    requests \
+    httpx \
+    pandas
+
+COPY services/__init__.py /opt/compassx/services/__init__.py
+COPY services/fsspec_cx /opt/compassx/services/fsspec_cx
+COPY services/compassx_sql /opt/compassx/services/compassx_sql
+
+ENV IPYTHONDIR=/opt/compassx/.ipython
+RUN mkdir -p /opt/compassx/.ipython/profile_default/startup && \
+    echo "import services.compassx_sql as cx" > /opt/compassx/.ipython/profile_default/startup/00-compassx.py && \
+    echo "try:\n    get_ipython().run_line_magic('load_ext', 'services.compassx_sql')\nexcept:\n    pass" >> /opt/compassx/.ipython/profile_default/startup/00-compassx.py
+
+CMD ["tail", "-f", "/dev/null"]

@@ -1,0 +1,28 @@
+# Custom Enterprise Gateway image with CompassX process proxy bundled.
+#
+# Build and load into minikube:
+#   docker build -f Dockerfile.eg -t compassx-enterprise-gateway:latest .
+#   minikube image load compassx-enterprise-gateway:latest
+#
+# Set EG_IMAGE=compassx-enterprise-gateway:latest in .env (or compute_settings).
+
+FROM elyra/enterprise-gateway:3.2.3
+
+USER root
+
+# Copy the standalone process proxy (no backend deps — reads config from env).
+# Uses python -c to find site-packages at build time regardless of Python version.
+COPY services/enterprise_gateway/compassx_process_proxy.py /tmp/compassx_process_proxy.py
+COPY services/enterprise_gateway/docker_process_proxy.py /tmp/docker_process_proxy.py
+RUN python -c "import site; print(site.getsitepackages()[0])" > /tmp/sp.txt && \
+    cp /tmp/compassx_process_proxy.py $(cat /tmp/sp.txt)/compassx_process_proxy.py && \
+    cp /tmp/docker_process_proxy.py $(cat /tmp/sp.txt)/docker_process_proxy.py && \
+    rm /tmp/compassx_process_proxy.py /tmp/docker_process_proxy.py /tmp/sp.txt
+
+# Ensure kubernetes client is available (EG base image may already have it).
+RUN pip install --no-cache-dir kubernetes docker
+
+COPY docker_kernel_specs /tmp/docker_kernel_specs
+RUN for spec in /tmp/docker_kernel_specs/*_kernel.json; do name=$(basename "$spec" _kernel.json); mkdir -p /usr/local/share/jupyter/kernels/${name}; cp "$spec" /usr/local/share/jupyter/kernels/${name}/kernel.json; done && rm -rf /tmp/docker_kernel_specs
+
+USER jovyan

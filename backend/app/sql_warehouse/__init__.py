@@ -1,0 +1,2 @@
+"""CompassX SQL Warehouse module."""
+

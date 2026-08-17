@@ -1,0 +1,97 @@
+# kubernetes-local — Everything runs in Kubernetes (minikube).
+#
+# All inter-service communication uses cluster-internal DNS — no port-forwards
+# needed between services. Port-forwards are only set up for services that the
+# developer needs to reach directly from their host machine (browser / CLI tools).
+#
+# ── Access pattern ────────────────────────────────────────────────────────────
+#   REQUIRED:
+#   - Frontend + API : http://localhost:18080  (ingress-nginx port-forward)
+#
+#   OPTIONAL (un-comment in kubernetes.exposed_services below):
+#   - MinIO Console  : http://localhost:9001
+#   - Airflow UI     : http://localhost:8080
+#   - Prometheus     : http://localhost:9090
+#
+# ── Bring your own infrastructure ────────────────────────────────────────────
+# Add any service to kubernetes.external_services to skip deploying it
+# in-cluster. You must supply connection details via the
+# compassx-backend-secrets Kubernetes Secret (see k8s/secrets/README.md).
+#
+#   Example — use your own RDS postgres:
+#     kubernetes:
+#       external_services: [postgres]
+#   Then:
+#     kubectl apply -f k8s/secrets/external-postgres.yaml   # your real values
+#     compassx up --profile kubernetes-local                # postgres skipped
+
+profile: kubernetes-local
+
+defaults:
+  mode: kubernetes
+
+services:
+  backend:            { mode: kubernetes }
+  frontend:           { mode: kubernetes }
+  postgres:           { mode: kubernetes }
+  redis:              { mode: kubernetes }
+  minio:              { mode: kubernetes }
+  minio-console:      { mode: kubernetes }
+  airflow:            { mode: kubernetes }
+  enterprise-gateway: { mode: kubernetes }
+  jupyter-server:     { mode: kubernetes }
+  prometheus:         { mode: kubernetes }
+
+compute:
+  driver: kubernetes
+  overrides: {}
+
+docker:
+  compose_file: docker/docker-compose.yml
+  project_name: compassx
+
+kubernetes:
+  namespace: compassx
+  ensure_images: true
+  ensure_rbac: true
+  port_forwards: true
+
+  # ── Services to expose via kubectl port-forward ───────────────────────────
+  # Only list what the developer actually needs to reach from the host.
+  # Cluster-to-cluster traffic uses DNS — never port-forwards.
+  exposed_services:
+    - frontend        # localhost:18080 → ingress-nginx-controller:80  (REQUIRED)
+
+    # Developer tool UIs — un-comment to enable:
+    # - minio-console  # localhost:9001  (MinIO Console)
+    # - airflow        # localhost:8080  (Airflow UI)
+    # - prometheus     # localhost:9090  (Prometheus)
+
+  # ── External / bring-your-own services ───────────────────────────────────
+  # Services listed here are NOT deployed in-cluster.
+  # Provide connection details via compassx-backend-secrets Secret.
+  # See: k8s/secrets/README.md
+  external_services: []
+  # Examples:
+  #   external_services: [postgres]                     # BYO postgres
+  #   external_services: [postgres, redis]              # BYO postgres + redis
+  #   external_services: [postgres, redis, minio]       # full external stack
+
+# Order matters: datastores first, then compute services, then app layer.
+startup_order:
+  - postgres
+  - redis
+  - minio
+  - minio-console
+  - airflow
+  - prometheus
+  - enterprise-gateway
+  - jupyter-server
+  - backend
+  - frontend
+
+# Health checks the CLI waits for before declaring the platform ready.
+# Uses host-perspective endpoints (localhost via port-forward).
+# In kubernetes-local, only frontend (ingress at localhost:18080) is exposed.
+required_healthy:
+  - frontend

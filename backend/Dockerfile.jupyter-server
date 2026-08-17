@@ -1,0 +1,6 @@
+FROM quay.io/jupyter/base-notebook:latest
+
+USER root
+# No extra layers needed right now; this wrapper exists so local Kubernetes
+# can load the notebook server image into minikube instead of pulling it live.
+USER jovyan

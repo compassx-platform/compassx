@@ -1,0 +1,61 @@
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap");
+@import "tailwindcss";
+@import "./variables.css";
+@import "./typography.css";
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  min-height: 100vh;
+}
+
+body {
+  margin: 0;
+  background: var(--cx-color-bg);
+  color: var(--cx-color-text);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+a {
+  color: inherit;
+}
+
+.cx-border {
+  border: var(--cx-border-hairline);
+}
+
+.cx-border-subtle {
+  border: var(--cx-border-hairline-subtle);
+}
+
+.cx-border-bottom {
+  border-bottom: var(--cx-border-hairline);
+}
+
+.cx-border-bottom-subtle {
+  border-bottom: var(--cx-border-hairline-subtle);
+}
+
+.cx-panel {
+  background: var(--cx-color-surface);
+  border: var(--cx-border-hairline);
+  border-radius: var(--cx-radius-md);
+}
+
+.cx-panel-subtle {
+  background: var(--cx-color-surface);
+  border: var(--cx-border-hairline-subtle);
+  border-radius: var(--cx-radius-md);
+}

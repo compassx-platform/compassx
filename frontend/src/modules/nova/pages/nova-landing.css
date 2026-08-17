@@ -1,0 +1,384 @@
+.nova-landing {
+  min-height: calc(100vh - 92px);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 36px 24px 56px;
+  color: var(--color-text);
+}
+
+.nova-landing-hero {
+  width: min(920px, 100%);
+  text-align: center;
+}
+
+.nova-landing-kicker {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 11px;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  color: var(--color-primary);
+  background: var(--color-surface);
+  font-size: 0.78rem;
+  font-weight: 650;
+}
+
+.nova-landing h1 {
+  margin: 18px 0 8px;
+  font-size: clamp(2rem, 4vw, 3.2rem);
+  letter-spacing: -0.04em;
+}
+
+.nova-landing-subtitle {
+  margin: 0 auto 28px;
+  max-width: 680px;
+  color: var(--color-text-muted);
+  font-size: 1rem;
+  line-height: 1.6;
+}
+
+.nova-landing-ask-card {
+  text-align: left;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 22px;
+  box-shadow: 0 18px 60px rgba(15, 23, 42, 0.12);
+  padding: 18px 20px;
+}
+
+.nova-landing-ask-card textarea {
+  width: 100%;
+  border: none;
+  outline: none;
+  resize: none;
+  background: transparent;
+  color: var(--color-text);
+  font: inherit;
+  font-size: 0.98rem;
+  line-height: 1.55;
+  min-height: 54px;
+}
+
+.nova-landing-ask-card textarea::placeholder {
+  color: var(--color-text-muted);
+}
+
+.nova-landing-actions {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+}
+
+.nova-landing-submit,
+.nova-landing-chip,
+.nova-landing-agent-list button {
+  border: none;
+  font: inherit;
+  cursor: pointer;
+}
+
+.nova-landing-hint {
+  color: var(--color-text-muted);
+  font-size: 0.82rem;
+}
+
+.nova-landing-submit {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border-radius: 999px;
+  background: var(--color-primary);
+  color: white;
+  font-weight: 650;
+}
+
+.nova-landing-submit:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.nova-landing-info {
+  margin-top: 12px;
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  text-align: left;
+  padding: 15px 18px;
+  border-radius: 18px;
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  background: rgba(245, 158, 11, 0.12);
+}
+
+.nova-landing-info-icon {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  color: #d97706;
+  background: rgba(255, 255, 255, 0.72);
+  flex: 0 0 auto;
+}
+
+.nova-landing-info strong,
+.nova-landing-info span {
+  display: block;
+}
+
+.nova-landing-info span {
+  margin-top: 3px;
+  color: var(--color-text-muted);
+}
+
+.nova-landing-grid,
+.nova-landing-agents,
+.nova-landing-modules {
+  width: min(920px, 100%);
+}
+
+.nova-landing-grid {
+  margin-top: 22px;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.nova-landing-chip {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 13px 14px;
+  border-radius: 16px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  color: var(--color-text);
+  text-align: left;
+}
+
+.nova-landing-chip:hover,
+.nova-landing-agent-list button:hover {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+
+.nova-landing-agents {
+  margin-top: 22px;
+  display: flex;
+  justify-content: space-between;
+  gap: 18px;
+  align-items: center;
+  padding: 18px;
+  border-radius: 20px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+}
+
+.nova-landing-agents h2 {
+  margin: 0 0 4px;
+  font-size: 1rem;
+}
+
+.nova-landing-agents p {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: 0.85rem;
+}
+
+.nova-landing-agent-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.nova-landing-agent-list button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 12px;
+  border-radius: 999px;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  color: var(--color-text);
+}
+
+.nova-landing-agent-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+}
+
+.nova-landing-modules {
+  margin-top: 18px;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  color: var(--color-text-muted);
+  font-size: 0.78rem;
+}
+
+.nova-landing-modules div {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  justify-content: center;
+}
+
+@media (max-width: 880px) {
+  .nova-landing-grid,
+  .nova-landing-modules {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .nova-landing-agents,
+  .nova-landing-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .nova-landing-agent-list {
+    justify-content: flex-start;
+  }
+}
+
+.nova-landing-chat-page {
+  min-height: calc(100vh - 48px);
+  padding: 0;
+  align-items: stretch;
+  background: var(--color-surface);
+}
+
+.nova-landing-chat-shell {
+  width: 100%;
+  height: calc(100vh - 48px);
+  margin: 0;
+  overflow: hidden;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.nova-landing-chat-shell .nova-panel {
+  background: transparent;
+  max-width: min(1080px, 100%);
+  margin: 0 auto;
+}
+
+.nova-landing-chat-shell .nova-panel-header {
+  padding: 18px 8px 14px;
+  border-bottom: none;
+}
+
+.nova-landing-chat-shell .nova-panel-title {
+  font-size: 15px;
+}
+
+.nova-landing-chat-shell .nova-panel-body {
+  padding: 0 8px;
+}
+
+.nova-landing-chat-shell .nova-panel-thread {
+  padding: 26px 0 170px;
+  gap: 24px;
+}
+
+.nova-landing-chat-shell .nova-panel-empty {
+  max-width: 100%;
+  border-radius: 14px;
+  background: transparent;
+}
+
+.nova-landing-chat-shell .nova-panel-row {
+  width: min(900px, 100%);
+  margin: 0 auto;
+}
+
+.nova-landing-chat-shell .nova-panel-bubble {
+  font-size: 15px;
+  line-height: 1.65;
+  max-width: min(760px, 82%);
+  padding: 14px 16px;
+}
+
+.nova-landing-chat-shell .nova-panel-bubble-user {
+  background: #eef4fb;
+  color: #111827;
+  border-radius: 18px;
+}
+
+.nova-landing-chat-shell .nova-panel-bubble-assistant {
+  background: transparent;
+  border: none;
+  color: var(--color-text);
+  padding-left: 0;
+}
+
+.nova-landing-chat-shell .nova-panel-explanation {
+  display: none;
+}
+
+.nova-landing-chat-shell .nova-panel-warning {
+  width: min(900px, 100%);
+  margin: 0 auto 8px;
+  background: #fbfbfb;
+}
+
+.nova-landing-chat-shell .nova-panel-composer-shell {
+  width: min(900px, calc(100% - 32px));
+  margin: 0 auto 28px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  gap: 6px;
+}
+
+.nova-landing-chat-shell .nova-panel-composer {
+  min-height: 112px;
+  padding: 14px 16px 10px;
+  border-radius: 24px;
+  border-color: #e5e7eb;
+  box-shadow: 0 14px 42px rgba(15, 23, 42, 0.12);
+}
+
+.nova-landing-chat-shell .nova-panel-input {
+  min-height: 58px;
+  max-height: 160px;
+  font-size: 15px;
+  padding: 0;
+}
+
+.nova-landing-chat-shell .nova-panel-submit {
+  width: 34px;
+  height: 34px;
+  background: #f3f4f6;
+  color: #6b7280;
+}
+
+.nova-landing-chat-shell .nova-panel-submit:not(:disabled):hover {
+  background: #111827;
+  color: #ffffff;
+}
+
+.nova-landing-chat-shell .nova-panel-surface-pill {
+  background: #ffffff;
+}
+
+.page-content:has(.nova-landing-chat-page) {
+  padding: 0;
+}
+
+@media (max-width: 560px) {
+  .nova-landing {
+    padding-inline: 14px;
+  }
+
+  .nova-landing-grid,
+  .nova-landing-modules {
+    grid-template-columns: 1fr;
+  }
+}

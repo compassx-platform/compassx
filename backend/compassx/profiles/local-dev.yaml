@@ -1,0 +1,63 @@
+# Local development: backend + frontend run natively on the host,
+# all infrastructure services run in Docker Compose.
+profile: local-dev
+
+defaults:
+  mode: docker
+
+services:
+  backend:
+    mode: local
+    # {venv_python} resolves per-OS at launch time (Windows: .venv\Scripts\python.exe,
+    # macOS/Linux: .venv/bin/python) — see LocalProcessLauncher._resolve_venv_python.
+    command: ["{venv_python}", "app.py"]
+    cwd: backend
+    windowed: true
+  frontend:
+    mode: local
+    command: ["npm", "run", "dev"]
+    cwd: frontend
+    windowed: true
+  postgres: { mode: docker }
+  redis: { mode: docker }
+  minio: { mode: docker }
+  minio-console: { mode: docker }
+  airflow: { mode: docker }
+  enterprise-gateway: { mode: docker }
+  prometheus: { mode: docker }
+
+compute:
+  # Driver used by the Runtime Manager for user runtimes in this profile.
+  driver: docker
+  overrides: {}
+
+docker:
+  compose_file: docker/docker-compose.yml
+  project_name: compassx
+  ensure_images: true
+
+kubernetes:
+  namespace: compassx
+  ensure_images: false
+  ensure_rbac: false
+  port_forwards: false
+
+startup_order:
+  - postgres
+  - redis
+  - minio
+  - airflow
+  - enterprise-gateway
+  - backend
+  - frontend
+
+# Services the backend waits on before serving requests.
+required_healthy:
+  - postgres
+  - redis
+  - minio
+  - airflow
+  - enterprise-gateway
+  - backend
+  - frontend
+  - prometheus

@@ -1,0 +1,413 @@
+/* Databricks SQL Editor Custom UI styles */
+.swh-editor-layout {
+  display: flex;
+  height: 100%;
+  flex: 1;
+  min-height: 0;
+  background: var(--color-background);
+}
+
+.swh-editor-sidebar {
+  width: 250px;
+  background: var(--color-surface);
+  border-right: 1px solid var(--color-border);
+  display: flex;
+  flex-direction: column;
+  min-width: 200px;
+}
+
+.swh-sidebar-header {
+  padding: 16px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.swh-sidebar-header h2 {
+  font-size: 14px;
+  font-weight: 600;
+  margin: 0;
+  color: var(--color-text);
+}
+
+.swh-sidebar-header-actions {
+  display: flex;
+  gap: 8px;
+  color: var(--color-text-muted);
+}
+
+.swh-sidebar-tree-control {
+  padding: 8px 16px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 11px;
+  color: var(--color-text-muted);
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-background-subtle);
+}
+
+.swh-sidebar-search {
+  padding: 8px 12px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--color-background);
+  margin: 8px 12px;
+  border-radius: 4px;
+  border: 1px solid var(--color-border);
+}
+
+.swh-sidebar-search input {
+  background: transparent;
+  border: none;
+  font-size: 12px;
+  color: var(--color-text);
+  outline: none;
+  width: 100%;
+}
+
+.swh-sidebar-tree-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0 12px;
+}
+
+.swh-sidebar-folder {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--color-text-muted);
+  padding: 6px 4px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+
+.swh-sidebar-file-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px 6px 20px;
+  font-size: 12px;
+  color: var(--color-text);
+  border-radius: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.swh-sidebar-file-item:hover {
+  background: var(--color-surface-hover);
+}
+
+.swh-sidebar-file-item.is-active {
+  background: var(--color-surface-active);
+  font-weight: 500;
+  color: var(--color-primary);
+}
+
+.swh-editor-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.swh-editor-tabs-bar {
+  display: flex;
+  align-items: center;
+  background: var(--color-surface);
+  border-bottom: 1px solid var(--color-border);
+  padding-left: 8px;
+  height: 36px;
+}
+
+.swh-editor-tab-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 12px;
+  height: 36px;
+  font-size: 12px;
+  color: var(--color-text-muted);
+  border-right: 1px solid var(--color-border);
+  cursor: pointer;
+  position: relative;
+  background: var(--color-surface);
+}
+
+.swh-editor-tab-item:hover {
+  background: var(--color-surface-hover);
+}
+
+.swh-editor-tab-item.is-active {
+  background: var(--color-background);
+  color: var(--color-text);
+  font-weight: 500;
+  border-bottom: 2px solid var(--color-primary);
+}
+
+.swh-tab-close-btn {
+  background: transparent;
+  border: none;
+  font-size: 14px;
+  line-height: 1;
+  color: var(--color-text-muted);
+  padding: 2px;
+  border-radius: 50%;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.swh-tab-close-btn:hover {
+  background: var(--color-surface-hover);
+  color: var(--color-text);
+}
+
+.swh-add-tab-btn {
+  background: transparent;
+  border: none;
+  padding: 8px;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.swh-add-tab-btn:hover {
+  color: var(--color-text);
+}
+
+.swh-editor-toolbar-db {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 16px;
+  background: var(--color-background);
+  border-bottom: 1px solid var(--color-border);
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.swh-toolbar-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.swh-run-btn-group {
+  display: flex;
+  align-items: center;
+}
+
+.swh-run-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--color-primary) !important;
+  color: white !important;
+  border: none;
+  font-weight: 600;
+}
+
+.swh-toolbar-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
+.swh-catalog-schema-selector-db {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  padding: 2px 8px;
+  border-radius: 4px;
+}
+
+.swh-catalog-schema-selector-db select {
+  background: transparent;
+  border: none;
+  color: var(--color-text);
+  font-size: 11px;
+  outline: none;
+  cursor: pointer;
+  font-weight: 500;
+}
+
+.swh-toolbar-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.swh-wh-selector-db {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  padding: 4px 10px;
+  border-radius: 4px;
+  font-size: 12px;
+}
+
+.swh-wh-selector-db select {
+  background: transparent;
+  border: none;
+  color: var(--color-text);
+  font-weight: 500;
+  outline: none;
+  cursor: pointer;
+}
+
+.swh-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--color-text-muted);
+}
+
+.swh-dot.is-running {
+  background: var(--color-success);
+}
+
+.swh-wh-size-badge {
+  background: var(--color-background-muted);
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: bold;
+}
+
+.swh-ide-editor-container {
+  display: flex;
+  flex: 1;
+  min-height: 200px;
+  background: var(--color-background);
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 13px;
+  line-height: 1.6;
+  position: relative;
+  overflow: auto;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.swh-line-numbers {
+  width: 45px;
+  padding: 16px 8px;
+  text-align: right;
+  color: var(--color-text-muted);
+  border-right: 1px solid var(--color-border);
+  background: var(--color-background-subtle);
+  user-select: none;
+}
+
+.swh-editor-textarea {
+  flex: 1;
+  padding: 16px;
+  background: transparent;
+  color: var(--color-text);
+  border: none;
+  resize: none;
+  outline: none;
+  font-family: inherit;
+  font-size: inherit;
+  line-height: inherit;
+  tab-size: 4;
+}
+
+.swh-editor-bottom-bar {
+  padding: 8px 16px;
+  background: var(--color-background);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.swh-results-pane-db {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  background: var(--color-surface);
+  min-height: 150px;
+}
+
+.swh-results-header-db {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 16px;
+  height: 36px;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-background-subtle);
+}
+
+.swh-results-tabs {
+  display: flex;
+  align-items: center;
+  height: 36px;
+  gap: 16px;
+}
+
+.swh-results-tab {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--color-text-muted);
+  border-bottom: 2px solid transparent;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+}
+
+.swh-results-tab.is-active {
+  color: var(--color-text);
+  border-bottom-color: var(--color-primary);
+}
+
+.swh-results-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: var(--color-text-muted);
+}
+
+.swh-results-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 16px;
+  border-top: 1px solid var(--color-border);
+  background: var(--color-background-subtle);
+  font-size: 11px;
+  color: var(--color-text-muted);
+}
+
+.swh-results-footer-left {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.swh-performance-link {
+  color: var(--color-primary);
+  text-decoration: none;
+}
+
+.swh-performance-link:hover {
+  text-decoration: underline;
+}
+
+.swh-results-footer-right {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}

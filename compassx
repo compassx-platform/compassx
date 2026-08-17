@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# CompassX platform CLI wrapper (Linux/macOS/git-bash).
+set -e
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR/backend"
+if [ -n "$BACKEND_VENV_PATH" ] && [ -f "$BACKEND_VENV_PATH/bin/python" ]; then
+    PY="$BACKEND_VENV_PATH/bin/python"
+elif [ -n "$BACKEND_VENV_PATH" ] && [ -f "$BACKEND_VENV_PATH/Scripts/python.exe" ]; then
+    PY="$BACKEND_VENV_PATH/Scripts/python.exe"
+elif [ -f ".venv/bin/python" ]; then
+    PY=".venv/bin/python"
+elif [ -f ".venv/Scripts/python.exe" ]; then
+    PY=".venv/Scripts/python.exe"
+elif command -v python3 >/dev/null 2>&1; then
+    PY="python3"
+else
+    PY="python"
+fi
+exec "$PY" -m compassx.cli.main "$@"

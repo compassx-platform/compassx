@@ -1,0 +1,38 @@
+.monitoring-error {
+  margin: -8px 0 16px;
+  padding: 10px 12px;
+  border: 1px solid #f0c5c5;
+  border-radius: 6px;
+  background: #fff2f2;
+  color: #9d2f2f;
+  font-size: 12px;
+}
+
+.monitoring-empty {
+  padding: 28px;
+  text-align: center;
+  color: #77858e;
+  font-size: 12px;
+}
+
+.status-badge--warning {
+  color: #a35b00;
+  background: #fff3df;
+}
+
+.table-status--warning {
+  color: #b24b3d;
+}
+
+.table-status--warning i {
+  background: #d85c4a;
+}
+
+.control-bar .stack-toggle {
+  color: #42535f;
+  cursor: pointer;
+}
+
+.stack-toggle input {
+  accent-color: #087ca1;
+}

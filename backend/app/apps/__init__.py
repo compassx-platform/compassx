@@ -1,0 +1,1 @@
+"""CompassX Apps module."""

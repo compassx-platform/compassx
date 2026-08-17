@@ -1,0 +1,44 @@
+# Everything runs in Docker Compose, including the backend.
+profile: docker
+
+defaults:
+  mode: docker
+
+services:
+  backend: { mode: docker }
+  frontend: { mode: docker }
+  postgres: { mode: docker }
+  redis: { mode: docker }
+  minio: { mode: docker }
+  minio-console: { mode: docker }
+  airflow: { mode: docker }
+  enterprise-gateway: { mode: docker }
+  jupyter-server: { mode: docker }
+  prometheus: { mode: docker }
+
+compute:
+  driver: docker
+  overrides: {}
+
+docker:
+  compose_file: docker/docker-compose.yml
+  project_name: compassx
+
+kubernetes:
+  namespace: compassx
+  ensure_images: false
+  ensure_rbac: false
+  port_forwards: false
+
+startup_order:
+  - postgres
+  - redis
+  - minio
+  - airflow
+  - enterprise-gateway
+  - backend
+  - frontend
+
+required_healthy:
+  - postgres
+  - minio

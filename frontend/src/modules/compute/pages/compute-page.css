@@ -1,0 +1,253 @@
+.compute-page {
+  height: 100%;
+  min-height: 0;
+  width: 100%;
+  padding: 12px 16px 16px;
+  background: var(--color-surface);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.compute-title {
+  margin: 0 0 4px;
+  color: var(--color-text);
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1.25;
+}
+
+.compute-tabs {
+  margin: 0;
+}
+
+.compute-tabs.page-tabs {
+  gap: 18px;
+}
+
+.compute-tabs.page-tabs button {
+  padding: 8px 0 9px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.compute-warning {
+  padding: 8px 12px;
+  border: 1px solid #f59e0b;
+  border-radius: 4px;
+  background: rgba(245, 158, 11, 0.1);
+  color: #92400e;
+  font-size: 13px;
+}
+
+.compute-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 28px;
+}
+
+.compute-search {
+  width: 260px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 3px;
+  background: var(--color-surface);
+  color: var(--color-text-muted);
+}
+
+.compute-search input {
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--color-text);
+  font: inherit;
+  font-size: 12px;
+}
+
+.compute-search input::placeholder {
+  color: var(--color-text-muted);
+}
+
+.compute-toolbar select {
+  height: 28px;
+  padding: 0 28px 0 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 3px;
+  background: var(--color-surface);
+  color: var(--color-text);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.compute-toolbar-spacer {
+  flex: 1;
+}
+
+.compute-primary-btn {
+  height: 28px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 3px;
+  background: var(--color-primary);
+  color: #fff;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.compute-primary-btn:hover {
+  background: var(--color-primary-hover);
+}
+
+.compute-secondary-btn {
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 3px;
+  background: var(--color-surface);
+  color: var(--color-text);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.compute-secondary-btn:hover:not(:disabled) {
+  background: var(--color-surface-secondary);
+}
+
+.compute-secondary-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.65;
+}
+
+.compute-content {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+.port-forward-panel {
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  background: var(--color-surface);
+}
+
+.port-forward-summary {
+  min-width: 150px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.port-forward-dot {
+  width: 9px;
+  height: 9px;
+  flex: 0 0 9px;
+  border-radius: 50%;
+  background: #6b7280;
+}
+
+.port-forward-dot-healthy {
+  background: #10b981;
+}
+
+.port-forward-dot-partial {
+  background: #f59e0b;
+}
+
+.port-forward-dot-down {
+  background: #ef4444;
+}
+
+.port-forward-title {
+  color: var(--color-text);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.port-forward-subtitle {
+  color: var(--color-text-muted);
+  font-size: 11px;
+  line-height: 1.2;
+}
+
+.port-forward-chips {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow-x: auto;
+}
+
+.port-forward-chip {
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  padding: 0 8px;
+  border: 1px solid var(--color-border);
+  border-radius: 3px;
+  color: var(--color-text-muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.port-forward-chip strong {
+  color: var(--color-text);
+  font-weight: 700;
+}
+
+.port-forward-chip-healthy,
+.port-forward-chip-running {
+  border-color: rgba(16, 185, 129, 0.35);
+  background: rgba(16, 185, 129, 0.08);
+}
+
+.port-forward-chip-waiting {
+  border-color: rgba(245, 158, 11, 0.35);
+  background: rgba(245, 158, 11, 0.08);
+}
+
+.port-forward-chip-broken,
+.port-forward-chip-stopped {
+  border-color: rgba(239, 68, 68, 0.35);
+  background: rgba(239, 68, 68, 0.08);
+}
+
+.port-forward-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.compute-default-pill {
+  margin-left: 8px;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: var(--color-surface-secondary);
+  color: var(--color-text-muted);
+  font-size: 11px;
+  font-weight: 600;
+}

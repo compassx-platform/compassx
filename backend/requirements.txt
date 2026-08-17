@@ -1,0 +1,91 @@
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+sqlalchemy==2.0.36
+psycopg2-binary==2.9.10
+alembic==1.14.1
+pydantic[email]==2.10.4
+pydantic-settings==2.7.1
+passlib[argon2]==1.7.4
+PyJWT==2.9.0
+httpx==0.28.1
+python-dotenv==1.0.1
+python-multipart>=0.0.32
+pandas==2.2.3
+pyarrow>=14.0.0
+openpyxl==3.1.5
+cryptography==43.0.3
+jsonpath-ng>=1.6.0          # JSONPath extraction in ingestion execution engine
+papermill==2.6.0
+
+# ── Agents module ──────────────────────────────────────────────────────────────
+# LLM providers
+anthropic>=0.30.0
+openai>=1.35.0
+google-genai>=1.0.0
+litellm>=1.40.0          # proxy layer for 100+ providers (Bedrock, Vertex, Gemini, etc.)
+
+# Claude Code SDK (requires Claude Code CLI: npm install -g @anthropic-ai/claude-code)
+claude-code-sdk>=0.0.10
+
+# Git tools
+PyGithub>=2.3.0
+azure-devops>=7.1.0b4
+
+# Python sandbox
+# NOTE: subprocess isolation used in v1. Docker sandbox is v2.
+# See: backend/app/services/python_sandbox.py and architecture/agents-implementation-plan.md §Sandbox
+# docker>=7.0.0  # Uncomment for v2 Docker sandbox
+
+# Vector / RAG (requires pgvector Postgres extension)
+sentence-transformers>=3.0.0
+
+# Catalog semantic search — pgvector SQLAlchemy type
+# Embedding calls are routed through the existing LLM connection infrastructure
+# (OpenAI / Azure / Ollama / LiteLLM / Gemini) — no extra embedding API key needed.
+pgvector>=0.3.0
+
+# Document processing
+pypdf>=4.0.0
+python-docx>=1.1.0
+
+# SQL parsing (SELECT-only enforcement for SQL skill)
+sqlparse>=0.5.0
+sqlglot>=23.0.0
+
+# Additional DB drivers — install on demand per deployment target:
+# PyMySQL>=1.1.0           # MySQL
+# pyodbc>=5.0.0            # MS SQL Server
+# snowflake-sqlalchemy>=1.6.0
+# sqlalchemy-bigquery>=1.12.0
+# databricks-sql-connector>=3.0.0
+
+# Async task queue — v2 upgrade path (not needed for v1 subprocess approach)
+# celery[redis]>=5.3.0
+# redis>=5.0.0
+
+# ── Platform Abstraction Layer (compassx/) ─────────────────────────────────────
+typer>=0.12.0
+rich>=13.0.0
+docker>=7.0.0
+psutil>=7.0.0
+prometheus-client>=0.20.0
+PyYAML>=6.0
+
+# ── Compute module ──────────────────────────────────────────────────────────────
+kubernetes>=28.1.0,<36.0.0
+sse-starlette>=1.6.5,<2.0
+boto3>=1.39.0
+azure-storage-blob>=12.23.0
+
+# ── Catalog: Pluggable Blob Storage (Iceberg + Volumes) ─────────────────────
+# Async AWS S3 / MinIO client (compatible botocore pinned by aiobotocore)
+aiobotocore>=2.13.0
+# Azure auth — service principal + managed identity support
+azure-identity>=1.16.0
+
+# ── Kernel Gateway integration ───────────────────────────────────────────────
+websockets>=13,<15.1
+
+# SQL Warehouse engines
+duckdb>=0.10.0
+clickhouse-connect>=0.7.0

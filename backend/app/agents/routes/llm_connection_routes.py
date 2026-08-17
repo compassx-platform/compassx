@@ -1,0 +1,207 @@
+"""LLM Connection CRUD routes + ping endpoint."""
+
+from __future__ import annotations
+
+import logging
+
+from datetime import datetime, timezone
+from fastapi import APIRouter, Depends, HTTPException, Request
+from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.orm import Session
+
+from app.database import get_account_db
+from app.dependencies import get_current_user
+from app.models.agents import LLMConnection
+from app.schemas.agents import LLMConnectionCreate, LLMConnectionResponse, LLMConnectionUpdate, PingResponse
+from app.services.encryption import decrypt_field, encrypt_field, mask_key
+from app.services.llm_client import ping as llm_ping
+
+router = APIRouter(prefix="/api/v1/llm-connections", tags=["LLM Connections"])
+logger = logging.getLogger(__name__)
+
+
+def _to_response(conn: LLMConnection) -> LLMConnectionResponse:
+    plain_key = ""
+    if conn.api_key_enc:
+        try:
+            plain_key = decrypt_field(conn.api_key_enc)
+        except ValueError:
+            logger.warning("Skipping unreadable api_key_enc for LLM connection %s", conn.id)
+    return LLMConnectionResponse(
+        id=conn.id,
+        name=conn.name,
+        provider=conn.provider,
+        model_name=conn.model_name,
+        api_key_masked=mask_key(plain_key) if plain_key else None,
+        base_url=conn.base_url,
+        timeout_s=conn.timeout_s,
+        max_tokens=conn.max_tokens,
+        config=conn.config or {},
+        is_fallback=conn.is_fallback,
+        use_for_memory=conn.use_for_memory,
+        use_for_embedding=conn.use_for_embedding,
+        input_cost_per_1k_tokens=float(conn.input_cost_per_1k_tokens) if conn.input_cost_per_1k_tokens is not None else None,
+        output_cost_per_1k_tokens=float(conn.output_cost_per_1k_tokens) if conn.output_cost_per_1k_tokens is not None else None,
+        cost_currency=conn.cost_currency,
+        cost_configured_at=conn.cost_configured_at,
+        cost_configured_by=conn.cost_configured_by,
+        created_at=conn.created_at,
+        updated_at=conn.updated_at,
+    )
+
+
+@router.get("", response_model=list[LLMConnectionResponse])
+def list_llm_connections(request: Request, db: Session = Depends(get_account_db)):
+    workspace_id = getattr(request.state, "workspace", None) and request.state.workspace.workspace_id
+    query = db.query(LLMConnection)
+    if workspace_id:
+        query = query.filter(LLMConnection.workspace_id == workspace_id)
+    else:
+        query = query.filter(LLMConnection.workspace_id == None)
+    return [_to_response(r) for r in query.order_by(LLMConnection.name).all()]
+
+
+@router.post("", response_model=LLMConnectionResponse, status_code=201)
+def create_llm_connection(
+    request: Request,
+    body: LLMConnectionCreate,
+    db: Session = Depends(get_account_db),
+    current_user: dict = Depends(get_current_user)
+):
+    workspace_id = getattr(request.state, "workspace", None) and request.state.workspace.workspace_id
+    if body.use_for_memory:
+        db.query(LLMConnection).filter(LLMConnection.workspace_id == workspace_id).update({LLMConnection.use_for_memory: False})
+    if body.use_for_embedding:
+        db.query(LLMConnection).filter(LLMConnection.workspace_id == workspace_id).update({LLMConnection.use_for_embedding: False})
+    
+    username = current_user.get("username") or current_user.get("email") or "system"
+    
+    conn = LLMConnection(
+        workspace_id=workspace_id,
+        name=body.name,
+        provider=body.provider,
+        model_name=body.model_name,
+        api_key_enc=encrypt_field(body.api_key) if body.api_key else None,
+        base_url=body.base_url,
+        timeout_s=body.timeout_s,
+        max_tokens=body.max_tokens,
+        config=body.config,
+        is_fallback=body.is_fallback,
+        use_for_memory=body.use_for_memory,
+        use_for_embedding=body.use_for_embedding,
+        input_cost_per_1k_tokens=body.input_cost_per_1k_tokens,
+        output_cost_per_1k_tokens=body.output_cost_per_1k_tokens,
+        cost_currency=body.cost_currency or "USD",
+        cost_configured_at=datetime.now(timezone.utc) if body.input_cost_per_1k_tokens is not None else None,
+        cost_configured_by=username if body.input_cost_per_1k_tokens is not None else None,
+    )
+    db.add(conn)
+    try:
+        db.commit()
+        db.refresh(conn)
+    except SQLAlchemyError as exc:
+        db.rollback()
+        raise HTTPException(400, f"Failed to save LLM connection: {exc}") from exc
+    return _to_response(conn)
+
+
+@router.get("/{connection_id}", response_model=LLMConnectionResponse)
+def get_llm_connection(request: Request, connection_id: int, db: Session = Depends(get_account_db)):
+    workspace_id = getattr(request.state, "workspace", None) and request.state.workspace.workspace_id
+    return _to_response(_get_or_404(db, connection_id, workspace_id))
+
+
+@router.put("/{connection_id}", response_model=LLMConnectionResponse)
+def update_llm_connection(
+    request: Request,
+    connection_id: int,
+    body: LLMConnectionUpdate,
+    db: Session = Depends(get_account_db),
+    current_user: dict = Depends(get_current_user)
+):
+    workspace_id = getattr(request.state, "workspace", None) and request.state.workspace.workspace_id
+    conn = _get_or_404(db, connection_id, workspace_id)
+    data = body.model_dump(exclude_none=True)
+    if data.get("use_for_memory"):
+        db.query(LLMConnection).filter(LLMConnection.workspace_id == workspace_id).update({LLMConnection.use_for_memory: False})
+    if data.get("use_for_embedding"):
+        db.query(LLMConnection).filter(LLMConnection.workspace_id == workspace_id).update({LLMConnection.use_for_embedding: False})
+    if "api_key" in data:
+        conn.api_key_enc = encrypt_field(data.pop("api_key"))
+    
+    # Check if cost was updated to set metadata
+    has_cost_update = "input_cost_per_1k_tokens" in data or "output_cost_per_1k_tokens" in data or "cost_currency" in data
+    if has_cost_update:
+        username = current_user.get("username") or current_user.get("email") or "system"
+        conn.cost_configured_at = datetime.now(timezone.utc)
+        conn.cost_configured_by = username
+
+    for field, value in data.items():
+        setattr(conn, field, value)
+    try:
+        db.commit()
+        db.refresh(conn)
+    except SQLAlchemyError as exc:
+        db.rollback()
+        raise HTTPException(400, f"Failed to update LLM connection: {exc}") from exc
+    return _to_response(conn)
+
+
+@router.post("/{connection_id}/set-memory", response_model=LLMConnectionResponse)
+def set_memory_llm(request: Request, connection_id: int, db: Session = Depends(get_account_db)):
+    workspace_id = getattr(request.state, "workspace", None) and request.state.workspace.workspace_id
+    db.query(LLMConnection).filter(LLMConnection.workspace_id == workspace_id).update({LLMConnection.use_for_memory: False})
+    conn = _get_or_404(db, connection_id, workspace_id)
+    conn.use_for_memory = True
+    try:
+        db.commit()
+        db.refresh(conn)
+    except SQLAlchemyError as exc:
+        db.rollback()
+        raise HTTPException(400, f"Failed to set memory LLM connection: {exc}") from exc
+    return _to_response(conn)
+
+
+@router.post("/{connection_id}/set-embedding", response_model=LLMConnectionResponse)
+def set_embedding_llm(request: Request, connection_id: int, db: Session = Depends(get_account_db)):
+    """Mark a single LLM connection as the embedding provider (exclusive toggle)."""
+    workspace_id = getattr(request.state, "workspace", None) and request.state.workspace.workspace_id
+    db.query(LLMConnection).filter(LLMConnection.workspace_id == workspace_id).update({LLMConnection.use_for_embedding: False})
+    conn = _get_or_404(db, connection_id, workspace_id)
+    conn.use_for_memory = True
+    conn.use_for_embedding = True
+    try:
+        db.commit()
+        db.refresh(conn)
+    except SQLAlchemyError as exc:
+        db.rollback()
+        raise HTTPException(400, f"Failed to set embedding LLM connection: {exc}") from exc
+    return _to_response(conn)
+
+
+@router.delete("/{connection_id}", status_code=204)
+def delete_llm_connection(request: Request, connection_id: int, db: Session = Depends(get_account_db)):
+    workspace_id = getattr(request.state, "workspace", None) and request.state.workspace.workspace_id
+    conn = _get_or_404(db, connection_id, workspace_id)
+    db.delete(conn)
+    db.commit()
+
+
+@router.post("/{connection_id}/ping", response_model=PingResponse)
+async def ping_llm_connection(request: Request, connection_id: int, db: Session = Depends(get_account_db)):
+    workspace_id = getattr(request.state, "workspace", None) and request.state.workspace.workspace_id
+    conn = _get_or_404(db, connection_id, workspace_id)
+    success, error = await llm_ping(conn)
+    return PingResponse(success=success, message="Connection successful" if success else f"Connection failed: {error}")
+
+
+def _get_or_404(db: Session, connection_id: int, workspace_id: str | None = None) -> LLMConnection:
+    query = db.query(LLMConnection).filter(LLMConnection.id == connection_id)
+    if workspace_id:
+        query = query.filter(LLMConnection.workspace_id == workspace_id)
+    else:
+        query = query.filter(LLMConnection.workspace_id == None)
+    conn = query.first()
+    if not conn:
+        raise HTTPException(404, "LLM connection not found")
+    return conn

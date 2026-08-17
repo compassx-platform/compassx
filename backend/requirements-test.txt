@@ -1,0 +1,8 @@
+# Test dependencies — install in addition to requirements.txt
+# pip install -r requirements.txt -r requirements-test.txt
+
+pytest==8.3.4
+pytest-cov==6.0.0
+pytest-asyncio==0.24.0
+httpx==0.28.1          # already in requirements.txt; listed here for clarity
+anyio==4.7.0           # required by pytest-asyncio

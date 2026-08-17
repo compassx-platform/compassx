@@ -1,0 +1,6 @@
+{
+  "argv": ["python", "-c", "import sys; sys.argv = ['ipykernel_launcher', '-f', sys.argv[-1]]; from ipykernel import kernelapp; kernelapp.main()", "{connection_file}"],
+  "display_name": "Python (Spark)",
+  "language": "python",
+  "metadata": {"process_proxy": {"class_name": "docker_process_proxy.DockerCompassXProcessProxy"}}
+}

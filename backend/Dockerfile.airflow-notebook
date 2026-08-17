@@ -1,0 +1,25 @@
+FROM python:3.11-slim
+
+ENV PIP_DEFAULT_TIMEOUT=300 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+WORKDIR /ms-home
+
+COPY requirements-airflow-notebook.txt .
+RUN pip install --no-cache-dir -r requirements-airflow-notebook.txt
+
+COPY notebooks ./notebooks
+COPY services/storage /opt/compassx/services/storage
+COPY services/compassx_sql /opt/compassx/services/compassx_sql
+COPY scripts/upload_notebook_output.py /opt/compassx/upload_notebook_output.py
+COPY scripts/download_notebook.py /opt/compassx/download_notebook.py
+
+ENV PYTHONPATH=/opt/compassx
+ENV IPYTHONDIR=/opt/compassx/.ipython
+RUN mkdir -p /opt/compassx/.ipython/profile_default/startup && \
+    echo "import services.compassx_sql as cx" > /opt/compassx/.ipython/profile_default/startup/00-compassx.py && \
+    echo "try:\n    get_ipython().run_line_magic('load_ext', 'services.compassx_sql')\nexcept:\n    pass" >> /opt/compassx/.ipython/profile_default/startup/00-compassx.py
+
+CMD ["python", "-c", "print('CompassX notebook runner image ready')"]
