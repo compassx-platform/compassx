@@ -148,7 +148,11 @@ export default function PodSelector() {
   const renderTriggerIcon = () => {
     if (!selectedPod) return null;
     if (isStarting || kernelStatus === 'connecting') {
-      return <Loader2 size={12} className="notebook-pod-spinner" title="Connecting to kernel..." />;
+      return (
+        <span title="Connecting to kernel...">
+          <Loader2 size={12} className="notebook-pod-spinner" />
+        </span>
+      );
     }
     if (kernelStatus === 'idle' || kernelStatus === 'busy') {
       return <span className="notebook-pod-dot notebook-pod-dot--connected" title={`Kernel connected (${kernelStatus})`} />;

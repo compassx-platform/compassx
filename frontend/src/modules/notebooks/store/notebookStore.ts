@@ -3,7 +3,7 @@ import type { StateCreator } from 'zustand';
 import type { IKernelConnection } from '@jupyterlab/services/lib/kernel/kernel';
 import type { ISessionConnection } from '@jupyterlab/services/lib/session/session';
 
-export type CellType = 'code' | 'markdown';
+export type CellType = 'code' | 'markdown' | 'raw';
 export type KernelStatus = 'idle' | 'busy' | 'dead' | 'unknown' | 'connecting';
 export type AgentEditAction = 'replace_focused' | 'replace_cell' | 'insert_below' | 'append_to_focused';
 
@@ -122,8 +122,8 @@ interface NotebookStore {
   setExecutionCount: (id: string, count: number | null) => void;
 
   // Kernel/session
-  setKernel: (kernel: IKernelConnection) => void;
-  setSession: (session: ISessionConnection) => void;
+  setKernel: (kernel: IKernelConnection | null) => void;
+  setSession: (session: ISessionConnection | null) => void;
   setKernelStatus: (status: KernelStatus) => void;
   setKernelInfo: (info: KernelInfo | null) => void;
 

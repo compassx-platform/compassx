@@ -223,14 +223,14 @@ function ToolCard({
                 </pre>
               </div>
             )}
-            {toolResult?.error && (
+            {toolResult?.error ? (
               <div style={{ marginTop: 6 }}>
                 <div style={{ fontWeight: 600, fontSize: "0.7rem", color: "#ef4444", textTransform: "uppercase", marginBottom: 2 }}>Error</div>
                 <pre style={{ margin: 0, overflowX: "auto", background: "rgba(239,68,68,0.08)", color: "#dc2626", padding: "4px 8px", borderRadius: 4 }}>
                   {String(toolResult.error)}
                 </pre>
               </div>
-            )}
+            ) : null}
           </div>
         </div>
       )}
@@ -1466,7 +1466,7 @@ export default function AgentChatPage() {
                   if (grp.isStreamingActive) {
                     // Push live streaming steps in exact chronological order (thoughts + tools)
                     streamingSteps.forEach((st) => {
-                      timelineSteps.push(st);
+                      timelineSteps.push(st as any);
                     });
 
                     const { thought, response } = parseThoughtContent(streamingText);
@@ -1496,8 +1496,8 @@ export default function AgentChatPage() {
                     messages.forEach((m) => {
                       if (m.role === "tool" && m.tool_name === "mark_step" && m.tool_result) {
                         const mr = m.tool_result.result as any;
-                        const stepId = mr?.updated_step ?? m.tool_result.args?.step_id;
-                        const status = mr?.status ?? m.tool_result.args?.status;
+                        const stepId = mr?.updated_step ?? (m.tool_result.args as any)?.step_id;
+                        const status = mr?.status ?? (m.tool_result.args as any)?.status;
                         if (stepId && status) stepStatusMap[stepId] = status;
                       }
                     });
@@ -1636,8 +1636,8 @@ export default function AgentChatPage() {
               messages.forEach((m) => {
                 if (m.role === "tool" && m.tool_name === "mark_step" && m.tool_result) {
                   const r = m.tool_result.result as any;
-                  const stepId = r?.updated_step ?? m.tool_result.args?.step_id;
-                  const status = r?.status ?? m.tool_result.args?.status;
+                  const stepId = r?.updated_step ?? (m.tool_result.args as any)?.step_id;
+                  const status = r?.status ?? (m.tool_result.args as any)?.status;
                   if (stepId && status) stepStatusMap[stepId] = status;
                 }
               });
@@ -1674,7 +1674,7 @@ export default function AgentChatPage() {
                       agent_id: "agent",
                       goal: goalData,
                       steps: mappedSteps,
-                      approved_at: res?.approved_at || (messages.some(m => (m.role === "tool" && m.tool_name === "mark_step") || (m.role === "user" && m.content.toLowerCase().includes("approved"))) ? new Date().toISOString() : null),
+                      approved_at: res?.approved_at || (messages.some(m => (m.role === "tool" && m.tool_name === "mark_step") || (m.role === "user" && m.content?.toLowerCase().includes("approved"))) ? new Date().toISOString() : null),
                       execution_approved_at: res?.execution_approved_at,
                     }}
                     onApprovePlan={() => sendMessage("Approved. Proceed to execute the plan.")}

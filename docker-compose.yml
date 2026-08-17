@@ -1,0 +1,212 @@
+# CompassX Platform — Complete Docker Compose Stack
+# Run: docker compose up -d --build
+# Or via CLI: compassx up --profile docker
+
+name: compassx
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg15
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./docker/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  minio:
+    image: minio/minio:RELEASE.2025-02-28T09-55-16Z
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  jobs-runner-image:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.airflow-notebook
+    image: compassx-airflow-notebook-runner:latest
+    command: ["python", "-c", "print('CompassX notebook runner image ready')"]
+    restart: "no"
+
+  airflow-init:
+    image: apache/airflow:2.9.3-python3.11
+    depends_on:
+      postgres:
+        condition: service_healthy
+      jobs-runner-image:
+        condition: service_completed_successfully
+    environment: &airflow-env
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://postgres:postgres@postgres:5432/airflow_meta
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+      AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "false"
+      AIRFLOW__API__AUTH_BACKENDS: airflow.api.auth.backend.basic_auth
+      AIRFLOW__WEBSERVER__EXPOSE_CONFIG: "true"
+      COMPASSX_SYSTEM_DB_URL: postgresql://postgres:postgres@postgres:5432/compassx_system
+      COMPASSX_BACKEND_URL: http://backend:8000
+      COMPASSX_INTERNAL_SECRET: compassx-local-dev-secret
+      COMPASSX_DAG_SHARD_COUNT: "1"
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        airflow db migrate
+        airflow users create \
+          --username admin --password admin \
+          --firstname Compass --lastname X \
+          --role Admin --email admin@compassx.local || true
+    restart: "no"
+
+  airflow-webserver:
+    image: apache/airflow:2.9.3-python3.11
+    command: webserver
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+    environment: *airflow-env
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./backend/shared/airflow/dags:/opt/airflow/dags:ro
+      - airflow-logs:/opt/airflow/logs
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+      start_period: 60s
+
+  airflow-scheduler:
+    image: apache/airflow:2.9.3-python3.11
+    command: scheduler
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+    environment: *airflow-env
+    volumes:
+      - ./backend/shared/airflow/dags:/opt/airflow/dags:ro
+      - airflow-logs:/opt/airflow/logs
+
+  enterprise-gateway:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.eg
+    image: compassx-enterprise-gateway:latest
+    user: root
+    ports:
+      - "8888:8888"
+    environment:
+      EG_ALLOW_ORIGIN: "*"
+      COMPASSX_RUNTIME_DRIVER: docker
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8888/api || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 12
+      start_period: 30s
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    image: compassx-backend:latest
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    environment:
+      COMPASSX_PLATFORM_PROFILE: docker
+      PG_HOST: postgres
+      PG_PORT: "5432"
+      PG_USER: postgres
+      PG_PASSWORD: postgres
+      SYSTEM_DB_NAME: compassx_account
+      DATA_DB_NAME: compassx_system
+      ASSET_DB_NAME: asset_manager
+      PG_DATABASE: compassx_system
+      PG_RAW_DATABASE: landing_zone
+      MINIO_ENDPOINT: minio:9000
+      REDIS_URL: redis://redis:6379/0
+      COMPASSX_ENV: local
+      DOCKER_HOST: unix:///var/run/docker.sock
+    ports:
+      - "8000:8000"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/healthcheck', timeout=3)\" || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 12
+      start_period: 30s
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    image: compassx-frontend:latest
+    depends_on:
+      backend:
+        condition: service_started
+    ports:
+      - "5173:80"
+    environment:
+      COMPASSX_BACKEND_ORIGIN: http://backend:8000
+
+  prometheus:
+    image: prom/prometheus:v2.53.0
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=30d"
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./docker/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:9090/-/healthy || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+volumes:
+  postgres-data:
+  redis-data:
+  minio-data:
+  airflow-logs:
+  prometheus-data:

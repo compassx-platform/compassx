@@ -697,6 +697,7 @@ export default function DataCatalog() {
   // Custom metadata states for simulated persistence
   const [dynamicOwners, setDynamicOwners] = useState<Record<string, string>>({});
   const [editingOwnerId, setEditingOwnerId] = useState<string | null>(null);
+  const [newOwnerValue, setNewOwnerValue] = useState('');
 
   const [selectedWarehouseId, setSelectedWarehouseId] = useState<string>('');
 
@@ -3073,14 +3074,9 @@ export default function DataCatalog() {
                       className="btn-outline flex items-center gap-1"
                       style={{ color: 'var(--color-danger)', borderColor: 'var(--color-danger)' }}
                       onClick={() => {
-                        setShowDeleteConfirmModal({
-                          title: 'Delete Notebook',
-                          message: `Are you sure you want to delete "${notebook.name}"? This will permanently delete its registration in CompassX.`,
-                          onConfirm: () => {
-                            deleteNotebookMutation.mutate({ catalog: selection.catalog, schema: selection.schema, notebook: selection.notebook });
-                            setShowDeleteConfirmModal(null);
-                          },
-                        });
+                        if (window.confirm(`Are you sure you want to delete "${notebook.name}"? This will permanently delete its registration in CompassX.`)) {
+                          deleteNotebookMutation.mutate({ catalog: selection.catalog, schema: selection.schema, notebook: selection.notebook });
+                        }
                       }}
                       disabled={deleteNotebookMutation.isPending}
                     >

@@ -26,6 +26,7 @@ def upgrade() -> None:
     conn = op.get_bind()
     op.execute("CREATE EXTENSION IF NOT EXISTS \"uuid-ossp\";")
     op.execute("CREATE EXTENSION IF NOT EXISTS \"pgcrypto\";")
+    op.execute("CREATE EXTENSION IF NOT EXISTS \"vector\";")
     op.execute("CREATE SCHEMA IF NOT EXISTS vector_db;")
 
     AccountBase.metadata.create_all(bind=conn)

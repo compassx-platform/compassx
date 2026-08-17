@@ -503,8 +503,8 @@ export default function SqlWarehousePage() {
       render: (row) => {
         if (!row.run_by_user_id && !row.run_by_user_name) return <span style={{ color: 'var(--text-tertiary)' }}>-</span>;
         
-        const displayName = row.run_by_user_name || (row.run_by_user_id?.length > 20 ? 'User' : row.run_by_user_id);
-        const title = row.run_by_user_name ? `${row.run_by_user_name} (${row.run_by_user_id})` : row.run_by_user_id;
+        const displayName = row.run_by_user_name || ((row.run_by_user_id?.length ?? 0) > 20 ? 'User' : (row.run_by_user_id ?? '-'));
+        const title = (row.run_by_user_name ? `${row.run_by_user_name} (${row.run_by_user_id})` : row.run_by_user_id) ?? undefined;
         
         return (
           <span title={title} style={{ 
@@ -525,17 +525,16 @@ export default function SqlWarehousePage() {
       header: 'User',
       render: (row) => {
         // Fallback for known system accounts
-        let displayUser = row.user_id;
+        let displayUser = row.run_by_user_name || row.run_by_user_id || 'Unknown';
         if (displayUser === 'system') displayUser = 'System User';
-        else if (displayUser?.length > 20) displayUser = 'Service Account'; // e.g. workspace UUID
-        else if (!displayUser) displayUser = 'Unknown';
+        else if (displayUser.length > 20) displayUser = 'Service Account'; // e.g. workspace UUID
 
-        const initial = displayUser.charAt(0).toUpperCase();
+        const initial = (displayUser.charAt(0) || 'U').toUpperCase();
 
         return (
           <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px' }}>
             <div style={{ width: '16px', height: '16px', borderRadius: '50%', background: 'var(--color-background-muted)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '9px', fontWeight: 'bold' }}>{initial}</div>
-            <span title={row.user_id} style={{ 
+            <span title={row.run_by_user_id ?? displayUser} style={{ 
               whiteSpace: 'nowrap',
               overflow: 'hidden',
               textOverflow: 'ellipsis',

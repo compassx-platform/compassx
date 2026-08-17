@@ -9,6 +9,7 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [checkingSetup, setCheckingSetup] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -16,14 +17,21 @@ export default function LoginPage() {
       try {
         const status = await fetchSetupStatus();
         if (status.needs_setup) {
-          navigate("/setup");
+          navigate("/setup", { replace: true });
+          return;
         }
       } catch (err) {
         console.error("Failed to fetch setup status", err);
+      } finally {
+        setCheckingSetup(false);
       }
     };
     checkSetup();
   }, [navigate]);
+
+  if (checkingSetup) {
+    return <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", background: "#0A0A0F" }} />;
+  }
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();

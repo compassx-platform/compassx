@@ -964,6 +964,7 @@ interface AgentForm {
   is_orchestrator: boolean;
   visibility: "shared" | "private";
   llm_connection_id?: number;
+  manifest?: AgentManifestData | null;
 }
 
 export default function AgentBuilderPage() {

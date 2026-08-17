@@ -21,7 +21,7 @@ compute:
   overrides: {}
 
 docker:
-  compose_file: docker/docker-compose.yml
+  compose_file: docker-compose.yml
   project_name: compassx
 
 kubernetes:

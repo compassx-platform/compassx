@@ -10,3 +10,7 @@ __pycache__/
 /.compassx/
 *kubeconfig*.yaml
 *kubeconfig*.yml
+node_modules/
+**/node_modules/
+dist/
+**/dist/
