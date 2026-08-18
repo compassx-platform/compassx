@@ -1,0 +1,233 @@
+name: Release & Publish Packages
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release Tag (e.g. v1.0.0)'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  packages: write
+
+env:
+  REGISTRY: ghcr.io
+  OWNER: ${{ github.repository_owner }}
+
+jobs:
+  detect-changes:
+    name: Detect Auxiliary Image Changes
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.resolve-tag.outputs.tag }}
+      build_eg: ${{ steps.check-diff.outputs.build_eg }}
+      build_notebook_runner: ${{ steps.check-diff.outputs.build_notebook_runner }}
+      build_jupyter_server: ${{ steps.check-diff.outputs.build_jupyter_server }}
+      build_duckdb: ${{ steps.check-diff.outputs.build_duckdb }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve Release Tag
+        id: resolve-tag
+        run: |
+          if [ -n "${{ github.event.inputs.tag }}" ]; then
+            TAG="${{ github.event.inputs.tag }}"
+          else
+            TAG="${GITHUB_REF_NAME}"
+          fi
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "Resolved release tag: ${TAG}"
+
+      - name: Check path diffs against previous tag
+        id: check-diff
+        run: |
+          TAG="${{ steps.resolve-tag.outputs.tag }}"
+          
+          # Find the tag immediately preceding the current tag
+          PREV_TAG=$(git tag --sort=-creatordate | grep -v "^${TAG}$" | head -n 1 || true)
+          
+          if [ -z "$PREV_TAG" ]; then
+            echo "Initial release detected (no previous tag). Building all auxiliary images."
+            echo "build_eg=true" >> "$GITHUB_OUTPUT"
+            echo "build_notebook_runner=true" >> "$GITHUB_OUTPUT"
+            echo "build_jupyter_server=true" >> "$GITHUB_OUTPUT"
+            echo "build_duckdb=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Comparing changes between ${PREV_TAG} and ${TAG}:"
+            CHANGED_FILES=$(git diff --name-only "$PREV_TAG" "$TAG")
+            echo "$CHANGED_FILES"
+
+            # 1. Enterprise Gateway
+            if echo "$CHANGED_FILES" | grep -qE "^backend/Dockerfile\.eg|^backend/services/enterprise_gateway/|^backend/compassx/"; then
+              echo "build_eg=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "build_eg=false" >> "$GITHUB_OUTPUT"
+            fi
+
+            # 2. Notebook Runner
+            if echo "$CHANGED_FILES" | grep -qE "^backend/Dockerfile\.airflow-notebook|^backend/shared/airflow/"; then
+              echo "build_notebook_runner=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "build_notebook_runner=false" >> "$GITHUB_OUTPUT"
+            fi
+
+            # 3. Jupyter Server
+            if echo "$CHANGED_FILES" | grep -qE "^backend/Dockerfile\.jupyter-server"; then
+              echo "build_jupyter_server=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "build_jupyter_server=false" >> "$GITHUB_OUTPUT"
+            fi
+
+            # 4. DuckDB Compute
+            if echo "$CHANGED_FILES" | grep -qE "^backend/Dockerfile\.compute-duckdb|^backend/app/compute/"; then
+              echo "build_duckdb=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "build_duckdb=false" >> "$GITHUB_OUTPUT"
+            fi
+          fi
+
+  build-core:
+    name: Build & Push Core Image (${{ matrix.service }})
+    needs: detect-changes
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - service: backend
+            context: ./backend
+            dockerfile: ./backend/Dockerfile
+          - service: frontend
+            context: ./frontend
+            dockerfile: ./frontend/Dockerfile
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.OWNER }}/${{ matrix.service }}
+          tags: |
+            type=raw,value=${{ needs.detect-changes.outputs.tag }}
+            type=raw,value=latest
+
+      - name: Build and push ${{ matrix.service }} image
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=${{ matrix.service }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.service }}
+
+  build-auxiliary:
+    name: Build & Push Auxiliary Images
+    needs: detect-changes
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - service: enterprise-gateway
+            context: ./backend
+            dockerfile: ./backend/Dockerfile.eg
+            flag: build_eg
+          - service: airflow-notebook-runner
+            context: ./backend
+            dockerfile: ./backend/Dockerfile.airflow-notebook
+            flag: build_notebook_runner
+          - service: jupyter-server
+            context: ./backend
+            dockerfile: ./backend/Dockerfile.jupyter-server
+            flag: build_jupyter_server
+          - service: compute-duckdb
+            context: ./backend
+            dockerfile: ./backend/Dockerfile.compute-duckdb
+            flag: build_duckdb
+    steps:
+      - name: Check if build is required
+        id: condition
+        run: |
+          FLAG_VALUE="${{ needs.detect-changes.outputs[matrix.flag] }}"
+          echo "Build flag for ${{ matrix.service }} is: $FLAG_VALUE"
+          echo "should_build=$FLAG_VALUE" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout repository
+        if: steps.condition.outputs.should_build == 'true'
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        if: steps.condition.outputs.should_build == 'true'
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        if: steps.condition.outputs.should_build == 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract Docker metadata
+        if: steps.condition.outputs.should_build == 'true'
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.OWNER }}/${{ matrix.service }}
+          tags: |
+            type=raw,value=${{ needs.detect-changes.outputs.tag }}
+            type=raw,value=latest
+
+      - name: Build and push ${{ matrix.service }} image
+        if: steps.condition.outputs.should_build == 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=${{ matrix.service }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.service }}
+
+  create-release:
+    name: Create GitHub Release
+    needs: [detect-changes, build-core, build-auxiliary]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.detect-changes.outputs.tag }}
+          name: Release ${{ needs.detect-changes.outputs.tag }}
+          generate_release_notes: true
+          draft: false
+          prerelease: false
