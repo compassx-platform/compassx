@@ -215,15 +215,50 @@ jobs:
           cache-to: type=gha,mode=max,scope=${{ matrix.service }}
 
   create-release:
-    name: Create GitHub Release
+    name: Create GitHub Release & Update Compose Tags
     needs: [detect-changes, build-core, build-auxiliary]
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/')
     steps:
-      - name: Checkout code
+      - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Update docker-compose.yml image tags
+        run: |
+          TAG="${{ needs.detect-changes.outputs.tag }}"
+          echo "Updating docker-compose.yml image tags to: ${TAG}"
+
+          # Update core service image tags
+          sed -i -E "s|(ghcr.io/${{ env.OWNER }}/backend):[a-zA-Z0-9._-]+|\1:${TAG}|g" docker-compose.yml
+          sed -i -E "s|(ghcr.io/${{ env.OWNER }}/frontend):[a-zA-Z0-9._-]+|\1:${TAG}|g" docker-compose.yml
+
+          # Update auxiliary service tags if they were built in this release
+          if [ "${{ needs.detect-changes.outputs.build_eg }}" = "true" ]; then
+            sed -i -E "s|(ghcr.io/${{ env.OWNER }}/enterprise-gateway):[a-zA-Z0-9._-]+|\1:${TAG}|g" docker-compose.yml
+          fi
+          if [ "${{ needs.detect-changes.outputs.build_notebook_runner }}" = "true" ]; then
+            sed -i -E "s|(ghcr.io/${{ env.OWNER }}/airflow-notebook-runner):[a-zA-Z0-9._-]+|\1:${TAG}|g" docker-compose.yml
+          fi
+
+          git diff docker-compose.yml
+
+      - name: Commit and push updated docker-compose.yml
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          
+          if ! git diff --quiet docker-compose.yml; then
+            git add docker-compose.yml
+            git commit -m "chore(release): update docker-compose.yml image tags to ${{ needs.detect-changes.outputs.tag }} [skip ci]"
+            git push origin main
+          else
+            echo "docker-compose.yml already up to date."
+          fi
 
       - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.detect-changes.outputs.tag }}
@@ -231,3 +266,5 @@ jobs:
           generate_release_notes: true
           draft: false
           prerelease: false
+          files: |
+            docker-compose.yml

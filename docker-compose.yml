@@ -1,5 +1,5 @@
 # CompassX Platform — Complete Docker Compose Stack
-# Run: docker compose up -d --build
+# Run: docker compose up -d
 # Or via CLI: compassx up --profile docker
 
 name: compassx
@@ -52,10 +52,7 @@ services:
       retries: 12
 
   jobs-runner-image:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile.airflow-notebook
-    image: compassx-airflow-notebook-runner:latest
+    image: ghcr.io/compassx-platform/airflow-notebook-runner:v0.1.0
     command: ["python", "-c", "print('CompassX notebook runner image ready')"]
     restart: "no"
 
@@ -119,10 +116,7 @@ services:
       - airflow-logs:/opt/airflow/logs
 
   enterprise-gateway:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile.eg
-    image: compassx-enterprise-gateway:latest
+    image: ghcr.io/compassx-platform/enterprise-gateway:v0.1.0
     user: root
     ports:
       - "8888:8888"
@@ -139,10 +133,7 @@ services:
       start_period: 30s
 
   backend:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
-    image: compassx-backend:latest
+    image: ghcr.io/compassx-platform/backend:v0.1.0
     depends_on:
       postgres:
         condition: service_healthy
@@ -175,10 +166,7 @@ services:
       start_period: 30s
 
   frontend:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile
-    image: compassx-frontend:latest
+    image: ghcr.io/compassx-platform/frontend:v0.1.0
     depends_on:
       backend:
         condition: service_started
