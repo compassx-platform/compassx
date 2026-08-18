@@ -4,8 +4,9 @@ ARG PIP_INDEX_URL
 # RUN adduser -D -u 1002 python
 WORKDIR /ms-home
 COPY requirements.txt .
-# Install directly from the configured/default index to avoid SSL failures
-# against the separate PyTorch wheel host in restricted corporate networks.
+# Install CPU-only PyTorch first to prevent downloading ~2GB CUDA binaries
+RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu
+
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .

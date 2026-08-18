@@ -44,7 +44,7 @@ services:
       - "9000:9000"
       - "9001:9001"
     volumes:
-      - minio-data:/data
+      - ./data/minio:/data
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
       interval: 5s
@@ -96,7 +96,7 @@ services:
       - "8080:8080"
     volumes:
       - ./backend/shared/airflow/dags:/opt/airflow/dags:ro
-      - airflow-logs:/opt/airflow/logs
+      - ./data/airflow/logs:/opt/airflow/logs
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
       interval: 15s
@@ -113,7 +113,7 @@ services:
     environment: *airflow-env
     volumes:
       - ./backend/shared/airflow/dags:/opt/airflow/dags:ro
-      - airflow-logs:/opt/airflow/logs
+      - ./data/airflow/logs:/opt/airflow/logs
 
   enterprise-gateway:
     image: ghcr.io/compassx-platform/enterprise-gateway:v0.1.0
@@ -195,6 +195,4 @@ services:
 volumes:
   postgres-data:
   redis-data:
-  minio-data:
-  airflow-logs:
   prometheus-data:
