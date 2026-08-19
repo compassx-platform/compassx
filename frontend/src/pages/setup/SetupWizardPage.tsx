@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { completeSetup } from "../../lib/userManagerApi";
-import { saveTokens } from "../../lib/auth";
+import { saveTokens, setPrincipalInfo } from "../../lib/auth";
 
 export default function SetupWizardPage() {
   const navigate = useNavigate();
@@ -35,9 +35,17 @@ export default function SetupWizardPage() {
         admin_display_name: displayName.trim(),
         admin_password: password,
       });
-      // Save tokens and kick off existing workspace creation flow
+      // Save tokens and navigate directly to the ready default workspace
       saveTokens(resp.access_token, resp.refresh_token);
-      navigate("/workspace/create");
+      setPrincipalInfo({
+        principal_id: resp.user_id,
+        name: resp.display_name || resp.email,
+        email: resp.email,
+        is_account_admin: resp.is_account_admin ?? true,
+        account_id: resp.account_id,
+        expires_at: "",
+      });
+      navigate("/w/default/platform");
     } catch (err: any) {
       setError(
         err.response?.data?.detail ||

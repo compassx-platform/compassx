@@ -1,9 +1,12 @@
 import React from "react";
 import { useNavigate } from "react-router-dom";
 import { clearSession } from "../../lib/auth";
+import { useMe } from "../../lib/userManagerApi";
 
 export default function NoWorkspacePage() {
   const navigate = useNavigate();
+  const { data: me } = useMe();
+  const isAccountAdmin = me?.account_role === "account_admin" || me?.is_account_admin;
 
   const handleLogout = () => {
     clearSession();
@@ -28,7 +31,7 @@ export default function NoWorkspacePage() {
         className="glass"
         style={{
           width: "100%",
-          maxWidth: "420px",
+          maxWidth: "440px",
           borderRadius: "var(--radius-lg)",
           background: "var(--color-surface)",
           border: "1px solid var(--color-border)",
@@ -42,8 +45,8 @@ export default function NoWorkspacePage() {
             width: "56px",
             height: "56px",
             borderRadius: "var(--radius-lg)",
-            background: "var(--color-danger-bg)",
-            border: "1px solid var(--color-danger)",
+            background: isAccountAdmin ? "var(--color-primary-bg, rgba(99, 102, 241, 0.1))" : "var(--color-danger-bg)",
+            border: `1px solid ${isAccountAdmin ? "var(--color-primary, #6366f1)" : "var(--color-danger)"}`,
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
@@ -51,11 +54,11 @@ export default function NoWorkspacePage() {
             margin: "0 auto 20px",
           }}
         >
-          🔒
+          {isAccountAdmin ? "📁" : "🔒"}
         </div>
 
         <h1 style={{ margin: "0 0 8px", fontSize: "20px", fontWeight: 700, color: "var(--color-text)" }}>
-          No Workspace Access
+          {isAccountAdmin ? "No Workspace Found" : "No Workspace Access"}
         </h1>
         <p
           style={{
@@ -65,17 +68,29 @@ export default function NoWorkspacePage() {
             lineHeight: 1.5,
           }}
         >
-          You don't have access to any workspaces yet. Please contact your account
-          administrator to get workspace access.
+          {isAccountAdmin
+            ? "You don't have any workspaces yet. Create your first workspace to start using Compass."
+            : "You don't have access to any workspaces yet. Please contact your account administrator to get workspace access."}
         </p>
 
-        <button
-          onClick={handleLogout}
-          className="btn-outline"
-          style={{ padding: "10px 24px" }}
-        >
-          Log Out
-        </button>
+        <div style={{ display: "flex", gap: "12px", justifyContent: "center" }}>
+          {isAccountAdmin && (
+            <button
+              onClick={() => navigate("/workspace/create")}
+              className="btn-primary"
+              style={{ padding: "10px 20px" }}
+            >
+              + Create Workspace
+            </button>
+          )}
+          <button
+            onClick={handleLogout}
+            className="btn-outline"
+            style={{ padding: "10px 20px" }}
+          >
+            Log Out
+          </button>
+        </div>
       </div>
     </div>
   );

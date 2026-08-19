@@ -35,8 +35,6 @@ import Entities from '@/modules/workflows/pages/Entities';
 import EntityEditPage from '@/modules/workflows/pages/EntityEditPage';
 import EntityRecordsPage from '@/modules/workflows/pages/EntityRecordsPage';
 import EntityRecordEditor from '@/modules/workflows/pages/EntityRecordEditor';
-import TimeseriesExplorer from '@/modules/data/pages/TimeseriesExplorer';
-import TimeseriesUpload from '@/modules/data/pages/TimeseriesUpload';
 import DataCatalog from '@/modules/data/pages/DataCatalog';
 import SqlWarehousePage from '@/modules/sql_warehouse/SqlWarehousePage';
 import BreakdownForm from '@/modules/workflows/pages/BreakdownForm';
@@ -121,9 +119,10 @@ function EntryPointGuard() {
         const ep = await fetchEntryPoint();
         if (ep.route === '/workspace-picker') { navigate('/workspace-picker', { replace: true }); return; }
         if (ep.route === '/no-workspace-access') { navigate('/no-workspace-access', { replace: true }); return; }
+        if (ep.route === '/workspace/create') { navigate('/workspace/create', { replace: true }); return; }
 
-        // 4. Fall back to workspace routing if entry point resolved a workspace
-        if (ep.workspace_id) {
+        // 4. Fall back to resolved entry point route if available
+        if (ep.workspace_id || ep.route) {
           navigate(ep.route, { replace: true });
         } else {
           navigate('/login', { replace: true });
@@ -260,8 +259,6 @@ export default function App() {
                   <Route path="entities/:entityName/edit" element={<EntityEditPage />} />
                   <Route path="entities/:entityName/records" element={<EntityRecordsPage />} />
                   <Route path="entities/:entity_name/records/:record_id/edit" element={<EntityRecordEditor />} />
-                  <Route path="timeseries" element={<TimeseriesExplorer />} />
-                  <Route path="timeseries/upload" element={<TimeseriesUpload />} />
                   <Route path="data-catalog" element={<DataCatalog />} />
                   <Route path="data-catalog/:catalog" element={<DataCatalog />} />
                   <Route path="data-catalog/:catalog/:schema" element={<DataCatalog />} />

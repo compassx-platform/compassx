@@ -679,7 +679,6 @@ class KubernetesLauncher(Launcher):
     _ENV_KEYS_BY_SERVICE: dict[str, list[str]] = {
         "postgres": [
             "PG_HOST", "PG_PORT", "PG_USER", "PG_PASSWORD",
-            "PG_DATABASE", "PG_RAW_DATABASE",
             # Airflow also uses postgres — pick up its override if present
             "AIRFLOW_PG_HOST", "AIRFLOW_PG_PORT",
             "AIRFLOW_PG_USER", "AIRFLOW_PG_PASSWORD", "AIRFLOW_PG_DATABASE",

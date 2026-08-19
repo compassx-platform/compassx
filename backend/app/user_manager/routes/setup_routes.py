@@ -121,34 +121,40 @@ def setup_complete(
     ))
     account_db.flush()
 
-    # 5. Create workspace if requested (otherwise workspace creation flow will kick in post-setup)
-    ws_id = None
-    if body.workspace_name:
-        ws_id = str(__import__("uuid").uuid4())
-        try:
-            legacy_ws = LegacyWorkspace(
-                id=ws_id,
-                account_id=account_id,
-                name=body.workspace_name,
-                slug=body.workspace_name.lower().replace(" ", "-"),
-                storage_backend="local",
-                storage_config={},
-                created_by=admin_user.id,
-            )
-            account_db.add(legacy_ws)
-            account_db.flush()
+    # 5. Always create initial default workspace with managed storage
+    ws_id = str(__import__("uuid").uuid4())
+    ws_name = body.workspace_name.strip() if body.workspace_name else "default"
+    ws_slug = ws_name.lower().replace(" ", "-")
+    try:
+        from app.workspace.storage_resolver import ensure_default_storage_bucket
+        ensure_default_storage_bucket()
+    except Exception as b_err:
+        logger.warning("Could not auto-ensure default storage bucket: %s", b_err)
 
-            system_db.add(UmWorkspaceRoleAssignment(
-                workspace_id=ws_id,
-                principal_id=admin_user.id,
-                principal_type="user",
-                role_id="workspace_admin",
-                is_default=True,
-                granted_by=admin_user.id,
-            ))
-            system_db.flush()
-        except Exception as ws_err:
-            logger.warning("Could not create initial workspace: %s", ws_err)
+    try:
+        legacy_ws = LegacyWorkspace(
+            id=ws_id,
+            account_id=account_id,
+            name=ws_name,
+            slug=ws_slug,
+            storage_backend="managed",
+            storage_config={},
+            created_by=admin_user.id,
+        )
+        account_db.add(legacy_ws)
+        account_db.flush()
+
+        system_db.add(UmWorkspaceRoleAssignment(
+            workspace_id=ws_id,
+            principal_id=admin_user.id,
+            principal_type="user",
+            role_id="workspace_admin",
+            is_default=True,
+            granted_by=admin_user.id,
+        ))
+        system_db.flush()
+    except Exception as ws_err:
+        logger.warning("Could not create initial workspace: %s", ws_err)
 
     # 7. Issue tokens
     access_token = create_access_token(

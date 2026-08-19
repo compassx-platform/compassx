@@ -6,107 +6,6 @@ from app.config import settings
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Primary application database (configured via PG_DATABASE env var)
-# ---------------------------------------------------------------------------
-engine = None
-SessionLocal = None
-_db_connection_failed = False
-
-try:
-    # Disable pool_pre_ping when skipping DB init for faster startup
-    pool_pre_ping = not settings.SKIP_DB_INIT
-    engine = create_engine(
-        settings.database_url,
-        pool_pre_ping=pool_pre_ping,
-        connect_args={"connect_timeout": 3},
-    )
-    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    # Test connection unless SKIP_DB_INIT is set
-    if not settings.SKIP_DB_INIT:
-        with engine.connect() as conn:
-            conn.execute(text("SELECT 1"))
-        logger.info("Primary database connection successful")
-    else:
-        logger.info("Primary database connection test skipped (SKIP_DB_INIT=True)")
-except Exception as e:
-    _db_connection_failed = True
-    logger.error("Primary database connection failed: %s. App will start with DB features disabled.", e)
-
-
-class Base(DeclarativeBase):
-    pass
-
-
-def get_db():
-    """FastAPI dependency that yields a session to the primary application DB."""
-    if SessionLocal is None:
-        raise RuntimeError("Primary database not available")
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
-
-
-def is_db_available():
-    """Check if primary database is available."""
-    if settings.SKIP_DB_INIT:
-        return False
-    return SessionLocal is not None and not _db_connection_failed
-
-
-# ---------------------------------------------------------------------------
-# Raw / time-series database (landing_zone or same as primary if not configured)
-# All timeseries models (raw_data, tag_definitions, upload_staging, edit_log)
-# live here so they share a single connection and transaction.
-# ---------------------------------------------------------------------------
-raw_engine = None
-RawSessionLocal = None
-_raw_db_connection_failed = False
-
-try:
-    # Disable pool_pre_ping when skipping DB init for faster startup
-    pool_pre_ping = not settings.SKIP_DB_INIT
-    raw_engine = create_engine(
-        settings.raw_database_url,
-        pool_pre_ping=pool_pre_ping,
-        connect_args={"connect_timeout": 3},
-    )
-    RawSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=raw_engine)
-    # Test connection unless SKIP_DB_INIT is set
-    if not settings.SKIP_DB_INIT:
-        with raw_engine.connect() as conn:
-            conn.execute(text("SELECT 1"))
-        logger.info("Raw database connection successful")
-    else:
-        logger.info("Raw database connection test skipped (SKIP_DB_INIT=True)")
-except Exception as e:
-    _raw_db_connection_failed = True
-    logger.error("Raw database connection failed: %s. Timeseries features will be disabled.", e)
-
-
-class RawBase(DeclarativeBase):
-    """Declarative base for all tables that live in the raw/time-series database."""
-    pass
-
-
-def get_raw_db():
-    """FastAPI dependency that yields a session to the raw/time-series DB."""
-    if RawSessionLocal is None:
-        raise RuntimeError("Raw database not available")
-    db = RawSessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
-
-
-def is_raw_db_available():
-    """Check if raw database is available."""
-    if settings.SKIP_DB_INIT:
-        return False
-    return RawSessionLocal is not None and not _raw_db_connection_failed
 
 
 # ---------------------------------------------------------------------------
@@ -337,3 +236,14 @@ def get_asset_db():
 
 def is_asset_db_available() -> bool:
     return AssetSessionLocal is not None and not _asset_db_connection_failed
+
+
+# ---------------------------------------------------------------------------
+# Backward compatibility aliases for routes using generic get_db / SessionLocal
+# (Points to the data plane: compassx_system)
+# ---------------------------------------------------------------------------
+get_db = get_system_db
+SessionLocal = SystemSessionLocal
+engine = system_engine
+Base = SystemBase
+is_db_available = is_system_db_available

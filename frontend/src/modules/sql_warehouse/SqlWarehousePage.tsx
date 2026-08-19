@@ -183,8 +183,7 @@ export default function SqlWarehousePage() {
   const [error, setError] = useState('');
 
   const [queryTabs, setQueryTabs] = useState([
-    { id: 'q1', name: "select * from 'development_catalog'.'alarm_manager'.'alarm_error_v1' limit 100;", sql: "select * from 'development_catalog'.'alarm_manager'.'alarm_error_v1' limit 100;", catalog: 'development_catalog', schema: 'alarm_manager' },
-    { id: 'q2', name: "select * from 'development_catalog'.'alarm_manager'.'alarm_error_v1' where error_id = 5961229;", sql: "select * from 'development_catalog'.'alarm_manager'.'alarm_error_v1' where error_id = 5961229;", catalog: 'development_catalog', schema: 'alarm_manager' }
+    { id: 'q1', name: "SELECT 1 AS id, 'CompassX SQL Warehouse' AS name;", sql: "SELECT 1 AS id, 'CompassX SQL Warehouse' AS name;", catalog: '', schema: '' }
   ]);
   const [activeQueryTabId, setActiveQueryTabId] = useState('q1');
   const [sidebarSearch, setSidebarSearch] = useState('');
@@ -248,7 +247,7 @@ export default function SqlWarehousePage() {
     if (queryTabs.some(t => t.id === item.id)) {
       setActiveQueryTabId(item.id);
     } else {
-      setQueryTabs(prev => [...prev, { id: item.id, name: item.name, sql: item.sql, catalog: item.catalog || 'development_catalog', schema: item.schema || 'alarm_manager' }]);
+      setQueryTabs(prev => [...prev, { id: item.id, name: item.name, sql: item.sql, catalog: item.catalog || activeCatalog, schema: item.schema || activeSchema }]);
       setActiveQueryTabId(item.id);
     }
   };
@@ -304,16 +303,9 @@ export default function SqlWarehousePage() {
   });
 
   const drafts = useMemo(() => {
-    const items = [
-      { id: 'mock1', name: "select * from 'development_catalog'.'alarm_manager'.'alarm_error_v1' limit 10;", sql: "select * from 'development_catalog'.'alarm_manager'.'alarm_error_v1' limit 10;" },
-      { id: 'mock2', name: "select * from 'development_catalog'.'alarm_manager'.'alarm_error_v1' limit 20;", sql: "select * from 'development_catalog'.'alarm_manager'.'alarm_error_v1' limit 20;" },
-      { id: 'mock3', name: "select * from 'development_catalog'.'alarm_manager'.'alarm_error_v1' limit 30;", sql: "select * from 'development_catalog'.'alarm_manager'.'alarm_error_v1' limit 30;" },
-      { id: 'mock4', name: "select * from 'development_catalog'.'alarm_manager'.'alarm_error_v1' limit 40;", sql: "select * from 'development_catalog'.'alarm_manager'.'alarm_error_v1' limit 40;" },
-      ...queryTabs
-    ];
     const seen = new Set();
     const uniqueItems = [];
-    for (const item of items) {
+    for (const item of queryTabs) {
       if (!seen.has(item.name)) {
         seen.add(item.name);
         uniqueItems.push(item);
@@ -327,14 +319,41 @@ export default function SqlWarehousePage() {
   }, [activeWarehouseId, warehouses]);
 
   useEffect(() => {
-    const firstCatalog = catalogsQuery.data?.[0]?.name;
-    if (!activeCatalog && firstCatalog) setActiveCatalog(firstCatalog);
-  }, [activeCatalog, catalogsQuery.data]);
+    const catalogs = catalogsQuery.data || [];
+    if (catalogs.length > 0) {
+      const exists = catalogs.some(c => c.name === activeCatalog);
+      if (!activeCatalog || !exists) {
+        setActiveCatalog(catalogs[0].name);
+        setActiveSchema('');
+      }
+    } else if (catalogsQuery.isSuccess && catalogs.length === 0) {
+      setActiveCatalog('');
+      setActiveSchema('');
+    }
+  }, [activeCatalog, catalogsQuery.data, catalogsQuery.isSuccess]);
 
   useEffect(() => {
-    const firstSchema = schemasQuery.data?.[0];
-    if (firstSchema && !schemasQuery.data?.includes(activeSchema)) setActiveSchema(firstSchema);
-  }, [activeSchema, schemasQuery.data]);
+    const schemas = schemasQuery.data || [];
+    if (schemas.length > 0) {
+      const exists = schemas.includes(activeSchema);
+      if (!activeSchema || !exists) {
+        setActiveSchema(schemas[0]);
+      }
+    } else if (schemasQuery.isSuccess && schemas.length === 0) {
+      setActiveSchema('');
+    }
+  }, [activeSchema, schemasQuery.data, schemasQuery.isSuccess]);
+
+  useEffect(() => {
+    if (activeCatalog || activeSchema) {
+      setQueryTabs(prev => prev.map(t => {
+        if (t.id === activeQueryTabId) {
+          return { ...t, catalog: activeCatalog, schema: activeSchema };
+        }
+        return t;
+      }));
+    }
+  }, [activeCatalog, activeSchema, activeQueryTabId]);
 
   const createMutation = useMutation({
     mutationFn: () => warehouseApi.create({

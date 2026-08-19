@@ -241,8 +241,23 @@ def resolve_entry_point(
             # 1d. Multiple memberships, no default
             result = {"workspace_id": None, "section": "picker", "route": "/workspace-picker"}
         else:
-            # 1e. Zero memberships
-            result = {"workspace_id": None, "section": "none", "route": "/no-workspace-access"}
+            # Check if user is an account admin
+            from app.user_manager.models.account_models import UmUser
+            from app.user_manager.dependencies import get_effective_account_role
+
+            user = account_db.query(UmUser).filter(UmUser.id == user_id).first()
+            is_account_admin = False
+            if user:
+                role = get_effective_account_role(user.id, user.account_id, account_db)
+                if role == "account_admin":
+                    is_account_admin = True
+
+            if is_account_admin:
+                # 1e. Account admin with zero workspaces -> trigger create workspace
+                result = {"workspace_id": None, "section": "create_workspace", "route": "/workspace/create"}
+            else:
+                # 1f. Regular user with zero memberships
+                result = {"workspace_id": None, "section": "none", "route": "/no-workspace-access"}
         _cache_set(cache_key, result)
         return result
 

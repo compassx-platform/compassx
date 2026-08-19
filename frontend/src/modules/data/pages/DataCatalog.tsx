@@ -731,6 +731,21 @@ export default function DataCatalog() {
     }
   }, [warehouses, selectedWarehouseId]);
 
+  // Keep selectedCatalogName and selectedSchemaName in sync with selection / available catalogs
+  useEffect(() => {
+    if (catalogsQuery.data && catalogsQuery.data.length > 0) {
+      const activeCat = selectedCatalogName || (selection as any)?.catalog || catalogsQuery.data[0].name;
+      if (activeCat !== selectedCatalogName) {
+        setSelectedCatalogName(activeCat);
+      }
+      const catObj = catalogsQuery.data.find(c => c.name === activeCat) || catalogsQuery.data[0];
+      const activeSch = selectedSchemaName || (selection as any)?.schema || (catObj?.schemas?.[0]?.name || '');
+      if (activeSch !== selectedSchemaName) {
+        setSelectedSchemaName(activeSch);
+      }
+    }
+  }, [catalogsQuery.data, selection, selectedCatalogName, selectedSchemaName, showTableModal]);
+
   // Filter connections list to only show Postgres connections
   const postgresConnections = useMemo(() => {
     return (connectionsQuery.data || []).filter(
@@ -1430,10 +1445,19 @@ export default function DataCatalog() {
 
   const createTableFromFileMutation = useMutation({
     mutationFn: (formData: FormData) => {
-      return catalogApi.createTableFromFile(selectedCatalogName, selectedSchemaName, formData);
+      const catName = selectedCatalogName || (selection as any)?.catalog || catalogsQuery.data?.[0]?.name || '';
+      const catObj = (catalogsQuery.data || []).find(c => c.name === catName) || catalogsQuery.data?.[0];
+      const schName = selectedSchemaName || (selection as any)?.schema || catObj?.schemas?.[0]?.name || '';
+      if (!catName || !schName) {
+        throw new Error('Please select a valid Catalog and Schema.');
+      }
+      return catalogApi.createTableFromFile(catName, schName, formData);
     },
     onMutate: () => {
-      const context = beginPendingAsset('table', selectedCatalogName, selectedSchemaName, tableNameInput.trim());
+      const catName = selectedCatalogName || (selection as any)?.catalog || catalogsQuery.data?.[0]?.name || '';
+      const catObj = (catalogsQuery.data || []).find(c => c.name === catName) || catalogsQuery.data?.[0];
+      const schName = selectedSchemaName || (selection as any)?.schema || catObj?.schemas?.[0]?.name || '';
+      const context = beginPendingAsset('table', catName, schName, tableNameInput.trim());
       setShowTableModal(false);
       return context;
     },
@@ -1446,10 +1470,13 @@ export default function DataCatalog() {
       setInferredTypes({});
       // Select the newly created table
       if (newTable && newTable.name) {
+        const catName = selectedCatalogName || (selection as any)?.catalog || catalogsQuery.data?.[0]?.name || '';
+        const catObj = (catalogsQuery.data || []).find(c => c.name === catName) || catalogsQuery.data?.[0];
+        const schName = selectedSchemaName || (selection as any)?.schema || catObj?.schemas?.[0]?.name || '';
         selectAndNavigate({
           kind: 'table',
-          catalog: selectedCatalogName,
-          schema: selectedSchemaName,
+          catalog: catName,
+          schema: schName,
           table: newTable.name
         });
       }

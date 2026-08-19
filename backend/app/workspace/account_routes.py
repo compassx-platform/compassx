@@ -93,14 +93,19 @@ async def create_workspace(
     if db.query(Workspace).filter(Workspace.slug == body.slug).first():
         raise HTTPException(status_code=400, detail="Workspace slug already exists")
 
-    # Validate storage config (test blob write)
-    try:
-        validate_storage_config(body.storage_backend, body.storage_config)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-
-    # Encrypt sensitive fields
-    encrypted_config = encrypt_storage_config(body.storage_config)
+    # Handle managed storage vs custom storage config
+    storage_backend = body.storage_backend or "managed"
+    if storage_backend == "managed" or not body.storage_config:
+        storage_backend = "managed"
+        encrypted_config = {}
+    else:
+        # Validate custom storage config (test blob write)
+        try:
+            validate_storage_config(storage_backend, body.storage_config)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        # Encrypt sensitive fields
+        encrypted_config = encrypt_storage_config(body.storage_config)
 
     ws_id = str(uuid4())
     ws = Workspace(
@@ -108,7 +113,7 @@ async def create_workspace(
         account_id=admin.account_id,
         name=body.name,
         slug=body.slug,
-        storage_backend=body.storage_backend,
+        storage_backend=storage_backend,
         storage_config=encrypted_config,
         created_by=admin.id,
     )
@@ -130,19 +135,22 @@ async def create_workspace(
             sys_db = SystemSessionLocal()
             try:
                 from app.user_manager.models.system_models import UmWorkspaceRoleAssignment
-                sys_db.add(UmWorkspaceRoleAssignment(
-                    workspace_id=ws_id,
-                    principal_id=admin.id,
-                    principal_type="user",
-                    role_id="workspace_admin",
-                    is_default=True,
-                    granted_by=admin.id,
-                ))
+                with sys_db.begin_nested():
+                    sys_db.add(UmWorkspaceRoleAssignment(
+                        workspace_id=ws_id,
+                        principal_id=admin.id,
+                        principal_type="user",
+                        role_id="workspace_admin",
+                        is_default=True,
+                        granted_by=admin.id,
+                    ))
                 sys_db.commit()
+            except Exception as sys_err:
+                logger.warning("Could not add system workspace role assignment: %s", sys_err)
             finally:
                 sys_db.close()
     except Exception as sys_err:
-        logger.warning("Could not add system workspace role assignment: %s", sys_err)
+        logger.warning("Could not open system DB for workspace role assignment: %s", sys_err)
 
     # Auto-create and bind workspace-specific default catalog
     try:
@@ -188,6 +196,13 @@ async def create_workspace(
             detail=f"Failed to create workspace due to catalog creation/binding error: {exc}"
         )
     db.refresh(ws)
+
+    # Invalidate entry point cache so post-login routing sees the new workspace
+    try:
+        from app.user_manager.entry_point import invalidate_entry_point_cache
+        invalidate_entry_point_cache(admin.id)
+    except Exception:
+        pass
 
     return WorkspaceOut(
         id=ws.id, name=ws.name, slug=ws.slug, status=ws.status,

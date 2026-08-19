@@ -128,12 +128,12 @@ def _resolve_duckdb_storage_config(db: Session, catalog: UnifiedCatalog, schema:
 
     # Fall back to workspace level storage
     from app.workspace.models import Workspace
-    from app.workspace.storage_validator import decrypt_storage_config
+    from app.workspace.storage_resolver import resolve_workspace_storage
 
     workspace = db.query(Workspace).filter(Workspace.status == "active").first()
-    if workspace and workspace.storage_backend:
-        config = decrypt_storage_config(workspace.storage_config)
-        return workspace.storage_backend, workspace.id, config
+    if workspace:
+        provider, config = resolve_workspace_storage(workspace)
+        return provider, workspace.id, config
 
     return None
 

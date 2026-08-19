@@ -49,8 +49,8 @@ export interface WorkspaceSlim {
 export interface WorkspaceCreatePayload {
   name: string;
   slug: string;
-  storage_backend: string;
-  storage_config: Record<string, string>;
+  storage_backend?: string;
+  storage_config?: Record<string, string>;
 }
 
 // ── Auth ─────────────────────────────────────────────────────────────────────

@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Optional
 
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, Field
 
 
 # ── Auth ────────────────────────────────────────────────────────────────────
@@ -58,8 +58,8 @@ class AccountPatch(BaseModel):
 class WorkspaceCreate(BaseModel):
     name: str
     slug: str
-    storage_backend: str
-    storage_config: dict[str, Any]
+    storage_backend: str = "managed"
+    storage_config: dict[str, Any] = Field(default_factory=dict)
 
 
 class WorkspacePatch(BaseModel):

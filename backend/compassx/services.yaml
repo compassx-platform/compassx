@@ -23,7 +23,7 @@ services:
     kubernetes: { host: compassx-frontend-service.compassx.svc.cluster.local, port: 80, protocol: http }
 
   postgres:
-    local:      { host: localhost, port: 5432, protocol: postgresql }
+    local:      { host: localhost, port: 5433, protocol: postgresql }
     docker:     { host: postgres, port: 5432, protocol: postgresql }
     kubernetes: { host: compassx-postgres.compassx.svc.cluster.local, port: 5432, protocol: postgresql }
 

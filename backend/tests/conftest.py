@@ -38,8 +38,8 @@ if BACKEND_DIR not in sys.path:
 # Set required environment variables BEFORE importing app modules that read
 # settings at module-load time.
 # ---------------------------------------------------------------------------
-os.environ.setdefault("PG_DATABASE", "test_db")
 os.environ.setdefault("PG_PASSWORD", "test")
+os.environ["SKIP_DB_INIT"] = "true"
 os.environ.setdefault(
     "CATALOG_ENCRYPTION_KEY",
     "dGVzdC1rZXktZm9yLXVuaXQtdGVzdHMtMzItYnl0ZXM="  # base64 of 32-byte test key
@@ -165,7 +165,7 @@ class SessionProxy:
         self._session.flush()
 
     def rollback(self):
-        pass
+        self._session.rollback()
 
 class TestAccountSessionLocal:
     def __call__(self):
@@ -202,6 +202,8 @@ app.database.AssetSessionLocal = TestAccountSessionLocal()
 def create_tables():
     """Create all tables once per test session."""
     import app.sql_warehouse.models  # noqa: F401
+    import app.user_manager.models.system_models  # noqa: F401
+    import app.user_manager.models.account_models  # noqa: F401
     from app.database import AccountBase, SystemBase, AssetBase
     if "sqlite" in test_engine.name:
         for table in AccountBase.metadata.tables.values():
@@ -214,6 +216,13 @@ def create_tables():
     AccountBase.metadata.create_all(bind=test_engine)
     SystemBase.metadata.create_all(bind=test_engine)
     AssetBase.metadata.create_all(bind=test_engine)
+
+    from app.user_manager.models.system_models import UmWorkspaceRole
+    with Session(test_engine) as init_session:
+        for r_id, r_name in [("workspace_admin", "Workspace Admin"), ("analyst", "Analyst"), ("business_viewer", "Business Viewer")]:
+            if not init_session.query(UmWorkspaceRole).filter(UmWorkspaceRole.id == r_id).first():
+                init_session.add(UmWorkspaceRole(id=r_id, display_name=r_name))
+        init_session.commit()
     yield
     try:
         Base.metadata.drop_all(bind=test_engine)

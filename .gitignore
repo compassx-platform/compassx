@@ -7,7 +7,8 @@ __pycache__/
 .mypy_cache/
 .ruff_cache/
 .codex-pycache/
-/.compassx/
+.compassx/
+**/.compassx/
 *kubeconfig*.yaml
 *kubeconfig*.yml
 node_modules/
@@ -15,3 +16,11 @@ node_modules/
 dist/
 **/dist/
 /data/
+
+# Environment files (keep .env.example tracked)
+.env
+.env.local
+.env.*.local
+*.env
+!*.env.example
+!.env.example

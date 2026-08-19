@@ -12,7 +12,7 @@ services:
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: postgres
     ports:
-      - "5432:5432"
+      - "5433:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
       - ./docker/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
@@ -133,7 +133,7 @@ services:
       start_period: 30s
 
   backend:
-    image: ghcr.io/compassx-platform/backend:v0.1.0
+    image: ghcr.io/compassx-platform/backend:v0.2.0
     depends_on:
       postgres:
         condition: service_healthy
@@ -148,9 +148,13 @@ services:
       SYSTEM_DB_NAME: compassx_account
       DATA_DB_NAME: compassx_system
       ASSET_DB_NAME: asset_manager
-      PG_DATABASE: compassx_system
-      PG_RAW_DATABASE: landing_zone
       MINIO_ENDPOINT: minio:9000
+      STORAGE_BACKEND: minio
+      STORAGE_ENDPOINT: http://minio:9000
+      STORAGE_BUCKET: compassx
+      STORAGE_ACCESS_KEY: minioadmin
+      STORAGE_SECRET_KEY: minioadmin
+      STORAGE_REGION: us-east-1
       REDIS_URL: redis://redis:6379/0
       COMPASSX_ENV: local
       DOCKER_HOST: unix:///var/run/docker.sock
@@ -166,7 +170,7 @@ services:
       start_period: 30s
 
   frontend:
-    image: ghcr.io/compassx-platform/frontend:v0.1.0
+    image: ghcr.io/compassx-platform/frontend:v0.2.0
     depends_on:
       backend:
         condition: service_started

@@ -27,15 +27,14 @@ def get_blob_backend(db: Session):
         return backend
     except Exception:
         from app.workspace.models import Workspace
-        from app.workspace.storage_validator import decrypt_storage_config
+        from app.workspace.storage_resolver import resolve_workspace_storage
         from app.storage.azure_backend import AzureStorageBackend
         from app.storage.s3_backend import S3StorageBackend
         from app.storage.minio_backend import MinIOStorageBackend
 
         workspace = account_db.query(Workspace).filter(Workspace.status == "active").first()
-        if workspace and workspace.storage_backend:
-            provider = workspace.storage_backend
-            config = decrypt_storage_config(workspace.storage_config)
+        if workspace:
+            provider, config = resolve_workspace_storage(workspace)
             if provider == "azure":
                 return AzureStorageBackend(
                     account_name=config.get("account_name"),

@@ -113,7 +113,7 @@ def resolve_catalog_storage(
     if not backend_row:
         # Fall back to workspace-level storage
         from app.workspace.models import Workspace
-        from app.workspace.storage_validator import decrypt_storage_config
+        from app.workspace.storage_resolver import resolve_workspace_storage
         from app.storage.azure_backend import AzureStorageBackend
         from app.storage.s3_backend import S3StorageBackend
         from app.storage.minio_backend import MinIOStorageBackend
@@ -141,11 +141,10 @@ def resolve_catalog_storage(
             if binding
             else None
         )
-        if not workspace or not workspace.storage_backend:
+        if not workspace:
             return None
 
-        provider = workspace.storage_backend
-        config = decrypt_storage_config(workspace.storage_config)
+        provider, config = resolve_workspace_storage(workspace)
 
         if provider == "azure":
             backend_instance = AzureStorageBackend(

@@ -34,8 +34,6 @@ logging.basicConfig(
     format="%(asctime)s  %(levelname)-8s  %(name)s  %(message)s",
     datefmt="%H:%M:%S",
 )
-logging.getLogger("app.services.timeseries_service").setLevel(logging.DEBUG)
-logging.getLogger("app.routes.timeseries_routes").setLevel(logging.DEBUG)
 
 logger = logging.getLogger("app.main")
 
@@ -45,7 +43,6 @@ from app.data.models import data_catalog, dataset  # noqa: E402, F401
 from app.catalog import models as unified_catalog_models  # noqa: E402, F401
 from app.workflows.models import entity, form, projection  # noqa: E402, F401
 from app.agents.models import agents as agents_models  # noqa: E402, F401
-from app.data.models import timeseries  # noqa: E402, F401
 from app.workflows.models import workflow  # noqa: E402, F401
 from app.compute.models import compute_resources  # noqa: E402, F401
 from app.dashboards.models import dashboard  # noqa: E402, F401
@@ -69,7 +66,7 @@ from app.user_manager.models import system_models as _um_system_models    # noqa
 from app.workflows.routes import entity_routes, form_routes  # noqa: E402
 from app.workflows.routes import proxy_routes  # noqa: E402
 from app.data.routes import explorer_routes  # noqa: E402
-from app.data.routes import data_catalog_routes, timeseries_routes  # noqa: E402
+from app.data.routes import data_catalog_routes  # noqa: E402
 from app.catalog import routes as catalog_routes  # noqa: E402
 from app.storage import router as storage_router_module  # noqa: E402
 from app.workflows.routes import workflow_routes  # noqa: E402
@@ -356,7 +353,6 @@ app.include_router(entity_routes.router)
 app.include_router(explorer_routes.router)
 app.include_router(form_routes.router)
 app.include_router(proxy_routes.router)
-app.include_router(timeseries_routes.router)
 app.include_router(data_catalog_routes.router)
 app.include_router(catalog_routes.router)
 app.include_router(storage_router_module.router)

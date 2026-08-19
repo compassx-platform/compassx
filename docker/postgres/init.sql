@@ -3,7 +3,6 @@ CREATE DATABASE compassx_account;
 CREATE DATABASE compassx_system;
 CREATE DATABASE asset_manager;
 CREATE DATABASE airflow_meta;
-CREATE DATABASE landing_zone;
 CREATE DATABASE test;
 
 \c compassx_account;

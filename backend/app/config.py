@@ -8,28 +8,22 @@ logger = logging.getLogger(__name__)
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=(".env", "backend/.env", "../.env"),
         env_file_encoding="utf-8",
         extra="ignore",
     )
 
-    # Primary application database
-    # All PG_* values must be supplied via environment variables (or .env file).
-    # PG_DATABASE has no built-in default so that a misconfigured deployment
-    # fails fast with a clear error instead of silently connecting to the wrong DB.
+
+    # PostgreSQL connection settings (defaults configured for Docker Postgres mapping)
     PG_HOST: str = "localhost"
-    PG_PORT: int = 5432
+    PG_PORT: int = 5433
     PG_USER: str = "postgres"
-    PG_PASSWORD: str = ""
-    PG_DATABASE: str  # required – set via env var, e.g. PG_DATABASE=compassx
+    PG_PASSWORD: str = "postgres"
 
     # Data Catalog – Fernet encryption key for stored connection passwords.
     # Generate with: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
     # If not set, a random key is generated at startup (passwords survive only until restart).
     CATALOG_ENCRYPTION_KEY: str = ""
-
-    # Raw / time-series database (landing_zone) – may be same host, different DB
-    PG_RAW_DATABASE: str = ""   # if empty, falls back to PG_DATABASE
 
     # Skip initial database connection tests (useful for fast startup if DB temporarily unavailable)
     SKIP_DB_INIT: bool = False
@@ -82,6 +76,15 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_TTL_MINUTES: int = 15
     REFRESH_TOKEN_TTL_DAYS: int = 30
 
+    # Managed Storage (Account / Deployment Default)
+    STORAGE_BACKEND: str = "minio"          # minio | s3 | azure | local
+    STORAGE_ENDPOINT: str = "http://localhost:9000"  # S3/MinIO endpoint URL
+    STORAGE_BUCKET: str = "compassx"        # default bucket / container name
+    STORAGE_ACCESS_KEY: str = "minioadmin"  # access key / Azure account name
+    STORAGE_SECRET_KEY: str = "minioadmin"  # secret key / Azure account key
+    STORAGE_REGION: str = "us-east-1"
+    STORAGE_PREFIX: str = ""                # optional global prefix before workspace prefixes
+
     # First boot (if set, skips interactive prompt)
     ADMIN_EMAIL: str = ""
     ADMIN_PASSWORD: str = ""
@@ -120,28 +123,17 @@ class Settings(BaseSettings):
 
     @property
     def database_url(self) -> str:
-        return (
-            f"postgresql://{self.PG_USER}:{self.PG_PASSWORD}"
-            f"@{self.PG_HOST}:{self.PG_PORT}/{self.PG_DATABASE}"
-        )
-
-    @property
-    def raw_database_url(self) -> str:
-        """Connection URL for the raw/time-series database."""
-        db = self.PG_RAW_DATABASE or self.PG_DATABASE
-        return (
-            f"postgresql://{self.PG_USER}:{self.PG_PASSWORD}"
-            f"@{self.PG_HOST}:{self.PG_PORT}/{db}"
-        )
+        """Alias for resolved_data_db_url (compassx_system DB)."""
+        return self.resolved_data_db_url
 
     @property
     def catalog_fernet_key(self) -> bytes:
         """Return a valid 32-byte URL-safe base64 Fernet key."""
         if self.CATALOG_ENCRYPTION_KEY:
             return self.CATALOG_ENCRYPTION_KEY.encode()
-        # Dev fallback: generate a deterministic key from PG_PASSWORD + PG_DATABASE
+        # Dev fallback: generate a deterministic key from PG_PASSWORD + SYSTEM_DB_NAME
         # so it survives process restarts within the same config.
-        seed = f"{self.PG_PASSWORD}:{self.PG_DATABASE}:catalog-key-v1"
+        seed = f"{self.PG_PASSWORD}:{self.SYSTEM_DB_NAME}:catalog-key-v1"
         raw = seed.encode("utf-8")
         # Pad/hash to 32 bytes then base64-url-encode for Fernet
         import hashlib

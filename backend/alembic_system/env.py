@@ -22,7 +22,7 @@ Tables in this DB (SystemBase):
   Compute: compute_resources, compute_resource_deployments
   Asset Manager: asset_types, asset_instances, asset_relationships,
                  asset_events, tags_def, asset_tags, asset_import_jobs, asset_memories
-  Data: datasets (timeseries data_catalog in raw/timeseries DB)
+  Data: datasets
 
 Run: alembic -c alembic_system.ini upgrade head
 """

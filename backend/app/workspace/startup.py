@@ -32,7 +32,12 @@ def run_workspace_startup() -> None:
 
     # Automatic Alembic migrations on startup are disabled to prevent server boot hanging.
     # Run alembic migrations manually via CLI when necessary.
-    logger.info("Automatic startup Alembic migrations skipped.")
+    # Auto-ensure default storage bucket exists (MinIO / S3)
+    try:
+        from app.workspace.storage_resolver import ensure_default_storage_bucket
+        ensure_default_storage_bucket()
+    except Exception as bucket_err:
+        logger.warning("Could not auto-ensure default storage bucket: %s", bucket_err)
 
     # 3. First boot (create account + admin + system catalog if empty)
     if AccountSessionLocal is None:
