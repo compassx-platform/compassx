@@ -66,7 +66,7 @@ class TestFlatTableName:
         assert svc.flat_table_name("work_order") == "work_order_flat"
 
     def test_preserves_entity_name(self):
-        assert svc.flat_table_name("breakdown_event") == "breakdown_event_flat"
+        assert svc.flat_table_name("event_record") == "event_record_flat"
 
     def test_single_word(self):
         assert svc.flat_table_name("invoice") == "invoice_flat"

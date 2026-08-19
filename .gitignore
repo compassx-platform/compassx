@@ -16,6 +16,7 @@ node_modules/
 dist/
 **/dist/
 /data/
+/architecture/
 
 # Environment files (keep .env.example tracked)
 .env

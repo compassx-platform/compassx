@@ -53,13 +53,12 @@ export const APP_DEFINITIONS: Record<AppId, AppDefinition> = {
   apps: {
     id: 'apps',
     label: 'Apps',
-    defaultPath: '/forms',
+    defaultPath: '/entities',
     navItems: [
-      { to: '/forms', icon: FileText, label: 'Forms', end: false },
       { to: '/entities', icon: Database, label: 'Entities', end: false },
       { to: '/assets', icon: GitBranch, label: 'Assets', end: true },
     ],
-    allowedPrefixes: ['/forms', '/entities', '/assets', '/apps_development'],
+    allowedPrefixes: ['/entities', '/assets', '/apps_development'],
   },
   business_center: {
     id: 'business_center',

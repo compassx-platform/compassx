@@ -1,9 +1,7 @@
 import { useMemo, type CSSProperties, type ChangeEvent } from 'react';
-import { useParams, useLocation } from 'react-router-dom';
-import { useScopedNavigate } from '@/lib/appNavigation';
-import { Edit2, Trash2, RefreshCw } from 'lucide-react';
-import { useDeleteEntityRecord, useEntityRecords, useUpdateEntityRecord } from '@/modules/workflows/hooks/useEntity';
-import { useForms } from '@/modules/workflows/hooks/useForm';
+import { useParams } from 'react-router-dom';
+import { Trash2, RefreshCw } from 'lucide-react';
+import { useDeleteEntityRecord, useEntityRecords, useUpdateEntityRecord, useEntityFields } from '@/modules/workflows/hooks/useEntity';
 import { useAllAssets, useAssetTypes } from '@/hooks/useAssets';
 import { useWorkflowTransitions } from '@/modules/workflows/hooks/useWorkflow';
 import { useToast, extractApiError } from '@/lib/toast';
@@ -72,12 +70,9 @@ export default function EntityRecordsPage() {
   // Support both old (:entity_name) and new (:entityName) param names
   const params = useParams<{ entityName?: string; entity_name?: string }>();
   const entityName = params.entityName || params.entity_name || '';
-  const navigate = useScopedNavigate();
-  const location = useLocation();
-  const isPublic = location.pathname.startsWith('/public/');
 
   const { data: records, isLoading, error, refetch } = useEntityRecords(entityName);
-  const { data: forms } = useForms();
+  const { data: entityFields } = useEntityFields(entityName);
   const deleteMut = useDeleteEntityRecord(entityName);
   const { data: allAssets } = useAllAssets();
   const { data: assetTypes } = useAssetTypes();
@@ -96,18 +91,15 @@ export default function EntityRecordsPage() {
 
   const toast = useToast();
 
-  const matchingForm = useMemo(
-    () => forms?.find((f) => f.entity_name === entityName) || null,
-    [forms, entityName],
-  );
-
   const dataColumns = useMemo<TableColumn[]>(() => {
-    if (matchingForm?.schema?.fields?.length) {
-      return matchingForm.schema.fields.map((f) => ({ id: f.id, label: f.label || fmtCol(f.id), fieldType: f.type }));
+    if (entityFields?.length) {
+      return entityFields
+        .filter((f) => !f.is_system)
+        .map((f) => ({ id: f.field_name, label: fmtCol(f.field_name), fieldType: f.field_type }));
     }
     const keys = Array.from(new Set((records || []).flatMap((r) => Object.keys(r.data_json || {}))));
     return keys.map((k) => ({ id: k, label: fmtCol(k) }));
-  }, [matchingForm, records]);
+  }, [entityFields, records]);
 
   if (!entityName) return <div style={{ padding: '2rem', color: 'var(--color-text-muted)' }}>No entity specified.</div>;
 
@@ -138,7 +130,7 @@ export default function EntityRecordsPage() {
         <div style={{ flex: 1 }}>
           <h1 style={{ fontSize: '1.5rem', fontWeight: 600, textTransform: 'capitalize' }}>{fmt(entityName)} Records</h1>
           <p style={{ color: 'var(--color-text-muted)', fontSize: '0.875rem', marginTop: 2 }}>
-            {matchingForm ? `Schema from ${matchingForm.form_id}` : 'Columns inferred from stored data'}
+            {entityFields?.length ? `${entityFields.length} configured fields` : 'Columns inferred from stored data'}
           </p>
         </div>
         <button className="btn-outline" onClick={() => refetch()} style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
@@ -195,12 +187,7 @@ export default function EntityRecordsPage() {
                     <td style={{ ...tdS, textAlign: 'center' }}>
                       <div style={{ display: 'grid', gap: 8, alignItems: 'center' }}>
                         <RecordStateTransitionDropdown entityName={entityName} record={rec} />
-                        <div style={{ display: 'inline-flex', gap: 6 }}>
-                          <button className="btn-outline" style={{ padding: '0.3rem 0.5rem' }}
-                            onClick={() => { if (!matchingForm) { toast.info('No form configured for this entity.'); return; } navigate(isPublic ? `/public/entities/${entityName}/records/${rec.id}/edit` : `/entities/${entityName}/records/${rec.id}/edit`); }}
-                            title={matchingForm ? 'Edit' : 'No form configured'}>
-                            <Edit2 size={14} />
-                          </button>
+                        <div style={{ display: 'inline-flex', gap: 6, justifyContent: 'center' }}>
                           <button className="btn-danger" style={{ padding: '0.3rem 0.5rem' }} disabled={deleteMut.isPending}
                             onClick={() => handleDelete(rec)} title="Delete">
                             <Trash2 size={14} />

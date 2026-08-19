@@ -27,18 +27,11 @@ import WorkspaceGuard from '@/components/layout/WorkspaceGuard';
 import CreateWorkspacePage from '@/pages/CreateWorkspacePage';
 import PublicShell from '@/components/layout/PublicShell';
 import NovaLandingPage from '@/modules/nova/pages/NovaLandingPage';
-import FormsPage from '@/modules/workflows/pages/FormsPage';
-import VisualFormBuilder from '@/modules/workflows/pages/VisualFormBuilder';
-import FormViewer from '@/modules/workflows/pages/FormViewer';
-import FormBulkUpload from '@/modules/workflows/pages/FormBulkUpload';
 import Entities from '@/modules/workflows/pages/Entities';
 import EntityEditPage from '@/modules/workflows/pages/EntityEditPage';
 import EntityRecordsPage from '@/modules/workflows/pages/EntityRecordsPage';
-import EntityRecordEditor from '@/modules/workflows/pages/EntityRecordEditor';
 import DataCatalog from '@/modules/data/pages/DataCatalog';
 import SqlWarehousePage from '@/modules/sql_warehouse/SqlWarehousePage';
-import BreakdownForm from '@/modules/workflows/pages/BreakdownForm';
-import BreakdownExplorer from '@/modules/workflows/pages/BreakdownExplorer';
 import AgentsPage from '@/modules/agents/pages/AgentsPage';
 import AgentToolDetailPage from '@/modules/agents/pages/AgentToolDetailPage';
 import AgentBuilderPage from '@/modules/agents/pages/AgentBuilderPage';
@@ -250,15 +243,9 @@ export default function App() {
                 <Route index element={<WorkspaceIndex />} />
                 <Route path=":appId" element={<AppScopeGuard />}>
                   <Route index element={<AppHomeRedirect />} />
-                  <Route path="forms" element={<FormsPage />} />
-                  <Route path="forms/builder" element={<VisualFormBuilder />} />
-                  <Route path="forms/builder/:formId" element={<VisualFormBuilder />} />
-                  <Route path="forms/:formId/view" element={<FormViewer />} />
-                  <Route path="forms/:formId/bulk-upload" element={<FormBulkUpload />} />
                   <Route path="entities" element={<Entities />} />
                   <Route path="entities/:entityName/edit" element={<EntityEditPage />} />
                   <Route path="entities/:entityName/records" element={<EntityRecordsPage />} />
-                  <Route path="entities/:entity_name/records/:record_id/edit" element={<EntityRecordEditor />} />
                   <Route path="data-catalog" element={<DataCatalog />} />
                   <Route path="data-catalog/:catalog" element={<DataCatalog />} />
                   <Route path="data-catalog/:catalog/:schema" element={<DataCatalog />} />
@@ -296,8 +283,6 @@ export default function App() {
                   <Route path="assets/types/:typeId/edit" element={<AssetTypeFormPage />} />
                   <Route path="assets/:instanceId" element={<AssetExplorerPage />} />
                   <Route path="assets/:instanceId/edit" element={<AssetFormPage />} />
-                  <Route path="breakdown/new" element={<BreakdownForm />} />
-                  <Route path="breakdown/explorer" element={<BreakdownExplorer />} />
                   <Route path="jobs" element={<JobsListPage />} />
                   <Route path="jobs/:jobId" element={<JobDetailPage />} />
                   <Route path="jobs/:jobId/runs/:runId" element={<RunDetailPage />} />
@@ -315,12 +300,7 @@ export default function App() {
                 </Route>
               </Route>
               <Route path="/public" element={<PublicShell />}>
-                <Route path="forms/:formId" element={<FormViewer />} />
-                <Route path="forms/:formId/edit/:record_id" element={<EntityRecordEditor />} />
-                <Route path="forms/:formId/bulk-upload" element={<FormBulkUpload />} />
                 <Route path="entities/:entityName/records" element={<EntityRecordsPage />} />
-                <Route path="entities/:entity_name/records/:record_id/edit" element={<EntityRecordEditor />} />
-                <Route path="breakdown/new" element={<BreakdownForm />} />
               </Route>
               <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>

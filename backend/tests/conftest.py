@@ -113,7 +113,7 @@ def _compile_create_table_sqlite(element, compiler, **kw):
 # ---------------------------------------------------------------------------
 from app.database import Base, AssetBase  # noqa: E402
 from app.workspace import models as workspace_models  # noqa: F401, E402
-from app.models import agents, entity, audit, dataset, form, projection, data_catalog, workflow, unified_catalog  # noqa: E402, F401
+from app.models import agents, entity, audit, dataset, data_catalog, workflow, unified_catalog  # noqa: E402, F401
 import app.asset_manager.models.asset_manager  # noqa: E402, F401
 
 # ---------------------------------------------------------------------------
@@ -315,7 +315,7 @@ def _make_test_app(db: Session) -> FastAPI:
     Avoids importing app.main (which runs Alembic migrations at import time).
     """
     from fastapi import FastAPI
-    from app.routes import entity_routes, form_routes, data_catalog_routes, workflow_routes, workspace_routes, llm_connection_routes
+    from app.routes import entity_routes, data_catalog_routes, workflow_routes, workspace_routes, llm_connection_routes
     from app.catalog import routes as catalog_routes
     from app.database import get_db, get_system_db, get_account_db, get_asset_db
     from app.dependencies import get_current_user
@@ -337,7 +337,6 @@ def _make_test_app(db: Session) -> FastAPI:
     app.dependency_overrides[get_current_user] = _override_get_current_user
 
     app.include_router(entity_routes.router)
-    app.include_router(form_routes.router)
     app.include_router(data_catalog_routes.router)
     app.include_router(catalog_routes.router)
     app.include_router(workflow_routes.router)
@@ -416,29 +415,6 @@ def sample_record(db_session: Session, sample_entity):
         asset_id=None,
         data={"title": "Test Record", "count": 42},
         user_email="test@example.com",
-    )
-
-
-@pytest.fixture()
-def sample_form(db_session: Session, sample_entity):
-    """Create and return a sample Form."""
-    from app.services.form_service import create_form_schema
-    from app.schemas.form import FormSchemaCreate
-
-    return create_form_schema(
-        db_session,
-        FormSchemaCreate(
-            form_id="test-form-001",
-            entity_name="test_entity",
-            schema={
-                "form_id": "test-form-001",
-                "entity": "test_entity",
-                "fields": [
-                    {"id": "title", "type": "text", "label": "Title", "required": True},
-                    {"id": "count", "type": "number", "label": "Count", "required": False},
-                ],
-            },
-        ),
     )
 
 

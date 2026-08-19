@@ -4,9 +4,7 @@ Unit tests for Pydantic schemas
 Coverage
 --------
 - EntityFieldCreate / EntityDefinitionCreate validation
-- FormSchemaCreate / FormSchemaUpdate validation
 - ConnectionCreate / ConnectionUpdate / SqlExecuteRequest validation
-- ExplorerQueryRequest validation
 - Edge cases: empty strings, out-of-range values, missing required fields
 """
 
@@ -22,14 +20,12 @@ from app.schemas.entity import (
     EntityFieldUpdate,
     EntityDefinitionUpdate,
 )
-from app.schemas.form import FormSchemaCreate, FormSchemaUpdate
 from app.schemas.data_catalog import (
     ConnectionCreate,
     ConnectionUpdate,
     ConnectionTestRequest,
     SqlExecuteRequest,
 )
-from app.schemas.explorer import ExplorerQuery as ExplorerQueryRequest
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -211,73 +207,6 @@ class TestEntityFieldUpdate:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# FormSchemaCreate
-# ═══════════════════════════════════════════════════════════════════════════════
-
-
-class TestFormSchemaCreate:
-
-    def test_valid_form_schema_create(self):
-        form = FormSchemaCreate(
-            form_id="my-form-001",
-            entity_name="work_order",
-            schema={
-                "fields": [
-                    {"id": "title", "type": "text", "label": "Title", "required": True}
-                ]
-            },
-        )
-        assert form.form_id == "my-form-001"
-        assert form.entity_name == "work_order"
-
-    def test_form_id_required(self):
-        with pytest.raises(ValidationError):
-            FormSchemaCreate(
-                form_id="",
-                entity_name="work_order",
-                schema={"fields": []},
-            )
-
-    def test_entity_name_required(self):
-        with pytest.raises(ValidationError):
-            FormSchemaCreate(
-                form_id="my-form",
-                entity_name="",
-                schema={"fields": []},
-            )
-
-    def test_schema_defaults_to_empty_dict(self):
-        form = FormSchemaCreate(
-            form_id="minimal-form",
-            entity_name="work_order",
-        )
-        assert form.schema == {}
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# FormSchemaUpdate
-# ═══════════════════════════════════════════════════════════════════════════════
-
-
-class TestFormSchemaUpdate:
-
-    def test_all_fields_optional(self):
-        update = FormSchemaUpdate()
-        assert update.entity_name is None
-        assert update.schema is None
-
-    def test_schema_only_update(self):
-        update = FormSchemaUpdate(schema={"fields": []})
-        assert update.schema == {"fields": []}
-        assert update.entity_name is None
-
-    def test_entity_name_only_update(self):
-        update = FormSchemaUpdate(entity_name="new_entity")
-        assert update.entity_name == "new_entity"
-        assert update.schema is None
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
 # ConnectionCreate
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -438,59 +367,3 @@ class TestSqlExecuteRequest:
                 sql="SELECT 1",
                 limit=100_001,
             )
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# ExplorerQueryRequest
-# ═══════════════════════════════════════════════════════════════════════════════
-
-
-class TestExplorerQueryRequest:
-
-    def test_valid_explorer_query(self):
-        req = ExplorerQueryRequest(
-            dataset="breakdown_event",
-            filters={},
-            pagination={"page": 1, "size": 25},
-        )
-        assert req.dataset == "breakdown_event"
-        assert req.pagination["page"] == 1
-
-    def test_dataset_required(self):
-        with pytest.raises(ValidationError):
-            ExplorerQueryRequest(
-                dataset="",
-                filters={},
-                pagination={"page": 1, "size": 25},
-            )
-
-    def test_pagination_required(self):
-        with pytest.raises(ValidationError):
-            ExplorerQueryRequest(
-                dataset="breakdown_event",
-                filters={},
-            )
-
-    def test_filters_defaults_to_empty_dict(self):
-        req = ExplorerQueryRequest(
-            dataset="breakdown_event",
-            pagination={"page": 1, "size": 25},
-        )
-        assert req.filters == {}
-
-    def test_sort_optional(self):
-        req = ExplorerQueryRequest(
-            dataset="breakdown_event",
-            filters={},
-            pagination={"page": 1, "size": 25},
-            sort={"timestamp": "desc"},
-        )
-        assert req.sort == {"timestamp": "desc"}
-
-    def test_sort_defaults_to_none(self):
-        req = ExplorerQueryRequest(
-            dataset="breakdown_event",
-            filters={},
-            pagination={"page": 1, "size": 25},
-        )
-        assert req.sort is None
