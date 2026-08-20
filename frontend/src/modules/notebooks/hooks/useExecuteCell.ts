@@ -53,7 +53,9 @@ export function useExecuteCell() {
 
       flushTimer.current = setInterval(flushStreams, 100);
 
-      const future = kernel.requestExecute({ code: source, store_history: true });
+      const nbPath = useNotebookStore.getState().notebookPath;
+      const initCode = nbPath ? `import os; os.environ['COMPASSX_NOTEBOOK_PATH'] = ${JSON.stringify(nbPath)}; os.environ['NOTEBOOK_PATH'] = ${JSON.stringify(nbPath)}\n` : '';
+      const future = kernel.requestExecute({ code: initCode + source, store_history: true });
       console.log('[notebook] future created:', future);
 
       future.onIOPub = (msg) => {

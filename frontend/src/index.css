@@ -3467,4 +3467,42 @@ html {
   font-size: 0.875rem;
 }
 
+/* Quick Connect row: show horizontal scrollbar only on hover without layout shift */
+.quick-connect-scroll-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 14px;
+  margin-bottom: 12px;
+  padding-top: 2px;
+  padding-bottom: 6px;
+  overflow-x: auto;
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+  scrollbar-gutter: stable;
+  transition: scrollbar-color 0.2s ease;
+}
+
+.quick-connect-scroll-row::-webkit-scrollbar {
+  height: 5px;
+}
+
+.quick-connect-scroll-row::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.quick-connect-scroll-row::-webkit-scrollbar-thumb {
+  background: transparent;
+  border-radius: 4px;
+  transition: background 0.2s ease;
+}
+
+.quick-connect-scroll-row:hover {
+  scrollbar-color: rgba(0, 0, 0, 0.25) transparent;
+}
+
+.quick-connect-scroll-row:hover::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.25);
+}
+
 

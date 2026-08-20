@@ -15,6 +15,7 @@ from __future__ import annotations
 import logging
 from abc import ABC, abstractmethod
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from compassx.models import (
@@ -22,6 +23,7 @@ from compassx.models import (
     ResourceRequirements,
     RuntimeProvisionError,
     RuntimeSpec,
+    VolumeMount,
 )
 
 logger = logging.getLogger(__name__)
@@ -141,6 +143,21 @@ class BaseSpecBuilder(ABC):
         env_vars.update({str(k): str(v) for k, v in extra_env.items()})
 
         profile_id = options.get("profile_id", "")
+        volumes = []
+        if env == "local":
+            backend_services = Path(__file__).resolve().parents[2] / "services"
+            if not backend_services.is_dir():
+                backend_services = Path(__file__).resolve().parents[1] / "services"
+            if backend_services.is_dir():
+                volumes.append(
+                    VolumeMount(
+                        name="compassx-services",
+                        mount_path="/opt/compassx/services",
+                        host_path=str(backend_services.resolve()),
+                        read_only=False,
+                    )
+                )
+
         spec = RuntimeSpec(
             runtime_id=runtime_id,
             runtime_type=self.runtime_type,
@@ -149,6 +166,7 @@ class BaseSpecBuilder(ABC):
             resources=self._resources(options),
             env=env_vars,
             ports=self.ports(options),
+            volumes=volumes,
             labels=self._standard_labels(runtime_id, user_id),
             annotations=self._standard_annotations(profile_id, env),
             namespace=namespace,

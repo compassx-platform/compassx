@@ -152,9 +152,35 @@ class DashboardAssetType:
         pass
 
 
+class ToolAssetType:
+    """Tools are database-backed Python function assets under <schema>/tools/<name>."""
+
+    kind = "tool"
+
+    def storage_sub_path(self, asset_name: str) -> str:
+        return f"tools/{asset_name}"
+
+    async def on_delete(self, ctx: "StorageContext", asset_name: str) -> None:
+        pass
+
+
+class ConnectionAssetType:
+    """Connections are database-backed connection assets under <schema>/connections/<name>."""
+
+    kind = "connection"
+
+    def storage_sub_path(self, asset_name: str) -> str:
+        return f"connections/{asset_name}"
+
+    async def on_delete(self, ctx: "StorageContext", asset_name: str) -> None:
+        pass
+
+
 # Register built-in types
 register_asset_type(TableAssetType())
 register_asset_type(VolumeAssetType())
 register_asset_type(NotebookAssetType())
 register_asset_type(DashboardAssetType())
+register_asset_type(ToolAssetType())
+register_asset_type(ConnectionAssetType())
 

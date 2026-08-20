@@ -169,6 +169,36 @@ def _build_extra_tools(
             session_id=session_id,
         )
 
+    # Discover promoted catalog tools for the workspace / manifest (External Agent Tools)
+    try:
+        from app.database import AccountSessionLocal
+        from app.catalog.models import UnifiedCatalogTool
+        from app.agents.services.agent.tools.external_catalog_tool import ExternalCatalogTool
+
+        if AccountSessionLocal is not None:
+            with AccountSessionLocal() as adb:
+                catalog_tools = adb.query(UnifiedCatalogTool).all()
+                for cat_tool in catalog_tools:
+                    tool_key = cat_tool.name
+                    # If specific tools are enabled for this agent, check if selected or default to all for Nova
+                    is_nova = getattr(agent, "name", "").lower() == "nova" or getattr(agent, "id", "") == "ai-data-engineer"
+                    is_enabled = is_nova or (tool_key in enabled_tool_keys) or (cat_tool.full_name in enabled_tool_keys) or (len(enabled_tool_keys) == 0)
+
+                    if is_enabled and tool_key not in extra:
+                        extra[tool_key] = ExternalCatalogTool(
+                            tool_id=cat_tool.id,
+                            name=cat_tool.name,
+                            description=cat_tool.description or f"Unified Catalog Tool: {cat_tool.full_name}",
+                            input_schema=cat_tool.param_schema,
+                            pinned_version=cat_tool.current_version,
+                            connection_dependencies=cat_tool.connection_dependencies,
+                            session_id=str(session_id),
+                            agent_type="nova" if is_nova else getattr(agent, "name", "agent"),
+                            invoked_by=user_id,
+                        )
+    except Exception as exc:
+        logger.warning("Could not load external catalog tools into manifest: %s", exc)
+
     return extra
 
 

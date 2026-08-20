@@ -3,6 +3,7 @@
  */
 import { useState, useEffect } from "react";
 import { useParams } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
 import { useScopedNavigate } from "@/lib/appNavigation";
 import {
   Zap,
@@ -16,6 +17,7 @@ import {
   Trash2,
   Edit2,
   Tag,
+  Wrench,
 } from "lucide-react";
 import { PageTabs } from "@/components/common/PageTabs";
 import { useAgent, useCreateAgent, useUpdateAgent, type AgentDBConnection } from "@/modules/agents/hooks/useAgents";
@@ -207,6 +209,26 @@ function StepTools({
   selectedTools: string[];
   setSelectedTools: React.Dispatch<React.SetStateAction<string[]>>;
 }) {
+  const { data: catalogTools = [] } = useQuery({
+    queryKey: ["catalogTools"],
+    queryFn: async () => {
+      try {
+        const res = await api.get("/catalog/tools");
+        return (res.data || []) as Array<{
+          id: string;
+          catalog: string;
+          schema_name: string;
+          name: string;
+          full_name: string;
+          description: string;
+          current_version: number;
+        }>;
+      } catch {
+        return [];
+      }
+    },
+  });
+
   function toggle(key: string) {
     setSelectedTools((prev) =>
       prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]
@@ -222,39 +244,99 @@ function StepTools({
       <p style={{ fontSize: "0.85rem", color: "var(--color-text-muted)", margin: 0 }}>
         Choose which tools this agent can use. Tools are invoked by the LLM via tool-use.
       </p>
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))",
-          gap: 12,
-        }}
-      >
-        {AVAILABLE_TOOLS.map((tool) => {
-          const enabled = enabledKeys.has(tool.key);
-          return (
-            <div
-              key={tool.key}
-              onClick={() => toggle(tool.key)}
-              style={{
-                border: `1.5px solid ${enabled ? "var(--color-primary)" : "var(--color-border)"}`,
-                borderRadius: 8,
-                padding: "12px 14px",
-                cursor: "pointer",
-                background: enabled ? "var(--color-primary-subtle, rgba(27,110,243,0.06))" : "var(--color-surface)",
-                transition: "border-color 0.15s, background 0.15s",
-              }}
-            >
-              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
-                <input type="checkbox" readOnly checked={enabled} />
-                <span style={{ fontWeight: 500, fontSize: "0.875rem" }}>{tool.name}</span>
+
+      {/* Built-in Platform Tools */}
+      <div>
+        <h4 style={{ margin: "0 0 10px", fontSize: "0.875rem", fontWeight: 600, color: "var(--color-text-muted)", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+          Built-in Agent Tools
+        </h4>
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))",
+            gap: 12,
+          }}
+        >
+          {AVAILABLE_TOOLS.map((tool) => {
+            const enabled = enabledKeys.has(tool.key);
+            return (
+              <div
+                key={tool.key}
+                onClick={() => toggle(tool.key)}
+                style={{
+                  border: `1.5px solid ${enabled ? "var(--color-primary)" : "var(--color-border)"}`,
+                  borderRadius: 8,
+                  padding: "12px 14px",
+                  cursor: "pointer",
+                  background: enabled ? "var(--color-primary-subtle, rgba(27,110,243,0.06))" : "var(--color-surface)",
+                  transition: "border-color 0.15s, background 0.15s",
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+                  <input type="checkbox" readOnly checked={enabled} />
+                  <span style={{ fontWeight: 500, fontSize: "0.875rem" }}>{tool.name}</span>
+                </div>
+                <div style={{ fontSize: "0.75rem", color: "var(--color-text-muted)", paddingLeft: 22 }}>
+                  {tool.description}
+                </div>
               </div>
-              <div style={{ fontSize: "0.75rem", color: "var(--color-text-muted)", paddingLeft: 22 }}>
-                {tool.description}
-              </div>
-            </div>
-          );
-        })}
+            );
+          })}
+        </div>
       </div>
+
+      {/* Unified Catalog Promoted Tools */}
+      {catalogTools.length > 0 && (
+        <div style={{ marginTop: 8 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 10 }}>
+            <Wrench size={15} style={{ color: "var(--color-primary)" }} />
+            <h4 style={{ margin: 0, fontSize: "0.875rem", fontWeight: 600, color: "var(--color-text-muted)", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+              Unified Catalog Promoted Tools ({catalogTools.length})
+            </h4>
+          </div>
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))",
+              gap: 12,
+            }}
+          >
+            {catalogTools.map((ct) => {
+              const enabled = enabledKeys.has(ct.name) || enabledKeys.has(ct.full_name);
+              return (
+                <div
+                  key={ct.id}
+                  onClick={() => toggle(ct.name)}
+                  style={{
+                    border: `1.5px solid ${enabled ? "var(--color-primary)" : "var(--color-border)"}`,
+                    borderRadius: 8,
+                    padding: "12px 14px",
+                    cursor: "pointer",
+                    background: enabled ? "var(--color-primary-subtle, rgba(27,110,243,0.06))" : "var(--color-surface)",
+                    transition: "border-color 0.15s, background 0.15s",
+                  }}
+                >
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <input type="checkbox" readOnly checked={enabled} />
+                      <span style={{ fontWeight: 600, fontSize: "0.875rem", fontFamily: "monospace" }}>{ct.name}</span>
+                    </div>
+                    <span style={{ fontSize: "0.7rem", padding: "1px 6px", borderRadius: 4, background: "#eff6ff", color: "#1d4ed8", fontWeight: 500 }}>
+                      v{ct.current_version}
+                    </span>
+                  </div>
+                  <div style={{ fontSize: "0.75rem", color: "var(--color-text-muted)", paddingLeft: 22 }}>
+                    {ct.description || `Catalog tool: ${ct.full_name}`}
+                  </div>
+                  <div style={{ fontSize: "0.7rem", color: "var(--color-text-muted)", paddingLeft: 22, marginTop: 4 }}>
+                    Namespace: <span style={{ fontFamily: "monospace" }}>{ct.catalog}.{ct.schema_name}</span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {hasClaudeAgent && (
         <div

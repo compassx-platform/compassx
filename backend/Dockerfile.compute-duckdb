@@ -17,6 +17,7 @@ RUN pip install --no-cache-dir \
 COPY services/__init__.py /opt/compassx/services/__init__.py
 COPY services/fsspec_cx /opt/compassx/services/fsspec_cx
 COPY services/compassx_sql /opt/compassx/services/compassx_sql
+COPY services/compassx_tools /opt/compassx/services/compassx_tools
 
 ENV IPYTHONDIR=/opt/compassx/.ipython
 RUN mkdir -p /opt/compassx/.ipython/profile_default/startup && \

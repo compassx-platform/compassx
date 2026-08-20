@@ -84,7 +84,11 @@ from app.agents.routes import (  # noqa: E402
     research_engine_routes,
     document_routes,
     artifact_routes,
+    external_connection_routes,
+    agent_tool_routes,
 )
+from app.catalog import tool_routes as catalog_tool_routes  # noqa: E402
+from app.catalog.connections import routes as catalog_connection_routes  # noqa: E402
 from app.dashboards.routes import dashboard_routes  # noqa: E402
 from app.notebooks.routes import notebook_routes  # noqa: E402
 from app.notebooks.routes import jupyter_proxy  # noqa: E402
@@ -221,6 +225,24 @@ async def lifespan(app: FastAPI):
                     _conn.execute(_text(_enum_sql))
                 _conn.commit()
             AccountBase.metadata.create_all(bind=account_engine, checkfirst=True)
+            try:
+                with account_engine.connect() as _conn:
+                    for _col in ["schema_id", "catalog_name", "schema_name"]:
+                        try:
+                            _conn.execute(_text(f"ALTER TABLE catalog_v2_connections ALTER COLUMN {_col} DROP NOT NULL;"))
+                        except Exception:
+                            pass
+                    _is_gen = _conn.execute(_text("""
+                        SELECT is_generated FROM information_schema.columns 
+                        WHERE table_name = 'catalog_v2_connections' AND column_name = 'full_name'
+                    """)).scalar()
+                    if _is_gen and str(_is_gen).upper() in ("ALWAYS", "YES", "TRUE"):
+                        _conn.execute(_text("ALTER TABLE catalog_v2_connections DROP COLUMN full_name;"))
+                        _conn.execute(_text("ALTER TABLE catalog_v2_connections ADD COLUMN full_name VARCHAR(765);"))
+                        _conn.execute(_text("UPDATE catalog_v2_connections SET full_name = COALESCE(catalog_name || '.' || schema_name || '.' || name, name);"))
+                    _conn.commit()
+            except Exception as _conn_tbl_err:
+                logger.debug("catalog_v2_connections migration check non-fatal: %s", _conn_tbl_err)
             logger.info("User Manager: account_db tables verified/created")
 
         if system_engine is not None:
@@ -366,6 +388,10 @@ app.include_router(budget_routes.router)
 app.include_router(research_engine_routes.router)
 app.include_router(document_routes.router)
 app.include_router(artifact_routes.router)
+app.include_router(external_connection_routes.router)
+app.include_router(catalog_tool_routes.router)
+app.include_router(agent_tool_routes.router)
+app.include_router(catalog_connection_routes.router)
 
 app.include_router(notebook_routes.router)
 app.include_router(jupyter_proxy.router)

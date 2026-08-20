@@ -64,6 +64,8 @@ class UnifiedCatalogSchema(Base):
     volumes: Mapped[list["UnifiedCatalogVolume"]] = relationship(back_populates="schema", cascade="all, delete-orphan")
     notebooks: Mapped[list["UnifiedCatalogNotebook"]] = relationship(back_populates="schema", cascade="all, delete-orphan")
     dashboards: Mapped[list["UnifiedCatalogDashboard"]] = relationship(back_populates="schema", cascade="all, delete-orphan")
+    tools: Mapped[list["UnifiedCatalogTool"]] = relationship(back_populates="schema", cascade="all, delete-orphan")
+    connections: Mapped[list["UnifiedCatalogConnection"]] = relationship(back_populates="schema", cascade="all, delete-orphan")
 
     # Blob storage association (Iceberg schemas only)
     storage_backend_id: Mapped[str | None] = mapped_column(String(36), nullable=True)  # FK resolved via service
@@ -265,5 +267,90 @@ class UnifiedCatalogDashboard(Base):
     schema: Mapped[UnifiedCatalogSchema] = relationship(back_populates="dashboards", lazy="joined")
 
 
+class UnifiedCatalogTool(Base):
+    __tablename__ = "catalog_tools"
+    __table_args__ = (
+        UniqueConstraint("catalog_name", "schema_name", "name", name="uq_catalog_tools_name"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    schema_id: Mapped[str] = mapped_column(ForeignKey("catalog_v2_schemas.id", ondelete="RESTRICT"), nullable=False)
+    catalog_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    schema_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    full_name: Mapped[str] = mapped_column(
+        String(765),
+        Computed("catalog_name || '.' || schema_name || '.' || name", persisted=True),
+        nullable=False,
+    )
+    source_notebook_object_id: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    source_code: Mapped[str] = mapped_column(Text, nullable=False)
+    param_schema: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    connection_dependencies: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    owner: Mapped[str] = mapped_column(String(255), nullable=False, default="default_user")
+    current_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+    created_by: Mapped[str] = mapped_column(String(255), nullable=False, default="default_user")
+    updated_by: Mapped[str] = mapped_column(String(255), nullable=False, default="default_user")
+
+    schema: Mapped[UnifiedCatalogSchema] = relationship(back_populates="tools", lazy="joined")
+    versions: Mapped[list["UnifiedCatalogToolVersion"]] = relationship(
+        back_populates="tool", cascade="all, delete-orphan", order_by="UnifiedCatalogToolVersion.version"
+    )
 
 
+class UnifiedCatalogToolVersion(Base):
+    __tablename__ = "catalog_tool_versions"
+    __table_args__ = (
+        UniqueConstraint("tool_id", "version", name="uq_catalog_tool_versions_version"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    tool_id: Mapped[str] = mapped_column(ForeignKey("catalog_tools.id", ondelete="CASCADE"), nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    source_notebook_object_id: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    source_code: Mapped[str] = mapped_column(Text, nullable=False)
+    param_schema: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    connection_dependencies: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    promoted_by: Mapped[str] = mapped_column(String(255), nullable=False, default="default_user")
+    promoted_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    tool: Mapped[UnifiedCatalogTool] = relationship(back_populates="versions")
+
+
+class UnifiedCatalogConnection(Base):
+    """First-class Catalog Connection (SQL Database, REST API, Loki, Prometheus, Custom)."""
+
+    __tablename__ = "catalog_v2_connections"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    schema_id: Mapped[str | None] = mapped_column(ForeignKey("catalog_v2_schemas.id", ondelete="SET NULL"), nullable=True)
+    catalog_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    schema_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    full_name: Mapped[str] = mapped_column(String(765), nullable=False)
+    category: Mapped[str] = mapped_column(String(50), nullable=False, default="database")  # database | api | observability | custom
+    connector_type: Mapped[str] = mapped_column(String(100), nullable=False, default="postgres")  # postgres, mysql, mssql, rest_api, loki, etc.
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    config: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)  # Unencrypted config (host, port, db, url)
+    auth_config: Mapped[str | None] = mapped_column(Text, nullable=True)  # Fernet encrypted ciphertext
+    status: Mapped[str] = mapped_column(String(50), nullable=False, default="active")  # active | disabled | error
+    owner: Mapped[str] = mapped_column(String(255), nullable=False, default="default_user")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+    created_by: Mapped[str] = mapped_column(String(255), nullable=False, default="default_user")
+    updated_by: Mapped[str] = mapped_column(String(255), nullable=False, default="default_user")
+
+    schema: Mapped[UnifiedCatalogSchema | None] = relationship(back_populates="connections", lazy="joined")

@@ -79,6 +79,16 @@ export function useKernel(notebookPath: string): KernelHookResult {
       setKernel(kernel);
       setKernelStatus(normalizeStatus(kernel.status));
 
+      // Inject notebook path context into kernel environment
+      const currentNbPath = useNotebookStore.getState().notebookPath;
+      if (currentNbPath) {
+        kernel.requestExecute({
+          code: `import os; os.environ['COMPASSX_NOTEBOOK_PATH'] = ${JSON.stringify(currentNbPath)}; os.environ['NOTEBOOK_PATH'] = ${JSON.stringify(currentNbPath)}`,
+          store_history: false,
+          silent: true,
+        });
+      }
+
       kernel.statusChanged.connect((_k: any, status: string) => {
         setKernelStatus(normalizeStatus(status));
       });

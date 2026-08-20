@@ -17,7 +17,7 @@ class ComputeSettings(BaseSettings):
     )
 
     COMPASSX_ENV: str = "local"
-    COMPASSX_PLATFORM_ENABLED: bool = False
+    COMPASSX_PLATFORM_ENABLED: bool = True
     # Backend process placement:
     # - host: run backend on localhost (local development)
     # - pod: provision and run backend inside Kubernetes for pod-based testing

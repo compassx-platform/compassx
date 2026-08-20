@@ -11,6 +11,7 @@ from alembic import op
 from app.database import SystemBase
 import app.workspace.data_models  # noqa: F401
 import app.agents.models.agents  # noqa: F401
+import app.agents.models.external_connection  # noqa: F401
 import app.sql_warehouse.models  # noqa: F401
 import app.dashboards.models.dashboard  # noqa: F401
 import app.jobs.models.job  # noqa: F401

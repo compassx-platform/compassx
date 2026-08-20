@@ -167,6 +167,12 @@ class SessionProxy:
     def rollback(self):
         self._session.rollback()
 
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        pass
+
 class TestAccountSessionLocal:
     def __call__(self):
         import sys
@@ -342,6 +348,15 @@ def _make_test_app(db: Session) -> FastAPI:
     app.include_router(workflow_routes.router)
     app.include_router(workspace_routes.router)
     app.include_router(llm_connection_routes.router)
+
+    from app.agents.routes import external_connection_routes, agent_tool_routes
+    from app.catalog import tool_routes as catalog_tool_routes
+    from app.catalog.connections import routes as catalog_connection_routes
+
+    app.include_router(external_connection_routes.router)
+    app.include_router(catalog_tool_routes.router)
+    app.include_router(agent_tool_routes.router)
+    app.include_router(catalog_connection_routes.router)
 
     return app
 

@@ -38,6 +38,7 @@ import AgentBuilderPage from '@/modules/agents/pages/AgentBuilderPage';
 import AgentChatPage from '@/modules/agents/pages/AgentChatPage';
 import WorkspaceConnectionsPage from '@/modules/agents/pages/WorkspaceConnectionsPage';
 import ConnectionsPage from '@/modules/agents/pages/ConnectionsPage';
+import CreateConnectionPage from '@/modules/agents/pages/CreateConnectionPage';
 import LLMConnectionsPage from '@/modules/agents/pages/LLMConnectionsPage';
 import DBConnectionsPage from '@/modules/agents/pages/DBConnectionsPage';
 import GitConnectionsPage from '@/modules/agents/pages/GitConnectionsPage';
@@ -260,6 +261,8 @@ export default function App() {
                   <Route path="agents/:agentId/chat/:sessionId" element={<AgentChatPage />} />
                   <Route path="agents/connections" element={<WorkspaceConnectionsPage />} />
                   <Route path="connections" element={<ConnectionsPage />} />
+                  <Route path="connections/create" element={<CreateConnectionPage />} />
+                  <Route path="connections/new" element={<CreateConnectionPage />} />
                   <Route path="connections/llm-models" element={<LLMConnectionsPage />} />
                   <Route path="connections/databases" element={<DBConnectionsPage />} />
                   <Route path="connections/git-servers" element={<GitConnectionsPage />} />

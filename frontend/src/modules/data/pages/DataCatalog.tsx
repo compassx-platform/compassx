@@ -30,7 +30,8 @@ import {
   Trash,
   Play,
   PanelLeftClose,
-  PanelLeftOpen
+  PanelLeftOpen,
+  Wrench,
 } from 'lucide-react';
 import api from '@/lib/api';
 import { useScopedNavigate } from '@/lib/appNavigation';
@@ -52,6 +53,7 @@ type Selection =
   | { kind: 'volume'; catalog: string; schema: string; volume: string } 
   | { kind: 'notebook'; catalog: string; schema: string; notebook: string; blob_path?: string }
   | { kind: 'dashboard'; catalog: string; schema: string; dashboard: string; dashboard_id?: string }
+  | { kind: 'tool'; catalog: string; schema: string; tool: string; tool_id?: string }
   | null;
 
 type DBConnection = { 
@@ -182,6 +184,36 @@ type CatalogDashboard = {
   updated_by: string;
 };
 
+type CatalogToolVersion = {
+  id: string;
+  tool_id: string;
+  version: number;
+  source_notebook_object_id?: string | null;
+  source_code: string;
+  param_schema: Record<string, any>;
+  connection_dependencies: string[];
+  promoted_by: string;
+  promoted_at: string;
+};
+
+type CatalogTool = {
+  id: string;
+  catalog: string;
+  schema_name: string;
+  name: string;
+  full_name: string;
+  description?: string | null;
+  param_schema: Record<string, any>;
+  connection_dependencies: string[];
+  source_notebook_object_id?: string | null;
+  source_code: string;
+  owner: string;
+  current_version: number;
+  created_at: string;
+  updated_at: string;
+  versions?: CatalogToolVersion[];
+};
+
 type VolumeFileInfo = {
   file_path: string;
   file_name: string;
@@ -242,7 +274,7 @@ type CatalogForm = {
   storageBackend: string;
 };
 
-type CatalogAssetKind = 'table' | 'volume' | 'notebook' | 'dashboard';
+type CatalogAssetKind = 'table' | 'volume' | 'notebook' | 'dashboard' | 'tool';
 
 type PendingCatalogAsset = {
   id: string;
@@ -283,7 +315,8 @@ const catalogApi = {
   getDashboard: (catalog: string, schema_name: string, dashboard: string) => api.get<CatalogDashboard>(`/catalog/catalogs/${encodeURIComponent(catalog)}/schemas/${encodeURIComponent(schema_name)}/dashboards/${encodeURIComponent(dashboard)}`).then((r) => r.data),
   updateDashboard: (catalog: string, schema_name: string, dashboard: string, body: { name?: string; comment?: string; owner?: string }) => api.patch<CatalogDashboard>(`/catalog/catalogs/${encodeURIComponent(catalog)}/schemas/${encodeURIComponent(schema_name)}/dashboards/${encodeURIComponent(dashboard)}`, body).then((r) => r.data),
   moveDashboard: (catalog: string, schema: string, dashboard: string, body: { target_catalog: string; target_schema: string; new_name?: string }) => api.post<CatalogDashboard>(`/catalog/catalogs/${encodeURIComponent(catalog)}/schemas/${encodeURIComponent(schema)}/dashboards/${encodeURIComponent(dashboard)}/move`, body).then((r) => r.data),
-  deleteDashboard: (catalog: string, schema: string, dashboard: string) => api.delete(`/catalog/catalogs/${encodeURIComponent(catalog)}/schemas/${encodeURIComponent(schema)}/dashboards/${encodeURIComponent(dashboard)}`).then((r) => r.data),
+  listTools: (catalog?: string, schema_name?: string) => api.get<CatalogTool[]>('/catalog/tools', { params: { catalog: catalog, schema: schema_name, schema_name: schema_name } }).then((r) => r.data),
+  getTool: (toolId: string) => api.get<CatalogTool>(`/catalog/tools/${encodeURIComponent(toolId)}`).then((r) => r.data),
   listVolumeFiles: (volume_id: string) => api.get<VolumeFileInfo[]>(`/catalog/volumes/${volume_id}/files`).then((r) => r.data),
   uploadVolumeFile: (volume_id: string, file: File, sub_path: string = "") => {
     const formData = new FormData();
@@ -415,6 +448,9 @@ export default function DataCatalog() {
 
   const [schemaDashboardsCache, setSchemaDashboardsCache] = useState<Record<string, CatalogDashboard[]>>({});
   const [loadingSchemaDashboards, setLoadingSchemaDashboards] = useState<Record<string, boolean>>({});
+
+  const [schemaToolsCache, setSchemaToolsCache] = useState<Record<string, CatalogTool[]>>({});
+  const [loadingSchemaTools, setLoadingSchemaTools] = useState<Record<string, boolean>>({});
   const [pendingCatalogAssets, setPendingCatalogAssets] = useState<PendingCatalogAsset[]>([]);
 
   // Governed Notebook editing / execution states
@@ -457,7 +493,8 @@ export default function DataCatalog() {
   const [editingDbOwner, setEditingDbOwner] = useState<string | null>(null);
 
   // Schema overview subtab state
-  const [schemaSubTab, setSchemaSubTab] = useState<'tables' | 'volumes' | 'notebooks' | 'dashboards'>('tables');
+  const [schemaSubTab, setSchemaSubTab] = useState<'tables' | 'volumes' | 'notebooks' | 'dashboards' | 'tools'>('tables');
+  const [selectedToolVersionId, setSelectedToolVersionId] = useState<string | null>(null);
 
   // Create Table state
   const [showTableModal, setShowTableModal] = useState(false);
@@ -895,6 +932,19 @@ export default function DataCatalog() {
     enabled: !!selection && selection.kind === 'dashboard',
   });
 
+  const toolQuery = useQuery({
+    queryKey: ['uc-tool', selection?.kind === 'tool' ? selection.catalog : null, selection?.kind === 'tool' ? selection.schema : null, selection?.kind === 'tool' ? (selection as any).tool : null, selection?.kind === 'tool' ? (selection as any).tool_id : null],
+    queryFn: async () => {
+      if (!selection || selection.kind !== 'tool') return null;
+      if ((selection as any).tool_id) {
+        return catalogApi.getTool((selection as any).tool_id);
+      }
+      const tools = await catalogApi.listTools(selection.catalog, selection.schema);
+      return tools.find(t => t.name === selection.tool) || null;
+    },
+    enabled: !!selection && selection.kind === 'tool',
+  });
+
   const notebookContentQuery = useQuery({
     queryKey: ['uc-notebook-content', notebookQuery.data?.blob_path],
     queryFn: () => api.get<any>(`/notebook/files/${notebookQuery.data!.blob_path}`).then((r) => r.data),
@@ -1202,10 +1252,24 @@ export default function DataCatalog() {
                 setLoadingSchemaDashboards(prev => ({ ...prev, [schemaKey]: false }));
               });
           }
+
+          if (!schemaToolsCache[schemaKey] && !loadingSchemasRef.current[`${schemaKey}-tools`]) {
+            loadingSchemasRef.current[`${schemaKey}-tools`] = true;
+            setLoadingSchemaTools(prev => ({ ...prev, [schemaKey]: true }));
+            catalogApi.listTools(catalogName, schemaName)
+              .then((toolsList) => {
+                setSchemaToolsCache(prev => ({ ...prev, [schemaKey]: toolsList }));
+              })
+              .catch((err) => console.error("Failed to load tools for schema", schemaKey, err))
+              .finally(() => {
+                loadingSchemasRef.current[`${schemaKey}-tools`] = false;
+                setLoadingSchemaTools(prev => ({ ...prev, [schemaKey]: false }));
+              });
+          }
         }
       }
     });
-  }, [expandedSchemas, schemaTablesCache, schemaVolumesCache, schemaNotebooksCache, schemaDashboardsCache]);
+  }, [expandedSchemas, schemaTablesCache, schemaVolumesCache, schemaNotebooksCache, schemaDashboardsCache, schemaToolsCache]);
 
   // Keep connection lists refetched whenever catalog modal opens
   useEffect(() => {
@@ -1824,7 +1888,7 @@ export default function DataCatalog() {
     }));
   };
 
-  const renderDetailHeader = (title: string, kind: 'catalog' | 'schema' | 'table' | 'volume' | 'notebook' | 'dashboard') => {
+  const renderDetailHeader = (title: string, kind: 'catalog' | 'schema' | 'table' | 'volume' | 'notebook' | 'dashboard' | 'tool') => {
     const fqn = getFqn(selection);
     const isFav = !!favorites[fqn];
 
@@ -1859,7 +1923,7 @@ export default function DataCatalog() {
               </button>
             </>
           )}
-          {selection && (selection.kind === 'schema' || selection.kind === 'table' || selection.kind === 'volume' || selection.kind === 'notebook' || selection.kind === 'dashboard') && (
+          {selection && (selection.kind === 'schema' || selection.kind === 'table' || selection.kind === 'volume' || selection.kind === 'notebook' || selection.kind === 'dashboard' || selection.kind === 'tool') && (
             <>
               <span style={{ color: 'var(--color-text-subtle)' }}>&gt;</span>
               <button 
@@ -1896,6 +1960,12 @@ export default function DataCatalog() {
               <span className="asset-breadcrumb-current">{selection.dashboard}</span>
             </>
           )}
+          {selection && selection.kind === 'tool' && (
+            <>
+              <span style={{ color: 'var(--color-text-subtle)' }}>&gt;</span>
+              <span className="asset-breadcrumb-current">{selection.tool}</span>
+            </>
+          )}
         </div>
 
         {/* Title row with icon and interactive buttons */}
@@ -1907,6 +1977,7 @@ export default function DataCatalog() {
             {kind === 'volume' && <Folder size={22} className="text-primary" />}
             {kind === 'notebook' && <FileCode size={22} className="text-primary" />}
             {kind === 'dashboard' && <SlidersHorizontal size={22} className="text-primary" />}
+            {kind === 'tool' && <Wrench size={22} className="text-primary" style={{ color: '#2563eb' }} />}
             <h2>{title}</h2>
             
             {/* Copy button */}
@@ -2117,6 +2188,7 @@ export default function DataCatalog() {
     const volumes = schemaVolumesCache[schemaKey] || [];
     const notebooks = schemaNotebooksCache[schemaKey] || [];
     const dashboards = schemaDashboardsCache[schemaKey] || [];
+    const tools = schemaToolsCache[schemaKey] || [];
 
     let itemsToRender: any[] = [];
     if (schemaSubTab === 'tables') {
@@ -2127,6 +2199,8 @@ export default function DataCatalog() {
       itemsToRender = notebooks;
     } else if (schemaSubTab === 'dashboards') {
       itemsToRender = dashboards;
+    } else if (schemaSubTab === 'tools') {
+      itemsToRender = tools;
     }
 
     const filtered = itemsToRender.filter(item => 
@@ -2185,6 +2259,13 @@ export default function DataCatalog() {
             >
               Dashboards {dashboards.length}
             </button>
+            <button 
+              type="button" 
+              className={cx("uc-subtab-btn", schemaSubTab === 'tools' && "is-active")}
+              onClick={() => { setSchemaSubTab('tools'); setSchemaTableFilter(''); }}
+            >
+              Tools {tools.length}
+            </button>
           </div>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -2233,6 +2314,15 @@ export default function DataCatalog() {
                   <th>Name</th>
                   <th>Owner</th>
                   <th>Dashboard ID</th>
+                  <th>Last Modified</th>
+                </tr>
+              )}
+              {schemaSubTab === 'tools' && (
+                <tr>
+                  <th>Tool Name</th>
+                  <th>Version</th>
+                  <th>Connections</th>
+                  <th>Owner</th>
                   <th>Last Modified</th>
                 </tr>
               )}
@@ -2326,9 +2416,45 @@ export default function DataCatalog() {
                 );
               })}
 
+              {schemaSubTab === 'tools' && sorted.map(tItem => {
+                return (
+                  <tr 
+                    key={tItem.id} 
+                    onClick={() => selectAndNavigate({ kind: 'tool', catalog: (selection as any)?.catalog || '', schema: (selection as any)?.schema || '', tool: tItem.name, tool_id: tItem.id })}
+                    style={{ cursor: 'pointer' }}
+                  >
+                    <td>
+                      <div className="flex items-center gap-2">
+                        <Wrench size={14} className="text-muted" style={{ color: '#2563eb' }} />
+                        <span style={{ fontWeight: 500, color: 'var(--color-primary)' }}>{tItem.name}</span>
+                      </div>
+                    </td>
+                    <td>
+                      <span className="uc-chip" style={{ fontSize: 11, background: '#eff6ff', color: '#1d4ed8' }}>
+                        v{tItem.current_version}
+                      </span>
+                    </td>
+                    <td>
+                      <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                        {(tItem.connection_dependencies || []).map((conn: string) => (
+                          <span key={conn} style={{ fontSize: 11, padding: '1px 6px', borderRadius: 4, background: '#f1f5f9', color: '#475569' }}>
+                            {conn}
+                          </span>
+                        ))}
+                        {(tItem.connection_dependencies || []).length === 0 && (
+                          <span style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>None</span>
+                        )}
+                      </div>
+                    </td>
+                    <td>{tItem.owner || 'default_user'}</td>
+                    <td>{new Date(tItem.updated_at || tItem.created_at).toLocaleDateString()}</td>
+                  </tr>
+                );
+              })}
+
               {sorted.length === 0 && (
                 <tr>
-                  <td colSpan={4} style={{ textAlign: 'center', padding: '24px', color: 'var(--color-text-muted)' }}>
+                  <td colSpan={5} style={{ textAlign: 'center', padding: '24px', color: 'var(--color-text-muted)' }}>
                     No {schemaSubTab} match your filter.
                   </td>
                 </tr>
@@ -3490,6 +3616,362 @@ export default function DataCatalog() {
               </div>
             </div>
           )}
+        </div>
+      );
+    }
+
+    // ── TOOL level ─────────────────────────────────────────────────────────────
+    if (selection && selection.kind === 'tool') {
+      if (toolQuery.isLoading) {
+        return <div className="uc-empty-state"><Loader2 size={24} className="spin" /><p>Loading tool details...</p></div>;
+      }
+      const tool = toolQuery.data;
+      if (!tool) {
+        return <div className="uc-empty-state"><p>Failed to load tool details.</p></div>;
+      }
+
+      const toolTabs = [
+        { value: 'overview', label: 'Overview' },
+        { value: 'params', label: 'Parameter Schema' },
+        { value: 'source', label: 'Source Code' },
+        { value: 'versions', label: `Version History (${tool.versions?.length || 1})` },
+      ] as const;
+
+      const properties = tool.param_schema?.properties || {};
+      const requiredProps = new Set(tool.param_schema?.required || []);
+
+      return (
+        <div className="uc-panel">
+          {renderDetailHeader(tool.name, 'tool')}
+
+          <PageTabs tabs={toolTabs} value={activeTab} onChange={setActiveTab} />
+
+          {activeTab === 'overview' && (
+            <div className="uc-tab-content" style={{ display: 'grid', gridTemplateColumns: '3fr 2fr', gap: '20px' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                {/* Tool description */}
+                <div className="uc-detail-card">
+                  <div className="uc-detail-title font-semibold">Tool Description</div>
+                  <p style={{ fontSize: '13.5px', color: 'var(--color-text)', lineHeight: 1.5, margin: 0 }}>
+                    {tool.description || 'No prompt description provided for this tool.'}
+                  </p>
+                </div>
+
+                {/* Connection Dependencies */}
+                <div className="uc-detail-card">
+                  <div className="uc-detail-title font-semibold">Declared Connection Dependencies</div>
+                  <p style={{ fontSize: '12px', color: 'var(--color-text-muted)', marginBottom: 8 }}>
+                    Credentials for these connections are decrypted and injected at runtime during agent tool invocation.
+                  </p>
+                  <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                    {(tool.connection_dependencies || []).map((c: string) => (
+                      <span key={c} className="uc-chip" style={{ display: 'inline-flex', alignItems: 'center', gap: 4, background: '#eff6ff', color: '#1d4ed8', padding: '3px 8px', borderRadius: 4, fontWeight: 500 }}>
+                        <Link2 size={12} /> {c}
+                      </span>
+                    ))}
+                    {(tool.connection_dependencies || []).length === 0 && (
+                      <span style={{ fontSize: '13px', color: 'var(--color-text-muted)' }}>No external connections required (Standalone tool).</span>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                {/* Properties */}
+                <div className="uc-detail-card">
+                  <div className="uc-detail-title font-semibold">General Information</div>
+                  <div className="uc-key-values">
+                    <div><span>FQN</span><strong style={{ fontFamily: 'monospace', fontSize: 12 }}>{tool.full_name}</strong></div>
+                    <div><span>Current Version</span><strong style={{ color: '#2563eb' }}>v{tool.current_version}</strong></div>
+                    <div><span>Owner</span><strong>{tool.owner}</strong></div>
+                    <div><span>Created</span><strong>{new Date(tool.created_at).toLocaleString()}</strong></div>
+                    <div><span>Last Updated</span><strong>{new Date(tool.updated_at).toLocaleString()}</strong></div>
+                    <div>
+                      <span>Source Notebook</span>
+                      {(() => {
+                        const nbId = tool.source_notebook_object_id;
+                        if (!nbId) return <strong style={{ color: 'var(--color-text-muted)', fontWeight: 400 }}>Standalone (No linked notebook)</strong>;
+                        const isPath = nbId.includes('/') || nbId.endsWith('.ipynb');
+                        const targetUrl = isPath ? `/notebooks/open?path=${encodeURIComponent(nbId)}` : null;
+                        return (
+                          <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                            {targetUrl ? (
+                              <a 
+                                href={targetUrl} 
+                                target="_blank" 
+                                rel="noreferrer"
+                                style={{ display: 'inline-flex', alignItems: 'center', gap: 4, color: 'var(--color-primary)', textDecoration: 'underline', fontWeight: 600, fontSize: 12 }}
+                                title="Open source notebook in new tab"
+                              >
+                                <FileCode size={13} /> {nbId.split('/').pop()}
+                              </a>
+                            ) : (
+                              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontFamily: 'monospace', fontSize: 12 }}>
+                                <FileCode size={13} /> {nbId}
+                              </span>
+                            )}
+                          </div>
+                        );
+                      })()}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'params' && (
+            <div className="uc-tab-content">
+              <div className="uc-detail-card">
+                <div className="uc-section-header" style={{ marginBottom: 12 }}>
+                  <div className="uc-detail-title">Parameters (OpenAI / Anthropic Tool Schema)</div>
+                  <span className="uc-chip">{Object.keys(properties).length} parameters</span>
+                </div>
+                {Object.keys(properties).length === 0 ? (
+                  <div className="uc-empty-inline">This tool accepts no arguments (0 parameters).</div>
+                ) : (
+                  <div className="uc-table-responsive">
+                    <table className="uc-columns-table">
+                      <thead>
+                        <tr>
+                          <th>Parameter</th>
+                          <th>Type</th>
+                          <th>Requirement</th>
+                          <th>Default Value</th>
+                          <th>Description</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {Object.entries(properties).map(([pName, pMeta]: [string, any]) => (
+                          <tr key={pName}>
+                            <td style={{ fontFamily: 'monospace', fontWeight: 600, color: 'var(--color-primary)' }}>{pName}</td>
+                            <td><span className="uc-type-badge">{pMeta.type || 'any'}</span></td>
+                            <td>
+                              {requiredProps.has(pName) ? (
+                                <span className="uc-chip" style={{ background: '#fef2f2', color: '#b91c1c', fontSize: 11 }}>Required</span>
+                              ) : (
+                                <span className="uc-chip" style={{ background: '#f1f5f9', color: '#64748b', fontSize: 11 }}>Optional</span>
+                              )}
+                            </td>
+                            <td style={{ fontFamily: 'monospace', fontSize: 12 }}>
+                              {pMeta.default !== undefined ? JSON.stringify(pMeta.default) : '—'}
+                            </td>
+                            <td style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>
+                              {pMeta.description || '—'}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+
+                <div style={{ marginTop: 24 }}>
+                  <div className="uc-detail-title" style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 6 }}>
+                    Raw Tool JSON Schema
+                  </div>
+                  <pre style={{ background: '#0f172a', color: '#e2e8f0', padding: 12, borderRadius: 6, fontSize: 11, overflowX: 'auto' }}>
+                    {JSON.stringify(tool.param_schema, null, 2)}
+                  </pre>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'source' && (
+            <div className="uc-tab-content">
+              <div className="uc-detail-card">
+                <div className="uc-section-header" style={{ marginBottom: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div className="uc-detail-title">Function Source Code (Current v{tool.current_version})</div>
+                  <button
+                    type="button"
+                    className="btn-outline"
+                    style={{ padding: '3px 8px', fontSize: 12, display: 'inline-flex', alignItems: 'center', gap: 4 }}
+                    onClick={() => {
+                      navigator.clipboard.writeText(tool.source_code);
+                      setCopiedFqn('source');
+                      setTimeout(() => setCopiedFqn(null), 2000);
+                    }}
+                  >
+                    {copiedFqn === 'source' ? <Check size={12} style={{ color: 'var(--color-success)' }} /> : <Copy size={12} />}
+                    {copiedFqn === 'source' ? 'Copied' : 'Copy Code'}
+                  </button>
+                </div>
+                <pre style={{ background: '#0f172a', color: '#38bdf8', padding: 16, borderRadius: 8, fontSize: 12, fontFamily: 'monospace', lineHeight: 1.6, overflowX: 'auto' }}>
+                  {tool.source_code}
+                </pre>
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'versions' && (() => {
+            const versions = tool.versions || [];
+            const activeVer = versions.find(v => v.id === selectedToolVersionId) || versions[versions.length - 1] || null;
+            const verProperties = activeVer?.param_schema?.properties || {};
+            const verRequiredProps = new Set(activeVer?.param_schema?.required || []);
+
+            return (
+              <div className="uc-tab-content" style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                <div className="uc-detail-card">
+                  <div className="uc-detail-title" style={{ marginBottom: 12 }}>Immutable Version History ({versions.length})</div>
+                  <div className="uc-table-responsive">
+                    <table className="uc-columns-table">
+                      <thead>
+                        <tr>
+                          <th>Version</th>
+                          <th>Source Notebook</th>
+                          <th>Declared Connections</th>
+                          <th>Promoted By</th>
+                          <th>Promoted At</th>
+                          <th style={{ textAlign: 'right' }}>Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {versions.map((v) => {
+                          const isSelected = activeVer?.id === v.id;
+                          return (
+                            <tr 
+                              key={v.id} 
+                              onClick={() => setSelectedToolVersionId(v.id)}
+                              style={{ cursor: 'pointer', background: isSelected ? 'var(--color-bg-subtle, #f8fafc)' : undefined }}
+                            >
+                              <td>
+                                <span className="uc-chip" style={{ background: v.version === tool.current_version ? '#dcfce7' : '#f1f5f9', color: v.version === tool.current_version ? '#15803d' : '#475569', fontWeight: 600 }}>
+                                  v{v.version} {v.version === tool.current_version && '(Current)'}
+                                </span>
+                              </td>
+                              <td>
+                                {v.source_notebook_object_id ? (
+                                  <span style={{ fontSize: 12, display: 'inline-flex', alignItems: 'center', gap: 4, color: 'var(--color-primary)' }}>
+                                    <FileCode size={12} /> {v.source_notebook_object_id.split('/').pop()}
+                                  </span>
+                                ) : (
+                                  <span style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>—</span>
+                                )}
+                              </td>
+                              <td>
+                                <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                                  {(v.connection_dependencies || []).map((c: string) => (
+                                    <span key={c} style={{ fontSize: 11, padding: '1px 6px', borderRadius: 4, background: '#f1f5f9', color: '#475569' }}>
+                                      {c}
+                                    </span>
+                                  ))}
+                                  {(v.connection_dependencies || []).length === 0 && (
+                                    <span style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>None</span>
+                                  )}
+                                </div>
+                              </td>
+                              <td>{v.promoted_by}</td>
+                              <td>{new Date(v.promoted_at).toLocaleString()}</td>
+                              <td style={{ textAlign: 'right' }}>
+                                <button
+                                  type="button"
+                                  className={cx("btn-outline", isSelected && "btn-primary")}
+                                  style={{ padding: '2px 8px', fontSize: 11 }}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setSelectedToolVersionId(v.id);
+                                  }}
+                                >
+                                  {isSelected ? 'Viewing' : 'Inspect Code'}
+                                </button>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                {/* Historical Version Detail Inspector */}
+                {activeVer && (
+                  <div className="uc-detail-card" style={{ borderLeft: '3px solid #2563eb' }}>
+                    <div className="uc-section-header" style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <div>
+                        <div className="uc-detail-title font-semibold" style={{ fontSize: 15 }}>
+                          Inspecting Version v{activeVer.version} {activeVer.version === tool.current_version ? '(Current Active Version)' : '(Historical Archive)'}
+                        </div>
+                        <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginTop: 2 }}>
+                          Promoted by <strong>{activeVer.promoted_by}</strong> on {new Date(activeVer.promoted_at).toLocaleString()}
+                        </div>
+                      </div>
+                      <div style={{ display: 'flex', gap: 8 }}>
+                        <button
+                          type="button"
+                          className="btn-outline"
+                          style={{ padding: '3px 8px', fontSize: 12, display: 'inline-flex', alignItems: 'center', gap: 4 }}
+                          onClick={() => {
+                            navigator.clipboard.writeText(activeVer.source_code);
+                            setCopiedFqn(`v${activeVer.version}`);
+                            setTimeout(() => setCopiedFqn(null), 2000);
+                          }}
+                        >
+                          {copiedFqn === `v${activeVer.version}` ? <Check size={12} style={{ color: 'var(--color-success)' }} /> : <Copy size={12} />}
+                          {copiedFqn === `v${activeVer.version}` ? 'Copied' : `Copy v${activeVer.version} Code`}
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Source Code */}
+                    <div style={{ marginBottom: 16 }}>
+                      <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--color-text-muted)', marginBottom: 6 }}>
+                        Python Source Code (v{activeVer.version})
+                      </div>
+                      <pre style={{ background: '#0f172a', color: '#38bdf8', padding: 16, borderRadius: 8, fontSize: 12, fontFamily: 'monospace', lineHeight: 1.6, overflowX: 'auto' }}>
+                        {activeVer.source_code}
+                      </pre>
+                    </div>
+
+                    {/* Parameter Schema for this version */}
+                    <div>
+                      <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--color-text-muted)', marginBottom: 6 }}>
+                        Parameter Schema (v{activeVer.version})
+                      </div>
+                      {Object.keys(verProperties).length === 0 ? (
+                        <div className="uc-empty-inline" style={{ padding: 8, fontSize: 12 }}>No parameters required.</div>
+                      ) : (
+                        <div className="uc-table-responsive">
+                          <table className="uc-columns-table">
+                            <thead>
+                              <tr>
+                                <th>Parameter</th>
+                                <th>Type</th>
+                                <th>Requirement</th>
+                                <th>Default</th>
+                                <th>Description</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {Object.entries(verProperties).map(([pName, pMeta]: [string, any]) => (
+                                <tr key={pName}>
+                                  <td style={{ fontFamily: 'monospace', fontWeight: 600, color: 'var(--color-primary)' }}>{pName}</td>
+                                  <td><span className="uc-type-badge">{pMeta.type || 'any'}</span></td>
+                                  <td>
+                                    {verRequiredProps.has(pName) ? (
+                                      <span className="uc-chip" style={{ background: '#fef2f2', color: '#b91c1c', fontSize: 11 }}>Required</span>
+                                    ) : (
+                                      <span className="uc-chip" style={{ background: '#f1f5f9', color: '#64748b', fontSize: 11 }}>Optional</span>
+                                    )}
+                                  </td>
+                                  <td style={{ fontFamily: 'monospace', fontSize: 12 }}>
+                                    {pMeta.default !== undefined ? JSON.stringify(pMeta.default) : '—'}
+                                  </td>
+                                  <td style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>
+                                    {pMeta.description || '—'}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })()}
         </div>
       );
     }
@@ -4907,6 +5389,7 @@ export default function DataCatalog() {
                         const volumes = schemaVolumesCache[schemaKey] || [];
                         const notebooks = schemaNotebooksCache[schemaKey] || [];
                         const dashboards = schemaDashboardsCache[schemaKey] || [];
+                        const tools = schemaToolsCache[schemaKey] || [];
                         const schemaPendingAssets = pendingCatalogAssets.filter((asset) => asset.catalog === catalog.name && asset.schema === schema.name);
                         const pendingTables = schemaPendingAssets.filter((asset) => asset.kind === 'table');
                         const pendingVolumes = schemaPendingAssets.filter((asset) => asset.kind === 'volume');
@@ -4917,7 +5400,8 @@ export default function DataCatalog() {
                         const hasVolumes = volumes.length + pendingVolumes.length > 0;
                         const hasNotebooks = notebooks.length + pendingNotebooks.length > 0;
                         const hasDashboards = dashboards.length + pendingDashboards.length > 0;
-                        const typesCount = (hasTables ? 1 : 0) + (hasVolumes ? 1 : 0) + (hasNotebooks ? 1 : 0) + (hasDashboards ? 1 : 0);
+                        const hasTools = tools.length > 0;
+                        const typesCount = (hasTables ? 1 : 0) + (hasVolumes ? 1 : 0) + (hasNotebooks ? 1 : 0) + (hasDashboards ? 1 : 0) + (hasTools ? 1 : 0);
                         const showGroups = typesCount > 1;
 
                         return (
@@ -5119,6 +5603,52 @@ export default function DataCatalog() {
                                                           <SlidersHorizontal size={10} />
                                                         </span>
                                                         <span className="uc-tree-row-label">{dbItem.name}</span>
+                                                      </button>
+                                                    );
+                                                  })}
+                                                </div>
+                                              )}
+                                            </>
+                                          );
+                                        })()}
+                                      </div>
+                                    )}
+
+                                    {/* Tools Group */}
+                                    {hasTools && (
+                                      <div className="uc-tree-group">
+                                        {(() => {
+                                          const toolsGroupOpen = expandedGroups[`${schemaKey}-tools`] !== false;
+                                          return (
+                                            <>
+                                              <button 
+                                                className="uc-tree-row"
+                                                onClick={() => {
+                                                  setExpandedGroups(prev => ({ ...prev, [`${schemaKey}-tools`]: !toolsGroupOpen }));
+                                                }}
+                                              >
+                                                <span className="uc-tree-row-chevron">
+                                                  {toolsGroupOpen ? <ChevronDown size={10} /> : <ChevronRight size={10} />}
+                                                </span>
+                                                <span className="uc-tree-row-label">Tools ({tools.length})</span>
+                                              </button>
+                                              {toolsGroupOpen && (
+                                                <div className="uc-tree-indent">
+                                                  {tools.map((toolItem) => {
+                                                    const isToolSelected = selection?.kind === 'tool' && selection.catalog === catalog.name && selection.schema === schema.name && selection.tool === toolItem.name;
+                                                    return (
+                                                      <button
+                                                        key={`tool-${toolItem.id}`}
+                                                        className={cx('uc-tree-row', isToolSelected && 'is-selected')}
+                                                        onClick={() => {
+                                                          selectAndNavigate({ kind: 'tool', catalog: catalog.name, schema: schema.name, tool: toolItem.name, tool_id: toolItem.id });
+                                                        }}
+                                                      >
+                                                        <span style={{ width: '12px' }} />
+                                                        <span className="uc-tree-row-icon">
+                                                          <Wrench size={10} style={{ color: '#2563eb' }} />
+                                                        </span>
+                                                        <span className="uc-tree-row-label">{toolItem.name}</span>
                                                       </button>
                                                     );
                                                   })}
