@@ -76,7 +76,7 @@ function GitConnectionForm({
             className="form-input"
             value={name}
             onChange={(e) => setName(e.target.value)}
-            placeholder="e.g. IpPlatform ADO"
+            placeholder="e.g. MyOrg ADO"
             required
           />
         </div>
@@ -103,7 +103,7 @@ function GitConnectionForm({
               className="form-input"
               value={organization}
               onChange={(e) => setOrganization(e.target.value)}
-              placeholder="e.g. IpPlatform"
+              placeholder="e.g. MyOrg"
               required={isAdo}
             />
           </div>
@@ -113,7 +113,7 @@ function GitConnectionForm({
               className="form-input"
               value={defaultProject}
               onChange={(e) => setDefaultProject(e.target.value)}
-              placeholder="e.g. IDCC"
+              placeholder="e.g. CompassX"
             />
           </div>
         </div>

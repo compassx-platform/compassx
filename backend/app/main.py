@@ -1,4 +1,4 @@
-"""IDCC Core API - FastAPI application entry point."""
+"""CompassX API - FastAPI application entry point."""
 
 import asyncio
 import logging
@@ -498,7 +498,7 @@ app.include_router(js_router, prefix="/api/v1/services/jupyter-server")
 
 @app.get("/")
 def read_root():
-    return {"service": "IDCC Core API", "status": "running"}
+    return {"service": "CompassX API", "status": "running"}
 
 
 @app.get("/healthcheck")

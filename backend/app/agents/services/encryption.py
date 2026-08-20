@@ -37,13 +37,12 @@ def decrypt_field(token: str) -> str:
     try:
         return _fernet().decrypt(token.encode()).decode()
     except (InvalidToken, Exception) as exc:
-        # Try fallbacks for dev db names (idcc_core, test, etc.)
+        # Try fallbacks for dev db names (test, compassx_account, etc.)
         import hashlib
         import base64
         from cryptography.fernet import Fernet
         
         fallback_seeds = [
-            "idcc_core",
             "test",
             "compassx_account",
             "compassx_system",

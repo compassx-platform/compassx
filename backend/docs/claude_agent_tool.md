@@ -21,7 +21,7 @@
     "tool": "claude_agent",
     "action": "generate_code",
     "repo_url":
-  "https://dev.azure.com/IpPlatform/IDCC/_git/asset_maintenance_backend",
+  "https://dev.azure.com/MyOrg/CompassX/_git/asset_maintenance_backend",
     "branch_name": "feature/update-readme",
     "provider": "azure_devops",
     "prompt": "Refine the README and create a PR"
@@ -43,16 +43,16 @@
   GitWorkspaceTool does:
   1. Resolves PAT — calls _get_pat(agent, "azure_devops") which decrypts
   gc.pat_enc from the agent's git_connections relationship
-  2. Injects PAT into URL — https://:{pat}@dev.azure.com/IpPlatform/IDCC/_
+  2. Injects PAT into URL — https://:{pat}@dev.azure.com/MyOrg/CompassX/_
   git/asset_maintenance_backend
   3. Clones into
-  AGENT_WORKSPACE_ROOT/IpPlatform_IDCC__git_asset_maintenance_backend/
+  AGENT_WORKSPACE_ROOT/MyOrg_CompassX__git_asset_maintenance_backend/
   with --no-single-branch --depth 1
   4. Auto-detects default branch — tries development → develop → master →
   main → git symbolic-ref refs/remotes/origin/HEAD
   5. Creates new branch — git branch feature/update-readme development
   6. Adds git worktree — git worktree add
-  /tmp/agent_workspaces/IpPlatform_...__feature_update-readme
+  /tmp/agent_workspaces/MyOrg_...__feature_update-readme
   feature/update-readme
   7. Returns { worktree_path, branch, base_branch, head_commit, repo_url }
 

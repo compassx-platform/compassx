@@ -49,7 +49,7 @@ def _safe_dir_name(url: str) -> str:
 
     Includes org+project info so repos with the same name in different
     organisations don't collide.
-    e.g. https://dev.azure.com/IpPlatform/IDCC/_git/myrepo → IpPlatform_IDCC_myrepo
+    e.g. https://dev.azure.com/MyOrg/CompassX/_git/myrepo → MyOrg_CompassX_myrepo
     """
     # Strip scheme and trailing slashes
     path = url.split("://", 1)[-1].rstrip("/")
