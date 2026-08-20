@@ -1,7 +1,6 @@
-import { useCallback } from 'react';
+import { useCallback, type ElementType } from 'react';
 import { useLocation, useNavigate, useParams, type NavigateOptions, type To } from 'react-router-dom';
-import type { ElementType } from 'react';
-import { Briefcase, Code2, Layers, Zap, LayoutDashboard, FileText, Database, GitBranch, Cable, BookOpen, ServerCog, History, Activity, ArrowDownToLine, Home } from 'lucide-react';
+import { Briefcase, Code2, Layers, Zap, LayoutDashboard, FileText, Database, GitBranch, Cable, BookOpen, ServerCog, History, Activity, ArrowDownToLine, Home, Sparkles } from 'lucide-react';
 
 export const APP_IDS = ['platform', 'apps', 'business_center'] as const;
 export type AppId = (typeof APP_IDS)[number];
@@ -21,53 +20,97 @@ export type NavItem = {
   end?: boolean;
 };
 
+export type NavGroup = {
+  title?: string;
+  items: NavItem[];
+};
+
 type AppDefinition = {
   id: AppId;
   label: string;
   defaultPath: string;
+  navGroups: NavGroup[];
   navItems: NavItem[];
   allowedPrefixes: string[];
 };
+
+const PLATFORM_NAV_GROUPS: NavGroup[] = [
+  {
+    items: [
+      { to: '/home', icon: Home, label: 'Home', end: true },
+      { to: '/notebooks', icon: Code2, label: 'Notebooks', end: false },
+      { to: '/jobs', icon: Briefcase, label: 'Jobs', end: false },
+      { to: '/dashboards', icon: LayoutDashboard, label: 'Dashboards', end: false },
+    ],
+  },
+  {
+    title: 'Data',
+    items: [
+      { to: '/data-catalog', icon: BookOpen, label: 'Data Catalog', end: false },
+      { to: '/sql-warehouse/explorer', icon: Database, label: 'Data Explorer', end: false },
+      { to: '/sql-warehouse/editor', icon: Code2, label: 'SQL Editor', end: false },
+      { to: '/sql-warehouse/warehouses', icon: ServerCog, label: 'SQL Warehouses', end: false },
+      { to: '/sql-warehouse/history', icon: History, label: 'Query History', end: false },
+      { to: '/ingestion/connections', icon: ArrowDownToLine, label: 'API Ingestion', end: false },
+    ],
+  },
+  {
+    title: 'AI',
+    items: [
+      { to: '/agents', icon: Layers, label: 'Agents', end: false },
+      { to: '/connections', icon: Cable, label: 'Connections', end: false },
+    ],
+  },
+  {
+    title: 'Infra',
+    items: [
+      { to: '/compute', icon: Zap, label: 'Compute', end: false },
+      { to: '/monitoring', icon: Activity, label: 'Monitoring', end: false },
+      { to: '/icons', icon: Sparkles, label: 'Custom Icons', end: false },
+    ],
+  },
+];
+
+const APPS_NAV_GROUPS: NavGroup[] = [
+  {
+    items: [
+      { to: '/assets', icon: GitBranch, label: 'Assets', end: true },
+      { to: '/apps_development', icon: Code2, label: 'App Developer', end: false },
+    ],
+  },
+];
+
+const BUSINESS_CENTER_NAV_GROUPS: NavGroup[] = [
+  {
+    items: [
+      { to: '/dashboards', icon: LayoutDashboard, label: 'Dashboards', end: false },
+    ],
+  },
+];
 
 export const APP_DEFINITIONS: Record<AppId, AppDefinition> = {
   platform: {
     id: 'platform',
     label: 'Platform',
     defaultPath: '/home',
-    navItems: [
-      { to: '/home', icon: Home, label: 'Home', end: true },
-      { to: '/jobs', icon: Briefcase, label: 'Jobs', end: false },
-      { to: '/notebooks', icon: Code2, label: 'Notebooks', end: false },
-      { to: '/dashboards', icon: LayoutDashboard, label: 'Dashboards', end: false },      { to: '/agents', icon: Layers, label: 'Agents', end: false },
-      { to: '/data-catalog', icon: BookOpen, label: 'Data Catalog', end: false },
-      { to: '/sql-warehouse/explorer', icon: Database, label: 'Data Explorer', end: false },
-      { to: '/sql-warehouse/editor', icon: Code2, label: 'SQL Editor', end: false },
-      { to: '/sql-warehouse/warehouses', icon: ServerCog, label: 'SQL Warehouses', end: false },
-      { to: '/sql-warehouse/history', icon: History, label: 'Query History', end: false },
-      { to: '/connections', icon: Cable, label: 'Connections', end: false },
-      { to: '/ingestion/connections', icon: ArrowDownToLine, label: 'API Ingestion', end: false },
-      { to: '/compute', icon: Zap, label: 'Compute', end: false },
-      { to: '/monitoring', icon: Activity, label: 'Monitoring', end: false },
-    ],
-    allowedPrefixes: ['/home', '/jobs', '/notebooks', '/agents', '/data-catalog', '/sql-warehouse', '/connections', '/ingestion', '/compute', '/monitoring', '/dashboards', '/apps_development'],
+    navGroups: PLATFORM_NAV_GROUPS,
+    navItems: PLATFORM_NAV_GROUPS.flatMap((g) => g.items),
+    allowedPrefixes: ['/home', '/jobs', '/notebooks', '/agents', '/data-catalog', '/sql-warehouse', '/connections', '/ingestion', '/compute', '/monitoring', '/dashboards', '/apps_development', '/icons'],
   },
   apps: {
     id: 'apps',
     label: 'Apps',
     defaultPath: '/assets',
-    navItems: [
-      { to: '/assets', icon: GitBranch, label: 'Assets', end: true },
-      { to: '/apps_development', icon: Code2, label: 'App Developer', end: false },
-    ],
+    navGroups: APPS_NAV_GROUPS,
+    navItems: APPS_NAV_GROUPS.flatMap((g) => g.items),
     allowedPrefixes: ['/assets', '/apps_development'],
   },
   business_center: {
     id: 'business_center',
     label: 'Business Center',
     defaultPath: '/dashboards',
-    navItems: [
-      { to: '/dashboards', icon: LayoutDashboard, label: 'Dashboards', end: false },
-    ],
+    navGroups: BUSINESS_CENTER_NAV_GROUPS,
+    navItems: BUSINESS_CENTER_NAV_GROUPS.flatMap((g) => g.items),
     allowedPrefixes: ['/dashboards'],
   },
 };
@@ -85,8 +128,12 @@ export function getDefaultPathForApp(appId: AppId): string {
   return APP_DEFINITIONS[appId].defaultPath;
 }
 
+export function getNavGroupsForApp(appId: AppId): NavGroup[] {
+  return APP_DEFINITIONS[appId]?.navGroups ?? [];
+}
+
 export function getNavItemsForApp(appId: AppId): NavItem[] {
-  return APP_DEFINITIONS[appId].navItems;
+  return APP_DEFINITIONS[appId]?.navItems ?? [];
 }
 
 export function stripAppScope(pathname: string): string {

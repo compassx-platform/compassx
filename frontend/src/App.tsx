@@ -25,7 +25,8 @@ import { ToastProvider } from '@/lib/toast';
 import AppShell from '@/components/layout/AppShell';
 import WorkspaceGuard from '@/components/layout/WorkspaceGuard';
 import CreateWorkspacePage from '@/pages/CreateWorkspacePage';
-import NovaLandingPage from '@/modules/nova/pages/NovaLandingPage';
+import LandingPage from '@/pages/LandingPage';
+import IconsShowcasePage from '@/pages/IconsShowcasePage';
 import DataCatalog from '@/modules/data/pages/DataCatalog';
 import SqlWarehousePage from '@/modules/sql_warehouse/SqlWarehousePage';
 import AgentsPage from '@/modules/agents/pages/AgentsPage';
@@ -240,7 +241,7 @@ export default function App() {
                 <Route index element={<WorkspaceIndex />} />
                 <Route path=":appId" element={<AppScopeGuard />}>
                   <Route index element={<AppHomeRedirect />} />
-                  <Route path="home" element={<NovaLandingPage />} />
+                  <Route path="home" element={<LandingPage />} />
                   <Route path="data-catalog" element={<DataCatalog />} />
                   <Route path="data-catalog/:catalog" element={<DataCatalog />} />
                   <Route path="data-catalog/:catalog/:schema" element={<DataCatalog />} />
@@ -292,6 +293,8 @@ export default function App() {
                   {/* CompassX Apps */}
                   <Route path="apps_development" element={<AppsListPage />} />
                   <Route path="apps_development/:compassAppId/:branchId" element={<AppEditorPage />} />
+                  {/* Custom Technology & Data Icons Showcase */}
+                  <Route path="icons" element={<IconsShowcasePage />} />
                   {/* Fallback for unhandled sub-routes inside an app */}
                   <Route path="*" element={<AppHomeRedirect />} />
                 </Route>

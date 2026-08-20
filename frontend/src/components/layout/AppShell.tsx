@@ -31,6 +31,7 @@ import {
   APP_DEFINITIONS,
   DEFAULT_APP_ID,
   getDefaultPathForApp,
+  getNavGroupsForApp,
   getNavItemsForApp,
   isAppId,
   resolveAppSwitchPath,
@@ -172,6 +173,7 @@ export default function AppShell() {
 
   const activeAppId: AppId = isAppId(appId) ? appId : DEFAULT_APP_ID;
 
+  const navGroups = useMemo(() => getNavGroupsForApp(activeAppId), [activeAppId]);
   const navItems = useMemo(() => getNavItemsForApp(activeAppId), [activeAppId]);
 
   const pageTitle = useMemo(() => {
@@ -191,6 +193,7 @@ export default function AppShell() {
     if (scopedPathname.startsWith('/ingestion/job-configs/')) return 'Job Config';
     if (scopedPathname.startsWith('/ingestion/job-configs')) return 'Job Configs';
     if (scopedPathname.startsWith('/ingestion/runs/')) return 'Ingestion Run';
+    if (scopedPathname.startsWith('/icons')) return 'Custom Icons';
     return 'Compass';
 
   }, [scopedPathname]);
@@ -336,18 +339,26 @@ export default function AppShell() {
                 </button>
               </>
             ) : (
-              navItems.map((item) => (
-                <NavLink
-                  key={item.to}
-                  to={appPath(item.to)}
-                  end={item.end}
-                  className={({ isActive }) => `app-sidebar-link ${isActive ? 'is-active' : ''}`}
-                  title={item.label}
-                >
-                  <item.icon size={16} className="app-sidebar-link-icon" />
-                  <span className="app-sidebar-link-label">{item.label}</span>
-                  <ChevronRight size={12} className="app-sidebar-link-arrow" />
-                </NavLink>
+              navGroups.map((group, groupIdx) => (
+                <div key={group.title || `group-${groupIdx}`} className="app-sidebar-group">
+                  {group.title && (
+                    <div className="app-sidebar-divider-label">
+                      {group.title}
+                    </div>
+                  )}
+                  {group.items.map((item) => (
+                    <NavLink
+                      key={item.to}
+                      to={appPath(item.to)}
+                      end={item.end}
+                      className={({ isActive }) => `app-sidebar-link ${isActive ? 'is-active' : ''}`}
+                      title={item.label}
+                    >
+                      <item.icon size={16} className="app-sidebar-link-icon" />
+                      <span className="app-sidebar-link-label">{item.label}</span>
+                    </NavLink>
+                  ))}
+                </div>
               ))
             )}
           </div>
