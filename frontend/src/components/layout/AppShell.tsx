@@ -47,7 +47,6 @@ import { useMe, useMyWorkspaces } from '@/lib/userManagerApi';
 
 
 const EXPERIMENTAL_NAV: NavItem[] = [
-  { to: '/entities', icon: Database, label: 'Entities', end: false },
   { to: '/data-catalog', icon: BookOpen, label: 'Data', end: false },
   { to: '/documents', icon: FileText, label: 'Documents', end: false },
 ];
@@ -176,10 +175,10 @@ export default function AppShell() {
   const navItems = useMemo(() => getNavItemsForApp(activeAppId), [activeAppId]);
 
   const pageTitle = useMemo(() => {
+    if (scopedPathname.startsWith('/home')) return 'Home';
     if (scopedPathname.startsWith('/apps_development')) return 'App Developer';
     if (scopedPathname.startsWith('/notebooks/open')) return 'Notebook';
     if (scopedPathname.startsWith('/notebooks')) return 'Notebooks';
-    if (scopedPathname.startsWith('/entities')) return 'Entities';
     if (scopedPathname.startsWith('/dashboards')) return 'Dashboards';
     if (scopedPathname.startsWith('/agents')) return 'Agents';
     if (scopedPathname.startsWith('/assets/types')) return 'Asset Types';

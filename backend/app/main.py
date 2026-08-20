@@ -38,12 +38,9 @@ logging.basicConfig(
 logger = logging.getLogger("app.main")
 
 # Import all models so SQLAlchemy knows about them BEFORE importing routes
-from app.workflows.models import audit  # noqa: E402, F401
 from app.data.models import data_catalog, dataset  # noqa: E402, F401
 from app.catalog import models as unified_catalog_models  # noqa: E402, F401
-from app.workflows.models import entity  # noqa: E402, F401
 from app.agents.models import agents as agents_models  # noqa: E402, F401
-from app.workflows.models import workflow  # noqa: E402, F401
 from app.compute.models import compute_resources  # noqa: E402, F401
 from app.dashboards.models import dashboard  # noqa: E402, F401
 from app.asset_manager.models import asset_manager as asset_manager_models  # noqa: E402, F401
@@ -63,12 +60,9 @@ from app.user_manager.models import account_models as _um_account_models  # noqa
 from app.user_manager.models import system_models as _um_system_models    # noqa: E402, F401
 
 # Now import routes
-from app.workflows.routes import entity_routes  # noqa: E402
-from app.workflows.routes import proxy_routes  # noqa: E402
 from app.data.routes import data_catalog_routes  # noqa: E402
 from app.catalog import routes as catalog_routes  # noqa: E402
 from app.storage import router as storage_router_module  # noqa: E402
-from app.workflows.routes import workflow_routes  # noqa: E402
 from app.agents.routes import (  # noqa: E402
     agent_context_routes,
     agent_routes,
@@ -346,7 +340,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     lifespan=lifespan,
     title="CompassX API",
-    description="Entity Engine, Dataset Layer, Form Engine, Explorer for CMMS",
+    description="CompassX Platform API",
     version="0.1.0",
     docs_url="/api/swagger/docs",
     openapi_url="/api/swagger.json",
@@ -397,12 +391,9 @@ async def db_error_handler(request: Request, call_next):
             }
         )
 
-app.include_router(entity_routes.router)
-app.include_router(proxy_routes.router)
 app.include_router(data_catalog_routes.router)
 app.include_router(catalog_routes.router)
 app.include_router(storage_router_module.router)
-app.include_router(workflow_routes.router)
 
 app.include_router(llm_connection_routes.router)
 app.include_router(db_connection_routes.router)

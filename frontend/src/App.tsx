@@ -25,11 +25,7 @@ import { ToastProvider } from '@/lib/toast';
 import AppShell from '@/components/layout/AppShell';
 import WorkspaceGuard from '@/components/layout/WorkspaceGuard';
 import CreateWorkspacePage from '@/pages/CreateWorkspacePage';
-import PublicShell from '@/components/layout/PublicShell';
 import NovaLandingPage from '@/modules/nova/pages/NovaLandingPage';
-import Entities from '@/modules/workflows/pages/Entities';
-import EntityEditPage from '@/modules/workflows/pages/EntityEditPage';
-import EntityRecordsPage from '@/modules/workflows/pages/EntityRecordsPage';
 import DataCatalog from '@/modules/data/pages/DataCatalog';
 import SqlWarehousePage from '@/modules/sql_warehouse/SqlWarehousePage';
 import AgentsPage from '@/modules/agents/pages/AgentsPage';
@@ -244,9 +240,7 @@ export default function App() {
                 <Route index element={<WorkspaceIndex />} />
                 <Route path=":appId" element={<AppScopeGuard />}>
                   <Route index element={<AppHomeRedirect />} />
-                  <Route path="entities" element={<Entities />} />
-                  <Route path="entities/:entityName/edit" element={<EntityEditPage />} />
-                  <Route path="entities/:entityName/records" element={<EntityRecordsPage />} />
+                  <Route path="home" element={<NovaLandingPage />} />
                   <Route path="data-catalog" element={<DataCatalog />} />
                   <Route path="data-catalog/:catalog" element={<DataCatalog />} />
                   <Route path="data-catalog/:catalog/:schema" element={<DataCatalog />} />
@@ -301,9 +295,6 @@ export default function App() {
                   {/* Fallback for unhandled sub-routes inside an app */}
                   <Route path="*" element={<AppHomeRedirect />} />
                 </Route>
-              </Route>
-              <Route path="/public" element={<PublicShell />}>
-                <Route path="entities/:entityName/records" element={<EntityRecordsPage />} />
               </Route>
               <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>

@@ -113,7 +113,7 @@ def _compile_create_table_sqlite(element, compiler, **kw):
 # ---------------------------------------------------------------------------
 from app.database import Base, AssetBase  # noqa: E402
 from app.workspace import models as workspace_models  # noqa: F401, E402
-from app.models import agents, entity, audit, dataset, data_catalog, workflow, unified_catalog  # noqa: E402, F401
+from app.models import agents, dataset, data_catalog, unified_catalog  # noqa: E402, F401
 import app.asset_manager.models.asset_manager  # noqa: E402, F401
 
 # ---------------------------------------------------------------------------
@@ -321,7 +321,7 @@ def _make_test_app(db: Session) -> FastAPI:
     Avoids importing app.main (which runs Alembic migrations at import time).
     """
     from fastapi import FastAPI
-    from app.routes import entity_routes, data_catalog_routes, workflow_routes, workspace_routes, llm_connection_routes
+    from app.routes import data_catalog_routes, workspace_routes, llm_connection_routes
     from app.catalog import routes as catalog_routes
     from app.database import get_db, get_system_db, get_account_db, get_asset_db
     from app.dependencies import get_current_user
@@ -342,10 +342,8 @@ def _make_test_app(db: Session) -> FastAPI:
     app.dependency_overrides[get_asset_db] = _override_get_db
     app.dependency_overrides[get_current_user] = _override_get_current_user
 
-    app.include_router(entity_routes.router)
     app.include_router(data_catalog_routes.router)
     app.include_router(catalog_routes.router)
-    app.include_router(workflow_routes.router)
     app.include_router(workspace_routes.router)
     app.include_router(llm_connection_routes.router)
 
@@ -371,66 +369,6 @@ def client(db_session: Session) -> TestClient:
 # ---------------------------------------------------------------------------
 # Common data factories
 # ---------------------------------------------------------------------------
-
-
-@pytest.fixture()
-def sample_entity(db_session: Session):
-    """Create and return a minimal EntityDefinition for use in tests."""
-    from app.services.entity_service import create_entity_definition
-
-    return create_entity_definition(
-        db_session,
-        definition_data={
-            "name": "test_entity",
-            "entity_type": "generic",
-            "asset_scoped": False,
-            "time_based": False,
-            "time_series": False,
-            "fields": [
-                {"field_name": "title", "field_type": "string", "is_required": True, "is_indexed": False},
-                {"field_name": "count", "field_type": "number", "is_required": False, "is_indexed": False},
-            ],
-            "system_fields": [],
-        },
-        user_email="test@example.com",
-    )
-
-
-@pytest.fixture()
-def sample_asset_scoped_entity(db_session: Session):
-    """Create and return an asset-scoped EntityDefinition."""
-    from app.services.entity_service import create_entity_definition
-
-    return create_entity_definition(
-        db_session,
-        definition_data={
-            "name": "asset_entity",
-            "entity_type": "event",
-            "asset_scoped": True,
-            "time_based": True,
-            "time_series": True,
-            "fields": [
-                {"field_name": "severity", "field_type": "string", "is_required": True, "is_indexed": False},
-                {"field_name": "description", "field_type": "text", "is_required": False, "is_indexed": False},
-            ],
-            "system_fields": [],
-        },
-        user_email="test@example.com",
-    )
-
-
-@pytest.fixture()
-def sample_record(db_session: Session, sample_entity):
-    """Create and return a sample EntityRecord."""
-    from app.services.entity_service import create_record
-
-    return create_record(
-        db_session,
-        entity_name="test_entity",
-        asset_id=None,
-        data={"title": "Test Record", "count": 42},
-        user_email="test@example.com",
-    )
 
 
 @pytest.fixture()

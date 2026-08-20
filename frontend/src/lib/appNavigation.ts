@@ -1,7 +1,7 @@
 import { useCallback } from 'react';
 import { useLocation, useNavigate, useParams, type NavigateOptions, type To } from 'react-router-dom';
 import type { ElementType } from 'react';
-import { Briefcase, Code2, Layers, Zap, LayoutDashboard, FileText, Database, GitBranch, Cable, BookOpen, ServerCog, History, Activity, ArrowDownToLine } from 'lucide-react';
+import { Briefcase, Code2, Layers, Zap, LayoutDashboard, FileText, Database, GitBranch, Cable, BookOpen, ServerCog, History, Activity, ArrowDownToLine, Home } from 'lucide-react';
 
 export const APP_IDS = ['platform', 'apps', 'business_center'] as const;
 export type AppId = (typeof APP_IDS)[number];
@@ -33,8 +33,9 @@ export const APP_DEFINITIONS: Record<AppId, AppDefinition> = {
   platform: {
     id: 'platform',
     label: 'Platform',
-    defaultPath: '/notebooks',
+    defaultPath: '/home',
     navItems: [
+      { to: '/home', icon: Home, label: 'Home', end: true },
       { to: '/jobs', icon: Briefcase, label: 'Jobs', end: false },
       { to: '/notebooks', icon: Code2, label: 'Notebooks', end: false },
       { to: '/dashboards', icon: LayoutDashboard, label: 'Dashboards', end: false },      { to: '/agents', icon: Layers, label: 'Agents', end: false },
@@ -48,17 +49,17 @@ export const APP_DEFINITIONS: Record<AppId, AppDefinition> = {
       { to: '/compute', icon: Zap, label: 'Compute', end: false },
       { to: '/monitoring', icon: Activity, label: 'Monitoring', end: false },
     ],
-    allowedPrefixes: ['/jobs', '/notebooks', '/agents', '/data-catalog', '/sql-warehouse', '/connections', '/ingestion', '/compute', '/monitoring', '/dashboards', '/apps_development'],
+    allowedPrefixes: ['/home', '/jobs', '/notebooks', '/agents', '/data-catalog', '/sql-warehouse', '/connections', '/ingestion', '/compute', '/monitoring', '/dashboards', '/apps_development'],
   },
   apps: {
     id: 'apps',
     label: 'Apps',
-    defaultPath: '/entities',
+    defaultPath: '/assets',
     navItems: [
-      { to: '/entities', icon: Database, label: 'Entities', end: false },
       { to: '/assets', icon: GitBranch, label: 'Assets', end: true },
+      { to: '/apps_development', icon: Code2, label: 'App Developer', end: false },
     ],
-    allowedPrefixes: ['/entities', '/assets', '/apps_development'],
+    allowedPrefixes: ['/assets', '/apps_development'],
   },
   business_center: {
     id: 'business_center',
