@@ -225,7 +225,7 @@ export default function GitConnectionsPage() {
   }
 
   return (
-    <div className="page-section">
+    <div className="page-section connections-page">
       <div className="page-header">
         <div>
           <h1 className="page-title">Git Connections</h1>
@@ -289,20 +289,21 @@ export default function GitConnectionsPage() {
                       {conn.name}
                       <span
                         style={{
-                          fontSize: "0.65rem",
-                          fontWeight: 600,
+                          fontSize: "0.68rem",
+                          fontWeight: 500,
                           padding: "2px 6px",
                           borderRadius: 4,
-                          background: conn.provider === "github" ? "rgba(36,41,47,0.1)" : "rgba(0,120,212,0.1)",
-                          color: conn.provider === "github" ? "#24292f" : "rgb(0,120,212)",
+                          background: "var(--color-surface-hover)",
+                          color: "var(--color-text-muted)",
+                          border: "1px solid var(--color-border)",
                           textTransform: "uppercase",
-                          letterSpacing: "0.05em",
+                          letterSpacing: "0.03em",
                         }}
                       >
                         {conn.provider === "azure_devops" ? "Azure DevOps" : "GitHub"}
                       </span>
                       {conn.pat_configured && (
-                        <span style={{ fontSize: "0.7rem", color: "var(--color-success, #38a169)" }}>
+                        <span style={{ fontSize: "0.72rem", color: "var(--color-success)" }}>
                           ✓ PAT
                         </span>
                       )}
@@ -321,13 +322,13 @@ export default function GitConnectionsPage() {
                       disabled={testStatus[conn.id] === "testing"}
                     >
                       {testStatus[conn.id] === "testing" ? (
-                        <Loader2 size={14} className="spin" />
+                        <Loader2 size={13} className="spin" />
                       ) : testStatus[conn.id] === "ok" ? (
-                        <CheckCircle2 size={14} color="#2E7D32" />
+                        <CheckCircle2 size={13} style={{ color: "var(--color-success)" }} />
                       ) : testStatus[conn.id] === "fail" ? (
-                        <XCircle size={14} color="#D32F2F" />
+                        <XCircle size={13} style={{ color: "var(--color-danger)" }} />
                       ) : (
-                        <Play size={14} />
+                        <Play size={13} />
                       )}
                     </button>
                     <button

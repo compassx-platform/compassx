@@ -60,6 +60,7 @@ import IngestionConnectionDetailPage from '@/modules/ingestion/pages/ConnectionD
 import IngestionJobConfigsPage from '@/modules/ingestion/pages/JobConfigsPage';
 import IngestionJobConfigDetailPage from '@/modules/ingestion/pages/JobConfigDetailPage';
 import IngestionRunDetailPage from '@/modules/ingestion/pages/IngestionRunDetailPage';
+import LogoShowcasePage from '@/pages/LogoShowcasePage';
 import { DEFAULT_APP_ID, isAppId, normalizeAppId, stripAppScope, getDefaultPathForApp } from '@/lib/appNavigation';
 import { useMyWorkspaces } from '@/lib/workspaceApi';
 
@@ -295,6 +296,9 @@ export default function App() {
                   <Route path="apps_development/:compassAppId/:branchId" element={<AppEditorPage />} />
                   {/* Custom Technology & Data Icons Showcase */}
                   <Route path="icons" element={<IconsShowcasePage />} />
+                  {/* CompassX Brand & Logo Visualizer */}
+                  <Route path="logo" element={<LogoShowcasePage />} />
+                  <Route path="brand-logo" element={<LogoShowcasePage />} />
                   {/* Fallback for unhandled sub-routes inside an app */}
                   <Route path="*" element={<AppHomeRedirect />} />
                 </Route>

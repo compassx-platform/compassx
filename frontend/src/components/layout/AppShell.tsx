@@ -6,8 +6,8 @@ import {
   ChevronRight,
   ChevronLeft,
   ChevronDown,
-  Sun,
-  Moon,
+  PanelLeftClose,
+  PanelLeftOpen,
   BookOpen,
   Sparkles,
   CircleUserRound,
@@ -15,13 +15,12 @@ import {
   LogOut,
   FlaskConical,
   Grid2x2,
-  CompassIcon,
   Plus,
   Pencil,
   Trash2,
   LayoutDashboard,
 } from 'lucide-react';
-import { useThemeContext } from '@/design-system';
+import { CompassXLogo } from '@/components/common/CompassXLogo';
 import AppNovaSidebar from '@/modules/nova/components/AppNovaSidebar';
 import { useNovaStore } from '@/modules/nova/stores/novaStore';
 import { useDashboards } from '@/modules/dashboards/hooks/useDashboard';
@@ -54,7 +53,6 @@ const EXPERIMENTAL_NAV: NavItem[] = [
 
 export default function AppShell() {
   const { data: me } = useMe();
-  const { isDark, toggleTheme } = useThemeContext();
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
   const [appMenuOpen, setAppMenuOpen] = useState(false);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(() => {
@@ -194,7 +192,8 @@ export default function AppShell() {
     if (scopedPathname.startsWith('/ingestion/job-configs')) return 'Job Configs';
     if (scopedPathname.startsWith('/ingestion/runs/')) return 'Ingestion Run';
     if (scopedPathname.startsWith('/icons')) return 'Custom Icons';
-    return 'Compass';
+    if (scopedPathname.startsWith('/logo') || scopedPathname.startsWith('/brand-logo')) return 'Logo Showcase';
+    return 'CompassX';
 
   }, [scopedPathname]);
 
@@ -229,6 +228,17 @@ export default function AppShell() {
     <div className="app-shell">
       {!hideSidebar && (
         <nav className={`app-sidebar glass ${isSidebarCollapsed ? 'is-collapsed' : ''}`}>
+          {/* Edge Toggle Handle sitting right on the border */}
+          <button
+            type="button"
+            className="app-sidebar-edge-toggle"
+            onClick={() => setIsSidebarCollapsed((open) => !open)}
+            aria-label={isSidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            title={isSidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+          >
+            {isSidebarCollapsed ? <ChevronRight size={12} strokeWidth={2.4} /> : <ChevronLeft size={12} strokeWidth={2.4} />}
+          </button>
+
           <div className="app-sidebar-header">
             <div
               className="app-sidebar-logo"
@@ -236,27 +246,13 @@ export default function AppShell() {
               style={{ cursor: 'pointer' }}
               title="Go to home"
             >
-              <div className="app-sidebar-logo-icon">
-                <CompassIcon size={17} strokeWidth={2.4} />
-              </div>
+              <CompassXLogo size={26} color="var(--color-primary, #1B6EF3)" />
               <div className="app-sidebar-logo-text-wrap">
-                <span className="app-sidebar-logo-text">Compass</span>
-                {workspaceCtx && (
-                  <span className="app-sidebar-logo-subtitle">
-                    {workspaceCtx.name}
-                  </span>
-                )}
+                <span className="app-sidebar-logo-text">
+                  Compass<span style={{ color: 'var(--color-primary, #1B6EF3)' }}>X</span>
+                </span>
               </div>
             </div>
-            <button
-              type="button"
-              className="app-sidebar-collapse-btn"
-              onClick={() => setIsSidebarCollapsed((open) => !open)}
-              aria-label={isSidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-              title={isSidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-            >
-              {isSidebarCollapsed ? <ChevronRight size={15} /> : <ChevronLeft size={15} />}
-            </button>
           </div>
 
           <div className="app-sidebar-section">
@@ -361,21 +357,6 @@ export default function AppShell() {
                 </div>
               ))
             )}
-          </div>
-
-
-          <div style={{ flex: 1 }} />
-
-          <div className="app-sidebar-footer">
-            <button
-              className="app-theme-toggle"
-              type="button"
-              onClick={toggleTheme}
-              title={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
-            >
-              {isDark ? <Sun size={15} /> : <Moon size={15} />}
-              <span className="app-theme-toggle-label">{isDark ? 'Light mode' : 'Dark mode'}</span>
-            </button>
           </div>
         </nav>
       )}

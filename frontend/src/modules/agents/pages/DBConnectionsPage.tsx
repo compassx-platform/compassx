@@ -520,7 +520,7 @@ export default function DBConnectionsPage() {
   }
 
   return (
-    <div className="page-section">
+    <div className="page-section connections-page">
       <div className="page-header">
         <div>
           <h1 className="page-title">DB Connections</h1>
@@ -599,13 +599,13 @@ export default function DBConnectionsPage() {
                       disabled={testStatus[conn.id] === "testing"}
                     >
                       {testStatus[conn.id] === "testing" ? (
-                        <Loader2 size={14} className="spin" />
+                        <Loader2 size={13} className="spin" />
                       ) : testStatus[conn.id] === "ok" ? (
-                        <CheckCircle2 size={14} color="#2E7D32" />
+                        <CheckCircle2 size={13} style={{ color: "var(--color-success)" }} />
                       ) : testStatus[conn.id] === "fail" ? (
-                        <XCircle size={14} color="#D32F2F" />
+                        <XCircle size={13} style={{ color: "var(--color-danger)" }} />
                       ) : (
-                        <Play size={14} />
+                        <Play size={13} />
                       )}
                     </button>
                     {conn.profiler_agent_id && (

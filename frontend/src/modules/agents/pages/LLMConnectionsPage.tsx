@@ -322,24 +322,24 @@ export default function LLMConnectionsPage() {
 
   function renderPingIcon(status: "ok" | "fail" | "pinging" | undefined) {
     if (status === "pinging") {
-      return <Loader2 size={14} className="spin" />;
+      return <Loader2 size={13} className="spin" />;
     }
     if (status === "ok") {
-      return <CheckCircle2 size={14} color="#2E7D32" />;
+      return <CheckCircle2 size={13} style={{ color: "var(--color-success)" }} />;
     }
     if (status === "fail") {
-      return <XCircle size={14} color="#D32F2F" />;
+      return <XCircle size={13} style={{ color: "var(--color-danger)" }} />;
     }
-    return <Wifi size={14} />;
+    return <Wifi size={13} />;
   }
 
   let content;
   if (isLoading) {
-    content = <div className="table-empty"><Loader2 size={20} className="spin" /> Loading…</div>;
+    content = <div className="table-empty"><Loader2 size={18} className="spin" /> Loading…</div>;
   } else if (connections.length === 0) {
     content = (
       <div className="table-empty">
-        <Cpu size={32} style={{ opacity: 0.3, marginBottom: 8 }} />
+        <Cpu size={28} style={{ opacity: 0.3, marginBottom: 8 }} />
         <div>No LLM connections yet.</div>
       </div>
     );
@@ -360,10 +360,10 @@ export default function LLMConnectionsPage() {
         <tbody>
           {connections.map((conn) => (
             <tr key={conn.id}>
-              <td style={{ fontWeight: 500, fontSize: "0.875rem" }}>{conn.name}</td>
-              <td style={{ fontSize: "0.8rem", color: "var(--color-text-muted)", textTransform: "capitalize" }}>{conn.provider}</td>
-              <td style={{ fontSize: "0.8rem", fontFamily: "monospace" }}>{conn.model_name}</td>
-              <td style={{ fontSize: "0.8rem" }}>
+              <td style={{ fontWeight: 500, fontSize: "0.85rem", color: "var(--color-text)" }}>{conn.name}</td>
+              <td style={{ fontSize: "0.80rem", color: "var(--color-text-muted)", textTransform: "capitalize" }}>{conn.provider}</td>
+              <td style={{ fontSize: "0.80rem", fontFamily: "monospace" }}>{conn.model_name}</td>
+              <td style={{ fontSize: "0.80rem" }}>
                 {conn.input_cost_per_1k_tokens !== undefined && conn.input_cost_per_1k_tokens !== null && conn.output_cost_per_1k_tokens !== undefined && conn.output_cost_per_1k_tokens !== null ? (
                   <span>
                     {conn.cost_currency ?? "USD"} {conn.input_cost_per_1k_tokens} / {conn.output_cost_per_1k_tokens}
@@ -380,9 +380,9 @@ export default function LLMConnectionsPage() {
                   {conn.use_for_memory && (
                     <span style={{
                       display: "inline-flex", alignItems: "center", gap: 4,
-                      fontSize: "0.7rem", fontWeight: 600, padding: "2px 7px",
-                      borderRadius: 99, background: "var(--color-accent-subtle, rgba(99,102,241,0.12))",
-                      color: "var(--color-accent, #6366f1)",
+                      fontSize: "0.68rem", fontWeight: 500, padding: "2px 6px",
+                      borderRadius: 4, background: "var(--color-surface-hover)",
+                      color: "var(--color-text-muted)", border: "1px solid var(--color-border)",
                     }}>
                       <BrainCircuit size={10} /> Memory
                     </span>
@@ -390,9 +390,9 @@ export default function LLMConnectionsPage() {
                   {conn.use_for_embedding && (
                     <span style={{
                       display: "inline-flex", alignItems: "center", gap: 4,
-                      fontSize: "0.7rem", fontWeight: 600, padding: "2px 7px",
-                      borderRadius: 99, background: "rgba(16,185,129,0.12)",
-                      color: "#10b981",
+                      fontSize: "0.68rem", fontWeight: 500, padding: "2px 6px",
+                      borderRadius: 4, background: "var(--color-surface-hover)",
+                      color: "var(--color-text-muted)", border: "1px solid var(--color-border)",
                     }}>
                       <Layers size={10} /> Embeddings
                     </span>
@@ -435,7 +435,7 @@ export default function LLMConnectionsPage() {
   }
 
   return (
-    <div className="page-section">
+    <div className="page-section connections-page">
       <div className="page-header">
         <div>
           <h1 className="page-title">LLM Connections</h1>
