@@ -9,7 +9,7 @@ import logging
 import secrets
 from datetime import datetime, timezone, timedelta
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, EmailStr
 from sqlalchemy.orm import Session
 
@@ -70,6 +70,7 @@ def setup_complete(
     body: SetupCompleteIn,
     account_db: Session = Depends(get_account_db),
     system_db: Session = Depends(get_system_db),
+    request: Request = None,
 ):
     """One-time setup: create account, admin user, first workspace, seed static tables.
 
@@ -132,6 +133,19 @@ def setup_complete(
         logger.warning("Could not auto-ensure default storage bucket: %s", b_err)
 
     try:
+        from app.workspace.models import Principal as LegacyPrincipal
+        if not account_db.query(LegacyPrincipal).filter(LegacyPrincipal.id == admin_user.id).first():
+            account_db.add(LegacyPrincipal(
+                id=admin_user.id,
+                account_id=account_id,
+                type="user",
+                email=admin_user.email,
+                name=admin_user.display_name or "Admin",
+                password_hash=admin_user.password_hash,
+                is_account_admin=True,
+            ))
+            account_db.flush()
+
         legacy_ws = LegacyWorkspace(
             id=ws_id,
             account_id=account_id,
@@ -153,6 +167,20 @@ def setup_complete(
             granted_by=admin_user.id,
         ))
         system_db.flush()
+
+        # Auto-ensure default DuckDB compute and SQL warehouse for initial workspace
+        try:
+            from app.compute.services.workspace_defaults import ensure_workspace_default_resources
+            runtime_manager = getattr(getattr(request, "app", None), "state", None) and getattr(request.app.state, "runtime_manager", None)
+            ensure_workspace_default_resources(
+                system_db,
+                workspace_id=ws_id,
+                created_by=admin_user.id,
+                user_id=admin_user.id,
+                runtime_manager=runtime_manager,
+            )
+        except Exception as res_err:
+            logger.warning("Could not auto-ensure default compute/warehouse in setup_complete: %s", res_err)
     except Exception as ws_err:
         logger.warning("Could not create initial workspace: %s", ws_err)
 

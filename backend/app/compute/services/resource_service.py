@@ -1,5 +1,6 @@
 """Service for persistent all-purpose compute resources."""
 import asyncio
+import concurrent.futures
 import json
 import logging
 import os
@@ -24,12 +25,21 @@ def platform_enabled() -> bool:
 
 
 def _run_async(coro):
-    """Bridge sync service methods to the async platform layer.
+    """Bridge sync service methods to the async platform layer safely.
 
-    Router endpoints are sync (FastAPI runs them in a threadpool), so there
-    is no running loop in this thread and asyncio.run is safe.
+    Handles both threads with no active event loop and async threads/lifespan
+    tasks with an active loop by offloading to a threadpool worker when needed.
     """
-    return asyncio.run(coro)
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+
+    if loop and loop.is_running():
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+            return executor.submit(lambda: asyncio.run(coro)).result()
+    else:
+        return asyncio.run(coro)
 
 
 class ComputeResourceService:
@@ -41,6 +51,16 @@ class ComputeResourceService:
         deployment-independent platform layer instead of ComputeManager."""
         self.db = db
         self.manager: ComputeManager = get_compute_manager()
+        if runtime_manager is None and platform_enabled():
+            try:
+                from compassx.container import PlatformContainer
+                from compassx.runtime.repository import SqlRuntimeRepository
+                from app.database import SystemSessionLocal
+                container = PlatformContainer()
+                repo = SqlRuntimeRepository(SystemSessionLocal) if SystemSessionLocal is not None else None
+                runtime_manager = container.build_runtime_manager(repo)
+            except Exception as rm_err:
+                logger.debug("Could not auto-wire runtime_manager in ComputeResourceService: %s", rm_err)
         self.runtime_manager = runtime_manager
 
     def _use_platform(self) -> bool:
@@ -71,7 +91,7 @@ class ComputeResourceService:
             "default_driver",
             None,
         )
-        if not target_driver:
+        if not target_driver or not isinstance(target_driver, str):
             return
 
         row = self.db.query(PlatformRuntime).filter(PlatformRuntime.runtime_id == runtime_id).first()
@@ -157,32 +177,32 @@ class ComputeResourceService:
         logger.info("Created compute resource: %s for user %s", resource_id, user_id)
 
         if auto_start:
-            self.start_resource(resource_id, user_id, workspace_id)
-            self.db.refresh(resource)
+            try:
+                self.start_resource(resource_id, user_id, workspace_id)
+                self.db.refresh(resource)
+            except Exception as start_err:
+                logger.warning("Could not start runtime during resource creation for %s (desired_status remains running): %s", resource_id, start_err)
 
         return self._to_response(resource)
 
     def list_resources(self, user_id: str, workspace_id: str | None = None) -> list[ComputeResourceResponse]:
-        query = self.db.query(ComputeResource).filter(
-            ComputeResource.user_id == user_id
-        )
+        query = self.db.query(ComputeResource)
         if workspace_id:
             query = query.filter(ComputeResource.workspace_id == workspace_id)
         else:
-            query = query.filter(ComputeResource.workspace_id == None)
+            query = query.filter(ComputeResource.workspace_id == None, ComputeResource.user_id == user_id)
         resources = query.order_by(ComputeResource.is_default.desc(), ComputeResource.created_at.asc()).all()
         return [self._to_response(resource) for resource in resources]
+
     def list_resources_with_status(
         self, user_id: str, workspace_id: str | None = None
     ) -> list[ComputeResourceStatus]:
         """List all resources with their current runtime status."""
-        query = self.db.query(ComputeResource).filter(
-            ComputeResource.user_id == user_id
-        )
+        query = self.db.query(ComputeResource)
         if workspace_id:
             query = query.filter(ComputeResource.workspace_id == workspace_id)
         else:
-            query = query.filter(ComputeResource.workspace_id == None)
+            query = query.filter(ComputeResource.workspace_id == None, ComputeResource.user_id == user_id)
         resources = query.order_by(
             ComputeResource.is_default.desc(), ComputeResource.created_at.asc()
         ).all()
@@ -222,12 +242,11 @@ class ComputeResourceService:
     def _get_resource_row(self, resource_id: str, user_id: str, workspace_id: str | None = None) -> ComputeResource:
         query = self.db.query(ComputeResource).filter(
             ComputeResource.id == resource_id,
-            ComputeResource.user_id == user_id,
         )
         if workspace_id:
             query = query.filter(ComputeResource.workspace_id == workspace_id)
         else:
-            query = query.filter(ComputeResource.workspace_id == None)
+            query = query.filter(ComputeResource.workspace_id == None, ComputeResource.user_id == user_id)
         resource = query.first()
         if not resource:
             raise ValueError(f"Resource not found: {resource_id}")
@@ -529,42 +548,19 @@ class ComputeResourceService:
         )
         return reconciled
 
-    def ensure_default_resource(self) -> ComputeResource | None:
-        """Create the default compute resource, preserving an existing user's intent."""
-        if not compute_settings.DEFAULT_COMPUTE_ENABLED:
-            return None
+    def ensure_default_resource(self, workspace_id: str | None = None) -> ComputeResource | None:
+        """Create the default compute resource if no compute exists in the target scope."""
+        from app.compute.services.workspace_defaults import ensure_workspace_default_resources
 
-        resource = self.db.query(ComputeResource).filter(
-            ComputeResource.user_id == compute_settings.DEFAULT_COMPUTE_USER_ID,
-            ComputeResource.is_default.is_(True),
-        ).first()
+        ensure_workspace_default_resources(
+            self.db,
+            workspace_id=workspace_id,
+            runtime_manager=self.runtime_manager,
+        )
 
-        if not resource:
-            request = ComputeResourceRequest(
-                name=compute_settings.DEFAULT_COMPUTE_NAME,
-                runtime=compute_settings.DEFAULT_COMPUTE_RUNTIME,
-                profile=compute_settings.resolved_default_compute_profile(),
-                description="Auto-created default compute for fast notebook access.",
-            )
-            self.create_resource(
-                request,
-                compute_settings.DEFAULT_COMPUTE_USER_ID,
-                compute_settings.DEFAULT_COMPUTE_CREATED_BY,
-                is_default=True,
-                auto_start=True,
-            )
-            resource = self.db.query(ComputeResource).filter(
-                ComputeResource.user_id == compute_settings.DEFAULT_COMPUTE_USER_ID,
-                ComputeResource.is_default.is_(True),
-            ).first()
-            logger.info("Default compute resource created")
+        query = self.db.query(ComputeResource)
+        if workspace_id:
+            query = query.filter(ComputeResource.workspace_id == workspace_id)
         else:
-            if resource.desired_status == "running":
-                self.get_resource_with_status(
-                    resource.id,
-                    resource.user_id,
-                    resource.workspace_id,
-                )
-            logger.info("Default compute resource reconciled")
-
-        return resource
+            query = query.filter(ComputeResource.workspace_id == None)
+        return query.filter(ComputeResource.is_default.is_(True)).first()

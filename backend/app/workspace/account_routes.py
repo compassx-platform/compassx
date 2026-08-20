@@ -88,6 +88,7 @@ async def create_workspace(
     body: WorkspaceCreate,
     db: Session = Depends(get_account_db),
     admin: Principal = Depends(require_account_admin),
+    request: Request = None,
 ):
     # Validate slug uniqueness
     if db.query(Workspace).filter(Workspace.slug == body.slug).first():
@@ -196,6 +197,28 @@ async def create_workspace(
             detail=f"Failed to create workspace due to catalog creation/binding error: {exc}"
         )
     db.refresh(ws)
+
+    # Auto-ensure default DuckDB compute and SQL warehouse for the new workspace
+    try:
+        from app.database import SystemSessionLocal
+        from app.compute.services.workspace_defaults import ensure_workspace_default_resources
+        if SystemSessionLocal:
+            sys_db = SystemSessionLocal()
+            try:
+                runtime_manager = getattr(getattr(request, "app", None), "state", None) and getattr(request.app.state, "runtime_manager", None)
+                ensure_workspace_default_resources(
+                    sys_db,
+                    workspace_id=ws_id,
+                    created_by=admin.id,
+                    user_id=admin.id,
+                    runtime_manager=runtime_manager,
+                )
+            except Exception as res_err:
+                logger.warning("Could not auto-ensure default compute/warehouse for workspace %s: %s", ws_id, res_err)
+            finally:
+                sys_db.close()
+    except Exception as res_err:
+        logger.warning("Could not open system DB for default compute/warehouse creation: %s", res_err)
 
     # Invalidate entry point cache so post-login routing sees the new workspace
     try:

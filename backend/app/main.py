@@ -175,12 +175,14 @@ async def lifespan(app: FastAPI):
     memory_module = importlib.import_module("app.memory")
     memory_module.memory_orchestrator = memory_orchestrator
 
-    # Default compute bootstrap (business concern — stays in the backend).
-    async def _bootstrap_default_compute() -> None:
+    # Default compute and SQL warehouse bootstrap per workspace (business concern — stays in the backend).
+    async def _bootstrap_default_resources() -> None:
         try:
-            from app.database import SystemSessionLocal, is_system_db_available
+            from app.database import SystemSessionLocal, AccountSessionLocal, is_system_db_available, is_account_db_available
             from compute.resource_service import ComputeResourceService
+            from app.compute.services.workspace_defaults import ensure_workspace_default_resources
             from compassx.runtime.repository import SqlRuntimeRepository
+            from app.workspace.models import Workspace
 
             if is_system_db_available() and SystemSessionLocal is not None:
                 def _bootstrap() -> None:
@@ -198,15 +200,43 @@ async def lifespan(app: FastAPI):
                             )
                         service = ComputeResourceService(db, runtime_manager=runtime_manager)
                         service.reconcile_runtime_states()
-                        service.ensure_default_resource()
+
+                        # Ensure defaults across all existing workspaces
+                        workspaces = []
+                        if is_account_db_available() and AccountSessionLocal is not None:
+                            adb = AccountSessionLocal()
+                            try:
+                                workspaces = adb.query(Workspace).all()
+                            except Exception as ws_q_err:
+                                logger.debug("Could not query workspaces during resource bootstrap: %s", ws_q_err)
+                            finally:
+                                adb.close()
+
+                        if workspaces:
+                            for ws in workspaces:
+                                ensure_workspace_default_resources(
+                                    db,
+                                    workspace_id=ws.id,
+                                    created_by="system",
+                                    user_id=ws.created_by or "default",
+                                    runtime_manager=runtime_manager,
+                                )
+                        # Also ensure global/default scope
+                        ensure_workspace_default_resources(
+                            db,
+                            workspace_id=None,
+                            created_by="system",
+                            user_id="default",
+                            runtime_manager=runtime_manager,
+                        )
                     finally:
                         db.close()
 
                 await asyncio.get_event_loop().run_in_executor(None, _bootstrap)
         except Exception as exc:
-            logger.error("Default compute bootstrap failed (non-fatal): %s", exc)
+            logger.error("Default resource bootstrap failed (non-fatal): %s", exc)
 
-    asyncio.create_task(_bootstrap_default_compute())
+    asyncio.create_task(_bootstrap_default_resources())
 
     # ── User Manager v1: auto-create tables + seed ───────────────────────────
     try:
