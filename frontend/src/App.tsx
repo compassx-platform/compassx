@@ -61,6 +61,7 @@ import IngestionJobConfigsPage from '@/modules/ingestion/pages/JobConfigsPage';
 import IngestionJobConfigDetailPage from '@/modules/ingestion/pages/JobConfigDetailPage';
 import IngestionRunDetailPage from '@/modules/ingestion/pages/IngestionRunDetailPage';
 import LogoShowcasePage from '@/pages/LogoShowcasePage';
+import DesignSystemShowcasePage from '@/pages/DesignSystemShowcasePage';
 import { DEFAULT_APP_ID, isAppId, normalizeAppId, stripAppScope, getDefaultPathForApp } from '@/lib/appNavigation';
 import { useMyWorkspaces } from '@/lib/workspaceApi';
 
@@ -235,6 +236,7 @@ export default function App() {
               <Route path="/no-workspace-access" element={<UMSuspense><NoWorkspacePage /></UMSuspense>} />
               <Route path="/account"             element={<UMSuspense><AccountConsolePage /></UMSuspense>} />
               <Route path="/account/workspaces/:workspaceId/members" element={<UMSuspense><WorkspaceMembersPage /></UMSuspense>} />
+              <Route path="/design-system"        element={<DesignSystemShowcasePage />} />
               {/* Root: try new entry-point resolution, fall back to legacy workspace routing */}
               <Route path="/" element={<EntryPointGuard />} />
               <Route path="workspace/create" element={<CreateWorkspacePage />} />
@@ -246,6 +248,11 @@ export default function App() {
                   <Route path="data-catalog" element={<DataCatalog />} />
                   <Route path="data-catalog/:catalog" element={<DataCatalog />} />
                   <Route path="data-catalog/:catalog/:schema" element={<DataCatalog />} />
+                  <Route path="data-catalog/:catalog/:schema/table/:table" element={<DataCatalog />} />
+                  <Route path="data-catalog/:catalog/:schema/volume/:volume" element={<DataCatalog />} />
+                  <Route path="data-catalog/:catalog/:schema/notebook/:notebook" element={<DataCatalog />} />
+                  <Route path="data-catalog/:catalog/:schema/dashboard/:dashboard" element={<DataCatalog />} />
+                  <Route path="data-catalog/:catalog/:schema/tool/:tool" element={<DataCatalog />} />
                   <Route path="data-catalog/:catalog/:schema/:table" element={<DataCatalog />} />
                   <Route path="sql-warehouse" element={<Navigate to="editor" replace />} />
                   <Route path="sql-warehouse/:tab" element={<SqlWarehousePage />} />
@@ -299,6 +306,8 @@ export default function App() {
                   {/* CompassX Brand & Logo Visualizer */}
                   <Route path="logo" element={<LogoShowcasePage />} />
                   <Route path="brand-logo" element={<LogoShowcasePage />} />
+                  {/* CompassX Centralized Design System Showcase */}
+                  <Route path="design-system" element={<DesignSystemShowcasePage />} />
                   {/* Fallback for unhandled sub-routes inside an app */}
                   <Route path="*" element={<AppHomeRedirect />} />
                 </Route>

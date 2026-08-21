@@ -19,14 +19,7 @@ async function fetchJupyterConfig(): Promise<ServerConfig> {
   return res.data;
 }
 
-/** Returned by useKernel so Notebook.tsx can render the connect modal when needed. */
-export interface KernelHookResult {
-  showConnectModal: boolean;
-  dismissConnectModal: () => void;
-  connectToDefault: () => Promise<void>;
-}
-
-export function useKernel(notebookPath: string): KernelHookResult {
+export function useKernel(notebookPath: string) {
   const { data: config } = useQuery({
     queryKey: ['notebook-config'],
     queryFn: fetchJupyterConfig,
@@ -44,7 +37,6 @@ export function useKernel(notebookPath: string): KernelHookResult {
   const connectingRef = useRef(false);
   const autoConnectAttemptedRef = useRef<string | null>(null);
 
-  const [showConnectModal, setShowConnectModal] = useState(false);
   const [autoConnectDone, setAutoConnectDone] = useState(false);
 
   const selectedPodResourceId = selectedPod?.resource_id ?? null;
@@ -126,9 +118,7 @@ export function useKernel(notebookPath: string): KernelHookResult {
     if (!notebookComputeLoaded) return;
 
     if (!lastComputeInfo) {
-      // Loaded and no last compute — show connect modal
       setAutoConnectDone(true);
-      setShowConnectModal(true);
       return;
     }
 
@@ -168,7 +158,6 @@ export function useKernel(notebookPath: string): KernelHookResult {
         console.warn('[notebook] auto-reconnect failed:', err);
         setSelectedPod(null);
         setKernelStatus('unknown');
-        setShowConnectModal(true);
       }
     })();
   }, [config, lastComputeInfo, notebookComputeLoaded, selectedPodKernelId, autoConnectDone]);
@@ -176,7 +165,6 @@ export function useKernel(notebookPath: string): KernelHookResult {
   // Reset auto-connect state when notebook changes
   useEffect(() => {
     setAutoConnectDone(false);
-    setShowConnectModal(false);
     autoConnectAttemptedRef.current = null;
   }, [notebookPath]);
 
@@ -200,51 +188,6 @@ export function useKernel(notebookPath: string): KernelHookResult {
     };
     connectToKernel(targetKernelId, targetKernelName, resolvedConfig, pod);
   }, [config, selectedPodKernelId, selectedPodKernelName, kernelRef?.id]);
-
-  async function connectToDefault() {
-    const currentUserId = getPrincipalInfo()?.principal_id;
-    if (!currentUserId || !config) return;
-    setShowConnectModal(false);
-    try {
-      // Find the resource named "default"
-      const resources = await computeApi.listResources(currentUserId) as Array<{ id: string; name: string; runtime: string; phase?: string }>;
-      const defaultResource = resources.find((r) => r.name === 'default');
-      if (!defaultResource) {
-        console.error('[notebook] No compute resource named "default" found');
-        setShowConnectModal(true);
-        return;
-      }
-
-      const kernelResp = await computeApi.startResourceKernel(defaultResource.id, currentUserId) as { id: string; name: string };
-      const pod: SelectedPod = {
-        resource_id: defaultResource.id,
-        runtime_id: null,
-        runtime: defaultResource.runtime ?? 'duckdb',
-        kernel_id: kernelResp.id,
-        kernel_name: kernelResp.name || kernelResp.id,
-        state: 'starting',
-      };
-      setSelectedPod(pod);
-
-      // Save this as the last compute for this notebook
-      const notebookId = useNotebookStore.getState().notebookId;
-      if (notebookId) {
-        api.put(`/notebook/${notebookId}/compute`, {
-          resource_id: defaultResource.id,
-          kernel_name: kernelResp.name || kernelResp.id,
-        }).catch(() => {});
-      }
-    } catch (err) {
-      console.error('[notebook] connect to default failed:', err);
-      setKernelStatus('dead');
-    }
-  }
-
-  return {
-    showConnectModal,
-    dismissConnectModal: () => setShowConnectModal(false),
-    connectToDefault,
-  };
 }
 
 

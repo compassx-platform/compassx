@@ -1,12 +1,14 @@
-import { useEffect, useRef, useCallback } from 'react';
+import { useRef, useCallback, useMemo } from 'react';
 import { EditorView, keymap, lineNumbers, Decoration } from '@codemirror/view';
 import { EditorState, RangeSetBuilder } from '@codemirror/state';
 import { indentMore, indentLess } from '@codemirror/commands';
 import { python } from '@codemirror/lang-python';
-import { HighlightStyle, syntaxHighlighting } from '@codemirror/language';
-// @ts-ignore
+import { syntaxHighlighting } from '@codemirror/language';
+import { oneDarkHighlightStyle } from '@codemirror/theme-one-dark';
 import { tags } from '@lezer/highlight';
+import { HighlightStyle } from '@codemirror/language';
 import { ChevronDown, ChevronRight } from 'lucide-react';
+import ReactCodeMirror from '@uiw/react-codemirror';
 import { useNotebookStore, hasDatabaseSideEffects } from '../../store/notebookStore';
 
 type DiffLine = {
@@ -54,22 +56,108 @@ interface Props {
   cellIndex: number;
 }
 
+/* ── GitHub-style Python highlight (light theme) ── */
 const pythonHighlightStyle = HighlightStyle.define([
-  { tag: tags.keyword, color: 'var(--syntax-keyword)', fontWeight: 'bold' },
-  { tag: tags.comment, color: 'var(--syntax-comment)', fontStyle: 'italic' },
-  { tag: tags.string, color: 'var(--syntax-string)' },
-  { tag: tags.number, color: 'var(--syntax-number)' },
-  { tag: tags.bool, color: 'var(--syntax-bool)' },
-  { tag: tags.null, color: 'var(--syntax-bool)' },
-  { tag: tags.operator, color: 'var(--syntax-operator)' },
-  { tag: tags.function(tags.variableName), color: 'var(--syntax-function)' },
-  { tag: tags.definition(tags.variableName), color: 'var(--syntax-definition)' },
-  { tag: tags.className, color: 'var(--syntax-class)' },
-  { tag: tags.typeName, color: 'var(--syntax-class)' },
-  { tag: tags.standard(tags.variableName), color: 'var(--syntax-builtin)' },
-  { tag: tags.special(tags.variableName), color: 'var(--syntax-builtin)' },
-  { tag: tags.propertyName, color: 'var(--syntax-property)' },
-].filter(style => style.tag !== undefined));
+  // Keywords
+  { tag: tags.keyword, color: '#d73a49', fontWeight: '600' },
+  { tag: tags.controlKeyword, color: '#d73a49', fontWeight: '600' },
+  { tag: tags.operatorKeyword, color: '#d73a49', fontWeight: '600' },
+  { tag: tags.definitionKeyword, color: '#d73a49', fontWeight: '600' },
+  { tag: tags.moduleKeyword, color: '#d73a49', fontWeight: '600' },
+
+  // Functions & Methods
+  { tag: tags.function(tags.variableName), color: '#6f42c1', fontWeight: '500' },
+  { tag: tags.function(tags.definition(tags.variableName)), color: '#6f42c1', fontWeight: 'bold' },
+  { tag: tags.function(tags.propertyName), color: '#6f42c1', fontWeight: '500' },
+  { tag: tags.definition(tags.function(tags.variableName)), color: '#6f42c1', fontWeight: 'bold' },
+
+  // Classes & Types
+  { tag: tags.definition(tags.className), color: '#005cc5', fontWeight: 'bold' },
+  { tag: tags.className, color: '#005cc5', fontWeight: '600' },
+  { tag: tags.typeName, color: '#005cc5', fontWeight: '600' },
+
+  // Variables & Properties
+  { tag: tags.propertyName, color: '#005cc5' },
+  { tag: tags.self, color: '#e36209', fontStyle: 'italic' },
+  { tag: tags.special(tags.variableName), color: '#e36209', fontWeight: '500' },
+  { tag: tags.standard(tags.variableName), color: '#e36209', fontWeight: '500' },
+  { tag: tags.variableName, color: '#24292e' },
+
+  // Literals: Strings, Numbers, Booleans, None
+  { tag: tags.string, color: '#032f62' },
+  { tag: tags.special(tags.string), color: '#032f62', fontStyle: 'italic' },
+  { tag: tags.docString, color: '#032f62', fontStyle: 'italic' },
+  { tag: tags.escape, color: '#d73a49' },
+  { tag: tags.number, color: '#005cc5' },
+  { tag: tags.integer, color: '#005cc5' },
+  { tag: tags.float, color: '#005cc5' },
+  { tag: tags.bool, color: '#005cc5', fontWeight: 'bold' },
+  { tag: tags.null, color: '#005cc5', fontWeight: 'bold' },
+
+  // Comments
+  { tag: tags.comment, color: '#6a737d', fontStyle: 'italic' },
+  { tag: tags.lineComment, color: '#6a737d', fontStyle: 'italic' },
+  { tag: tags.blockComment, color: '#6a737d', fontStyle: 'italic' },
+
+  // Operators
+  { tag: tags.operator, color: '#d73a49' },
+  { tag: tags.arithmeticOperator, color: '#d73a49' },
+  { tag: tags.bitwiseOperator, color: '#d73a49' },
+  { tag: tags.compareOperator, color: '#d73a49' },
+  { tag: tags.updateOperator, color: '#d73a49' },
+  { tag: tags.definitionOperator, color: '#d73a49' },
+  { tag: tags.derefOperator, color: '#24292e' },
+
+  // Decorators & Meta
+  { tag: tags.meta, color: '#e36209', fontWeight: '500' },
+  { tag: tags.modifier, color: '#e36209', fontWeight: '500' },
+
+  // Punctuation & Brackets
+  { tag: tags.punctuation, color: '#24292e' },
+  { tag: tags.separator, color: '#24292e' },
+  { tag: tags.bracket, color: '#24292e' },
+  { tag: tags.paren, color: '#24292e' },
+  { tag: tags.squareBracket, color: '#24292e' },
+  { tag: tags.brace, color: '#24292e' },
+]);
+
+/* ── Custom light theme for the editor chrome ── */
+const editorTheme = EditorView.theme({
+  '&': {
+    fontSize: '13px',
+    fontFamily: "var(--cx-font-mono, 'Courier New', monospace)",
+    backgroundColor: 'transparent',
+  },
+  '&.cm-focused': {
+    outline: 'none',
+  },
+  '.cm-content': {
+    outline: 'none',
+    padding: '4px 0',
+  },
+  '.cm-cursor': {
+    borderLeftColor: '#0969da',
+    borderLeftWidth: '2px',
+  },
+  '.cm-gutters': {
+    backgroundColor: '#f8fafc',
+    borderRight: '1px solid #e2e8f0',
+    color: '#94a3b8',
+    userSelect: 'none',
+  },
+  '.cm-lineNumbers .cm-gutterElement': {
+    color: '#94a3b8',
+    minWidth: '2.5em',
+    padding: '0 8px 0 4px',
+    textAlign: 'right',
+  },
+  '&.cm-focused .cm-cursor': {
+    borderLeftColor: '#0969da',
+  },
+  '&.cm-focused .cm-selectionBackground, ::selection': {
+    backgroundColor: '#b3d7ff !important',
+  },
+});
 
 export default function CodeCell({ cellId, cellIndex }: Props) {
   const cell = useNotebookStore((s) => s.cells.find((c) => c.id === cellId));
@@ -81,8 +169,6 @@ export default function CodeCell({ cellId, cellIndex }: Props) {
   const toggleCollapseOutput = useNotebookStore((s) => s.toggleCollapseOutput);
   const { executeCell } = useExecuteCell();
 
-  const editorRef = useRef<HTMLDivElement>(null);
-  const viewRef = useRef<EditorView | null>(null);
   const isFocused = focusedCellId === cellId;
   const isCollapsed = collapsedOutputs.has(cellId);
 
@@ -91,16 +177,19 @@ export default function CodeCell({ cellId, cellIndex }: Props) {
     executeCell(cell.id, cell.source);
   }, [cell, executeCell]);
 
-  useEffect(() => {
-    if (!editorRef.current || viewRef.current) return;
+  const runCellRef = useRef(runCell);
+  runCellRef.current = runCell;
 
-    const isPending = cell?.cellStatus === 'pending';
-    const diffLines = isPending
-      ? buildDiff(cell?.committedSource || '', cell?.pendingSource || '')
-      : [];
-    const docText = isPending
-      ? diffLines.map(l => l.text).join('\n')
-      : (cell?.source ?? '');
+  const isPending = cell?.cellStatus === 'pending';
+
+  /* ── Build diff decorations for pending edits ── */
+  const { docText, diffExtensions } = useMemo(() => {
+    if (!isPending) {
+      return { docText: cell?.source ?? '', diffExtensions: [] as any[] };
+    }
+
+    const diffLines = buildDiff(cell?.committedSource || '', cell?.pendingSource || '');
+    const text = diffLines.map(l => l.text).join('\n');
 
     const lineNumbersMap: string[] = [];
     let proposedLineCount = 0;
@@ -125,117 +214,59 @@ export default function CodeCell({ cellId, cellIndex }: Props) {
     });
     const diffDecorations = builder.finish();
 
-    const extensions = [
-      python(),
-      syntaxHighlighting(pythonHighlightStyle),
-      ...(showLineNumbers
-        ? [
-            isPending
-              ? lineNumbers({ formatNumber: (lineNo) => lineNumbersMap[lineNo - 1] ?? '' })
-              : lineNumbers(),
-          ]
-        : []),
-      isPending ? EditorState.readOnly.of(true) : [],
-      isPending ? EditorView.decorations.of(diffDecorations) : [],
-      keymap.of([
-        { key: 'Tab', run: indentMore },
-        { key: 'Shift-Tab', run: indentLess },
-        { key: 'Shift-Enter', run: () => { runCellRef.current(); return true; } },
-      ]),
-      isPending
-        ? keymap.of([
-            {
-              key: 'Escape',
-              run: () => {
-                useNotebookStore.getState().rejectAgentCellEdit(cellId);
-                return true;
-              },
+    return {
+      docText: text,
+      diffExtensions: [
+        lineNumbers({ formatNumber: (lineNo: number) => lineNumbersMap[lineNo - 1] ?? '' }),
+        EditorState.readOnly.of(true),
+        EditorView.decorations.of(diffDecorations),
+        keymap.of([
+          {
+            key: 'Escape',
+            run: () => {
+              useNotebookStore.getState().rejectAgentCellEdit(cellId);
+              return true;
             },
-            {
-              key: 'Ctrl-Enter',
-              run: () => {
-                useNotebookStore.getState().acceptAgentCellEdit(cellId);
-                return true;
-              },
+          },
+          {
+            key: 'Ctrl-Enter',
+            run: () => {
+              useNotebookStore.getState().acceptAgentCellEdit(cellId);
+              return true;
             },
-          ])
-        : [],
-      EditorView.updateListener.of((update) => {
-        if (update.docChanged && !isPending) updateCellSource(cellId, update.state.doc.toString());
-        if (update.focusChanged && update.view.hasFocus) setFocusedCell(cellId);
-      }),
-      EditorView.theme({
-        '&': { 
-          fontSize: '13px', 
-          fontFamily: "var(--cx-font-mono, 'Courier New', monospace)",
-          color: 'var(--color-text)',
-        },
-        '&.cm-focused': {
-          outline: 'none',
-        },
-        '.cm-content': {
-          outline: 'none',
-        },
-        '.cm-cursor': {
-          borderLeftColor: 'var(--color-text)',
-        },
-        '.cm-gutters': { 
-          backgroundColor: 'var(--color-bg)', 
-          borderRight: '1px solid var(--color-border)',
-          color: 'var(--color-text-muted)',
-        },
-        '.cm-lineNumbers .cm-gutterElement': { 
-          color: 'var(--color-text-subtle)', 
-          minWidth: '3em', 
-          padding: '0 4px' 
-        },
-        '&.cm-focused .cm-cursor': {
-          borderLeftColor: 'var(--color-text)',
-        },
-        '&.cm-focused .cm-selectionBackground, ::selection': {
-          backgroundColor: 'var(--color-primary-bg)',
-        },
-        '.cm-activeLine': {
-          backgroundColor: 'var(--color-surface-hover)',
-        },
-        '.cm-activeLineGutter': {
-          backgroundColor: 'var(--color-surface-hover)',
-        },
-      }),
-    ];
+          },
+        ]),
+      ],
+    };
+  }, [isPending, cell?.source, cell?.committedSource, cell?.pendingSource, cellId]);
 
-    const view = new EditorView({
-      state: EditorState.create({ doc: docText, extensions }),
-      parent: editorRef.current,
-    });
+  /* ── Assemble extensions ── */
+  const extensions = useMemo(() => [
+    python(),
+    syntaxHighlighting(pythonHighlightStyle),
+    ...(showLineNumbers && !isPending ? [lineNumbers()] : []),
+    keymap.of([
+      { key: 'Tab', run: indentMore },
+      { key: 'Shift-Tab', run: indentLess },
+      { key: 'Shift-Enter', run: () => { runCellRef.current(); return true; } },
+    ]),
+    ...diffExtensions,
+  ], [showLineNumbers, isPending, diffExtensions]);
 
-    viewRef.current = view;
-    return () => { view.destroy(); viewRef.current = null; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cellId, cell?.cellStatus, cell?.committedSource, cell?.pendingSource, showLineNumbers]);
+  const handleChange = useCallback((value: string) => {
+    if (!isPending) {
+      updateCellSource(cellId, value);
+    }
+  }, [cellId, isPending, updateCellSource]);
 
-  useEffect(() => {
-    const view = viewRef.current;
-    if (!view || !cell) return;
-    const isPending = cell.cellStatus === 'pending';
-    if (isPending) return;
-    const currentDoc = view.state.doc.toString();
-    if (currentDoc === cell.source) return;
-    const selection = view.state.selection;
-    view.dispatch({
-      changes: { from: 0, to: currentDoc.length, insert: cell.source },
-      selection,
-    });
-  }, [cell?.source, cell?.cellStatus]);
-
-  // Keep runCell ref fresh
-  const runCellRef = useRef(runCell);
-  useEffect(() => { runCellRef.current = runCell; }, [runCell]);
+  const handleFocus = useCallback(() => {
+    setFocusedCell(cellId);
+  }, [cellId, setFocusedCell]);
 
   if (!cell) return null;
 
   const executionLabel = cell.isRunning ? '[*]' : cell.executionCount != null ? `[${cell.executionCount}]` : '[ ]';
-  
+
   // Format execution time
   const getExecutionTime = () => {
     if (!cell.executedAt) return null;
@@ -243,13 +274,13 @@ export default function CodeCell({ cellId, cellIndex }: Props) {
     const now = new Date();
     const diffMs = now.getTime() - date.getTime();
     const diffMins = Math.floor(diffMs / 60000);
-    
+
     if (diffMins < 1) return 'Just now';
     if (diffMins < 60) return `${diffMins}m ago`;
-    
+
     const diffHours = Math.floor(diffMins / 60);
     if (diffHours < 24) return `${diffHours}h ago`;
-    
+
     return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: '2-digit' });
   };
 
@@ -280,7 +311,24 @@ export default function CodeCell({ cellId, cellIndex }: Props) {
           )}
         <div style={{ display: isCellCollapsed ? 'none' : 'block' }}>
           <div className="notebook-editor-container" style={{ position: 'relative' }}>
-            <div ref={editorRef} className="notebook-cell-editor" />
+            <div className="notebook-cell-editor">
+              <ReactCodeMirror
+                value={docText}
+                extensions={extensions}
+                onChange={handleChange}
+                onFocus={handleFocus}
+                readOnly={isPending}
+                editable={!isPending}
+                theme={editorTheme}
+                basicSetup={{
+                  lineNumbers: false,
+                  foldGutter: false,
+                  highlightActiveLine: false,
+                  highlightActiveLineGutter: false,
+                  syntaxHighlighting: false,
+                }}
+              />
+            </div>
           {cell.cellStatus === 'pending' && (
             <div className="notebook-inline-diff-actions">
               <button

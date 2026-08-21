@@ -32,6 +32,10 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   Wrench,
+  BookOpen,
+  LayoutDashboard,
+  Layers,
+  HardDrive,
 } from 'lucide-react';
 import api from '@/lib/api';
 import { useScopedNavigate } from '@/lib/appNavigation';
@@ -387,24 +391,66 @@ export default function DataCatalog() {
   const qc = useQueryClient();
   const queryClient = qc;
   const navigate = useScopedNavigate();
-  const { catalog: urlCatalog, schema: urlSchema, table: urlAsset } = useParams<{ catalog?: string; schema?: string; table?: string }>();
+  const {
+    catalog: urlCatalog,
+    schema: urlSchema,
+    table: urlTable,
+    volume: urlVolume,
+    notebook: urlNotebook,
+    dashboard: urlDashboard,
+    tool: urlTool,
+  } = useParams<{
+    catalog?: string;
+    schema?: string;
+    table?: string;
+    volume?: string;
+    notebook?: string;
+    dashboard?: string;
+    tool?: string;
+  }>();
   const [searchParams] = useSearchParams();
 
   // Derive initial selection from URL params & query string
   const initialSelection = useMemo<Selection>(() => {
-    if (urlCatalog && urlSchema && urlAsset) {
-      if (urlAsset.endsWith('.ipynb') || searchParams.get('kind') === 'notebook') {
-        const nbName = urlAsset.endsWith('.ipynb') ? urlAsset.slice(0, -6) : urlAsset;
-        const blob_path = searchParams.get('path') || `${urlCatalog}/${urlSchema}/${urlAsset.endsWith('.ipynb') ? urlAsset : `${urlAsset}.ipynb`}`;
+    if (urlCatalog && urlSchema) {
+      if (urlNotebook) {
+        const decodedNb = decodeURIComponent(urlNotebook);
+        const nbName = decodedNb.endsWith('.ipynb') ? decodedNb.slice(0, -6) : decodedNb;
+        const blob_path = searchParams.get('path') || `${urlCatalog}/${urlSchema}/${nbName}.ipynb`;
         return { kind: 'notebook', catalog: urlCatalog, schema: urlSchema, notebook: nbName, blob_path };
       }
-      if (searchParams.get('kind') === 'dashboard') {
-        return { kind: 'dashboard', catalog: urlCatalog, schema: urlSchema, dashboard: urlAsset };
+      if (urlDashboard) {
+        const decoded = decodeURIComponent(urlDashboard);
+        const dashboardId = searchParams.get('dashboard_id') || undefined;
+        return { kind: 'dashboard', catalog: urlCatalog, schema: urlSchema, dashboard: decoded, dashboard_id: dashboardId };
       }
-      if (searchParams.get('kind') === 'volume') {
-        return { kind: 'volume', catalog: urlCatalog, schema: urlSchema, volume: urlAsset };
+      if (urlVolume) {
+        const decoded = decodeURIComponent(urlVolume);
+        return { kind: 'volume', catalog: urlCatalog, schema: urlSchema, volume: decoded };
       }
-      return { kind: 'table', catalog: urlCatalog, schema: urlSchema, table: urlAsset };
+      if (urlTool) {
+        const decoded = decodeURIComponent(urlTool);
+        const toolId = searchParams.get('tool_id') || undefined;
+        return { kind: 'tool', catalog: urlCatalog, schema: urlSchema, tool: decoded, tool_id: toolId };
+      }
+      if (urlTable) {
+        const decoded = decodeURIComponent(urlTable);
+        if (decoded.endsWith('.ipynb') || searchParams.get('kind') === 'notebook') {
+          const nbName = decoded.endsWith('.ipynb') ? decoded.slice(0, -6) : decoded;
+          const blob_path = searchParams.get('path') || `${urlCatalog}/${urlSchema}/${nbName}.ipynb`;
+          return { kind: 'notebook', catalog: urlCatalog, schema: urlSchema, notebook: nbName, blob_path };
+        }
+        if (searchParams.get('kind') === 'dashboard') {
+          return { kind: 'dashboard', catalog: urlCatalog, schema: urlSchema, dashboard: decoded, dashboard_id: searchParams.get('dashboard_id') || undefined };
+        }
+        if (searchParams.get('kind') === 'volume') {
+          return { kind: 'volume', catalog: urlCatalog, schema: urlSchema, volume: decoded };
+        }
+        if (searchParams.get('kind') === 'tool') {
+          return { kind: 'tool', catalog: urlCatalog, schema: urlSchema, tool: decoded, tool_id: searchParams.get('tool_id') || undefined };
+        }
+        return { kind: 'table', catalog: urlCatalog, schema: urlSchema, table: decoded };
+      }
     }
     if (searchParams.get('path')) {
       const queryPath = searchParams.get('path')!;
@@ -421,7 +467,7 @@ export default function DataCatalog() {
     if (urlCatalog && urlSchema) return { kind: 'schema', catalog: urlCatalog, schema: urlSchema };
     if (urlCatalog) return { kind: 'catalog', catalog: urlCatalog };
     return { kind: 'root' };
-  }, [urlCatalog, urlSchema, urlAsset, searchParams]);
+  }, [urlCatalog, urlSchema, urlTable, urlVolume, urlNotebook, urlDashboard, urlTool, searchParams]);
 
   // Selection and Search States
   const [selection, setSelection] = useState<Selection>(initialSelection);
@@ -434,7 +480,26 @@ export default function DataCatalog() {
   const [expandedSchemas, setExpandedSchemas] = useState<Record<string, boolean>>(
     urlCatalog && urlSchema ? { [`${urlCatalog}.${urlSchema}`]: true } : {}
   );
-  const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
+  const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>(() => {
+    if (!urlCatalog || !urlSchema) return {};
+    const base = `${urlCatalog}.${urlSchema}`;
+    if (urlNotebook || searchParams.get('kind') === 'notebook' || urlTable?.endsWith('.ipynb')) {
+      return { [`${base}.notebooks`]: true };
+    }
+    if (urlVolume || searchParams.get('kind') === 'volume') {
+      return { [`${base}.volumes`]: true };
+    }
+    if (urlDashboard || searchParams.get('kind') === 'dashboard') {
+      return { [`${base}.dashboards`]: true };
+    }
+    if (urlTool || searchParams.get('kind') === 'tool') {
+      return { [`${base}.tools`]: true };
+    }
+    if (urlTable) {
+      return { [`${base}.tables`]: true };
+    }
+    return {};
+  });
 
   // Tree item caches
   const [schemaTablesCache, setSchemaTablesCache] = useState<Record<string, CatalogTable[]>>({});
@@ -493,7 +558,13 @@ export default function DataCatalog() {
   const [editingDbOwner, setEditingDbOwner] = useState<string | null>(null);
 
   // Schema overview subtab state
-  const [schemaSubTab, setSchemaSubTab] = useState<'tables' | 'volumes' | 'notebooks' | 'dashboards' | 'tools'>('tables');
+  const [schemaSubTab, setSchemaSubTab] = useState<'tables' | 'volumes' | 'notebooks' | 'dashboards' | 'tools'>(() => {
+    if (urlNotebook || searchParams.get('kind') === 'notebook' || urlTable?.endsWith('.ipynb')) return 'notebooks';
+    if (urlVolume || searchParams.get('kind') === 'volume') return 'volumes';
+    if (urlDashboard || searchParams.get('kind') === 'dashboard') return 'dashboards';
+    if (urlTool || searchParams.get('kind') === 'tool') return 'tools';
+    return 'tables';
+  });
   const [selectedToolVersionId, setSelectedToolVersionId] = useState<string | null>(null);
 
   // Create Table state
@@ -690,8 +761,22 @@ export default function DataCatalog() {
     if (mainTabId === panelId) {
       setMainTabId('details');
       setSelection(detailsSelection);
+      if (detailsSelection.kind === 'catalog') {
+        navigate(`/data-catalog/${encodeURIComponent(detailsSelection.catalog)}`);
+      } else if (detailsSelection.kind === 'schema') {
+        navigate(`/data-catalog/${encodeURIComponent(detailsSelection.catalog)}/${encodeURIComponent(detailsSelection.schema)}`);
+      } else if (detailsSelection.kind === 'table') {
+        navigate(`/data-catalog/${encodeURIComponent(detailsSelection.catalog)}/${encodeURIComponent(detailsSelection.schema)}/table/${encodeURIComponent(detailsSelection.table)}`);
+      } else if (detailsSelection.kind === 'volume') {
+        navigate(`/data-catalog/${encodeURIComponent(detailsSelection.catalog)}/${encodeURIComponent(detailsSelection.schema)}/volume/${encodeURIComponent(detailsSelection.volume)}`);
+      } else if (detailsSelection.kind === 'tool') {
+        const q = (detailsSelection as any).tool_id ? `?tool_id=${encodeURIComponent((detailsSelection as any).tool_id)}` : '';
+        navigate(`/data-catalog/${encodeURIComponent(detailsSelection.catalog)}/${encodeURIComponent(detailsSelection.schema)}/tool/${encodeURIComponent((detailsSelection as any).tool)}${q}`);
+      } else {
+        navigate('/data-catalog');
+      }
     }
-  }, [detailsSelection, mainTabId]);
+  }, [detailsSelection, mainTabId, navigate]);
 
   // Navigate selection + push RESTful URL / open right-side tabs
   const selectAndNavigate = useCallback((next: Selection) => {
@@ -705,9 +790,11 @@ export default function DataCatalog() {
       syncOpenPanel(next);
       if (next.kind === 'notebook') {
         const path = next.blob_path ? `?path=${encodeURIComponent(next.blob_path)}` : '';
-        navigate(`/data-catalog/${encodeURIComponent(next.catalog)}/${encodeURIComponent(next.schema)}/${encodeURIComponent(next.notebook)}.ipynb${path}`);
+        const nbName = next.notebook.endsWith('.ipynb') ? next.notebook.slice(0, -6) : next.notebook;
+        navigate(`/data-catalog/${encodeURIComponent(next.catalog)}/${encodeURIComponent(next.schema)}/notebook/${encodeURIComponent(nbName)}${path}`);
       } else if (next.kind === 'dashboard') {
-        navigate(`/data-catalog/${encodeURIComponent(next.catalog)}/${encodeURIComponent(next.schema)}/${encodeURIComponent(next.dashboard)}?kind=dashboard`);
+        const q = next.dashboard_id ? `?dashboard_id=${encodeURIComponent(next.dashboard_id)}` : '';
+        navigate(`/data-catalog/${encodeURIComponent(next.catalog)}/${encodeURIComponent(next.schema)}/dashboard/${encodeURIComponent(next.dashboard)}${q}`);
       }
       return;
     }
@@ -718,9 +805,12 @@ export default function DataCatalog() {
     } else if (next.kind === 'schema') {
       navigate(`/data-catalog/${encodeURIComponent(next.catalog)}/${encodeURIComponent(next.schema)}`);
     } else if (next.kind === 'table') {
-      navigate(`/data-catalog/${encodeURIComponent(next.catalog)}/${encodeURIComponent(next.schema)}/${encodeURIComponent(next.table)}`);
+      navigate(`/data-catalog/${encodeURIComponent(next.catalog)}/${encodeURIComponent(next.schema)}/table/${encodeURIComponent(next.table)}`);
     } else if (next.kind === 'volume') {
-      navigate(`/data-catalog/${encodeURIComponent(next.catalog)}/${encodeURIComponent(next.schema)}/${encodeURIComponent(next.volume)}?kind=volume`);
+      navigate(`/data-catalog/${encodeURIComponent(next.catalog)}/${encodeURIComponent(next.schema)}/volume/${encodeURIComponent(next.volume)}`);
+    } else if (next.kind === 'tool') {
+      const q = (next as any).tool_id ? `?tool_id=${encodeURIComponent((next as any).tool_id)}` : '';
+      navigate(`/data-catalog/${encodeURIComponent(next.catalog)}/${encodeURIComponent(next.schema)}/tool/${encodeURIComponent((next as any).tool)}${q}`);
     }
   }, [navigate, setDetailsPanelSelection, syncOpenPanel]);
 
@@ -2087,7 +2177,13 @@ export default function DataCatalog() {
                           type="button"
                           onClick={() => {
                             setShowCreateDropdown(false);
-                            setNbForm({ name: '', blob_path: '', owner: 'catalog-admin', comment: '' });
+                            const schemaKey = selection?.kind === 'schema' ? `${selection.catalog}.${selection.schema}` : '';
+                            const existing = (schemaKey && schemaNotebooksCache[schemaKey]) || [];
+                            let idx = 1;
+                            while (existing.some(n => n.name.toLowerCase() === `untitled_notebook_${idx}` || n.name.toLowerCase() === `untitled_notebook_${idx}.ipynb`)) {
+                              idx++;
+                            }
+                            setNbForm({ name: `untitled_notebook_${idx}`, blob_path: '', owner: 'catalog-admin', comment: '' });
                             setShowNbModal(true);
                           }}
                         >
@@ -2098,7 +2194,13 @@ export default function DataCatalog() {
                           type="button"
                           onClick={() => {
                             setShowCreateDropdown(false);
-                            setDbForm({ name: '', comment: '' });
+                            const schemaKey = selection?.kind === 'schema' ? `${selection.catalog}.${selection.schema}` : '';
+                            const existing = (schemaKey && schemaDashboardsCache[schemaKey]) || [];
+                            let idx = 1;
+                            while (existing.some(d => d.name.toLowerCase() === `untitled_dashboard_${idx}`)) {
+                              idx++;
+                            }
+                            setDbForm({ name: `untitled_dashboard_${idx}`, comment: '' });
                             setShowDashboardModal(true);
                           }}
                         >
@@ -5824,7 +5926,7 @@ export default function DataCatalog() {
 
         {/* Right Main Content area */}
         <main className="uc-main" style={{ display: 'flex', flexDirection: 'column', minHeight: 0 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 12px 0', borderBottom: '1px solid var(--color-border)', flexShrink: 0, overflowX: 'auto' }}>
+          <div className="uc-main-tab-strip">
             {isSidebarCollapsed && (
               <button
                 type="button"
@@ -5841,73 +5943,71 @@ export default function DataCatalog() {
               onClick={() => {
                 setMainTabId('details');
                 setSelection(detailsSelection);
+                if (detailsSelection.kind === 'catalog') {
+                  navigate(`/data-catalog/${encodeURIComponent(detailsSelection.catalog)}`);
+                } else if (detailsSelection.kind === 'schema') {
+                  navigate(`/data-catalog/${encodeURIComponent(detailsSelection.catalog)}/${encodeURIComponent(detailsSelection.schema)}`);
+                } else if (detailsSelection.kind === 'table') {
+                  navigate(`/data-catalog/${encodeURIComponent(detailsSelection.catalog)}/${encodeURIComponent(detailsSelection.schema)}/table/${encodeURIComponent(detailsSelection.table)}`);
+                } else if (detailsSelection.kind === 'volume') {
+                  navigate(`/data-catalog/${encodeURIComponent(detailsSelection.catalog)}/${encodeURIComponent(detailsSelection.schema)}/volume/${encodeURIComponent(detailsSelection.volume)}`);
+                } else if (detailsSelection.kind === 'tool') {
+                  const q = (detailsSelection as any).tool_id ? `?tool_id=${encodeURIComponent((detailsSelection as any).tool_id)}` : '';
+                  navigate(`/data-catalog/${encodeURIComponent(detailsSelection.catalog)}/${encodeURIComponent(detailsSelection.schema)}/tool/${encodeURIComponent((detailsSelection as any).tool)}${q}`);
+                } else {
+                  navigate('/data-catalog');
+                }
               }}
-              className={cx('uc-tab', mainTabId === 'details' && 'is-active')}
-              style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: 6,
-                padding: '8px 12px',
-                border: 'none',
-                borderBottom: mainTabId === 'details' ? '2px solid var(--color-primary)' : '2px solid transparent',
-                background: 'transparent',
-                color: mainTabId === 'details' ? 'var(--color-text)' : 'var(--color-text-muted)',
-                fontSize: 13,
-                fontWeight: mainTabId === 'details' ? 600 : 500,
-                cursor: 'pointer',
-                whiteSpace: 'nowrap',
-              }}
+              className={cx('uc-main-tab', mainTabId === 'details' && 'is-active')}
+              title="Details overview"
             >
-              Details
+              <Layers size={13} color={mainTabId === 'details' ? '#2563eb' : '#64748b'} />
+              <span className="uc-main-tab-title">Details</span>
             </button>
 
-            {openPanels.map((panel) => (
-              <div
-                key={panel.id}
-                style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: 4,
-                  padding: '6px 8px 6px 12px',
-                  borderBottom: mainTabId === panel.id ? '2px solid var(--color-primary)' : '2px solid transparent',
-                  background: 'transparent',
-                  color: mainTabId === panel.id ? 'var(--color-text)' : 'var(--color-text-muted)',
-                  fontSize: 13,
-                  fontWeight: mainTabId === panel.id ? 600 : 500,
-                  whiteSpace: 'nowrap',
-                  cursor: 'pointer',
-                }}
-                onClick={() => {
-                  setMainTabId(panel.id);
-                  setSelection(panel.selection);
-                }}
-              >
-                <span>{panel.label}</span>
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    closeOpenPanel(panel.id);
+            {openPanels.map((panel) => {
+              const isNotebook = panel.selection.kind === 'notebook';
+              const isDashboard = panel.selection.kind === 'dashboard';
+              const isVolume = panel.selection.kind === 'volume';
+              const isActive = mainTabId === panel.id;
+
+              return (
+                <div
+                  key={panel.id}
+                  className={cx('uc-main-tab', isActive && 'is-active')}
+                  onClick={() => {
+                    setMainTabId(panel.id);
+                    setSelection(panel.selection);
+                    if (panel.selection.kind === 'notebook') {
+                      const path = panel.selection.blob_path ? `?path=${encodeURIComponent(panel.selection.blob_path)}` : '';
+                      const nbName = panel.selection.notebook.endsWith('.ipynb') ? panel.selection.notebook.slice(0, -6) : panel.selection.notebook;
+                      navigate(`/data-catalog/${encodeURIComponent(panel.selection.catalog)}/${encodeURIComponent(panel.selection.schema)}/notebook/${encodeURIComponent(nbName)}${path}`);
+                    } else if (panel.selection.kind === 'dashboard') {
+                      const q = panel.selection.dashboard_id ? `?dashboard_id=${encodeURIComponent(panel.selection.dashboard_id)}` : '';
+                      navigate(`/data-catalog/${encodeURIComponent(panel.selection.catalog)}/${encodeURIComponent(panel.selection.schema)}/dashboard/${encodeURIComponent(panel.selection.dashboard)}${q}`);
+                    }
                   }}
-                  style={{
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    width: 18,
-                    height: 18,
-                    border: 'none',
-                    borderRadius: 4,
-                    background: 'transparent',
-                    color: 'inherit',
-                    cursor: 'pointer',
-                    opacity: 0.75,
-                  }}
-                  title="Close tab"
+                  title={panel.label}
                 >
-                  <X size={12} />
-                </button>
-              </div>
-            ))}
+                  {isNotebook && <BookOpen size={13} color={isActive ? '#ea580c' : '#64748b'} />}
+                  {isDashboard && <LayoutDashboard size={13} color={isActive ? '#7c3aed' : '#64748b'} />}
+                  {isVolume && <HardDrive size={13} color={isActive ? '#0284c7' : '#64748b'} />}
+                  {!isNotebook && !isDashboard && !isVolume && <FileCode size={13} color={isActive ? '#2563eb' : '#64748b'} />}
+                  <span className="uc-main-tab-title">{panel.label}</span>
+                  <button
+                    type="button"
+                    className="uc-main-tab-close"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      closeOpenPanel(panel.id);
+                    }}
+                    title="Close tab"
+                  >
+                    <X size={12} />
+                  </button>
+                </div>
+              );
+            })}
           </div>
           <div style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
             {renderMainContent()}

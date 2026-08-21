@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useEffect, useCallback } from 'react';
 import {
   DndContext,
   closestCenter,
@@ -22,9 +22,6 @@ import { useKernel } from '../hooks/useKernel';
 import NotebookToolbar from './Toolbar/NotebookToolbar';
 import CodeCell from './Cell/CodeCell';
 import MarkdownCell from './Cell/MarkdownCell';
-import CommandPalette from './CommandPalette';
-import VariableExplorer from './VariableExplorer';
-import ConnectComputeModal from './ConnectComputeModal';
 
 interface Props {
   notebookPath?: string;
@@ -82,7 +79,7 @@ function SortableCell({ id, children }: { id: string; children: React.ReactNode 
 
 // ── Main Notebook ──────────────────────────────────────────────────────────
 export default function Notebook({ notebookPath = 'notebooks/untitled.ipynb', isLoading = false, onDelete }: Props) {
-  const { showConnectModal, dismissConnectModal, connectToDefault } = useKernel(notebookPath);
+  useKernel(notebookPath);
 
   const cells = useNotebookStore((s) => s.cells);
   const addCell = useNotebookStore((s) => s.addCell);
@@ -96,21 +93,6 @@ export default function Notebook({ notebookPath = 'notebooks/untitled.ipynb', is
       addCell('code');
     }
   }, [isLoading, cells.length, addCell]);
-
-  const [showCommandPalette, setShowCommandPalette] = useState(false);
-  const [showVariableExplorer, setShowVariableExplorer] = useState(false);
-
-  // Cmd+Shift+P → command palette
-  useEffect(() => {
-    function onKey(e: KeyboardEvent) {
-      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === 'p') {
-        e.preventDefault();
-        setShowCommandPalette((v) => !v);
-      }
-    }
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, []);
 
   // Arrow key navigation between cells (when editor not focused)
   const navigateCell = useCallback(
@@ -210,42 +192,7 @@ export default function Notebook({ notebookPath = 'notebooks/untitled.ipynb', is
             )}
           </div>
         </div>
-
-        {showVariableExplorer && (
-          <VariableExplorer onClose={() => setShowVariableExplorer(false)} />
-        )}
       </div>
-
-      <div className="notebook-footer">
-        <button
-          className="notebook-toolbar-btn"
-          onClick={() => setShowVariableExplorer((v) => !v)}
-          title="Variable Explorer"
-        >
-          {'{x}'} Variables
-        </button>
-        <span className="notebook-shortcut-hint">Cmd+Shift+P — command palette</span>
-      </div>
-
-      {showCommandPalette && (
-        <CommandPalette onClose={() => setShowCommandPalette(false)} />
-      )}
-
-      {showConnectModal && (
-        <ConnectComputeModal
-          onConnectDefault={connectToDefault}
-          onSelectCompute={() => {
-            dismissConnectModal();
-            // Focus the PodSelector so user can pick a compute
-            const selector = document.querySelector<HTMLSelectElement>('.notebook-pod-select');
-            if (selector) {
-              selector.focus();
-              selector.click();
-            }
-          }}
-          onDismiss={dismissConnectModal}
-        />
-      )}
     </div>
   );
 }

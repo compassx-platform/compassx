@@ -13,17 +13,23 @@ interface Props {
 export default function MarkdownCell({ cellId, cellIndex }: Props) {
   const cell = useNotebookStore((s) => s.cells.find((c) => c.id === cellId));
   const updateCellSource = useNotebookStore((s) => s.updateCellSource);
+  const setFocusedCell = useNotebookStore((s) => s.setFocusedCell);
+  const focusedCellId = useNotebookStore((s) => s.focusedCellId);
   const [editing, setEditing] = useState(!cell?.source);
 
   const startEdit = useCallback(() => setEditing(true), []);
   const stopEdit = useCallback(() => setEditing(false), []);
 
+  const isFocused = focusedCellId === cellId;
   const isCellCollapsed = useNotebookStore((s) => s.collapsedCells.has(cellId));
 
   if (!cell) return null;
 
   return (
-    <div className="notebook-cell notebook-cell-markdown">
+    <div
+      className={`notebook-cell notebook-cell-markdown ${isFocused ? 'is-focused' : ''}`}
+      onClick={() => setFocusedCell(cellId)}
+    >
       <CellToolbar cellId={cellId} cellIndex={cellIndex} isRunning={false} onRun={stopEdit} />
       <div className="notebook-cell-body">
         {isCellCollapsed && (

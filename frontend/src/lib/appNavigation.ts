@@ -66,8 +66,6 @@ const PLATFORM_NAV_GROUPS: NavGroup[] = [
     items: [
       { to: '/compute', icon: Zap, label: 'Compute', end: false },
       { to: '/monitoring', icon: Activity, label: 'Monitoring', end: false },
-      { to: '/icons', icon: Sparkles, label: 'Custom Icons', end: false },
-      { to: '/logo', icon: Sparkles, label: 'Logo Showcase', end: false },
     ],
   },
 ];
@@ -96,7 +94,7 @@ export const APP_DEFINITIONS: Record<AppId, AppDefinition> = {
     defaultPath: '/home',
     navGroups: PLATFORM_NAV_GROUPS,
     navItems: PLATFORM_NAV_GROUPS.flatMap((g) => g.items),
-    allowedPrefixes: ['/home', '/jobs', '/notebooks', '/agents', '/data-catalog', '/sql-warehouse', '/connections', '/ingestion', '/compute', '/monitoring', '/dashboards', '/apps_development', '/icons', '/logo', '/brand-logo'],
+    allowedPrefixes: ['/home', '/jobs', '/notebooks', '/agents', '/data-catalog', '/sql-warehouse', '/connections', '/ingestion', '/compute', '/monitoring', '/dashboards', '/apps_development', '/icons', '/logo', '/brand-logo', '/design-system'],
   },
   apps: {
     id: 'apps',

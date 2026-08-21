@@ -8,7 +8,6 @@ import {
   ChevronDown,
   PanelLeftClose,
   PanelLeftOpen,
-  BookOpen,
   Sparkles,
   CircleUserRound,
   Settings,
@@ -19,6 +18,8 @@ import {
   Pencil,
   Trash2,
   LayoutDashboard,
+  Palette,
+  Image,
 } from 'lucide-react';
 import { CompassXLogo } from '@/components/common/CompassXLogo';
 import AppNovaSidebar from '@/modules/nova/components/AppNovaSidebar';
@@ -47,8 +48,10 @@ import { useMe, useMyWorkspaces } from '@/lib/userManagerApi';
 
 
 const EXPERIMENTAL_NAV: NavItem[] = [
-  { to: '/data-catalog', icon: BookOpen, label: 'Data', end: false },
   { to: '/documents', icon: FileText, label: 'Documents', end: false },
+  { to: '/icons', icon: Sparkles, label: 'Custom Icons', end: false },
+  { to: '/logo', icon: Image, label: 'Logo Showcase', end: false },
+  { to: '/design-system', icon: Palette, label: 'Design System', end: false },
 ];
 
 export default function AppShell() {
@@ -193,6 +196,7 @@ export default function AppShell() {
     if (scopedPathname.startsWith('/ingestion/runs/')) return 'Ingestion Run';
     if (scopedPathname.startsWith('/icons')) return 'Custom Icons';
     if (scopedPathname.startsWith('/logo') || scopedPathname.startsWith('/brand-logo')) return 'Logo Showcase';
+    if (scopedPathname.startsWith('/design-system')) return 'Design System';
     return 'CompassX';
 
   }, [scopedPathname]);
