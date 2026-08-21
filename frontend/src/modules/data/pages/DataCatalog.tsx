@@ -36,6 +36,8 @@ import {
   LayoutDashboard,
   Layers,
   HardDrive,
+  GitCommit,
+  History,
 } from 'lucide-react';
 import api from '@/lib/api';
 import { useScopedNavigate } from '@/lib/appNavigation';
@@ -45,6 +47,7 @@ import { Table } from '@/components/common/Table';
 import NotebookPage from '@/modules/notebooks/pages/NotebookPage';
 import DashboardEditorPage from '@/modules/dashboards/pages/DashboardEditorPage';
 import { useNotebookStore } from '@/modules/notebooks/store/notebookStore';
+import { CatalogQueryEditorTab, CatalogQueryVersion } from '../components/CatalogQueryEditorTab';
 
 const CATALOG_TABS_STORAGE_KEY = 'compassx_catalog_open_tabs_v1';
 
@@ -58,6 +61,7 @@ type Selection =
   | { kind: 'notebook'; catalog: string; schema: string; notebook: string; blob_path?: string }
   | { kind: 'dashboard'; catalog: string; schema: string; dashboard: string; dashboard_id?: string }
   | { kind: 'tool'; catalog: string; schema: string; tool: string; tool_id?: string }
+  | { kind: 'query'; catalog: string; schema: string; query: string }
   | null;
 
 type DBConnection = { 
@@ -278,7 +282,24 @@ type CatalogForm = {
   storageBackend: string;
 };
 
-type CatalogAssetKind = 'table' | 'volume' | 'notebook' | 'dashboard' | 'tool';
+type CatalogQuery = {
+  id: string;
+  catalog_name: string;
+  schema_name: string;
+  name: string;
+  full_name: string;
+  sql_text: string;
+  owner: string;
+  description?: string | null;
+  current_version?: number;
+  versions?: CatalogQueryVersion[];
+  created_at: string;
+  updated_at: string;
+  created_by: string;
+  updated_by: string;
+};
+
+type CatalogAssetKind = 'table' | 'volume' | 'notebook' | 'dashboard' | 'tool' | 'query';
 
 type PendingCatalogAsset = {
   id: string;
@@ -319,6 +340,16 @@ const catalogApi = {
   getDashboard: (catalog: string, schema_name: string, dashboard: string) => api.get<CatalogDashboard>(`/catalog/catalogs/${encodeURIComponent(catalog)}/schemas/${encodeURIComponent(schema_name)}/dashboards/${encodeURIComponent(dashboard)}`).then((r) => r.data),
   updateDashboard: (catalog: string, schema_name: string, dashboard: string, body: { name?: string; comment?: string; owner?: string }) => api.patch<CatalogDashboard>(`/catalog/catalogs/${encodeURIComponent(catalog)}/schemas/${encodeURIComponent(schema_name)}/dashboards/${encodeURIComponent(dashboard)}`, body).then((r) => r.data),
   moveDashboard: (catalog: string, schema: string, dashboard: string, body: { target_catalog: string; target_schema: string; new_name?: string }) => api.post<CatalogDashboard>(`/catalog/catalogs/${encodeURIComponent(catalog)}/schemas/${encodeURIComponent(schema)}/dashboards/${encodeURIComponent(dashboard)}/move`, body).then((r) => r.data),
+  deleteDashboard: (catalog: string, schema: string, dashboard: string) => api.delete(`/catalog/catalogs/${encodeURIComponent(catalog)}/schemas/${encodeURIComponent(schema)}/dashboards/${encodeURIComponent(dashboard)}`).then((r) => r.data),
+  listQueries: (catalog: string, schema_name: string) => api.get<CatalogQuery[]>(`/catalog/catalogs/${encodeURIComponent(catalog)}/schemas/${encodeURIComponent(schema_name)}/queries`).then((r) => r.data),
+  createQuery: (catalog: string, schema_name: string, body: { name: string; sql_text: string; description?: string }) => api.post<CatalogQuery>(`/catalog/catalogs/${encodeURIComponent(catalog)}/schemas/${encodeURIComponent(schema_name)}/queries`, body).then((r) => r.data),
+  getQuery: (catalog: string, schema_name: string, query: string) => api.get<CatalogQuery>(`/catalog/catalogs/${encodeURIComponent(catalog)}/schemas/${encodeURIComponent(schema_name)}/queries/${encodeURIComponent(query)}`).then((r) => r.data),
+  updateQuery: (catalog: string, schema_name: string, query: string, body: { name?: string; sql_text?: string; description?: string; owner?: string; change_summary?: string }) => api.patch<CatalogQuery>(`/catalog/catalogs/${encodeURIComponent(catalog)}/schemas/${encodeURIComponent(schema_name)}/queries/${encodeURIComponent(query)}`, body).then((r) => r.data),
+  deleteQuery: (catalog: string, schema: string, query: string) => api.delete(`/catalog/catalogs/${encodeURIComponent(catalog)}/schemas/${encodeURIComponent(schema)}/queries/${encodeURIComponent(query)}`),
+  getQueryVersions: (catalog: string, schema_name: string, query: string) => api.get<CatalogQueryVersion[]>(`/catalog/catalogs/${encodeURIComponent(catalog)}/schemas/${encodeURIComponent(schema_name)}/queries/${encodeURIComponent(query)}/versions`).then((r) => r.data),
+  createQueryVersion: (catalog: string, schema_name: string, query: string, body: { sql_text: string; description?: string; change_summary?: string }) => api.post<CatalogQueryVersion>(`/catalog/catalogs/${encodeURIComponent(catalog)}/schemas/${encodeURIComponent(schema_name)}/queries/${encodeURIComponent(query)}/versions`, body).then((r) => r.data),
+  getQueryVersion: (catalog: string, schema_name: string, query: string, version: number) => api.get<CatalogQueryVersion>(`/catalog/catalogs/${encodeURIComponent(catalog)}/schemas/${encodeURIComponent(schema_name)}/queries/${encodeURIComponent(query)}/versions/${version}`).then((r) => r.data),
+  restoreQueryVersion: (catalog: string, schema_name: string, query: string, version: number) => api.post<CatalogQuery>(`/catalog/catalogs/${encodeURIComponent(catalog)}/schemas/${encodeURIComponent(schema_name)}/queries/${encodeURIComponent(query)}/versions/${version}/restore`).then((r) => r.data),
   listTools: (catalog?: string, schema_name?: string) => api.get<CatalogTool[]>('/catalog/tools', { params: { catalog: catalog, schema: schema_name, schema_name: schema_name } }).then((r) => r.data),
   getTool: (toolId: string) => api.get<CatalogTool>(`/catalog/tools/${encodeURIComponent(toolId)}`).then((r) => r.data),
   listVolumeFiles: (volume_id: string) => api.get<VolumeFileInfo[]>(`/catalog/volumes/${volume_id}/files`).then((r) => r.data),
@@ -399,6 +430,7 @@ export default function DataCatalog() {
     notebook: urlNotebook,
     dashboard: urlDashboard,
     tool: urlTool,
+    query: urlQuery,
   } = useParams<{
     catalog?: string;
     schema?: string;
@@ -407,6 +439,7 @@ export default function DataCatalog() {
     notebook?: string;
     dashboard?: string;
     tool?: string;
+    query?: string;
   }>();
   const [searchParams] = useSearchParams();
 
@@ -433,6 +466,10 @@ export default function DataCatalog() {
         const toolId = searchParams.get('tool_id') || undefined;
         return { kind: 'tool', catalog: urlCatalog, schema: urlSchema, tool: decoded, tool_id: toolId };
       }
+      if (urlQuery || searchParams.get('kind') === 'query') {
+        const decoded = decodeURIComponent(urlQuery || searchParams.get('query') || '');
+        return { kind: 'query', catalog: urlCatalog, schema: urlSchema, query: decoded };
+      }
       if (urlTable) {
         const decoded = decodeURIComponent(urlTable);
         if (decoded.endsWith('.ipynb') || searchParams.get('kind') === 'notebook') {
@@ -449,6 +486,9 @@ export default function DataCatalog() {
         if (searchParams.get('kind') === 'tool') {
           return { kind: 'tool', catalog: urlCatalog, schema: urlSchema, tool: decoded, tool_id: searchParams.get('tool_id') || undefined };
         }
+        if (searchParams.get('kind') === 'query') {
+          return { kind: 'query', catalog: urlCatalog, schema: urlSchema, query: decoded };
+        }
         return { kind: 'table', catalog: urlCatalog, schema: urlSchema, table: decoded };
       }
     }
@@ -462,12 +502,18 @@ export default function DataCatalog() {
         const filename = parts.slice(2).join('/');
         const nbName = filename.endsWith('.ipynb') ? filename.slice(0, -6) : filename;
         return { kind: 'notebook', catalog, schema, notebook: nbName, blob_path: clean };
+      } else {
+        const filename = parts[parts.length - 1];
+        const nbName = filename.endsWith('.ipynb') ? filename.slice(0, -6) : filename;
+        const catalog = urlCatalog || 'main';
+        const schema = urlSchema || 'default';
+        return { kind: 'notebook', catalog, schema, notebook: nbName, blob_path: clean };
       }
     }
     if (urlCatalog && urlSchema) return { kind: 'schema', catalog: urlCatalog, schema: urlSchema };
     if (urlCatalog) return { kind: 'catalog', catalog: urlCatalog };
     return { kind: 'root' };
-  }, [urlCatalog, urlSchema, urlTable, urlVolume, urlNotebook, urlDashboard, urlTool, searchParams]);
+  }, [urlCatalog, urlSchema, urlTable, urlVolume, urlNotebook, urlDashboard, urlTool, urlQuery, searchParams]);
 
   // Selection and Search States
   const [selection, setSelection] = useState<Selection>(initialSelection);
@@ -495,6 +541,9 @@ export default function DataCatalog() {
     if (urlTool || searchParams.get('kind') === 'tool') {
       return { [`${base}.tools`]: true };
     }
+    if (urlQuery || searchParams.get('kind') === 'query') {
+      return { [`${base}.queries`]: true };
+    }
     if (urlTable) {
       return { [`${base}.tables`]: true };
     }
@@ -516,6 +565,9 @@ export default function DataCatalog() {
 
   const [schemaToolsCache, setSchemaToolsCache] = useState<Record<string, CatalogTool[]>>({});
   const [loadingSchemaTools, setLoadingSchemaTools] = useState<Record<string, boolean>>({});
+
+  const [schemaQueriesCache, setSchemaQueriesCache] = useState<Record<string, CatalogQuery[]>>({});
+  const [loadingSchemaQueries, setLoadingSchemaQueries] = useState<Record<string, boolean>>({});
   const [pendingCatalogAssets, setPendingCatalogAssets] = useState<PendingCatalogAsset[]>([]);
 
   // Governed Notebook editing / execution states
@@ -558,11 +610,12 @@ export default function DataCatalog() {
   const [editingDbOwner, setEditingDbOwner] = useState<string | null>(null);
 
   // Schema overview subtab state
-  const [schemaSubTab, setSchemaSubTab] = useState<'tables' | 'volumes' | 'notebooks' | 'dashboards' | 'tools'>(() => {
+  const [schemaSubTab, setSchemaSubTab] = useState<'tables' | 'volumes' | 'notebooks' | 'dashboards' | 'tools' | 'queries'>(() => {
     if (urlNotebook || searchParams.get('kind') === 'notebook' || urlTable?.endsWith('.ipynb')) return 'notebooks';
     if (urlVolume || searchParams.get('kind') === 'volume') return 'volumes';
     if (urlDashboard || searchParams.get('kind') === 'dashboard') return 'dashboards';
     if (urlTool || searchParams.get('kind') === 'tool') return 'tools';
+    if (urlQuery || searchParams.get('kind') === 'query') return 'queries';
     return 'tables';
   });
   const [selectedToolVersionId, setSelectedToolVersionId] = useState<string | null>(null);
@@ -674,18 +727,20 @@ export default function DataCatalog() {
   const getOpenPanelId = useCallback((next: Exclude<Selection, null | { kind: 'root' }>) => {
     if (next.kind === 'notebook') return `notebook:${next.catalog}.${next.schema}.${next.notebook}`;
     if (next.kind === 'dashboard') return `dashboard:${next.catalog}.${next.schema}.${next.dashboard}`;
+    if (next.kind === 'query') return `query:${next.catalog}.${next.schema}.${next.query}`;
     return 'details';
   }, []);
 
   const getOpenPanelLabel = useCallback((next: Exclude<Selection, null | { kind: 'root' }>) => {
     if (next.kind === 'notebook') return next.notebook;
     if (next.kind === 'dashboard') return next.dashboard;
+    if (next.kind === 'query') return next.query;
     return 'Details';
   }, []);
 
   const initialOpenPanels = useMemo(() => {
     const saved = persistedTabs?.openPanels || [];
-    if (initialSelection && (initialSelection.kind === 'notebook' || initialSelection.kind === 'dashboard')) {
+    if (initialSelection && (initialSelection.kind === 'notebook' || initialSelection.kind === 'dashboard' || initialSelection.kind === 'query')) {
       const id = getOpenPanelId(initialSelection);
       const label = getOpenPanelLabel(initialSelection);
       if (!saved.some((p) => p.id === id)) {
@@ -696,7 +751,7 @@ export default function DataCatalog() {
   }, [initialSelection, persistedTabs, getOpenPanelId, getOpenPanelLabel]);
 
   const initialMainTabId = useMemo(() => {
-    if (initialSelection && (initialSelection.kind === 'notebook' || initialSelection.kind === 'dashboard')) {
+    if (initialSelection && (initialSelection.kind === 'notebook' || initialSelection.kind === 'dashboard' || initialSelection.kind === 'query')) {
       return getOpenPanelId(initialSelection);
     }
     return persistedTabs?.mainTabId || 'details';
@@ -710,6 +765,43 @@ export default function DataCatalog() {
   useEffect(() => {
     savePersistedTabs({ openPanels, mainTabId, detailsSelection });
   }, [openPanels, mainTabId, detailsSelection]);
+
+  // Synchronize route/URL changes to selection, open panels, and active tab
+  useEffect(() => {
+    if (!initialSelection) return;
+    setSelection(initialSelection);
+    if (initialSelection.kind === 'notebook' || initialSelection.kind === 'dashboard' || initialSelection.kind === 'query') {
+      const id = getOpenPanelId(initialSelection);
+      const label = getOpenPanelLabel(initialSelection);
+      setOpenPanels((prev) => {
+        if (!prev.some((p) => p.id === id)) {
+          return [...prev, { id, label, selection: initialSelection }];
+        }
+        return prev;
+      });
+      setMainTabId(id);
+    } else {
+      setDetailsSelection(initialSelection);
+      setMainTabId('details');
+    }
+
+    if ('catalog' in initialSelection && initialSelection.catalog) {
+      setExpandedCatalogs((prev) => ({ ...prev, [initialSelection.catalog]: true }));
+      if ('schema' in initialSelection && initialSelection.schema) {
+        const schemaKey = `${initialSelection.catalog}.${initialSelection.schema}`;
+        setExpandedSchemas((prev) => ({ ...prev, [schemaKey]: true }));
+        if (initialSelection.kind === 'notebook') {
+          setExpandedGroups((prev) => ({ ...prev, [`${schemaKey}.notebooks`]: true, [`${schemaKey}-notebooks`]: true }));
+        }
+        if (initialSelection.kind === 'dashboard') {
+          setExpandedGroups((prev) => ({ ...prev, [`${schemaKey}.dashboards`]: true, [`${schemaKey}-dashboards`]: true }));
+        }
+        if (initialSelection.kind === 'query') {
+          setExpandedGroups((prev) => ({ ...prev, [`${schemaKey}.queries`]: true, [`${schemaKey}-queries`]: true }));
+        }
+      }
+    }
+  }, [initialSelection, getOpenPanelId, getOpenPanelLabel]);
 
   // Synchronize notebook store active path whenever a notebook is selected
   useEffect(() => {
@@ -761,7 +853,9 @@ export default function DataCatalog() {
     if (mainTabId === panelId) {
       setMainTabId('details');
       setSelection(detailsSelection);
-      if (detailsSelection.kind === 'catalog') {
+      if (!detailsSelection || detailsSelection.kind === 'root') {
+        navigate('/data-catalog');
+      } else if (detailsSelection.kind === 'catalog') {
         navigate(`/data-catalog/${encodeURIComponent(detailsSelection.catalog)}`);
       } else if (detailsSelection.kind === 'schema') {
         navigate(`/data-catalog/${encodeURIComponent(detailsSelection.catalog)}/${encodeURIComponent(detailsSelection.schema)}`);
@@ -772,6 +866,8 @@ export default function DataCatalog() {
       } else if (detailsSelection.kind === 'tool') {
         const q = (detailsSelection as any).tool_id ? `?tool_id=${encodeURIComponent((detailsSelection as any).tool_id)}` : '';
         navigate(`/data-catalog/${encodeURIComponent(detailsSelection.catalog)}/${encodeURIComponent(detailsSelection.schema)}/tool/${encodeURIComponent((detailsSelection as any).tool)}${q}`);
+      } else if (detailsSelection.kind === 'query') {
+        navigate(`/data-catalog/${encodeURIComponent(detailsSelection.catalog)}/${encodeURIComponent(detailsSelection.schema)}?kind=query&query=${encodeURIComponent(detailsSelection.query)}`);
       } else {
         navigate('/data-catalog');
       }
@@ -786,7 +882,7 @@ export default function DataCatalog() {
       return;
     }
 
-    if (next.kind === 'notebook' || next.kind === 'dashboard') {
+    if (next.kind === 'notebook' || next.kind === 'dashboard' || next.kind === 'query') {
       syncOpenPanel(next);
       if (next.kind === 'notebook') {
         const path = next.blob_path ? `?path=${encodeURIComponent(next.blob_path)}` : '';
@@ -795,6 +891,8 @@ export default function DataCatalog() {
       } else if (next.kind === 'dashboard') {
         const q = next.dashboard_id ? `?dashboard_id=${encodeURIComponent(next.dashboard_id)}` : '';
         navigate(`/data-catalog/${encodeURIComponent(next.catalog)}/${encodeURIComponent(next.schema)}/dashboard/${encodeURIComponent(next.dashboard)}${q}`);
+      } else if (next.kind === 'query') {
+        navigate(`/data-catalog/${encodeURIComponent(next.catalog)}/${encodeURIComponent(next.schema)}?kind=query&query=${encodeURIComponent(next.query)}`);
       }
       return;
     }
@@ -904,6 +1002,12 @@ export default function DataCatalog() {
   const schemaDashboardsQuery = useQuery({
     queryKey: ['uc-schema-dashboards', activeCatalog, activeSchema],
     queryFn: () => catalogApi.listDashboards(activeCatalog!, activeSchema!),
+    enabled: !!activeCatalog && !!activeSchema,
+  });
+
+  const schemaQueriesQuery = useQuery({
+    queryKey: ['uc-schema-queries', activeCatalog, activeSchema],
+    queryFn: () => catalogApi.listQueries(activeCatalog!, activeSchema!),
     enabled: !!activeCatalog && !!activeSchema,
   });
 
@@ -1033,6 +1137,18 @@ export default function DataCatalog() {
       return tools.find(t => t.name === selection.tool) || null;
     },
     enabled: !!selection && selection.kind === 'tool',
+  });
+
+  const queryQuery = useQuery({
+    queryKey: ['uc-query', selection?.kind === 'query' ? selection.catalog : null, selection?.kind === 'query' ? selection.schema : null, selection?.kind === 'query' ? selection.query : null],
+    queryFn: () => catalogApi.getQuery((selection as any).catalog, (selection as any).schema, (selection as any).query),
+    enabled: !!selection && selection.kind === 'query',
+  });
+
+  const queryVersionsQuery = useQuery({
+    queryKey: ['uc-query-versions', selection?.kind === 'query' ? selection.catalog : null, selection?.kind === 'query' ? selection.schema : null, selection?.kind === 'query' ? selection.query : null],
+    queryFn: () => catalogApi.getQueryVersions((selection as any).catalog, (selection as any).schema, (selection as any).query),
+    enabled: !!selection && selection.kind === 'query',
   });
 
   const notebookContentQuery = useQuery({
@@ -1267,6 +1383,17 @@ export default function DataCatalog() {
     }
   }, [schemaDashboardsQuery.data, activeCatalog, activeSchema]);
 
+  // Keep queries cache updated
+  useEffect(() => {
+    if (schemaQueriesQuery.data && activeCatalog && activeSchema) {
+      const key = `${activeCatalog}.${activeSchema}`;
+      setSchemaQueriesCache((prev) => ({
+        ...prev,
+        [key]: schemaQueriesQuery.data!
+      }));
+    }
+  }, [schemaQueriesQuery.data, activeCatalog, activeSchema]);
+
   // Reset tab when selection changes
   useEffect(() => { 
     setActiveTab('overview'); 
@@ -1356,10 +1483,24 @@ export default function DataCatalog() {
                 setLoadingSchemaTools(prev => ({ ...prev, [schemaKey]: false }));
               });
           }
+
+          if (!schemaQueriesCache[schemaKey] && !loadingSchemasRef.current[`${schemaKey}-queries`]) {
+            loadingSchemasRef.current[`${schemaKey}-queries`] = true;
+            setLoadingSchemaQueries(prev => ({ ...prev, [schemaKey]: true }));
+            catalogApi.listQueries(catalogName, schemaName)
+              .then((qList) => {
+                setSchemaQueriesCache(prev => ({ ...prev, [schemaKey]: qList }));
+              })
+              .catch((err) => console.error("Failed to load queries for schema", schemaKey, err))
+              .finally(() => {
+                loadingSchemasRef.current[`${schemaKey}-queries`] = false;
+                setLoadingSchemaQueries(prev => ({ ...prev, [schemaKey]: false }));
+              });
+          }
         }
       }
     });
-  }, [expandedSchemas, schemaTablesCache, schemaVolumesCache, schemaNotebooksCache, schemaDashboardsCache, schemaToolsCache]);
+  }, [expandedSchemas, schemaTablesCache, schemaVolumesCache, schemaNotebooksCache, schemaDashboardsCache, schemaToolsCache, schemaQueriesCache]);
 
   // Keep connection lists refetched whenever catalog modal opens
   useEffect(() => {
@@ -1473,6 +1614,33 @@ export default function DataCatalog() {
         closeOpenPanel(`dashboard:${variables.catalog}.${variables.schema}.${variables.dashboard}`);
         setDetailsPanelSelection({ kind: 'schema', catalog: variables.catalog, schema: variables.schema });
       }
+    },
+  });
+
+  const deleteQueryMutation = useMutation({
+    mutationFn: (data: { catalog: string; schema: string; query: string }) =>
+      catalogApi.deleteQuery(data.catalog, data.schema, data.query),
+    onSuccess: (_, variables) => {
+      const schemaKey = `${variables.catalog}.${variables.schema}`;
+      setSchemaQueriesCache((prev) => ({
+        ...prev,
+        [schemaKey]: (prev[schemaKey] || []).filter((q) => q.name !== variables.query),
+      }));
+      queryClient.invalidateQueries({ queryKey: ['uc-schema-queries', variables.catalog, variables.schema] });
+      closeOpenPanel(`query:${variables.catalog}.${variables.schema}.${variables.query}`);
+      if (selection?.kind === 'query') {
+        setDetailsPanelSelection({ kind: 'schema', catalog: variables.catalog, schema: variables.schema });
+      }
+    },
+  });
+
+  const restoreQueryVersionMutation = useMutation({
+    mutationFn: (data: { catalog: string; schema: string; query: string; version: number }) =>
+      catalogApi.restoreQueryVersion(data.catalog, data.schema, data.query, data.version),
+    onSuccess: (_, variables) => {
+      queryClient.invalidateQueries({ queryKey: ['uc-query', variables.catalog, variables.schema, variables.query] });
+      queryClient.invalidateQueries({ queryKey: ['uc-query-versions', variables.catalog, variables.schema, variables.query] });
+      queryClient.invalidateQueries({ queryKey: ['uc-schema-queries', variables.catalog, variables.schema] });
     },
   });
 
@@ -1905,6 +2073,8 @@ export default function DataCatalog() {
     if (sel.kind === 'volume') return `${sel.catalog}.${sel.schema}.${sel.volume}`;
     if (sel.kind === 'notebook') return `${sel.catalog}.${sel.schema}.${sel.notebook}`;
     if (sel.kind === 'dashboard') return `${sel.catalog}.${sel.schema}.${sel.dashboard}`;
+    if (sel.kind === 'tool') return `${sel.catalog}.${sel.schema}.${sel.tool}`;
+    if (sel.kind === 'query') return `${sel.catalog}.${sel.schema}.${sel.query}`;
     return '';
   };
 
@@ -1978,7 +2148,7 @@ export default function DataCatalog() {
     }));
   };
 
-  const renderDetailHeader = (title: string, kind: 'catalog' | 'schema' | 'table' | 'volume' | 'notebook' | 'dashboard' | 'tool') => {
+  const renderDetailHeader = (title: string, kind: 'catalog' | 'schema' | 'table' | 'volume' | 'notebook' | 'dashboard' | 'tool' | 'query') => {
     const fqn = getFqn(selection);
     const isFav = !!favorites[fqn];
 
@@ -2013,7 +2183,7 @@ export default function DataCatalog() {
               </button>
             </>
           )}
-          {selection && (selection.kind === 'schema' || selection.kind === 'table' || selection.kind === 'volume' || selection.kind === 'notebook' || selection.kind === 'dashboard' || selection.kind === 'tool') && (
+          {selection && (selection.kind === 'schema' || selection.kind === 'table' || selection.kind === 'volume' || selection.kind === 'notebook' || selection.kind === 'dashboard' || selection.kind === 'tool' || selection.kind === 'query') && (
             <>
               <span style={{ color: 'var(--color-text-subtle)' }}>&gt;</span>
               <button 
@@ -2056,6 +2226,12 @@ export default function DataCatalog() {
               <span className="asset-breadcrumb-current">{selection.tool}</span>
             </>
           )}
+          {selection && selection.kind === 'query' && (
+            <>
+              <span style={{ color: 'var(--color-text-subtle)' }}>&gt;</span>
+              <span className="asset-breadcrumb-current">{selection.query}</span>
+            </>
+          )}
         </div>
 
         {/* Title row with icon and interactive buttons */}
@@ -2068,6 +2244,7 @@ export default function DataCatalog() {
             {kind === 'notebook' && <FileCode size={22} className="text-primary" />}
             {kind === 'dashboard' && <SlidersHorizontal size={22} className="text-primary" />}
             {kind === 'tool' && <Wrench size={22} className="text-primary" style={{ color: '#2563eb' }} />}
+            {kind === 'query' && <FileCode size={22} className="text-primary" />}
             <h2>{title}</h2>
             
             {/* Copy button */}
@@ -2291,6 +2468,7 @@ export default function DataCatalog() {
     const notebooks = schemaNotebooksCache[schemaKey] || [];
     const dashboards = schemaDashboardsCache[schemaKey] || [];
     const tools = schemaToolsCache[schemaKey] || [];
+    const queries = schemaQueriesCache[schemaKey] || [];
 
     let itemsToRender: any[] = [];
     if (schemaSubTab === 'tables') {
@@ -2303,6 +2481,8 @@ export default function DataCatalog() {
       itemsToRender = dashboards;
     } else if (schemaSubTab === 'tools') {
       itemsToRender = tools;
+    } else if (schemaSubTab === 'queries') {
+      itemsToRender = queries;
     }
 
     const filtered = itemsToRender.filter(item => 
@@ -2368,6 +2548,13 @@ export default function DataCatalog() {
             >
               Tools {tools.length}
             </button>
+            <button 
+              type="button" 
+              className={cx("uc-subtab-btn", schemaSubTab === 'queries' && "is-active")}
+              onClick={() => { setSchemaSubTab('queries'); setSchemaTableFilter(''); }}
+            >
+              Queries {queries.length}
+            </button>
           </div>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -2428,6 +2615,15 @@ export default function DataCatalog() {
                   <th>Last Modified</th>
                 </tr>
               )}
+              {schemaSubTab === 'queries' && (
+                <tr>
+                  <th>Query Name</th>
+                  <th>Owner</th>
+                  <th>Description</th>
+                  <th>Created at</th>
+                  <th>Actions</th>
+                </tr>
+              )}
             </thead>
             <tbody>
               {schemaSubTab === 'tables' && sorted.map(t => {
@@ -2456,24 +2652,22 @@ export default function DataCatalog() {
                 );
               })}
 
-              {schemaSubTab === 'volumes' && sorted.map(v => {
+              {schemaSubTab === 'volumes' && sorted.map(vol => {
                 return (
                   <tr 
-                    key={v.id} 
-                    onClick={() => selectAndNavigate({ kind: 'volume', catalog: (selection as any)?.catalog || '', schema: (selection as any)?.schema || '', volume: v.name })}
+                    key={vol.id} 
+                    onClick={() => selectAndNavigate({ kind: 'volume', catalog: vol.catalog, schema: vol.schema_name, volume: vol.name })}
                     style={{ cursor: 'pointer' }}
                   >
                     <td>
                       <div className="flex items-center gap-2">
                         <Folder size={14} className="text-muted" style={{ color: 'var(--color-primary)' }} />
-                        <span style={{ fontWeight: 500, color: 'var(--color-primary)' }}>{v.name}</span>
+                        <span style={{ fontWeight: 500, color: 'var(--color-primary)' }}>{vol.name}</span>
                       </div>
                     </td>
-                    <td style={{ fontSize: '11px', fontFamily: 'monospace' }}>
-                      {v.storage_location || `/${(selection as any)?.catalog}/${(selection as any)?.schema}/volumes/${v.name}/`}
-                    </td>
-                    <td>{v.created_by || 'catalog-admin'}</td>
-                    <td>{new Date(v.created_at).toLocaleDateString()}</td>
+                    <td style={{ fontSize: '11px', fontFamily: 'monospace' }}>{vol.storage_location}</td>
+                    <td>{vol.owner}</td>
+                    <td>{new Date(vol.created_at).toLocaleDateString()}</td>
                   </tr>
                 );
               })}
@@ -2492,7 +2686,7 @@ export default function DataCatalog() {
                       </div>
                     </td>
                     <td>{nb.owner || 'catalog-admin'}</td>
-                    <td style={{ fontSize: '11px', fontFamily: 'monospace' }}>{nb.storage_location || nb.blob_path}</td>
+                    <td style={{ fontSize: '11px', fontFamily: 'monospace' }}>{nb.blob_path}</td>
                     <td>{new Date(nb.updated_at || nb.created_at).toLocaleDateString()}</td>
                   </tr>
                 );
@@ -2550,6 +2744,52 @@ export default function DataCatalog() {
                     </td>
                     <td>{tItem.owner || 'default_user'}</td>
                     <td>{new Date(tItem.updated_at || tItem.created_at).toLocaleDateString()}</td>
+                  </tr>
+                );
+              })}
+
+              {schemaSubTab === 'queries' && sorted.map((qItem: CatalogQuery) => {
+                return (
+                  <tr 
+                    key={qItem.id} 
+                    onClick={() => selectAndNavigate({ kind: 'query', catalog: qItem.catalog_name, schema: qItem.schema_name, query: qItem.name })}
+                    style={{ cursor: 'pointer' }}
+                  >
+                    <td>
+                      <div className="flex items-center gap-2">
+                        <FileCode size={14} className="text-muted" style={{ color: 'var(--color-primary)' }} />
+                        <span style={{ fontWeight: 500, color: 'var(--color-primary)' }}>{qItem.name}</span>
+                      </div>
+                    </td>
+                    <td>{qItem.owner || '—'}</td>
+                    <td style={{ maxWidth: 280, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {qItem.description || '—'}
+                    </td>
+                    <td>{new Date(qItem.created_at).toLocaleDateString()}</td>
+                    <td>
+                      <div style={{ display: 'flex', gap: 6 }}>
+                        <button
+                          className="btn-primary flex items-center gap-1"
+                          style={{ fontSize: 11, padding: '2px 8px' }}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            selectAndNavigate({ kind: 'query', catalog: qItem.catalog_name, schema: qItem.schema_name, query: qItem.name });
+                          }}
+                        >
+                          <Play size={10} fill="currentColor" /> Open in Editor
+                        </button>
+                        <button
+                          className="btn-outline flex items-center gap-1"
+                          style={{ fontSize: 11, padding: '2px 8px' }}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            navigate(`/sql-warehouse?catalog=${encodeURIComponent(qItem.catalog_name)}&schema=${encodeURIComponent(qItem.schema_name)}&query_name=${encodeURIComponent(qItem.name)}&sql=${encodeURIComponent(qItem.sql_text)}`);
+                          }}
+                        >
+                          <Database size={10} /> Warehouse
+                        </button>
+                      </div>
+                    </td>
                   </tr>
                 );
               })}
@@ -3221,6 +3461,23 @@ export default function DataCatalog() {
       return (
         <div style={{ height: '100%', overflow: 'hidden' }}>
           <DashboardEditorPage dashboardId={dashboardId} embedded />
+        </div>
+      );
+    }
+
+    if (mainTabId !== 'details' && selection && selection.kind === 'query') {
+      return (
+        <div style={{ height: '100%', overflow: 'hidden' }}>
+          <CatalogQueryEditorTab
+            catalog={selection.catalog}
+            schema={selection.schema}
+            queryName={selection.query}
+            onDelete={() => {
+              queryClient.invalidateQueries({ queryKey: ['uc-schema-queries', selection.catalog, selection.schema] });
+              closeOpenPanel(mainTabId);
+              setDetailsPanelSelection({ kind: 'schema', catalog: selection.catalog, schema: selection.schema });
+            }}
+          />
         </div>
       );
     }
@@ -4074,6 +4331,295 @@ export default function DataCatalog() {
               </div>
             );
           })()}
+        </div>
+      );
+    }
+
+    // ── QUERY level ────────────────────────────────────────────────────────────
+    if (selection && selection.kind === 'query') {
+      if (queryQuery.isLoading) {
+        return <div className="uc-empty-state"><Loader2 size={24} className="spin" /><p>Loading query details...</p></div>;
+      }
+      const q = queryQuery.data;
+      if (!q) {
+        return <div className="uc-empty-state"><p>Failed to load query details.</p></div>;
+      }
+
+      const allQueryVersions = queryVersionsQuery.data || q.versions || [];
+      const queryTabs = [
+        { value: 'overview', label: 'Overview' },
+        { value: 'versions', label: `Version History (${allQueryVersions.length || 1})` },
+        { value: 'sql', label: 'SQL Query' },
+      ] as const;
+
+      return (
+        <div className="uc-panel">
+          {renderDetailHeader(q.name, 'query')}
+
+          <PageTabs tabs={queryTabs} value={activeTab} onChange={setActiveTab} />
+
+          {activeTab === 'overview' && (
+            <div className="uc-tab-content" style={{ display: 'grid', gridTemplateColumns: '3fr 2fr', gap: '20px' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                
+                {/* Query metadata summary */}
+                <div className="uc-detail-card">
+                  <div className="uc-detail-title font-semibold">General Information</div>
+                  <div className="uc-detail-grid">
+                    <div><span>Name</span><strong>{q.name}</strong></div>
+                    <div><span>Active Version</span><strong style={{ color: 'var(--color-primary)' }}>v{q.current_version || 1}</strong></div>
+                    <div><span>Full Name</span><strong className="font-mono text-xs">{q.full_name}</strong></div>
+                    <div><span>Catalog</span><strong>{q.catalog_name}</strong></div>
+                    <div><span>Schema</span><strong>{q.schema_name}</strong></div>
+                    <div><span>Owner</span><strong>{q.owner || '—'}</strong></div>
+                    <div><span>Created At</span><strong>{new Date(q.created_at).toLocaleString()}</strong></div>
+                    <div><span>Updated At</span><strong>{new Date(q.updated_at).toLocaleString()}</strong></div>
+                  </div>
+
+                  {/* Actions (Open in Query Editor, Delete) */}
+                  <div style={{ marginTop: '20px', display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                    <button
+                      className="btn-primary flex items-center gap-1.5"
+                      onClick={() => syncOpenPanel(selection)}
+                    >
+                      <Play size={12} fill="currentColor" /> Open in Query Editor
+                    </button>
+                    <button
+                      className="btn-outline flex items-center gap-1"
+                      onClick={() => navigate(`/sql-warehouse?catalog=${encodeURIComponent(q.catalog_name)}&schema=${encodeURIComponent(q.schema_name)}&query_name=${encodeURIComponent(q.name)}&sql=${encodeURIComponent(q.sql_text)}`)}
+                    >
+                      <Database size={12} /> Open in SQL Warehouse
+                    </button>
+                    <button
+                      className="btn-outline flex items-center gap-1"
+                      style={{ color: 'var(--color-danger)', borderColor: 'var(--color-danger)' }}
+                      onClick={() => {
+                        if (confirm(`Are you sure you want to delete the query "${q.name}" from the catalog?`)) {
+                          deleteQueryMutation.mutate({ catalog: selection.catalog, schema: selection.schema, query: selection.query });
+                        }
+                      }}
+                      disabled={deleteQueryMutation.isPending}
+                    >
+                      <Trash size={12} /> Delete
+                    </button>
+                  </div>
+                </div>
+
+                {/* Description Card */}
+                <div className="uc-detail-card" style={{ display: 'flex', flexDirection: 'column' }}>
+                  <div className="uc-detail-title">Description</div>
+                  <div style={{ fontSize: 13, color: q.description ? 'var(--color-text)' : 'var(--color-text-muted)' }}>
+                    {q.description || 'No description provided.'}
+                  </div>
+                </div>
+
+                {/* SQL Preview snippet in Overview */}
+                <div className="uc-detail-card">
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+                    <div className="uc-detail-title font-semibold">SQL Preview (v{q.current_version || 1})</div>
+                    <button
+                      className="btn-outline flex items-center gap-1"
+                      style={{ fontSize: 11, padding: '2px 8px' }}
+                      onClick={() => {
+                        navigator.clipboard.writeText(q.sql_text);
+                        setCopiedFqn('sql_overview');
+                        setTimeout(() => setCopiedFqn(null), 2000);
+                      }}
+                    >
+                      {copiedFqn === 'sql_overview' ? <Check size={11} style={{ color: 'var(--color-success)' }} /> : <Copy size={11} />}
+                      {copiedFqn === 'sql_overview' ? 'Copied' : 'Copy SQL'}
+                    </button>
+                  </div>
+                  <pre
+                    style={{
+                      background: '#0f172a',
+                      border: '1px solid var(--color-border)',
+                      borderRadius: 6,
+                      padding: '12px 14px',
+                      fontSize: 12,
+                      fontFamily: 'monospace',
+                      maxHeight: 240,
+                      overflowY: 'auto',
+                      whiteSpace: 'pre-wrap',
+                      color: '#f8fafc',
+                      margin: 0,
+                    }}
+                  >
+                    {q.sql_text}
+                  </pre>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'versions' && (
+            <div className="uc-tab-content" style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div>
+                  <h3 style={{ margin: 0, fontSize: 15, fontWeight: 600 }}>Immutable Version History</h3>
+                  <p style={{ margin: '4px 0 0', fontSize: 12, color: 'var(--color-text-muted)' }}>
+                    Every revision of this query is tracked with author attribution, change summary, and full SQL snapshot.
+                  </p>
+                </div>
+                <button
+                  className="btn-primary flex items-center gap-1.5"
+                  onClick={() => syncOpenPanel(selection)}
+                >
+                  <Play size={12} fill="currentColor" /> Open in Editor
+                </button>
+              </div>
+
+              {queryVersionsQuery.isLoading && (
+                <div className="uc-empty-state"><Loader2 size={20} className="spin" /><p>Loading version history...</p></div>
+              )}
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                {allQueryVersions.map((v) => {
+                  const isCurrent = v.version === (q.current_version || 1);
+                  return (
+                    <div
+                      key={v.version}
+                      className="uc-detail-card"
+                      style={{
+                        borderLeft: isCurrent ? '3px solid var(--color-primary)' : '1px solid var(--color-border)',
+                        padding: 16,
+                      }}
+                    >
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 10 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                          <span
+                            style={{
+                              padding: '2px 8px',
+                              borderRadius: 4,
+                              fontWeight: 700,
+                              fontSize: 12,
+                              background: isCurrent ? 'var(--color-primary)' : 'var(--color-surface-2)',
+                              color: isCurrent ? '#ffffff' : 'inherit',
+                            }}
+                          >
+                            v{v.version}
+                          </span>
+                          {isCurrent && (
+                            <span className="uc-chip" style={{ background: 'rgba(16, 185, 129, 0.15)', color: '#10b981', fontWeight: 600 }}>
+                              Active Version
+                            </span>
+                          )}
+                          <span style={{ fontSize: 13, fontWeight: 600 }}>
+                            {v.change_summary || (v.version === 1 ? 'Initial query registration' : `Revision ${v.version}`)}
+                          </span>
+                        </div>
+
+                        <div style={{ display: 'flex', gap: 6 }}>
+                          <button
+                            className="btn-outline flex items-center gap-1"
+                            style={{ fontSize: 11, padding: '2px 8px' }}
+                            onClick={() => {
+                              navigator.clipboard.writeText(v.sql_text);
+                              setCopiedFqn(`sql_ver_${v.version}`);
+                              setTimeout(() => setCopiedFqn(null), 2000);
+                            }}
+                          >
+                            {copiedFqn === `sql_ver_${v.version}` ? <Check size={11} style={{ color: 'var(--color-success)' }} /> : <Copy size={11} />}
+                            {copiedFqn === `sql_ver_${v.version}` ? 'Copied' : 'Copy SQL'}
+                          </button>
+
+                          {!isCurrent && (
+                            <button
+                              className="btn-outline flex items-center gap-1"
+                              style={{ fontSize: 11, padding: '2px 8px' }}
+                              onClick={() => {
+                                if (confirm(`Restore query to version ${v.version}? This will create a new version with this snapshot's SQL.`)) {
+                                  restoreQueryVersionMutation.mutate({
+                                    catalog: selection.catalog,
+                                    schema: selection.schema,
+                                    query: selection.query,
+                                    version: v.version,
+                                  });
+                                }
+                              }}
+                              disabled={restoreQueryVersionMutation.isPending}
+                            >
+                              <History size={11} /> Restore this Version
+                            </button>
+                          )}
+                        </div>
+                      </div>
+
+                      <div style={{ display: 'flex', gap: 16, fontSize: 11, color: 'var(--color-text-muted)', marginBottom: 10 }}>
+                        <span>Author: <strong style={{ color: 'var(--color-text)' }}>{v.created_by || q.owner}</strong></span>
+                        <span>Committed: <strong style={{ color: 'var(--color-text)' }}>{new Date(v.created_at).toLocaleString()}</strong></span>
+                      </div>
+
+                      <pre
+                        style={{
+                          background: '#0f172a',
+                          border: '1px solid var(--color-border)',
+                          borderRadius: 6,
+                          padding: '10px 12px',
+                          fontSize: 12,
+                          fontFamily: 'monospace',
+                          maxHeight: 160,
+                          overflowY: 'auto',
+                          whiteSpace: 'pre-wrap',
+                          color: '#f8fafc',
+                          margin: 0,
+                        }}
+                      >
+                        {v.sql_text}
+                      </pre>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'sql' && (
+            <div className="uc-tab-content">
+              <div className="uc-detail-card">
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                  <div className="uc-detail-title font-semibold">Full SQL Query</div>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <button
+                      className="btn-outline flex items-center gap-1"
+                      style={{ fontSize: 12, padding: '4px 10px' }}
+                      onClick={() => {
+                        navigator.clipboard.writeText(q.sql_text);
+                        setCopiedFqn('sql_tab');
+                        setTimeout(() => setCopiedFqn(null), 2000);
+                      }}
+                    >
+                      {copiedFqn === 'sql_tab' ? <Check size={12} style={{ color: 'var(--color-success)' }} /> : <Copy size={12} />}
+                      {copiedFqn === 'sql_tab' ? 'Copied' : 'Copy SQL'}
+                    </button>
+                    <button
+                      className="btn-primary flex items-center gap-1"
+                      style={{ fontSize: 12, padding: '4px 10px' }}
+                      onClick={() => syncOpenPanel(selection)}
+                    >
+                      <Play size={12} fill="currentColor" /> Open in Query Editor
+                    </button>
+                  </div>
+                </div>
+                <pre
+                  style={{
+                    background: '#0f172a',
+                    border: '1px solid var(--color-border)',
+                    borderRadius: 6,
+                    padding: '16px',
+                    fontSize: 13,
+                    fontFamily: 'monospace',
+                    overflowX: 'auto',
+                    whiteSpace: 'pre-wrap',
+                    color: '#f8fafc',
+                    margin: 0,
+                  }}
+                >
+                  {q.sql_text}
+                </pre>
+              </div>
+            </div>
+          )}
         </div>
       );
     }
@@ -5492,6 +6038,7 @@ export default function DataCatalog() {
                         const notebooks = schemaNotebooksCache[schemaKey] || [];
                         const dashboards = schemaDashboardsCache[schemaKey] || [];
                         const tools = schemaToolsCache[schemaKey] || [];
+                        const queries = schemaQueriesCache[schemaKey] || [];
                         const schemaPendingAssets = pendingCatalogAssets.filter((asset) => asset.catalog === catalog.name && asset.schema === schema.name);
                         const pendingTables = schemaPendingAssets.filter((asset) => asset.kind === 'table');
                         const pendingVolumes = schemaPendingAssets.filter((asset) => asset.kind === 'volume');
@@ -5503,7 +6050,8 @@ export default function DataCatalog() {
                         const hasNotebooks = notebooks.length + pendingNotebooks.length > 0;
                         const hasDashboards = dashboards.length + pendingDashboards.length > 0;
                         const hasTools = tools.length > 0;
-                        const typesCount = (hasTables ? 1 : 0) + (hasVolumes ? 1 : 0) + (hasNotebooks ? 1 : 0) + (hasDashboards ? 1 : 0) + (hasTools ? 1 : 0);
+                        const hasQueries = queries.length > 0;
+                        const typesCount = (hasTables ? 1 : 0) + (hasVolumes ? 1 : 0) + (hasNotebooks ? 1 : 0) + (hasDashboards ? 1 : 0) + (hasTools ? 1 : 0) + (hasQueries ? 1 : 0);
                         const showGroups = typesCount > 1;
 
                         return (
@@ -5748,9 +6296,55 @@ export default function DataCatalog() {
                                                       >
                                                         <span style={{ width: '12px' }} />
                                                         <span className="uc-tree-row-icon">
-                                                          <Wrench size={10} style={{ color: '#2563eb' }} />
+                                                          <Wrench size={10} />
                                                         </span>
                                                         <span className="uc-tree-row-label">{toolItem.name}</span>
+                                                      </button>
+                                                    );
+                                                  })}
+                                                </div>
+                                              )}
+                                            </>
+                                          );
+                                        })()}
+                                      </div>
+                                    )}
+
+                                    {/* Queries Group */}
+                                    {hasQueries && (
+                                      <div className="uc-tree-group">
+                                        {(() => {
+                                          const queriesGroupOpen = expandedGroups[`${schemaKey}-queries`] !== false;
+                                          return (
+                                            <>
+                                              <button 
+                                                className="uc-tree-row"
+                                                onClick={() => {
+                                                  setExpandedGroups(prev => ({ ...prev, [`${schemaKey}-queries`]: !queriesGroupOpen }));
+                                                }}
+                                              >
+                                                <span className="uc-tree-row-chevron">
+                                                  {queriesGroupOpen ? <ChevronDown size={10} /> : <ChevronRight size={10} />}
+                                                </span>
+                                                <span className="uc-tree-row-label">Queries ({queries.length})</span>
+                                              </button>
+                                              {queriesGroupOpen && (
+                                                <div className="uc-tree-indent">
+                                                  {queries.map((qItem) => {
+                                                    const isQSelected = selection?.kind === 'query' && selection.catalog === catalog.name && selection.schema === schema.name && selection.query === qItem.name;
+                                                    return (
+                                                      <button
+                                                        key={`q-${qItem.id}`}
+                                                        className={cx('uc-tree-row', isQSelected && 'is-selected')}
+                                                        onClick={() => {
+                                                          selectAndNavigate({ kind: 'query', catalog: catalog.name, schema: schema.name, query: qItem.name });
+                                                        }}
+                                                      >
+                                                        <span style={{ width: '12px' }} />
+                                                        <span className="uc-tree-row-icon">
+                                                          <FileCode size={10} />
+                                                        </span>
+                                                        <span className="uc-tree-row-label">{qItem.name}</span>
                                                       </button>
                                                     );
                                                   })}
@@ -5823,87 +6417,49 @@ export default function DataCatalog() {
                                       );
                                     })}
                                     {dashboards.map((dbItem) => {
-                                      const isDbSelected = selection?.kind === 'dashboard' && selection.catalog === catalog.name && selection.schema === schema.name && selection.dashboard === dbItem.name;
+                                       const isDbSelected = selection?.kind === 'dashboard' && selection.catalog === catalog.name && selection.schema === schema.name && selection.dashboard === dbItem.name;
 
-                                      return (
-                                        <button
-                                          key={`db-${dbItem.id}`}
-                                          className={cx('uc-tree-row', isDbSelected && 'is-selected')}
-                                          onClick={() => {
-                                            selectAndNavigate({ kind: 'dashboard', catalog: catalog.name, schema: schema.name, dashboard: dbItem.name, dashboard_id: dbItem.dashboard_id ?? undefined });
-                                          }}
-                                        >
-                                          <span style={{ width: '12px' }} />
-                                          <span className="uc-tree-row-icon">
-                                            <SlidersHorizontal size={10} style={{ color: 'var(--color-primary)' }} />
-                                          </span>
-                                          <span className="uc-tree-row-label">{dbItem.name}</span>
-                                        </button>
-                                      );
-                                    })}
-                                    {volumes.map((vol) => {
-                                      const isVolSelected = selection?.kind === 'volume' && selection.catalog === catalog.name && selection.schema === schema.name && selection.volume === vol.name;
-                                      
-                                      return (
-                                        <button 
-                                          key={`vol-${vol.id}`}
-                                          className={cx('uc-tree-row', isVolSelected && 'is-selected')}
-                                          onClick={() => {
-                                            selectAndNavigate({ kind: 'volume', catalog: catalog.name, schema: schema.name, volume: vol.name });
-                                          }}
-                                        >
-                                          <span style={{ width: '12px' }} />
-                                          <span className="uc-tree-row-icon">
-                                            <Folder size={10} style={{ color: 'var(--color-primary)' }} />
-                                          </span>
-                                          <span className="uc-tree-row-label">{vol.name}</span>
-                                        </button>
-                                      );
-                                    })}
-                                    {notebooks.map((nb) => {
-                                      const isNbSelected = selection?.kind === 'notebook' && selection.catalog === catalog.name && selection.schema === schema.name && selection.notebook === nb.name;
+                                       return (
+                                         <button
+                                           key={`db-${dbItem.id}`}
+                                           className={cx('uc-tree-row', isDbSelected && 'is-selected')}
+                                           onClick={() => {
+                                             selectAndNavigate({ kind: 'dashboard', catalog: catalog.name, schema: schema.name, dashboard: dbItem.name, dashboard_id: dbItem.dashboard_id ?? undefined });
+                                           }}
+                                         >
+                                           <span style={{ width: '12px' }} />
+                                           <span className="uc-tree-row-icon">
+                                             <SlidersHorizontal size={10} style={{ color: 'var(--color-primary)' }} />
+                                           </span>
+                                           <span className="uc-tree-row-label">{dbItem.name}</span>
+                                         </button>
+                                       );
+                                     })}
+                                     {queries.map((qItem) => {
+                                       const isQSelected = selection?.kind === 'query' && selection.catalog === catalog.name && selection.schema === schema.name && selection.query === qItem.name;
 
-                                      return (
-                                        <button
-                                          key={`nb-${nb.id}`}
-                                          className={cx('uc-tree-row', isNbSelected && 'is-selected')}
-                                          onClick={() => {
-                                            selectAndNavigate({ kind: 'notebook', catalog: catalog.name, schema: schema.name, notebook: nb.name, blob_path: nb.blob_path });
-                                          }}
-                                        >
-                                          <span style={{ width: '12px' }} />
-                                          <span className="uc-tree-row-icon">
-                                            <FileCode size={10} style={{ color: 'var(--color-primary)' }} />
-                                          </span>
-                                          <span className="uc-tree-row-label">{nb.name}</span>
-                                        </button>
-                                      );
-                                    })}
-                                    {dashboards.map((dbItem) => {
-                                      const isDbSelected = selection?.kind === 'dashboard' && selection.catalog === catalog.name && selection.schema === schema.name && selection.dashboard === dbItem.name;
-
-                                      return (
-                                        <button
-                                          key={`db-${dbItem.id}`}
-                                          className={cx('uc-tree-row', isDbSelected && 'is-selected')}
-                                          onClick={() => {
-                                            selectAndNavigate({ kind: 'dashboard', catalog: catalog.name, schema: schema.name, dashboard: dbItem.name, dashboard_id: dbItem.dashboard_id ?? undefined });
-                                          }}
-                                        >
-                                          <span style={{ width: '12px' }} />
-                                          <span className="uc-tree-row-icon">
-                                            <SlidersHorizontal size={10} style={{ color: 'var(--color-primary)' }} />
-                                          </span>
-                                          <span className="uc-tree-row-label">{dbItem.name}</span>
-                                        </button>
-                                      );
-                                    })}
-                                    {tables.length === 0 && volumes.length === 0 && notebooks.length === 0 && dashboards.length === 0 && schemaPendingAssets.length === 0 && (
-                                      <div style={{ fontSize: '10px', color: 'var(--color-text-subtle)', padding: '2px 8px 2px 28px' }}>
-                                        {loadingSchemaTables[schemaKey] || loadingSchemaNotebooks[schemaKey] || loadingSchemaDashboards[schemaKey] ? 'Loading...' : 'No assets registered'}
-                                      </div>
-                                    )}
-                                  </>
+                                       return (
+                                         <button
+                                           key={`q-${qItem.id}`}
+                                           className={cx('uc-tree-row', isQSelected && 'is-selected')}
+                                           onClick={() => {
+                                             selectAndNavigate({ kind: 'query', catalog: catalog.name, schema: schema.name, query: qItem.name });
+                                           }}
+                                         >
+                                           <span style={{ width: '12px' }} />
+                                           <span className="uc-tree-row-icon">
+                                             <FileCode size={10} style={{ color: 'var(--color-primary)' }} />
+                                           </span>
+                                           <span className="uc-tree-row-label">{qItem.name}</span>
+                                         </button>
+                                       );
+                                     })}
+                                     {tables.length === 0 && volumes.length === 0 && notebooks.length === 0 && dashboards.length === 0 && tools.length === 0 && queries.length === 0 && schemaPendingAssets.length === 0 && (
+                                       <div style={{ fontSize: '10px', color: 'var(--color-text-subtle)', padding: '2px 8px 2px 28px' }}>
+                                         {loadingSchemaTables[schemaKey] || loadingSchemaNotebooks[schemaKey] || loadingSchemaDashboards[schemaKey] || loadingSchemaQueries[schemaKey] ? 'Loading...' : 'No assets registered'}
+                                       </div>
+                                     )}
+                                   </>
                                 )}
                               </div>
                             )}
@@ -5943,7 +6499,9 @@ export default function DataCatalog() {
               onClick={() => {
                 setMainTabId('details');
                 setSelection(detailsSelection);
-                if (detailsSelection.kind === 'catalog') {
+                if (!detailsSelection || detailsSelection.kind === 'root') {
+                  navigate('/data-catalog');
+                } else if (detailsSelection.kind === 'catalog') {
                   navigate(`/data-catalog/${encodeURIComponent(detailsSelection.catalog)}`);
                 } else if (detailsSelection.kind === 'schema') {
                   navigate(`/data-catalog/${encodeURIComponent(detailsSelection.catalog)}/${encodeURIComponent(detailsSelection.schema)}`);
@@ -5954,6 +6512,8 @@ export default function DataCatalog() {
                 } else if (detailsSelection.kind === 'tool') {
                   const q = (detailsSelection as any).tool_id ? `?tool_id=${encodeURIComponent((detailsSelection as any).tool_id)}` : '';
                   navigate(`/data-catalog/${encodeURIComponent(detailsSelection.catalog)}/${encodeURIComponent(detailsSelection.schema)}/tool/${encodeURIComponent((detailsSelection as any).tool)}${q}`);
+                } else if (detailsSelection.kind === 'query') {
+                  navigate(`/data-catalog/${encodeURIComponent(detailsSelection.catalog)}/${encodeURIComponent(detailsSelection.schema)}?kind=query&query=${encodeURIComponent(detailsSelection.query)}`);
                 } else {
                   navigate('/data-catalog');
                 }
@@ -5961,7 +6521,7 @@ export default function DataCatalog() {
               className={cx('uc-main-tab', mainTabId === 'details' && 'is-active')}
               title="Details overview"
             >
-              <Layers size={13} color={mainTabId === 'details' ? '#2563eb' : '#64748b'} />
+              <Layers size={13} color="#6B7280" />
               <span className="uc-main-tab-title">Details</span>
             </button>
 
@@ -5989,10 +6549,10 @@ export default function DataCatalog() {
                   }}
                   title={panel.label}
                 >
-                  {isNotebook && <BookOpen size={13} color={isActive ? '#ea580c' : '#64748b'} />}
-                  {isDashboard && <LayoutDashboard size={13} color={isActive ? '#7c3aed' : '#64748b'} />}
-                  {isVolume && <HardDrive size={13} color={isActive ? '#0284c7' : '#64748b'} />}
-                  {!isNotebook && !isDashboard && !isVolume && <FileCode size={13} color={isActive ? '#2563eb' : '#64748b'} />}
+                  {isNotebook && <BookOpen size={13} color="#6B7280" />}
+                  {isDashboard && <LayoutDashboard size={13} color="#6B7280" />}
+                  {isVolume && <HardDrive size={13} color="#6B7280" />}
+                  {!isNotebook && !isDashboard && !isVolume && <FileCode size={13} color="#6B7280" />}
                   <span className="uc-main-tab-title">{panel.label}</span>
                   <button
                     type="button"

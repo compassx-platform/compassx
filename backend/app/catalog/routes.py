@@ -33,6 +33,12 @@ from app.catalog.schemas import (
     DashboardRead,
     DashboardUpdate,
     DashboardMove,
+    QueryCreate,
+    QueryRead,
+    QueryUpdate,
+    QueryMove,
+    QueryVersionRead,
+    QueryCreateVersion,
 )
 from app.catalog.service import (
     _to_table_read,
@@ -69,6 +75,16 @@ from app.catalog.service import (
     update_dashboard,
     move_dashboard,
     delete_dashboard,
+    list_queries,
+    get_query,
+    create_query,
+    update_query,
+    move_query,
+    delete_query,
+    create_query_version,
+    list_query_versions,
+    get_query_version,
+    restore_query_version,
 )
 from app.database import get_account_db as get_db
 from app.dependencies import get_current_user
@@ -1128,6 +1144,164 @@ async def remove_dashboard(
         await delete_dashboard(db, catalog_name, schema_name, dashboard_name)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
+
+
+# ── Queries ───────────────────────────────────────────────────────────────────
+
+@router.get("/catalogs/{catalog_name}/schemas/{schema_name}/queries", response_model=list[QueryRead])
+def get_queries(
+    catalog_name: str,
+    schema_name: str,
+    db: Session = Depends(get_db)
+):
+    """List queries registered under a schema."""
+    try:
+        return list_queries(db, catalog_name, schema_name)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+
+
+@router.post("/catalogs/{catalog_name}/schemas/{schema_name}/queries", response_model=QueryRead, status_code=201)
+async def add_query(
+    catalog_name: str,
+    schema_name: str,
+    body: QueryCreate,
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    """Register and save a new query in a schema."""
+    try:
+        return await create_query(db, catalog_name, schema_name, body, user)
+    except ValueError as exc:
+        if "already exists" in str(exc):
+            raise HTTPException(status_code=409, detail=str(exc))
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@router.get("/catalogs/{catalog_name}/schemas/{schema_name}/queries/{query_name}", response_model=QueryRead)
+def read_query(
+    catalog_name: str,
+    schema_name: str,
+    query_name: str,
+    db: Session = Depends(get_db)
+):
+    """Retrieve query metadata and SQL content."""
+    try:
+        return get_query(db, catalog_name, schema_name, query_name)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+
+
+@router.patch("/catalogs/{catalog_name}/schemas/{schema_name}/queries/{query_name}", response_model=QueryRead)
+def edit_query(
+    catalog_name: str,
+    schema_name: str,
+    query_name: str,
+    body: QueryUpdate,
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    """Update query metadata or SQL text."""
+    try:
+        return update_query(db, catalog_name, schema_name, query_name, body, user)
+    except ValueError as exc:
+        if "already exists" in str(exc):
+            raise HTTPException(status_code=409, detail=str(exc))
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@router.post("/catalogs/{catalog_name}/schemas/{schema_name}/queries/{query_name}/move", response_model=QueryRead)
+async def move_catalog_query(
+    catalog_name: str,
+    schema_name: str,
+    query_name: str,
+    body: QueryMove,
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    """Move a query to another catalog and/or schema."""
+    try:
+        return await move_query(db, catalog_name, schema_name, query_name, body, user)
+    except ValueError as exc:
+        if "already exists" in str(exc):
+            raise HTTPException(status_code=409, detail=str(exc))
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@router.delete("/catalogs/{catalog_name}/schemas/{schema_name}/queries/{query_name}", status_code=204)
+async def remove_query(
+    catalog_name: str,
+    schema_name: str,
+    query_name: str,
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    """Delete a registered query from the catalog."""
+    try:
+        await delete_query(db, catalog_name, schema_name, query_name)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+
+
+@router.get("/catalogs/{catalog_name}/schemas/{schema_name}/queries/{query_name}/versions", response_model=list[QueryVersionRead])
+def get_query_version_history(
+    catalog_name: str,
+    schema_name: str,
+    query_name: str,
+    db: Session = Depends(get_db),
+):
+    """List all immutable versions for a query."""
+    try:
+        return list_query_versions(db, catalog_name, schema_name, query_name)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+
+
+@router.post("/catalogs/{catalog_name}/schemas/{schema_name}/queries/{query_name}/versions", response_model=QueryVersionRead, status_code=201)
+def add_query_version(
+    catalog_name: str,
+    schema_name: str,
+    query_name: str,
+    body: QueryCreateVersion,
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    """Create a new version for a query."""
+    try:
+        return create_query_version(db, catalog_name, schema_name, query_name, body, user)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@router.get("/catalogs/{catalog_name}/schemas/{schema_name}/queries/{query_name}/versions/{version_num}", response_model=QueryVersionRead)
+def read_query_version(
+    catalog_name: str,
+    schema_name: str,
+    query_name: str,
+    version_num: int,
+    db: Session = Depends(get_db),
+):
+    """Get a specific version of a query."""
+    try:
+        return get_query_version(db, catalog_name, schema_name, query_name, version_num)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+
+
+@router.post("/catalogs/{catalog_name}/schemas/{schema_name}/queries/{query_name}/versions/{version_num}/restore", response_model=QueryRead)
+def restore_version(
+    catalog_name: str,
+    schema_name: str,
+    query_name: str,
+    version_num: int,
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    """Restore query SQL and description from an earlier version."""
+    try:
+        return restore_query_version(db, catalog_name, schema_name, query_name, version_num, user)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
 
 

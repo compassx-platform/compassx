@@ -261,6 +261,66 @@ class DashboardMove(BaseModel):
     new_name: str | None = Field(None, pattern=r"^[a-zA-Z0-9_]+$")
 
 
+# ── Catalog Queries ─────────────────────────────────────────────────────────
+
+class QueryCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=255)
+    sql_text: str = Field(..., min_length=1)
+    description: str | None = None
+
+
+class QueryVersionRead(BaseModel):
+    model_config = {"from_attributes": True}
+
+    id: str
+    query_id: str
+    version: int
+    sql_text: str
+    description: str | None = None
+    change_summary: str | None = None
+    created_by: str
+    created_at: datetime
+
+
+class QueryCreateVersion(BaseModel):
+    sql_text: str = Field(..., min_length=1)
+    description: str | None = None
+    change_summary: str | None = None
+
+
+class QueryRead(BaseModel):
+    model_config = {"from_attributes": True}
+
+    id: str
+    catalog_name: str
+    schema_name: str
+    name: str
+    full_name: str
+    sql_text: str
+    owner: str
+    description: str | None = None
+    current_version: int = 1
+    versions: list[QueryVersionRead] = []
+    created_at: datetime
+    updated_at: datetime
+    created_by: str
+    updated_by: str
+
+
+class QueryUpdate(BaseModel):
+    name: str | None = Field(None, min_length=1, max_length=255)
+    sql_text: str | None = None
+    description: str | None = None
+    owner: str | None = None
+    change_summary: str | None = None
+
+
+class QueryMove(BaseModel):
+    target_catalog: str
+    target_schema: str
+    new_name: str | None = Field(None, min_length=1, max_length=255)
+
+
 
 # ── Workspace-Catalog Bindings ──────────────────────────────────────────────
 

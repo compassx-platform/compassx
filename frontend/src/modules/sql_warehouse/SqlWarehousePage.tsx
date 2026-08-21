@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useParams, useNavigate, Link } from 'react-router-dom';
+import { useParams, useNavigate, Link, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Database, Loader2, Play, Plus, Power, Square, TerminalSquare, Code2, Server, History, CheckCircle2, ChevronRight, Activity, Clock, Search, ServerCog, Folder, ChevronDown, Star, Sparkles, Download, Maximize2, BarChart2, Settings, MoreVertical, Share2, FileText, RefreshCw, XCircle, HelpCircle, ExternalLink, Zap, LayoutGrid, List, X, GitBranch } from 'lucide-react';
+import { Database, Loader2, Play, Plus, Power, Square, TerminalSquare, Code2, Server, History, CheckCircle2, ChevronRight, Activity, Clock, Search, ServerCog, Folder, ChevronDown, Star, Sparkles, Download, Maximize2, BarChart2, Settings, MoreVertical, Share2, FileText, RefreshCw, XCircle, HelpCircle, ExternalLink, Zap, LayoutGrid, List, X, GitBranch, Edit2, Trash2, Check, Bookmark, BookOpen } from 'lucide-react';
 import api from '@/lib/api';
 import { AppTable, type AppTableColumn } from '@/components/common/AppTable';
 import { PageTabs } from '@/components/common/PageTabs';
+import { ModularSqlEditor } from './components/ModularSqlEditor';
+import { CatalogExplorerTree } from '../data/components/CatalogExplorerTree';
 import './sql-warehouse.css';
 import './sql-editor-custom.css';
 
@@ -48,6 +50,182 @@ type HistoryRecord = {
   query_analysis?: Record<string, any> | null;
   created_at: string;
 };
+
+type DraftQuery = {
+  id: string;
+  workspace_id?: string | null;
+  user_id: string;
+  name: string;
+  sql_text: string;
+  catalog?: string | null;
+  schema_name?: string | null;
+  tab_order: number;
+  created_at: string;
+  updated_at: string;
+};
+
+function InlineRenameInput({
+  initialValue,
+  onSave,
+  onCancel,
+  className,
+  style,
+}: {
+  initialValue: string;
+  onSave: (val: string) => void;
+  onCancel: () => void;
+  className?: string;
+  style?: React.CSSProperties;
+}) {
+  const [val, setVal] = useState(initialValue);
+  const valRef = useRef(val);
+  valRef.current = val;
+
+  const inputRef = useRef<HTMLInputElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const isCommittedRef = useRef(false);
+
+  const handleCommit = (shouldSave: boolean) => {
+    if (isCommittedRef.current) return;
+    isCommittedRef.current = true;
+    if (shouldSave) {
+      const trimmed = valRef.current.trim();
+      if (trimmed) {
+        onSave(trimmed);
+      } else {
+        onCancel();
+      }
+    } else {
+      onCancel();
+    }
+  };
+
+  useEffect(() => {
+    if (inputRef.current) {
+      inputRef.current.focus();
+      inputRef.current.select();
+    }
+
+    const handleClickOutside = (e: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        handleCommit(true);
+      }
+    };
+
+    const timer = setTimeout(() => {
+      window.addEventListener('mousedown', handleClickOutside);
+    }, 150);
+
+    return () => {
+      clearTimeout(timer);
+      window.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, []);
+
+  return (
+    <div
+      ref={containerRef}
+      onClick={(e) => e.stopPropagation()}
+      onMouseDown={(e) => e.stopPropagation()}
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 3,
+        flex: 1,
+        minWidth: 0,
+      }}
+    >
+      <input
+        ref={inputRef}
+        type="text"
+        className={className}
+        value={val}
+        autoFocus
+        onChange={(e) => setVal(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            e.stopPropagation();
+            handleCommit(true);
+          } else if (e.key === 'Escape') {
+            e.preventDefault();
+            e.stopPropagation();
+            handleCommit(false);
+          }
+        }}
+        onClick={(e) => e.stopPropagation()}
+        onMouseDown={(e) => e.stopPropagation()}
+        style={{
+          background: 'var(--color-surface)',
+          color: 'var(--color-text)',
+          border: '1px solid var(--color-primary)',
+          borderRadius: 3,
+          padding: '1px 6px',
+          fontSize: 12,
+          outline: 'none',
+          boxShadow: '0 0 0 2px rgba(14, 165, 233, 0.25)',
+          width: '100%',
+          minWidth: 80,
+          ...style,
+        }}
+      />
+      <button
+        type="button"
+        onMouseDown={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+        }}
+        onClick={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          handleCommit(true);
+        }}
+        title="Save (Enter)"
+        style={{
+          background: 'var(--color-primary)',
+          color: '#ffffff',
+          border: 'none',
+          borderRadius: 3,
+          padding: '2px 4px',
+          cursor: 'pointer',
+          display: 'inline-flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          flexShrink: 0,
+        }}
+      >
+        <Check size={11} />
+      </button>
+      <button
+        type="button"
+        onMouseDown={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+        }}
+        onClick={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          handleCommit(false);
+        }}
+        title="Cancel (Esc)"
+        style={{
+          background: 'var(--color-background-subtle, #374151)',
+          color: 'var(--color-text-muted)',
+          border: '1px solid var(--color-border)',
+          borderRadius: 3,
+          padding: '2px 4px',
+          cursor: 'pointer',
+          display: 'inline-flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          flexShrink: 0,
+        }}
+      >
+        <X size={11} />
+      </button>
+    </div>
+  );
+}
 
 function ProfileTreeNode({ node, totalLatency, depth = 0 }: { node: any; totalLatency: number; depth?: number }) {
   const [expanded, setExpanded] = useState(true);
@@ -156,9 +334,13 @@ const warehouseApi = {
   create: (body: Record<string, unknown>) => api.post<Warehouse>('/warehouses', body).then((r) => r.data),
   start: (id: string) => api.post<Warehouse>(`/warehouses/${id}/start`).then((r) => r.data),
   stop: (id: string) => api.post<Warehouse>(`/warehouses/${id}/stop`).then((r) => r.data),
-  query: (warehouse_id: string, sql: string, catalog?: string, schema_name?: string, source?: string) => api.post<QueryResult>('/sql/query', { warehouse_id, sql, max_rows: 1000, catalog, schema_name, source }).then((r) => r.data),
+  query: (warehouse_id: string, sql: string, catalog?: string, schema_name?: string, source?: string, max_rows?: number) => api.post<QueryResult>('/sql/query', { warehouse_id, sql, max_rows: max_rows ?? 1000, catalog, schema_name, source }).then((r) => r.data),
   validate: (sql: string) => api.post<{ valid: boolean; error?: string; statement_count?: number }>('/sql/validate', { sql }).then((r) => r.data),
   history: (warehouse_id?: string, scope: 'me' | 'all' = 'me') => api.get<{ records: HistoryRecord[] }>('/sql/history', { params: { warehouse_id, limit: 25, scope } }).then((r) => r.data.records),
+  drafts: () => api.get<DraftQuery[]>('/sql/drafts').then((r) => r.data),
+  createDraft: (body: { name?: string; sql_text?: string; catalog?: string; schema_name?: string; tab_order?: number }) => api.post<DraftQuery>('/sql/drafts', body).then((r) => r.data),
+  updateDraft: (id: string, body: { name?: string; sql_text?: string; catalog?: string; schema_name?: string; tab_order?: number }) => api.put<DraftQuery>(`/sql/drafts/${id}`, body).then((r) => r.data),
+  deleteDraft: (id: string) => api.delete<{ deleted: boolean; id: string }>(`/sql/drafts/${id}`).then((r) => r.data),
   catalogs: () => api.get<{ catalogs: { name: string; catalog_type: string }[] }>('/sql-warehouse/catalog/catalogs').then((r) => r.data.catalogs),
   schemas: (catalog: string) => api.get<{ schemas: string[] }>('/sql-warehouse/catalog/schemas', { params: { catalog } }).then((r) => r.data.schemas),
   tables: (catalog: string, schema: string) => api.get<{ tables: string[] }>('/sql-warehouse/catalog/tables', { params: { catalog, schema } }).then((r) => r.data.tables),
@@ -170,24 +352,59 @@ export default function SqlWarehousePage() {
   const activeTab = tab || 'editor';
   const navigate = useNavigate();
   
+  const [searchParams] = useSearchParams();
+  const initialSqlParam = searchParams.get('sql');
+  const initialQueryNameParam = searchParams.get('query_name');
+  const initialCatalogParam = searchParams.get('catalog');
+  const initialSchemaParam = searchParams.get('schema');
+
   const [search, setSearch] = useState('');
   
   const [detailsWarehouseId, setDetailsWarehouseId] = useState<string | null>(null);
   const [detailsTab, setDetailsTab] = useState<'overview' | 'monitoring'>('monitoring');
   
   const [activeWarehouseId, setActiveWarehouseId] = useState('');
-  const [activeCatalog, setActiveCatalog] = useState('');
-  const [activeSchema, setActiveSchema] = useState('');
-  const [sql, setSql] = useState("SELECT 1 AS id, 'CompassX SQL Warehouse' AS name;");
+  const [activeCatalog, setActiveCatalog] = useState(initialCatalogParam || '');
+  const [activeSchema, setActiveSchema] = useState(initialSchemaParam || '');
+  const [sql, setSql] = useState(initialSqlParam || "SELECT 1 AS id, 'CompassX SQL Warehouse' AS name;");
   const [result, setResult] = useState<QueryResult | null>(null);
   const [error, setError] = useState('');
 
-  const [queryTabs, setQueryTabs] = useState([
-    { id: 'q1', name: "SELECT 1 AS id, 'CompassX SQL Warehouse' AS name;", sql: "SELECT 1 AS id, 'CompassX SQL Warehouse' AS name;", catalog: '', schema: '' }
+  const [queryTabs, setQueryTabs] = useState<Array<{ id: string; name: string; sql: string; catalog: string; schema: string }>>([
+    {
+      id: 'q1',
+      name: initialQueryNameParam || "Query 1",
+      sql: initialSqlParam || "SELECT 1 AS id, 'CompassX SQL Warehouse' AS name;",
+      catalog: initialCatalogParam || '',
+      schema: initialSchemaParam || '',
+    }
   ]);
   const [activeQueryTabId, setActiveQueryTabId] = useState('q1');
+  const [editingTabId, setEditingTabId] = useState<string | null>(null);
+  const [openDraftMenuId, setOpenDraftMenuId] = useState<string | null>(null);
   const [sidebarSearch, setSidebarSearch] = useState('');
   const [draftsExpanded, setDraftsExpanded] = useState(true);
+  const [sidebarMode, setSidebarMode] = useState<'drafts' | 'catalog'>('drafts');
+
+  // Save to Catalog modal state
+  const [showSaveToCatalogModal, setShowSaveToCatalogModal] = useState(false);
+  const [saveCatalogName, setSaveCatalogName] = useState('');
+  const [saveSchemaName, setSaveSchemaName] = useState('');
+  const [saveQueryName, setSaveQueryName] = useState('');
+  const [saveDescription, setSaveDescription] = useState('');
+  const [isSavingToCatalog, setIsSavingToCatalog] = useState(false);
+  const [saveCatalogFeedback, setSaveCatalogFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+
+  const autoSaveTimerRef = useRef<any>(null);
+  const initialLoadDone = useRef(false);
+
+  useEffect(() => {
+    const handleOutsideClick = () => {
+      setOpenDraftMenuId(null);
+    };
+    window.addEventListener('click', handleOutsideClick);
+    return () => window.removeEventListener('click', handleOutsideClick);
+  }, []);
 
   // Query History Filters
   const [historySearch, setHistorySearch] = useState('');
@@ -200,6 +417,63 @@ export default function SqlWarehousePage() {
   const [drawerTab, setDrawerTab] = useState<'profile' | 'sql'>('profile');
   const [explainPlanText, setExplainPlanText] = useState<string | null>(null);
   const [isExplaining, setIsExplaining] = useState(false);
+
+  const draftsQuery = useQuery({ queryKey: ['swh-drafts'], queryFn: warehouseApi.drafts });
+
+  useEffect(() => {
+    if (draftsQuery.isSuccess) {
+      if (draftsQuery.data && draftsQuery.data.length > 0) {
+        const loadedTabs = draftsQuery.data.map(d => ({
+          id: d.id,
+          name: d.name,
+          sql: d.sql_text,
+          catalog: d.catalog || '',
+          schema: d.schema_name || '',
+        }));
+        if (!initialLoadDone.current) {
+          setQueryTabs(loadedTabs);
+          setActiveQueryTabId(loadedTabs[0].id);
+          setSql(loadedTabs[0].sql);
+          if (loadedTabs[0].catalog) setActiveCatalog(loadedTabs[0].catalog);
+          if (loadedTabs[0].schema) setActiveSchema(loadedTabs[0].schema);
+          initialLoadDone.current = true;
+        } else {
+          setQueryTabs(prev => {
+            return loadedTabs.map(loaded => {
+              const existing = prev.find(p => p.id === loaded.id);
+              if (existing) {
+                return { ...existing, name: loaded.name };
+              }
+              return loaded;
+            });
+          });
+        }
+      } else if (!initialLoadDone.current) {
+        initialLoadDone.current = true;
+        warehouseApi.createDraft({
+          name: 'Query 1',
+          sql_text: "SELECT 1 AS id, 'CompassX SQL Warehouse' AS name;",
+          catalog: activeCatalog || '',
+          schema_name: activeSchema || '',
+          tab_order: 0,
+        }).then(newDraft => {
+          const newTab = {
+            id: newDraft.id,
+            name: newDraft.name,
+            sql: newDraft.sql_text,
+            catalog: newDraft.catalog || '',
+            schema: newDraft.schema_name || '',
+          };
+          setQueryTabs([newTab]);
+          setActiveQueryTabId(newDraft.id);
+          setSql(newTab.sql);
+          qc.invalidateQueries({ queryKey: ['swh-drafts'] });
+        }).catch(err => {
+          console.error('Failed to create default initial draft:', err);
+        });
+      }
+    }
+  }, [draftsQuery.data, draftsQuery.isSuccess]);
 
   useEffect(() => {
     setExplainPlanText(null);
@@ -222,45 +496,115 @@ export default function SqlWarehousePage() {
 
   const activeTabObj = useMemo(() => queryTabs.find(t => t.id === activeQueryTabId) || queryTabs[0], [queryTabs, activeQueryTabId]);
 
-  useEffect(() => {
-    if (activeTabObj) {
-      setSql(activeTabObj.sql);
-      if (activeTabObj.catalog) setActiveCatalog(activeTabObj.catalog);
-      if (activeTabObj.schema) setActiveSchema(activeTabObj.schema);
+  const handleSelectTab = (tabId: string) => {
+    setActiveQueryTabId(tabId);
+    const target = queryTabs.find(t => t.id === tabId);
+    if (target) {
+      setSql(target.sql);
+      if (target.catalog) setActiveCatalog(target.catalog);
+      if (target.schema) setActiveSchema(target.schema);
     }
-  }, [activeQueryTabId]);
+  };
+
+  const triggerAutoSave = (draftId: string, updates: { name?: string; sql_text?: string; catalog?: string; schema_name?: string }) => {
+    if (!draftId) return;
+    if (autoSaveTimerRef.current) {
+      clearTimeout(autoSaveTimerRef.current);
+    }
+    autoSaveTimerRef.current = setTimeout(() => {
+      warehouseApi.updateDraft(draftId, updates).then(() => {
+        qc.invalidateQueries({ queryKey: ['swh-drafts'] });
+      }).catch(err => {
+        console.error('Failed to auto-save draft:', err);
+      });
+    }, 600);
+  };
 
   const handleSqlChange = (newSql: string) => {
     setSql(newSql);
     setQueryTabs(prev => prev.map(t => {
       if (t.id === activeQueryTabId) {
-        const trimmed = newSql.trim();
-        const firstLine = trimmed.split('\n')[0] || 'New Query';
-        const name = firstLine.length > 45 ? firstLine.slice(0, 42) + '...' : firstLine;
-        return { ...t, sql: newSql, name };
+        return { ...t, sql: newSql };
       }
       return t;
     }));
+    triggerAutoSave(activeQueryTabId, { sql_text: newSql });
+  };
+
+  const handleCatalogChange = (newCat: string) => {
+    setActiveCatalog(newCat);
+    setActiveSchema('');
+    setQueryTabs(prev => prev.map(t => {
+      if (t.id === activeQueryTabId) {
+        return { ...t, catalog: newCat, schema: '' };
+      }
+      return t;
+    }));
+    triggerAutoSave(activeQueryTabId, { catalog: newCat, schema_name: '' });
+  };
+
+  const handleSchemaChange = (newSchema: string) => {
+    setActiveSchema(newSchema);
+    setQueryTabs(prev => prev.map(t => {
+      if (t.id === activeQueryTabId) {
+        return { ...t, schema: newSchema };
+      }
+      return t;
+    }));
+    triggerAutoSave(activeQueryTabId, { schema_name: newSchema });
+  };
+
+  const handleSaveRename = async (id: string, newName: string) => {
+    const trimmed = newName.trim();
+    setEditingTabId(null);
+    if (!trimmed) return;
+    setQueryTabs(prev => prev.map(t => t.id === id ? { ...t, name: trimmed } : t));
+    try {
+      await warehouseApi.updateDraft(id, { name: trimmed });
+      qc.invalidateQueries({ queryKey: ['swh-drafts'] });
+    } catch (e) {
+      console.error('Failed to rename draft:', e);
+    }
   };
 
   const handleSelectDraft = (item: { id: string; name: string; sql: string; catalog?: string; schema?: string }) => {
     if (queryTabs.some(t => t.id === item.id)) {
-      setActiveQueryTabId(item.id);
+      handleSelectTab(item.id);
     } else {
       setQueryTabs(prev => [...prev, { id: item.id, name: item.name, sql: item.sql, catalog: item.catalog || activeCatalog, schema: item.schema || activeSchema }]);
-      setActiveQueryTabId(item.id);
+      handleSelectTab(item.id);
     }
   };
 
-  const handleAddTab = () => {
-    const newId = 'q_' + Date.now();
-    const name = `select * from ...`;
-    const newTab = { id: newId, name, sql: 'select * from ...', catalog: activeCatalog, schema: activeSchema };
-    setQueryTabs(prev => [...prev, newTab]);
-    setActiveQueryTabId(newId);
+  const handleAddTab = async () => {
+    const nextNumber = (draftsQuery.data?.length ?? queryTabs.length) + 1;
+    const defaultName = `Query ${nextNumber}`;
+    const defaultSql = 'select * from ...';
+    try {
+      const newDraft = await warehouseApi.createDraft({
+        name: defaultName,
+        sql_text: defaultSql,
+        catalog: activeCatalog,
+        schema_name: activeSchema,
+        tab_order: queryTabs.length,
+      });
+      const newTab = {
+        id: newDraft.id,
+        name: newDraft.name,
+        sql: newDraft.sql_text,
+        catalog: newDraft.catalog || activeCatalog,
+        schema: newDraft.schema_name || activeSchema,
+      };
+      setQueryTabs(prev => [...prev, newTab]);
+      setActiveQueryTabId(newDraft.id);
+      setSql(newDraft.sql_text);
+      qc.invalidateQueries({ queryKey: ['swh-drafts'] });
+    } catch (e) {
+      console.error('Failed to create draft:', e);
+    }
   };
 
-  const handleCloseTab = (id: string) => {
+  const handleCloseTab = async (id: string) => {
     if (queryTabs.length <= 1) return;
     const activeIndex = queryTabs.findIndex(t => t.id === activeQueryTabId);
     const newTabs = queryTabs.filter(t => t.id !== id);
@@ -268,7 +612,35 @@ export default function SqlWarehousePage() {
     if (activeQueryTabId === id) {
       const nextActive = newTabs[Math.max(activeIndex - 1, 0)];
       setActiveQueryTabId(nextActive.id);
+      setSql(nextActive.sql);
+      if (nextActive.catalog) setActiveCatalog(nextActive.catalog);
+      if (nextActive.schema) setActiveSchema(nextActive.schema);
     }
+    try {
+      await warehouseApi.deleteDraft(id);
+      qc.invalidateQueries({ queryKey: ['swh-drafts'] });
+    } catch (e) {
+      console.error('Failed to delete draft:', e);
+    }
+  };
+
+  const handleInsertIntoSql = (identifier: string) => {
+    const updatedSql = sql ? `${sql.trim()}\n${identifier}` : identifier;
+    handleSqlChange(updatedSql);
+  };
+
+  const handleDownloadCsv = () => {
+    if (!result || !result.columns || !result.rows || result.rows.length === 0) return;
+    const header = result.columns.join(',');
+    const rows = result.rows.map(r => r.map(cell => `"${String(cell ?? '').replace(/"/g, '""')}"`).join(','));
+    const csvContent = "data:text/csv;charset=utf-8," + [header, ...rows].join('\n');
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement("a");
+    link.setAttribute("href", encodedUri);
+    link.setAttribute("download", `${activeTabObj?.name || 'query_result'}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
   };
 
   const lineNumbers = useMemo(() => {
@@ -302,17 +674,75 @@ export default function SqlWarehousePage() {
     queryFn: () => warehouseApi.history(detailsWarehouseId || undefined, historyUser as 'me' | 'all')
   });
 
+  const saveSchemasQuery = useQuery({
+    queryKey: ['swh-save-schemas', saveCatalogName],
+    queryFn: () => warehouseApi.schemas(saveCatalogName),
+    enabled: !!saveCatalogName && showSaveToCatalogModal,
+  });
+
+  const handleOpenSaveToCatalog = () => {
+    const currentTab = queryTabs.find(t => t.id === activeQueryTabId);
+    const defaultCat = activeCatalog || catalogsQuery.data?.[0]?.name || 'compassx';
+    setSaveCatalogName(defaultCat);
+    setSaveSchemaName(activeSchema || 'public');
+    setSaveQueryName(currentTab?.name || 'Query');
+    setSaveDescription('');
+    setSaveCatalogFeedback(null);
+    setShowSaveToCatalogModal(true);
+  };
+
+  const handleSaveToCatalogSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!saveCatalogName || !saveSchemaName || !saveQueryName.trim()) {
+      setSaveCatalogFeedback({ type: 'error', message: 'Catalog, schema, and query name are required.' });
+      return;
+    }
+    setIsSavingToCatalog(true);
+    setSaveCatalogFeedback(null);
+    try {
+      await api.post(`/catalog/catalogs/${encodeURIComponent(saveCatalogName)}/schemas/${encodeURIComponent(saveSchemaName)}/queries`, {
+        name: saveQueryName.trim(),
+        sql_text: sql || '',
+        description: saveDescription.trim() || undefined,
+      });
+      setSaveCatalogFeedback({
+        type: 'success',
+        message: `Query registered in catalog: ${saveCatalogName}.${saveSchemaName}.${saveQueryName.trim()}`,
+      });
+      qc.invalidateQueries({ queryKey: ['uc-schema-queries'] });
+      qc.invalidateQueries({ queryKey: ['uc-catalog'] });
+      setTimeout(() => {
+        setShowSaveToCatalogModal(false);
+        setIsSavingToCatalog(false);
+        setSaveCatalogFeedback(null);
+      }, 1400);
+    } catch (err: any) {
+      setIsSavingToCatalog(false);
+      const detail = err?.response?.data?.detail || err?.message || 'Failed to save query to catalog';
+      setSaveCatalogFeedback({ type: 'error', message: detail });
+    }
+  };
+
   const drafts = useMemo(() => {
+    const list = (draftsQuery.data && draftsQuery.data.length > 0) ? draftsQuery.data.map(d => ({
+      id: d.id,
+      name: d.name,
+      sql: d.sql_text,
+      catalog: d.catalog || '',
+      schema: d.schema_name || '',
+    })) : queryTabs;
+
     const seen = new Set();
     const uniqueItems = [];
-    for (const item of queryTabs) {
-      if (!seen.has(item.name)) {
-        seen.add(item.name);
+    for (const item of list) {
+      if (!seen.has(item.id)) {
+        seen.add(item.id);
         uniqueItems.push(item);
       }
     }
     return uniqueItems.filter(item => !sidebarSearch || item.name.toLowerCase().includes(sidebarSearch.toLowerCase()));
-  }, [queryTabs, sidebarSearch]);
+  }, [draftsQuery.data, queryTabs, sidebarSearch]);
+
 
   useEffect(() => {
     if (!activeWarehouseId && warehouses[0]) setActiveWarehouseId(warehouses[0].id);
@@ -372,7 +802,7 @@ export default function SqlWarehousePage() {
   const stopMutation = useMutation({ mutationFn: (id: string) => warehouseApi.stop(id), onSuccess: () => qc.invalidateQueries({ queryKey: ['sql-warehouses'] }) });
   
   const runMutation = useMutation({
-    mutationFn: () => warehouseApi.query(activeWarehouse!.id, sql, activeCatalog, activeSchema),
+    mutationFn: (limit?: number) => warehouseApi.query(activeWarehouse!.id, sql, activeCatalog, activeSchema, 'sql_editor', limit ?? 1000),
     onMutate: () => { setError(''); setResult(null); },
     onSuccess: (res) => { setResult(res); qc.invalidateQueries({ queryKey: ['swh-history'] }); },
     onError: (e: any) => setError(e?.response?.data?.detail?.detail || e?.response?.data?.detail || 'Query failed'),
@@ -703,237 +1133,340 @@ export default function SqlWarehousePage() {
               <div className="swh-sidebar-header">
                 <h2>SQL Editor</h2>
                 <div className="swh-sidebar-header-actions">
-                  <RefreshCw size={13} className="cursor-pointer" />
-                  <Folder size={13} className="cursor-pointer" />
+                  <button 
+                    onClick={() => {
+                      if (sidebarMode === 'drafts') draftsQuery.refetch();
+                      else qc.invalidateQueries({ queryKey: ['explorer-catalogs'] });
+                    }} 
+                    title={sidebarMode === 'drafts' ? "Refresh drafts" : "Refresh catalog tree"} 
+                    style={{ background: 'none', border: 'none', padding: 2, cursor: 'pointer', color: 'var(--color-text-muted)', display: 'flex', alignItems: 'center' }}
+                  >
+                    <RefreshCw size={13} className={draftsQuery.isFetching ? 'spin' : ''} />
+                  </button>
                 </div>
               </div>
-              <div className="swh-sidebar-tree-control">
-                <span>Tree view: ON</span>
-                <ChevronDown size={12} />
-              </div>
-              <div className="swh-sidebar-search">
-                <Search size={12} className="text-muted" />
-                <input 
-                  placeholder="Type to search" 
-                  value={sidebarSearch}
-                  onChange={e => setSidebarSearch(e.target.value)}
-                />
-              </div>
-              <div className="swh-sidebar-tree-list">
-                <div 
-                  className="swh-sidebar-folder"
-                  onClick={() => setDraftsExpanded(!draftsExpanded)}
+
+              {/* Clean Segmented Mode Switcher: Drafts vs Catalog */}
+              <div className="swh-sidebar-mode-switch">
+                <button
+                  type="button"
+                  className={`swh-sidebar-mode-btn ${sidebarMode === 'drafts' ? 'is-active' : ''}`}
+                  onClick={() => setSidebarMode('drafts')}
+                  title="View your personal draft queries"
                 >
-                  {draftsExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-                  <Folder size={13} className="text-muted" />
+                  <Folder size={12} className="swh-mode-icon" />
                   <span>Drafts</span>
-                </div>
-                {draftsExpanded && (
-                  <div style={{ display: 'flex', flexDirection: 'column' }}>
-                    {drafts.map(item => (
-                      <div 
-                        key={item.id} 
-                        className={`swh-sidebar-file-item ${activeQueryTabId === item.id ? 'is-active' : ''}`}
-                        onClick={() => handleSelectDraft(item)}
-                        title={item.name}
-                      >
-                        <FileText size={12} />
-                        <span>{item.name}</span>
+                </button>
+                <button
+                  type="button"
+                  className={`swh-sidebar-mode-btn ${sidebarMode === 'catalog' ? 'is-active' : ''}`}
+                  onClick={() => setSidebarMode('catalog')}
+                  title="Explore Data Catalog schemas and tables (click to insert into SQL)"
+                >
+                  <Database size={12} className="swh-mode-icon" />
+                  <span>Catalog</span>
+                </button>
+              </div>
+
+              {sidebarMode === 'drafts' && (
+                <>
+                  <div className="swh-sidebar-search">
+                    <Search size={12} className="text-muted" />
+                    <input 
+                      placeholder="Type to search" 
+                      value={sidebarSearch}
+                      onChange={e => setSidebarSearch(e.target.value)}
+                    />
+                  </div>
+                  <div className="swh-sidebar-tree-list">
+                    <div 
+                      className="swh-sidebar-folder"
+                      onClick={() => setDraftsExpanded(!draftsExpanded)}
+                    >
+                      {draftsExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                      <Folder size={13} className="text-muted" />
+                      <span>Drafts</span>
+                    </div>
+                    {draftsExpanded && (
+                      <div style={{ display: 'flex', flexDirection: 'column' }}>
+                        {drafts.map(item => (
+                          <div 
+                            key={item.id} 
+                            className={`swh-sidebar-file-item ${activeQueryTabId === item.id ? 'is-active' : ''}`}
+                            onClick={(e) => {
+                              if (editingTabId === item.id) {
+                                e.stopPropagation();
+                                return;
+                              }
+                              handleSelectDraft(item);
+                            }}
+                            style={{ position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'space-between', paddingRight: 4 }}
+                          >
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 6, flex: 1, minWidth: 0 }}>
+                              <FileText size={12} style={{ flexShrink: 0 }} />
+                              {editingTabId === item.id ? (
+                                <InlineRenameInput
+                                  initialValue={item.name}
+                                  onSave={(newName) => handleSaveRename(item.id, newName)}
+                                  onCancel={() => setEditingTabId(null)}
+                                  style={{ width: '100%', fontSize: 11 }}
+                                />
+                              ) : (
+                                <span
+                                  onDoubleClick={(e) => {
+                                    e.stopPropagation();
+                                    setEditingTabId(item.id);
+                                  }}
+                                  style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                                  title={item.name}
+                                >
+                                  {item.name}
+                                </span>
+                              )}
+                            </div>
+
+                            {editingTabId !== item.id && (
+                              <div style={{ position: 'relative', flexShrink: 0 }}>
+                                <button
+                                  className="swh-draft-more-btn"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setOpenDraftMenuId(openDraftMenuId === item.id ? null : item.id);
+                                  }}
+                                  title="Draft options"
+                                  style={{
+                                    background: 'none',
+                                    border: 'none',
+                                    padding: '2px 3px',
+                                    cursor: 'pointer',
+                                    color: 'var(--color-text-muted)',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    borderRadius: 3,
+                                  }}
+                                >
+                                  <MoreVertical size={12} />
+                                </button>
+
+                                {openDraftMenuId === item.id && (
+                                  <div
+                                    className="swh-draft-menu-dropdown"
+                                    onClick={(e) => e.stopPropagation()}
+                                    style={{
+                                      position: 'absolute',
+                                      right: 0,
+                                      top: '100%',
+                                      zIndex: 100,
+                                      background: 'var(--color-surface)',
+                                      border: '1px solid var(--color-border)',
+                                      borderRadius: 6,
+                                      boxShadow: '0 4px 14px rgba(0,0,0,0.18)',
+                                      padding: '4px 0',
+                                      minWidth: 110,
+                                    }}
+                                  >
+                                    <button
+                                      onMouseDown={(e) => {
+                                        e.preventDefault();
+                                        e.stopPropagation();
+                                      }}
+                                      onClick={(e) => {
+                                        e.preventDefault();
+                                        e.stopPropagation();
+                                        setOpenDraftMenuId(null);
+                                        setEditingTabId(item.id);
+                                      }}
+                                      style={{
+                                        width: '100%',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        gap: 6,
+                                        padding: '6px 10px',
+                                        background: 'none',
+                                        border: 'none',
+                                        fontSize: 11,
+                                        color: 'var(--color-text)',
+                                        cursor: 'pointer',
+                                        textAlign: 'left',
+                                      }}
+                                      onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--color-background-subtle)')}
+                                      onMouseLeave={(e) => (e.currentTarget.style.background = 'none')}
+                                    >
+                                      <Edit2 size={11} />
+                                      <span>Rename</span>
+                                    </button>
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        setOpenDraftMenuId(null);
+                                        handleCloseTab(item.id);
+                                      }}
+                                      style={{
+                                        width: '100%',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        gap: 6,
+                                        padding: '6px 10px',
+                                        background: 'none',
+                                        border: 'none',
+                                        fontSize: 11,
+                                        color: '#ef4444',
+                                        cursor: 'pointer',
+                                        textAlign: 'left',
+                                      }}
+                                      onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--color-background-subtle)')}
+                                      onMouseLeave={(e) => (e.currentTarget.style.background = 'none')}
+                                    >
+                                      <Trash2 size={11} />
+                                      <span>Delete</span>
+                                    </button>
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                        {drafts.length === 0 && (
+                          <div className="text-center text-muted py-2" style={{ fontSize: 11 }}>No drafts found</div>
+                        )}
                       </div>
-                    ))}
-                    {drafts.length === 0 && (
-                      <div className="text-center text-muted py-2" style={{ fontSize: 11 }}>No drafts found</div>
                     )}
                   </div>
-                )}
-              </div>
+                </>
+              )}
+
+              {sidebarMode === 'catalog' && (
+                <div style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
+                  <CatalogExplorerTree mode="exploration" onInsert={handleInsertIntoSql} />
+                </div>
+              )}
             </div>
 
             {/* Main Area */}
             <div className="swh-editor-main">
               {/* Tab Bar */}
               <div className="swh-editor-tabs-bar">
-                {queryTabs.map(tab => (
-                  <div 
-                    key={tab.id} 
-                    className={`swh-editor-tab-item ${activeQueryTabId === tab.id ? 'is-active' : ''}`}
-                    onClick={() => setActiveQueryTabId(tab.id)}
-                  >
-                    <FileText size={12} className="text-muted" />
-                    <span>{tab.name}</span>
-                    <button 
-                      className="swh-tab-close-btn" 
-                      onClick={(e) => { e.stopPropagation(); handleCloseTab(tab.id); }}
+                {queryTabs.map(tab => {
+                  const isActive = activeQueryTabId === tab.id;
+                  const isEditing = editingTabId === tab.id;
+
+                  return (
+                    <div 
+                      key={tab.id} 
+                      className={`swh-editor-tab-item ${isActive ? 'is-active' : ''}`}
+                      onClick={(e) => {
+                        if (isEditing) {
+                          e.stopPropagation();
+                          return;
+                        }
+                        if (!isActive) {
+                          handleSelectTab(tab.id);
+                        }
+                      }}
+                      title={isActive && !isEditing ? 'Click query name to rename' : tab.name}
                     >
-                      &times;
-                    </button>
-                  </div>
-                ))}
-                <button className="swh-add-tab-btn" onClick={handleAddTab} title="New query">
-                  <Plus size={14} />
+                      <FileText size={13} className="swh-tab-icon" />
+                      {isEditing ? (
+                        <InlineRenameInput
+                          initialValue={tab.name}
+                          onSave={(newName) => handleSaveRename(tab.id, newName)}
+                          onCancel={() => setEditingTabId(null)}
+                          style={{ maxWidth: 140 }}
+                        />
+                      ) : (
+                        <span
+                          className="swh-tab-title"
+                          onClick={(e) => {
+                            if (isActive) {
+                              e.stopPropagation();
+                              setEditingTabId(tab.id);
+                            }
+                          }}
+                          onDoubleClick={(e) => {
+                            e.stopPropagation();
+                            setEditingTabId(tab.id);
+                          }}
+                        >
+                          {tab.name}
+                        </span>
+                      )}
+                      {isActive && !isEditing && (
+                        <button
+                          className="swh-tab-rename-btn"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setEditingTabId(tab.id);
+                          }}
+                          title="Rename query"
+                        >
+                          <Edit2 size={11} />
+                        </button>
+                      )}
+                      <button 
+                        type="button"
+                        className="swh-tab-close-btn" 
+                        onClick={(e) => { e.stopPropagation(); handleCloseTab(tab.id); }}
+                        title="Close query tab"
+                      >
+                        <X size={11} />
+                      </button>
+                    </div>
+                  );
+                })}
+                <button className="swh-add-tab-btn" onClick={handleAddTab} title="New query tab">
+                  <Plus size={13} />
                 </button>
               </div>
 
-              {/* Sub-header Toolbar */}
-              <div className="swh-editor-toolbar-db">
-                <div className="swh-toolbar-left">
-                  <button 
-                    className="btn btn-primary btn-sm swh-run-btn" 
-                    disabled={!canRun} 
-                    onClick={() => runMutation.mutate()}
-                  >
-                    {runMutation.isPending ? <Loader2 size={13} className="spin" /> : <Play size={13} />}
-                    <span>Run all (1000)</span>
-                  </button>
-
-                  <div className="swh-toolbar-meta">
-                    {runMutation.isPending && (
-                      <span style={{ display: 'flex', alignItems: 'center', gap: 4, color: 'var(--color-primary)' }}>
-                        <Loader2 size={12} className="spin" /> Running
-                      </span>
-                    )}
-                    {!runMutation.isPending && result && (
-                      <span className="text-success" style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                        ✓ {result.duration_ms / 1000}s ({result.rows_returned} rows)
-                      </span>
-                    )}
-                    {!runMutation.isPending && error && (
-                      <span className="text-danger" style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                        ✗ Error
-                      </span>
-                    )}
-
-                    <div className="swh-catalog-schema-selector-db">
-                      <select value={activeCatalog} onChange={e => { setActiveCatalog(e.target.value); setActiveSchema(''); }}>
-                        {(catalogsQuery.data || []).map(c => <option key={c.name} value={c.name}>{c.name}</option>)}
-                      </select>
-                      <span className="text-muted">.</span>
-                      <select value={activeSchema} onChange={e => setActiveSchema(e.target.value)}>
-                        {(schemasQuery.data || []).map(s => <option key={s} value={s}>{s}</option>)}
-                      </select>
-                    </div>
-
-                    <Star size={13} className="cursor-pointer text-muted hover:text-warning" />
-                    <span style={{ fontSize: 11 }}>Last edit was just now</span>
-                  </div>
-                </div>
-
-                <div className="swh-toolbar-right">
-                  <div className="swh-wh-selector-db">
-                    <div className={`swh-dot ${activeWarehouse?.status === 'running' ? 'is-running' : ''}`} />
-                    <select value={activeWarehouseId} onChange={e => setActiveWarehouseId(e.target.value)}>
-                      {warehouses.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
-                    </select>
-                    <span className="swh-wh-size-badge">2XS</span>
-                  </div>
-                  <button className="btn btn-secondary btn-sm" style={{ height: 28, padding: '0 8px' }}>Schedule</button>
-                  <button className="btn btn-secondary btn-sm" style={{ height: 28, padding: '0 8px' }}>Share</button>
-                  <button className="btn btn-secondary btn-sm" style={{ height: 28, padding: '0 8px' }}>Save</button>
-                  <button className="ghost-icon-btn"><MoreVertical size={13} /></button>
-                </div>
-              </div>
-
-              {/* IDE Editor Area */}
-              <div className="swh-ide-editor-container">
-                <div className="swh-line-numbers">
-                  {lineNumbers.map(n => <div key={n}>{n}</div>)}
-                </div>
-                <textarea 
-                  className="swh-editor-textarea" 
-                  value={sql} 
-                  onChange={e => handleSqlChange(e.target.value)} 
-                  spellCheck={false} 
-                  onKeyDown={e => {
-                    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
-                      e.preventDefault();
-                      if (canRun) runMutation.mutate();
-                    }
-                  }}
+              {/* Shared Modular SQL Editor */}
+              <div style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
+                <ModularSqlEditor
+                  sql={sql}
+                  onSqlChange={handleSqlChange}
+                  warehouses={warehouses}
+                  activeWarehouseId={activeWarehouseId}
+                  onWarehouseChange={setActiveWarehouseId}
+                  catalogs={catalogsQuery.data || []}
+                  activeCatalog={activeCatalog}
+                  onCatalogChange={handleCatalogChange}
+                  schemas={schemasQuery.data || []}
+                  activeSchema={activeSchema}
+                  onSchemaChange={handleSchemaChange}
+                  onRun={(options) => runMutation.mutate(options?.limit)}
+                  isExecuting={runMutation.isPending}
+                  result={result}
+                  error={error}
+                  canRun={canRun}
+                  queryName={activeTabObj?.name || 'query_result'}
+                  toolbarActions={
+                    <button
+                      className="btn btn-secondary btn-sm"
+                      onClick={handleOpenSaveToCatalog}
+                      title="Save and register query in Unified Data Catalog"
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 5,
+                        fontSize: 12,
+                        height: 30,
+                        padding: '0 12px',
+                        boxSizing: 'border-box',
+                        borderRadius: 6,
+                        background: 'var(--color-surface)',
+                        border: '1px solid var(--color-border)',
+                        color: 'var(--color-text)',
+                        cursor: 'pointer',
+                      }}
+                    >
+                      <Bookmark size={13} style={{ color: 'var(--color-primary)' }} />
+                      <span>Save to Catalog</span>
+                    </button>
+                  }
+                  headerMeta={
+                    <span style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>Auto-saved</span>
+                  }
+                  onPerformanceClick={(res) => setSelectedQueryForProfile(res as any)}
                 />
-              </div>
-
-              {/* Editor bottom bar */}
-              <div className="swh-editor-bottom-bar">
-                <button className="btn btn-secondary btn-sm" style={{ height: 26, padding: '0 8px', fontSize: 11 }}>+ Add parameter</button>
-              </div>
-
-              {/* Results Panel */}
-              <div className="swh-results-pane-db">
-                <div className="swh-results-header-db">
-                  <div className="swh-results-tabs">
-                    <div className="swh-results-tab is-active">Table</div>
-                    <div className="swh-results-tab">+</div>
-                  </div>
-                  <div className="swh-results-header-actions">
-                    <Search size={13} className="cursor-pointer" />
-                    <BarChart2 size={13} className="cursor-pointer" />
-                    <Maximize2 size={13} className="cursor-pointer" />
-                  </div>
-                </div>
-
-                <div className="swh-results-table-wrap" style={{ flex: 1, minHeight: 0 }}>
-                  {runMutation.isPending && (
-                    <div className="swh-empty">
-                      <Loader2 size={24} className="spin text-primary" />
-                      <span>Running query...</span>
-                    </div>
-                  )}
-                  {error && (
-                    <div className="swh-empty text-danger">
-                      <CheckCircle2 size={24} />
-                      <span>{error}</span>
-                    </div>
-                  )}
-                  {!runMutation.isPending && !error && result && (
-                    <table className="swh-results-table">
-                      <thead>
-                        <tr>
-                          <th>#</th>
-                          {result.columns.map(c => (
-                            <th key={c}>
-                              <span style={{ display: 'inline-flex', alignItems: 'center' }}>
-                                {getHeaderIcon(c)}
-                                {c}
-                              </span>
-                            </th>
-                          ))}
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {result.rows.map((r, i) => (
-                          <tr key={i}>
-                            <td>{i + 1}</td>
-                            {r.map((cell, j) => <td key={j}>{cell == null ? 'NULL' : String(cell)}</td>)}
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  )}
-                  {!runMutation.isPending && !error && !result && (
-                    <div className="swh-empty">
-                      <Play size={24} className="text-muted" />
-                      <span>Run a query to view results</span>
-                    </div>
-                  )}
-                </div>
-
-                {/* Results Footer */}
-                {result && (
-                  <div className="swh-results-footer">
-                    <div className="swh-results-footer-left">
-                      <Download size={13} className="cursor-pointer text-muted hover:text-primary" />
-                      <span>{result.rows_returned} rows | {result.duration_ms / 1000}s runtime</span>
-                      <a href="#" className="swh-performance-link" onClick={e => { e.preventDefault(); setSelectedQueryForProfile(result); }}>See performance</a>
-                    </div>
-                    <div className="swh-results-footer-right">
-                      <button className="btn btn-secondary btn-sm" style={{ height: 22, padding: '0 6px', fontSize: 10, display: 'inline-flex', alignItems: 'center', gap: 3 }}>
-                        <Sparkles size={9} />
-                        Optimize
-                      </button>
-                      <span>Refreshed just now</span>
-                    </div>
-                  </div>
-                )}
               </div>
             </div>
           </div>
@@ -1437,6 +1970,140 @@ export default function SqlWarehousePage() {
                 Create
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {showSaveToCatalogModal && (
+        <div className="swh-modal-backdrop" onClick={() => !isSavingToCatalog && setShowSaveToCatalogModal(false)}>
+          <div className="swh-modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 540 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <Bookmark size={18} style={{ color: 'var(--color-primary)' }} />
+                <h2 style={{ margin: 0, fontSize: 16, fontWeight: 600 }}>Save Query to Catalog</h2>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowSaveToCatalogModal(false)}
+                disabled={isSavingToCatalog}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--color-text-muted)' }}
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            {saveCatalogFeedback && (
+              <div
+                style={{
+                  padding: '8px 12px',
+                  borderRadius: 6,
+                  marginBottom: 14,
+                  fontSize: 13,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 8,
+                  backgroundColor: saveCatalogFeedback.type === 'success' ? 'rgba(16, 185, 129, 0.15)' : 'rgba(239, 68, 68, 0.15)',
+                  color: saveCatalogFeedback.type === 'success' ? '#10b981' : '#ef4444',
+                  border: `1px solid ${saveCatalogFeedback.type === 'success' ? '#10b981' : '#ef4444'}`,
+                }}
+              >
+                {saveCatalogFeedback.type === 'success' ? <Check size={14} /> : <XCircle size={14} />}
+                <span>{saveCatalogFeedback.message}</span>
+              </div>
+            )}
+
+            <form onSubmit={handleSaveToCatalogSubmit}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 12 }}>
+                <div className="swh-modal-field" style={{ margin: 0 }}>
+                  <label style={{ fontSize: 12, fontWeight: 500, marginBottom: 4, display: 'block' }}>Catalog *</label>
+                  <select
+                    value={saveCatalogName}
+                    onChange={e => setSaveCatalogName(e.target.value)}
+                    style={{ width: '100%', padding: '6px 8px', borderRadius: 4, border: '1px solid var(--color-border)', background: 'var(--color-surface)', color: 'inherit' }}
+                  >
+                    {(catalogsQuery.data || []).map(c => (
+                      <option key={c.name} value={c.name}>{c.name}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="swh-modal-field" style={{ margin: 0 }}>
+                  <label style={{ fontSize: 12, fontWeight: 500, marginBottom: 4, display: 'block' }}>Schema *</label>
+                  <select
+                    value={saveSchemaName}
+                    onChange={e => setSaveSchemaName(e.target.value)}
+                    style={{ width: '100%', padding: '6px 8px', borderRadius: 4, border: '1px solid var(--color-border)', background: 'var(--color-surface)', color: 'inherit' }}
+                  >
+                    {(saveSchemasQuery.data || (activeCatalog === saveCatalogName ? schemasQuery.data : []) || ['public']).map(s => (
+                      <option key={s} value={s}>{s}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div className="swh-modal-field" style={{ marginBottom: 12 }}>
+                <label style={{ fontSize: 12, fontWeight: 500, marginBottom: 4, display: 'block' }}>Query Name *</label>
+                <input
+                  type="text"
+                  value={saveQueryName}
+                  onChange={e => setSaveQueryName(e.target.value)}
+                  placeholder="e.g. Monthly_Active_Users"
+                  required
+                  style={{ width: '100%', padding: '6px 8px', borderRadius: 4, border: '1px solid var(--color-border)', background: 'var(--color-surface)', color: 'inherit' }}
+                />
+              </div>
+
+              <div className="swh-modal-field" style={{ marginBottom: 12 }}>
+                <label style={{ fontSize: 12, fontWeight: 500, marginBottom: 4, display: 'block' }}>Description (optional)</label>
+                <textarea
+                  value={saveDescription}
+                  onChange={e => setSaveDescription(e.target.value)}
+                  placeholder="Describe what this query calculates or returns..."
+                  rows={2}
+                  style={{ width: '100%', padding: '6px 8px', borderRadius: 4, border: '1px solid var(--color-border)', background: 'var(--color-surface)', color: 'inherit', resize: 'vertical' }}
+                />
+              </div>
+
+              <div className="swh-modal-field" style={{ marginBottom: 16 }}>
+                <label style={{ fontSize: 12, fontWeight: 500, marginBottom: 4, display: 'block' }}>SQL Preview</label>
+                <div
+                  style={{
+                    maxHeight: 120,
+                    overflowY: 'auto',
+                    background: 'var(--color-background, #0f172a)',
+                    border: '1px solid var(--color-border, #334155)',
+                    borderRadius: 4,
+                    padding: '8px 10px',
+                    fontFamily: 'monospace',
+                    fontSize: 11,
+                    color: '#94a3b8',
+                    whiteSpace: 'pre-wrap',
+                  }}
+                >
+                  {sql || '-- Empty query'}
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+                <button
+                  type="button"
+                  className="swh-btn-secondary"
+                  onClick={() => setShowSaveToCatalogModal(false)}
+                  disabled={isSavingToCatalog}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="swh-btn-primary"
+                  disabled={isSavingToCatalog || !saveQueryName.trim() || !saveCatalogName || !saveSchemaName}
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+                >
+                  {isSavingToCatalog && <Loader2 size={14} className="spin" />}
+                  <span>{isSavingToCatalog ? 'Saving...' : 'Save to Catalog'}</span>
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

@@ -7,6 +7,7 @@ metadata — they are a denormalized, embeddable projection of it.
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Any
 
 from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Integer, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
@@ -32,7 +33,7 @@ class CatalogSearchAsset(Base):
     __tablename__ = "assets"
     __table_args__ = {"schema": "vector_db"}
 
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    id: Mapped[int] = mapped_column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True, autoincrement=True)
 
     # Object identity
     object_type: Mapped[str] = mapped_column(Text, nullable=False)
@@ -45,17 +46,17 @@ class CatalogSearchAsset(Base):
     # Embeddable metadata
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     content_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
-    embedding_text: Mapped[str] = mapped_column(Text, nullable=False)
+    embedding_text: Mapped[str | None] = mapped_column(Text, nullable=True)
 
-    # The vector itself — NULL until embedded
+    # Vector embedding (Voyage AI, 1536 dims)
     embedding: Mapped[object | None] = mapped_column(_VECTOR_TYPE, nullable=True)
-    # Records which LLM connection (model name) produced this embedding
-    embedding_model: Mapped[str] = mapped_column(Text, nullable=False, default="llm-connection")
+    embedding_model: Mapped[str | None] = mapped_column(Text, nullable=True)
 
-    # Foreign-object flags
+    # Foreign catalog metadata
     is_foreign: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     last_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
+    # Timestamps
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -65,17 +66,14 @@ class CatalogSearchAsset(Base):
 
 
 class CatalogSearchEmbeddingJob(Base):
-    """Polling job queue for asynchronous embedding generation.
-
-    Mirrors the async job-table pattern used by the Layer 1 profiler.
-    """
+    """Async queue for objects that need vector embeddings generated."""
 
     __tablename__ = "embedding_jobs"
     __table_args__ = {"schema": "vector_db"}
 
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    id: Mapped[int] = mapped_column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True, autoincrement=True)
     asset_id: Mapped[int] = mapped_column(
-        BigInteger,
+        BigInteger().with_variant(Integer, "sqlite"),
         ForeignKey("vector_db.assets.id", ondelete="CASCADE"),
         nullable=False,
     )
@@ -97,7 +95,7 @@ class CatalogSearchForeignSyncLog(Base):
     __tablename__ = "foreign_sync_log"
     __table_args__ = {"schema": "vector_db"}
 
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    id: Mapped[int] = mapped_column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True, autoincrement=True)
     foreign_catalog_name: Mapped[str] = mapped_column(Text, nullable=False)
     connection_id: Mapped[int] = mapped_column(Integer, nullable=False)
     triggered_by_user_id: Mapped[str] = mapped_column(Text, nullable=False)

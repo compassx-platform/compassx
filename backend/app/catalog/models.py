@@ -66,6 +66,7 @@ class UnifiedCatalogSchema(Base):
     dashboards: Mapped[list["UnifiedCatalogDashboard"]] = relationship(back_populates="schema", cascade="all, delete-orphan")
     tools: Mapped[list["UnifiedCatalogTool"]] = relationship(back_populates="schema", cascade="all, delete-orphan")
     connections: Mapped[list["UnifiedCatalogConnection"]] = relationship(back_populates="schema", cascade="all, delete-orphan")
+    queries: Mapped[list["UnifiedCatalogQuery"]] = relationship(back_populates="schema", cascade="all, delete-orphan")
 
     # Blob storage association (Iceberg schemas only)
     storage_backend_id: Mapped[str | None] = mapped_column(String(36), nullable=True)  # FK resolved via service
@@ -354,3 +355,58 @@ class UnifiedCatalogConnection(Base):
     updated_by: Mapped[str] = mapped_column(String(255), nullable=False, default="default_user")
 
     schema: Mapped[UnifiedCatalogSchema | None] = relationship(back_populates="connections", lazy="joined")
+
+
+class UnifiedCatalogQuery(Base):
+    __tablename__ = "catalog_queries"
+    __table_args__ = (
+        UniqueConstraint("catalog_name", "schema_name", "name", name="uq_catalog_queries_name"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    schema_id: Mapped[str] = mapped_column(ForeignKey("catalog_v2_schemas.id", ondelete="RESTRICT"), nullable=False)
+    catalog_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    schema_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    full_name: Mapped[str] = mapped_column(
+        String(765),
+        Computed("catalog_name || '.' || schema_name || '.' || name", persisted=True),
+        nullable=False,
+    )
+    sql_text: Mapped[str] = mapped_column(Text, nullable=False)
+    owner: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    current_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+    created_by: Mapped[str] = mapped_column(String(255), nullable=False)
+    updated_by: Mapped[str] = mapped_column(String(255), nullable=False)
+
+    schema: Mapped[UnifiedCatalogSchema] = relationship(back_populates="queries", lazy="joined")
+    versions: Mapped[list["UnifiedCatalogQueryVersion"]] = relationship(
+        back_populates="query", cascade="all, delete-orphan", order_by="UnifiedCatalogQueryVersion.version"
+    )
+
+
+class UnifiedCatalogQueryVersion(Base):
+    __tablename__ = "catalog_query_versions"
+    __table_args__ = (
+        UniqueConstraint("query_id", "version", name="uq_catalog_query_versions_version"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    query_id: Mapped[str] = mapped_column(ForeignKey("catalog_queries.id", ondelete="CASCADE"), nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    sql_text: Mapped[str] = mapped_column(Text, nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    change_summary: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    created_by: Mapped[str] = mapped_column(String(255), nullable=False, default="default_user")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    query: Mapped[UnifiedCatalogQuery] = relationship(back_populates="versions")

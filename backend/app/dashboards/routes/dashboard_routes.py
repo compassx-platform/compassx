@@ -41,7 +41,7 @@ def _utcnow_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _to_meta(d: Dashboard) -> dict:
+def _to_meta(d: Dashboard, uc_dash: Any = None) -> dict:
     return {
         "id": d.id,
         "name": d.name,
@@ -52,6 +52,8 @@ def _to_meta(d: Dashboard) -> dict:
         "permissionMode": d.permission_mode,
         "createdAt": d.created_at.isoformat() if d.created_at else None,
         "updatedAt": d.updated_at.isoformat() if d.updated_at else None,
+        "catalog_name": getattr(uc_dash, "catalog_name", None),
+        "schema_name": getattr(uc_dash, "schema_name", None),
     }
 
 
@@ -214,10 +216,9 @@ def _register_dashboard_in_default_catalog(db: Session, workspace_id: str, dashb
 @router.get("")
 def list_dashboards(request: Request, db: Session = Depends(get_db)):
     workspace_id = _workspace_id(request)
+    from app.catalog.models import UnifiedCatalog, UnifiedCatalogSchema, UnifiedCatalogDashboard, CatalogWorkspaceBinding
     
     if workspace_id:
-        from app.catalog.models import UnifiedCatalog, UnifiedCatalogSchema, UnifiedCatalogDashboard, CatalogWorkspaceBinding
-        
         # Get all catalog IDs bound to this workspace or available to all workspaces
         bound_catalog_ids_subquery = (
             db.query(CatalogWorkspaceBinding.catalog_id)
@@ -253,7 +254,9 @@ def list_dashboards(request: Request, db: Session = Depends(get_db)):
     else:
         dashboards = db.query(Dashboard).order_by(Dashboard.updated_at.desc()).all()
         
-    return [_to_meta(d) for d in dashboards]
+    uc_dashboards = db.query(UnifiedCatalogDashboard).filter(UnifiedCatalogDashboard.dashboard_id.isnot(None)).all()
+    uc_map = {uc.dashboard_id: uc for uc in uc_dashboards}
+    return [_to_meta(d, uc_map.get(d.id)) for d in dashboards]
 
 
 class CreateBody(BaseModel):

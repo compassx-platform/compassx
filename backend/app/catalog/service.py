@@ -6,6 +6,7 @@ from typing import Any
 import httpx
 import psycopg2
 import psycopg2.extras
+from sqlalchemy import func
 from sqlalchemy.orm import Session, joinedload
 
 from app.catalog.models import (
@@ -17,6 +18,8 @@ from app.catalog.models import (
     UnifiedCatalogTable,
     UnifiedCatalogNotebook,
     UnifiedCatalogDashboard,
+    UnifiedCatalogQuery,
+    UnifiedCatalogQueryVersion,
 )
 from app.models.agents import DBConnection, DataSourceProfile
 from app.catalog.schemas import (
@@ -42,6 +45,12 @@ from app.catalog.schemas import (
     NotebookCreate,
     NotebookUpdate,
     NotebookMove,
+    QueryCreate,
+    QueryRead,
+    QueryUpdate,
+    QueryMove,
+    QueryVersionRead,
+    QueryCreateVersion,
 )
 from app.services.encryption import decrypt_field, encrypt_field
 from app.catalog.storage_context import resolve_catalog_storage, resolve_catalog_storage_by_schema_id
@@ -2278,6 +2287,322 @@ async def delete_dashboard(db: Session, catalog_name: str, schema_name: str, das
 
     db.delete(catalog_dashboard)
     db.commit()
+
+
+# ── Queries ───────────────────────────────────────────────────────────────────
+
+def list_queries(db: Session, catalog_name: str, schema_name: str) -> list[UnifiedCatalogQuery]:
+    schema = db.query(UnifiedCatalogSchema).join(
+        UnifiedCatalog, UnifiedCatalogSchema.catalog_id == UnifiedCatalog.id
+    ).filter(
+        UnifiedCatalog.name == catalog_name,
+        UnifiedCatalogSchema.name == schema_name
+    ).first()
+    if not schema:
+        raise ValueError(f"Schema '{schema_name}' not found in catalog '{catalog_name}'.")
+
+    return db.query(UnifiedCatalogQuery).options(
+        joinedload(UnifiedCatalogQuery.versions)
+    ).filter(
+        UnifiedCatalogQuery.schema_id == schema.id
+    ).order_by(UnifiedCatalogQuery.created_at.desc()).all()
+
+
+async def create_query(db: Session, catalog_name: str, schema_name: str, body: QueryCreate, user: dict) -> UnifiedCatalogQuery:
+    catalog = db.query(UnifiedCatalog).filter(UnifiedCatalog.name == catalog_name).first()
+    if not catalog:
+        raise ValueError(f"Catalog '{catalog_name}' not found.")
+    schema = db.query(UnifiedCatalogSchema).filter(
+        UnifiedCatalogSchema.catalog_id == catalog.id,
+        UnifiedCatalogSchema.name == schema_name
+    ).first()
+    if not schema:
+        raise ValueError(f"Schema '{schema_name}' not found in catalog '{catalog_name}'.")
+
+    # Check for duplicate name in this catalog & schema
+    existing = db.query(UnifiedCatalogQuery).filter(
+        UnifiedCatalogQuery.catalog_name == catalog_name,
+        UnifiedCatalogQuery.schema_name == schema_name,
+        UnifiedCatalogQuery.name == body.name
+    ).first()
+    if existing:
+        raise ValueError(f"Query '{body.name}' already exists in schema '{catalog_name}.{schema_name}'.")
+
+    actor = _current_actor(user)
+
+    catalog_query = UnifiedCatalogQuery(
+        schema_id=schema.id,
+        catalog_name=catalog_name,
+        schema_name=schema_name,
+        name=body.name,
+        sql_text=body.sql_text,
+        owner=actor,
+        description=body.description,
+        current_version=1,
+        created_by=actor,
+        updated_by=actor,
+    )
+    db.add(catalog_query)
+    db.flush()
+
+    # Automatically create version 1
+    v1 = UnifiedCatalogQueryVersion(
+        query_id=catalog_query.id,
+        version=1,
+        sql_text=body.sql_text,
+        description=body.description,
+        change_summary="Initial version",
+        created_by=actor,
+    )
+    db.add(v1)
+    db.commit()
+    db.refresh(catalog_query)
+
+    # Enqueue embedding for semantic search
+    q_name = catalog_query.name
+    try:
+        from app.catalog.search_indexer import enqueue_asset_for_embedding
+        enqueue_asset_for_embedding(
+            db,
+            object_type="query",
+            source_object_id=catalog_query.id,
+            catalog_name=catalog_name,
+            schema_name=schema_name,
+            object_name=catalog_query.name,
+            description=catalog_query.description or catalog_query.sql_text,
+        )
+        db.commit()
+    except Exception as _idx_err:
+        db.rollback()
+        import logging as _log
+        _log.getLogger(__name__).warning("Failed to enqueue embedding for query %s: %s", q_name, _idx_err)
+
+    return catalog_query
+
+
+def get_query(db: Session, catalog_name: str, schema_name: str, query_name: str) -> UnifiedCatalogQuery:
+    query_obj = db.query(UnifiedCatalogQuery).options(
+        joinedload(UnifiedCatalogQuery.versions)
+    ).filter(
+        UnifiedCatalogQuery.catalog_name == catalog_name,
+        UnifiedCatalogQuery.schema_name == schema_name,
+        UnifiedCatalogQuery.name == query_name
+    ).first()
+    if not query_obj:
+        raise ValueError(f"Query '{query_name}' not found in schema '{catalog_name}.{schema_name}'.")
+    return query_obj
+
+
+def update_query(db: Session, catalog_name: str, schema_name: str, query_name: str, body: QueryUpdate, user: dict) -> UnifiedCatalogQuery:
+    catalog_query = get_query(db, catalog_name, schema_name, query_name)
+    actor = _current_actor(user)
+
+    if body.owner is not None:
+        catalog_query.owner = body.owner
+    if body.description is not None:
+        catalog_query.description = body.description
+
+    # If SQL text changed, create a new version automatically
+    if body.sql_text is not None and body.sql_text != catalog_query.sql_text:
+        highest_v = db.query(func.max(UnifiedCatalogQueryVersion.version)).filter(
+            UnifiedCatalogQueryVersion.query_id == catalog_query.id
+        ).scalar() or catalog_query.current_version
+        next_v = highest_v + 1
+        new_v = UnifiedCatalogQueryVersion(
+            query_id=catalog_query.id,
+            version=next_v,
+            sql_text=body.sql_text,
+            description=body.description or catalog_query.description,
+            change_summary=body.change_summary or f"Updated query to version {next_v}",
+            created_by=actor,
+        )
+        db.add(new_v)
+        catalog_query.sql_text = body.sql_text
+        catalog_query.current_version = next_v
+
+    if body.name is not None and body.name != catalog_query.name:
+        existing = db.query(UnifiedCatalogQuery).filter(
+            UnifiedCatalogQuery.catalog_name == catalog_name,
+            UnifiedCatalogQuery.schema_name == schema_name,
+            UnifiedCatalogQuery.name == body.name
+        ).first()
+        if existing:
+            raise ValueError(f"Query '{body.name}' already exists in schema '{catalog_name}.{schema_name}'.")
+        catalog_query.name = body.name
+
+    catalog_query.updated_by = actor
+    db.commit()
+    db.refresh(catalog_query)
+
+    # Re-enqueue embedding whenever name, description, or SQL changes
+    q_name = catalog_query.name
+    try:
+        from app.catalog.search_indexer import enqueue_asset_for_embedding
+        enqueue_asset_for_embedding(
+            db,
+            object_type="query",
+            source_object_id=catalog_query.id,
+            catalog_name=catalog_query.catalog_name,
+            schema_name=catalog_query.schema_name,
+            object_name=catalog_query.name,
+            description=catalog_query.description or catalog_query.sql_text,
+        )
+        db.commit()
+    except Exception as _idx_err:
+        db.rollback()
+        import logging as _log
+        _log.getLogger(__name__).warning("Failed to re-enqueue embedding for query %s: %s", q_name, _idx_err)
+
+    return catalog_query
+
+
+def create_query_version(db: Session, catalog_name: str, schema_name: str, query_name: str, body: QueryCreateVersion, user: dict) -> UnifiedCatalogQueryVersion:
+    catalog_query = get_query(db, catalog_name, schema_name, query_name)
+    actor = _current_actor(user)
+
+    highest_v = db.query(func.max(UnifiedCatalogQueryVersion.version)).filter(
+        UnifiedCatalogQueryVersion.query_id == catalog_query.id
+    ).scalar() or catalog_query.current_version
+    next_v = highest_v + 1
+
+    new_v = UnifiedCatalogQueryVersion(
+        query_id=catalog_query.id,
+        version=next_v,
+        sql_text=body.sql_text,
+        description=body.description or catalog_query.description,
+        change_summary=body.change_summary or f"Version {next_v}",
+        created_by=actor,
+    )
+    db.add(new_v)
+    catalog_query.sql_text = body.sql_text
+    if body.description is not None:
+        catalog_query.description = body.description
+    catalog_query.current_version = next_v
+    catalog_query.updated_by = actor
+
+    db.commit()
+    db.refresh(new_v)
+    db.refresh(catalog_query)
+
+    # Re-enqueue embedding
+    try:
+        from app.catalog.search_indexer import enqueue_asset_for_embedding
+        enqueue_asset_for_embedding(
+            db,
+            object_type="query",
+            source_object_id=catalog_query.id,
+            catalog_name=catalog_query.catalog_name,
+            schema_name=catalog_query.schema_name,
+            object_name=catalog_query.name,
+            description=catalog_query.description or catalog_query.sql_text,
+        )
+        db.commit()
+    except Exception as _idx_err:
+        db.rollback()
+        import logging as _log
+        _log.getLogger(__name__).warning("Failed to re-enqueue embedding for query %s: %s", catalog_query.name, _idx_err)
+
+    return new_v
+
+
+def list_query_versions(db: Session, catalog_name: str, schema_name: str, query_name: str) -> list[UnifiedCatalogQueryVersion]:
+    catalog_query = get_query(db, catalog_name, schema_name, query_name)
+    return db.query(UnifiedCatalogQueryVersion).filter(
+        UnifiedCatalogQueryVersion.query_id == catalog_query.id
+    ).order_by(UnifiedCatalogQueryVersion.version.desc()).all()
+
+
+def get_query_version(db: Session, catalog_name: str, schema_name: str, query_name: str, version_num: int) -> UnifiedCatalogQueryVersion:
+    catalog_query = get_query(db, catalog_name, schema_name, query_name)
+    v = db.query(UnifiedCatalogQueryVersion).filter(
+        UnifiedCatalogQueryVersion.query_id == catalog_query.id,
+        UnifiedCatalogQueryVersion.version == version_num
+    ).first()
+    if not v:
+        raise ValueError(f"Version {version_num} not found for query '{query_name}'.")
+    return v
+
+
+def restore_query_version(db: Session, catalog_name: str, schema_name: str, query_name: str, version_num: int, user: dict) -> UnifiedCatalogQuery:
+    target_v = get_query_version(db, catalog_name, schema_name, query_name, version_num)
+    catalog_query = get_query(db, catalog_name, schema_name, query_name)
+    actor = _current_actor(user)
+
+    highest_v = db.query(func.max(UnifiedCatalogQueryVersion.version)).filter(
+        UnifiedCatalogQueryVersion.query_id == catalog_query.id
+    ).scalar() or catalog_query.current_version
+    next_v = highest_v + 1
+
+    new_v = UnifiedCatalogQueryVersion(
+        query_id=catalog_query.id,
+        version=next_v,
+        sql_text=target_v.sql_text,
+        description=target_v.description,
+        change_summary=f"Restored from version {version_num}",
+        created_by=actor,
+    )
+    db.add(new_v)
+    catalog_query.sql_text = target_v.sql_text
+    catalog_query.description = target_v.description
+    catalog_query.current_version = next_v
+    catalog_query.updated_by = actor
+
+    db.commit()
+    db.refresh(catalog_query)
+    return catalog_query
+
+
+async def move_query(db: Session, catalog_name: str, schema_name: str, query_name: str, body: QueryMove, user: dict) -> UnifiedCatalogQuery:
+    catalog_query = get_query(db, catalog_name, schema_name, query_name)
+
+    target_catalog = db.query(UnifiedCatalog).filter(UnifiedCatalog.name == body.target_catalog).first()
+    if not target_catalog:
+        raise ValueError(f"Target catalog '{body.target_catalog}' not found.")
+    
+    target_schema = db.query(UnifiedCatalogSchema).filter(
+        UnifiedCatalogSchema.catalog_id == target_catalog.id,
+        UnifiedCatalogSchema.name == body.target_schema
+    ).first()
+    if not target_schema:
+        raise ValueError(f"Target schema '{body.target_schema}' not found in catalog '{body.target_catalog}'.")
+
+    dest_name = body.new_name if body.new_name else catalog_query.name
+
+    existing = db.query(UnifiedCatalogQuery).filter(
+        UnifiedCatalogQuery.catalog_name == body.target_catalog,
+        UnifiedCatalogQuery.schema_name == body.target_schema,
+        UnifiedCatalogQuery.name == dest_name
+    ).first()
+    if existing:
+        raise ValueError(f"Query '{dest_name}' already exists in target schema '{body.target_catalog}.{body.target_schema}'.")
+
+    actor = _current_actor(user)
+    catalog_query.catalog_name = body.target_catalog
+    catalog_query.schema_name = body.target_schema
+    catalog_query.schema_id = target_schema.id
+    catalog_query.name = dest_name
+    catalog_query.updated_by = actor
+
+    db.commit()
+    db.refresh(catalog_query)
+    return catalog_query
+
+
+async def delete_query(db: Session, catalog_name: str, schema_name: str, query_name: str) -> None:
+    catalog_query = get_query(db, catalog_name, schema_name, query_name)
+
+    # Delete search indexing entry
+    try:
+        from app.catalog.search_indexer import delete_asset_from_search
+        delete_asset_from_search(db, "query", catalog_query.id)
+    except Exception as _idx_err:
+        db.rollback()
+        import logging as _log
+        _log.getLogger(__name__).warning("Failed to delete embedding for query %s: %s", catalog_query.name, _idx_err)
+
+    db.delete(catalog_query)
+    db.commit()
+
 
 
 

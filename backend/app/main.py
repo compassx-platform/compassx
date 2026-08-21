@@ -264,13 +264,25 @@ async def lifespan(app: FastAPI):
                         _conn.execute(_text("ALTER TABLE catalog_v2_connections DROP COLUMN full_name;"))
                         _conn.execute(_text("ALTER TABLE catalog_v2_connections ADD COLUMN full_name VARCHAR(765);"))
                         _conn.execute(_text("UPDATE catalog_v2_connections SET full_name = COALESCE(catalog_name || '.' || schema_name || '.' || name, name);"))
+                    
+                    # Ensure current_version column exists on catalog_queries
+                    _has_col = _conn.execute(_text("""
+                        SELECT 1 FROM information_schema.columns 
+                        WHERE table_name = 'catalog_queries' AND column_name = 'current_version'
+                    """)).scalar()
+                    if not _has_col:
+                        _conn.execute(_text("ALTER TABLE catalog_queries ADD COLUMN current_version INTEGER NOT NULL DEFAULT 1;"))
+                        logger.info("Auto-migrated catalog_queries: added current_version column")
+
                     _conn.commit()
             except Exception as _conn_tbl_err:
-                logger.debug("catalog_v2_connections migration check non-fatal: %s", _conn_tbl_err)
+                logger.debug("catalog schema migration check non-fatal: %s", _conn_tbl_err)
             logger.info("User Manager: account_db tables verified/created")
 
         if system_engine is not None:
             with system_engine.connect() as _conn:
+                for _schema in ["query", "compute", "ai", "jobs"]:
+                    _conn.execute(_text(f"CREATE SCHEMA IF NOT EXISTS {_schema};"))
                 _conn.execute(_text(
                     "DO $$ BEGIN CREATE TYPE um_principal_type_sys AS ENUM ('user','group'); EXCEPTION WHEN duplicate_object THEN null; END $$;"
                 ))

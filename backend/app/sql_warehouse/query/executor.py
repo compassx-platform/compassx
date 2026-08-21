@@ -37,7 +37,8 @@ class QueryExecutor:
         run_by_user_name: str | None = None,
     ) -> dict:
         start = time.monotonic()
-        sql_hash = hashlib.sha256(sql.encode("utf-8")).hexdigest()
+        cache_key_content = f"{sql}__limit={max_rows}__cat={catalog}__sch={schema_name}"
+        sql_hash = hashlib.sha256(cache_key_content.encode("utf-8")).hexdigest()
         enforce_policy(warehouse, self.records)
 
         # Check cache
@@ -92,10 +93,14 @@ class QueryExecutor:
             if warehouse.engine == "duckdb":
                 setup_sql = build_duckdb_catalog_plan(self.records.db).setup_sql
                 if catalog:
-                    if schema_name:
-                        setup_sql.append(f'USE "{catalog}"."{schema_name}";')
+                    if catalog.lower() in {"main", "temp", "system", "memory"}:
+                        if schema_name:
+                            setup_sql.append(f'USE "{schema_name}";')
                     else:
-                        setup_sql.append(f'USE "{catalog}";')
+                        if schema_name:
+                            setup_sql.append(f'USE "{catalog}"."{schema_name}";')
+                        else:
+                            setup_sql.append(f'USE "{catalog}";')
             result = await adapter.execute(
                 sql=sql,
                 query_id=query_id,

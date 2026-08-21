@@ -35,7 +35,7 @@ interface WorkspaceFeedItem {
   icon: typeof Workflow;
   timeText: string;
   targetUrl?: string;
-  agentId?: string;
+  agentId?: number;
 }
 
 const TABS: { id: TabId; label: string; icon: typeof Lightbulb }[] = [
@@ -154,7 +154,7 @@ export default function LandingPage() {
       list.push({
         id: `job-${job.job_id}`,
         name: job.name,
-        path: `/jobs/${job.job_id}${job.cron_schedule ? ` • cron: ${job.cron_schedule}` : ''}`,
+        path: `/jobs/${job.job_id}${job.schedule_cron ? ` • cron: ${job.schedule_cron}` : ''}`,
         type: 'Job',
         icon: Workflow,
         timeText: `Status: ${job.status}`,
@@ -167,7 +167,7 @@ export default function LandingPage() {
       list.push({
         id: `agent-${agent.id}`,
         name: agent.name,
-        path: `/agents/${agent.id} • ${agent.model_provider || 'Assistant'}`,
+        path: `/agents/${agent.id} • ${agent.model || 'Assistant'}`,
         type: 'Agent',
         icon: Bot,
         timeText: agent.is_active ? 'Active' : 'Draft',

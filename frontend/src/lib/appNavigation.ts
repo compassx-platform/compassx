@@ -1,6 +1,6 @@
 import { useCallback, type ElementType } from 'react';
 import { useLocation, useNavigate, useParams, type NavigateOptions, type To } from 'react-router-dom';
-import { Briefcase, Code2, Layers, Zap, LayoutDashboard, FileText, Database, GitBranch, Cable, BookOpen, ServerCog, History, Activity, ArrowDownToLine, Home, Sparkles } from 'lucide-react';
+import { Briefcase, Code2, Layers, Zap, LayoutDashboard, FileText, Database, GitBranch, Cable, BookOpen, ServerCog, History, Activity, Home, Sparkles } from 'lucide-react';
 
 export const APP_IDS = ['platform', 'apps', 'business_center'] as const;
 export type AppId = (typeof APP_IDS)[number];
@@ -51,7 +51,6 @@ const PLATFORM_NAV_GROUPS: NavGroup[] = [
       { to: '/sql-warehouse/editor', icon: Code2, label: 'SQL Editor', end: false },
       { to: '/sql-warehouse/warehouses', icon: ServerCog, label: 'SQL Warehouses', end: false },
       { to: '/sql-warehouse/history', icon: History, label: 'Query History', end: false },
-      { to: '/ingestion/connections', icon: ArrowDownToLine, label: 'API Ingestion', end: false },
     ],
   },
   {

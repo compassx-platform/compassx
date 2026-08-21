@@ -20,6 +20,7 @@ import {
   LayoutDashboard,
   Palette,
   Image,
+  ArrowDownToLine,
 } from 'lucide-react';
 import { CompassXLogo } from '@/components/common/CompassXLogo';
 import AppNovaSidebar from '@/modules/nova/components/AppNovaSidebar';
@@ -49,6 +50,7 @@ import { useMe, useMyWorkspaces } from '@/lib/userManagerApi';
 
 const EXPERIMENTAL_NAV: NavItem[] = [
   { to: '/documents', icon: FileText, label: 'Documents', end: false },
+  { to: '/ingestion/connections', icon: ArrowDownToLine, label: 'API Ingestion', end: false },
   { to: '/icons', icon: Sparkles, label: 'Custom Icons', end: false },
   { to: '/logo', icon: Image, label: 'Logo Showcase', end: false },
   { to: '/design-system', icon: Palette, label: 'Design System', end: false },

@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import JSON, BigInteger, Boolean, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import JSON, BigInteger, Boolean, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import SystemBase as Base
@@ -73,4 +73,23 @@ class SqlActiveQuery(Base):
     warehouse_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
     engine_query_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_now)
+
+
+class SqlDraftQuery(Base):
+    __tablename__ = "draft_queries"
+    __table_args__ = (
+        Index("idx_draft_queries_user_ws", "user_id", "workspace_id", "tab_order"),
+        {"schema": "query"},
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    workspace_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    user_id: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False, default="Query 1")
+    sql_text: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    catalog: Mapped[str | None] = mapped_column(String(255), nullable=True, default="")
+    schema_name: Mapped[str | None] = mapped_column(String(255), nullable=True, default="")
+    tab_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_now, onupdate=_now)
 

@@ -1,26 +1,52 @@
+from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from sqlalchemy import text
+from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
 from app.database import get_account_db, get_system_db
+from app.dependencies import get_current_user
 from app.sql_warehouse.catalog.metadata_api import CatalogMetadataAPI
 from app.sql_warehouse.engine.router import get_adapter
-from app.sql_warehouse.models import SqlQueryRecord
+from app.sql_warehouse.models import SqlDraftQuery, SqlQueryRecord
 from app.sql_warehouse.query.executor import QueryExecutor
 from app.sql_warehouse.query.parser import validate_sql, extract_table_references
 from app.sql_warehouse.query.query_record import QueryRecordStore
-from app.sql_warehouse.schemas import CancelRequest, ExplainRequest, QueryRequest, ValidateRequest, WarehouseCreate, WarehouseRead, NotebookQueryRequest
+from app.sql_warehouse.schemas import (
+    CancelRequest,
+    ExplainRequest,
+    NotebookQueryRequest,
+    QueryRequest,
+    SqlDraftCreate,
+    SqlDraftRead,
+    SqlDraftUpdate,
+    ValidateRequest,
+    WarehouseCreate,
+    WarehouseRead,
+)
 from app.sql_warehouse.warehouse.manager import create_warehouse, delete_warehouse, get_warehouse_by_id, list_warehouses, update_warehouse_status
 
 router = APIRouter(prefix="/api/v1", tags=["sql-warehouse"])
 
 
-class _User:
-    id = "system"
+def _resolve_user_and_workspace(request: Request, user: Any = None) -> tuple[str, str | None]:
+    ws_ctx = getattr(request.state, "workspace", None)
+    workspace_id = ws_ctx.workspace_id if ws_ctx and hasattr(ws_ctx, "workspace_id") else None
+    if not workspace_id:
+        workspace_id = request.headers.get("X-Workspace-Id") or request.query_params.get("workspace_id")
 
+    user_id = None
+    if ws_ctx and getattr(ws_ctx, "principal_id", None):
+        user_id = ws_ctx.principal_id
+    elif isinstance(user, dict):
+        user_id = user.get("id") or user.get("sub")
+    elif hasattr(user, "id"):
+        user_id = user.id
 
-def get_current_user() -> _User:
-    return _User()
+    if not user_id:
+        user_id = "bbbbbbbb-0000-0000-0000-000000000001"
+
+    return str(user_id), str(workspace_id) if workspace_id else None
+
 
 
 def _record_to_dict(record: SqlQueryRecord) -> dict:
@@ -103,7 +129,7 @@ async def run_query(
     data_db: Session = Depends(get_system_db),
     user=Depends(get_current_user),
 ):
-    workspace_id = getattr(request.state, "workspace", None) and request.state.workspace.workspace_id
+    user_id, workspace_id = _resolve_user_and_workspace(request, user)
     warehouse = get_warehouse_by_id(db, req.warehouse_id, workspace_id=workspace_id)
     if not warehouse:
         raise HTTPException(404, "Warehouse not found")
@@ -113,7 +139,7 @@ async def run_query(
         result = await QueryExecutor(db, data_db).run(
             warehouse=warehouse,
             sql=req.sql,
-            user_id=user.id,
+            user_id=user_id,
             session_id=req.session_id,
             max_rows=req.max_rows,
             catalog=req.catalog,
@@ -167,6 +193,7 @@ async def cancel_query(
 
 @router.get("/sql/history")
 def query_history(
+    request: Request,
     warehouse_id: str | None = Query(None),
     limit: int = Query(50, le=500),
     offset: int = Query(0),
@@ -175,21 +202,142 @@ def query_history(
     db: Session = Depends(get_system_db),
     user=Depends(get_current_user),
 ):
-    target_user_id = user.id if scope == "me" else None
+    user_id, workspace_id = _resolve_user_and_workspace(request, user)
+    target_user_id = user_id if scope == "me" else None
     records = QueryRecordStore(db).list(user_id=target_user_id, warehouse_id=warehouse_id, status=status, limit=limit, offset=offset)
     return {"records": [_record_to_dict(r) for r in records], "limit": limit, "offset": offset}
 
 
 @router.get("/sql/result/{query_id}")
-def get_result(query_id: str, db: Session = Depends(get_system_db), user=Depends(get_current_user)):
+def get_result(query_id: str, request: Request, db: Session = Depends(get_system_db), user=Depends(get_current_user)):
+    user_id, workspace_id = _resolve_user_and_workspace(request, user)
     record = QueryRecordStore(db).get(query_id)
     if not record:
         raise HTTPException(404, "Query not found")
-    if record.user_id != user.id:
+    if record.user_id != user_id:
         raise HTTPException(403, "Forbidden")
     if record.result_payload:
         return {**record.result_payload, "query_id": query_id, "cache_hit": record.cache_hit, "query_analysis": record.query_analysis}
     return {"query_id": query_id, "status": record.status, "message": "Result no longer available. Re-run the query."}
+
+
+# ── Draft Queries (Workspace & User Scoped) ──────────────────────────────────
+
+@router.get("/sql/drafts", response_model=list[SqlDraftRead])
+def list_drafts(
+    request: Request,
+    db: Session = Depends(get_system_db),
+    user=Depends(get_current_user),
+):
+    user_id, workspace_id = _resolve_user_and_workspace(request, user)
+    stmt = select(SqlDraftQuery).where(SqlDraftQuery.user_id == user_id)
+    if workspace_id:
+        stmt = stmt.where(SqlDraftQuery.workspace_id == workspace_id)
+    else:
+        stmt = stmt.where(SqlDraftQuery.workspace_id.is_(None))
+    stmt = stmt.order_by(SqlDraftQuery.tab_order.asc(), SqlDraftQuery.created_at.asc())
+    return list(db.scalars(stmt))
+
+
+@router.post("/sql/drafts", response_model=SqlDraftRead)
+def create_draft(
+    request: Request,
+    req: SqlDraftCreate,
+    db: Session = Depends(get_system_db),
+    user=Depends(get_current_user),
+):
+    user_id, workspace_id = _resolve_user_and_workspace(request, user)
+
+    # Resolve default query name if none or empty provided
+    name = (req.name or "").strip()
+    if not name:
+        stmt = select(func.count()).select_from(SqlDraftQuery).where(SqlDraftQuery.user_id == user_id)
+        if workspace_id:
+            stmt = stmt.where(SqlDraftQuery.workspace_id == workspace_id)
+        else:
+            stmt = stmt.where(SqlDraftQuery.workspace_id.is_(None))
+        count = db.scalar(stmt) or 0
+        name = f"Query {count + 1}"
+
+    draft = SqlDraftQuery(
+        workspace_id=workspace_id,
+        user_id=user_id,
+        name=name,
+        sql_text=req.sql_text or "",
+        catalog=req.catalog or "",
+        schema_name=req.schema_name or "",
+        tab_order=req.tab_order,
+    )
+    db.add(draft)
+    db.commit()
+    db.refresh(draft)
+    return draft
+
+
+@router.put("/sql/drafts/{draft_id}", response_model=SqlDraftRead)
+def update_draft(
+    draft_id: str,
+    req: SqlDraftUpdate,
+    request: Request,
+    db: Session = Depends(get_system_db),
+    user=Depends(get_current_user),
+):
+    user_id, workspace_id = _resolve_user_and_workspace(request, user)
+    stmt = select(SqlDraftQuery).where(
+        SqlDraftQuery.id == draft_id,
+        SqlDraftQuery.user_id == user_id,
+    )
+    if workspace_id:
+        stmt = stmt.where(SqlDraftQuery.workspace_id == workspace_id)
+    else:
+        stmt = stmt.where(SqlDraftQuery.workspace_id.is_(None))
+
+    draft = db.scalar(stmt)
+    if not draft:
+        raise HTTPException(status_code=404, detail="Draft query not found")
+
+    if req.name is not None:
+        trimmed_name = req.name.strip()
+        if trimmed_name:
+            draft.name = trimmed_name
+    if req.sql_text is not None:
+        draft.sql_text = req.sql_text
+    if req.catalog is not None:
+        draft.catalog = req.catalog
+    if req.schema_name is not None:
+        draft.schema_name = req.schema_name
+    if req.tab_order is not None:
+        draft.tab_order = req.tab_order
+
+    db.commit()
+    db.refresh(draft)
+    return draft
+
+
+@router.delete("/sql/drafts/{draft_id}")
+def delete_draft(
+    draft_id: str,
+    request: Request,
+    db: Session = Depends(get_system_db),
+    user=Depends(get_current_user),
+):
+    user_id, workspace_id = _resolve_user_and_workspace(request, user)
+    stmt = select(SqlDraftQuery).where(
+        SqlDraftQuery.id == draft_id,
+        SqlDraftQuery.user_id == user_id,
+    )
+    if workspace_id:
+        stmt = stmt.where(SqlDraftQuery.workspace_id == workspace_id)
+    else:
+        stmt = stmt.where(SqlDraftQuery.workspace_id.is_(None))
+
+    draft = db.scalar(stmt)
+    if not draft:
+        raise HTTPException(status_code=404, detail="Draft query not found")
+
+    db.delete(draft)
+    db.commit()
+    return {"deleted": True, "id": draft_id}
 
 
 @router.get("/sql-warehouse/catalog/catalogs")
@@ -228,6 +376,7 @@ def health(db: Session = Depends(get_system_db)):
     except Exception:
         postgres = False
     return {"status": "ok" if postgres else "degraded", "postgres": postgres, "cache": True}
+
 
 
 

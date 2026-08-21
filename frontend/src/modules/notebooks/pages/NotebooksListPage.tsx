@@ -8,9 +8,12 @@ import { listJobs } from '@/modules/jobs/lib/jobsApi';
 import { AppTable, type AppTableColumn } from '@/components/common/AppTable';
 
 interface NotebookEntry {
+  id?: string;
   path: string;
   name: string;
   full_name?: string;
+  catalog_name?: string;
+  schema_name?: string;
   storage_location?: string;
 }
 
@@ -135,17 +138,37 @@ export default function NotebooksListPage() {
       || notebook.storage_location?.toLowerCase().includes(query);
   });
 
-  function openNotebookInCatalog(path: string, catalogName?: string, schemaName?: string, nbName?: string) {
-    const clean = path.replace(/\\/g, '/').replace(/^\//, '');
-    const parts = clean.split('/');
-    if (catalogName && schemaName && nbName) {
-      const safeNb = nbName.endsWith('.ipynb') ? nbName.slice(0, -6) : nbName;
-      navigate(`/data-catalog/${encodeURIComponent(catalogName)}/${encodeURIComponent(schemaName)}/notebook/${encodeURIComponent(safeNb)}?path=${encodeURIComponent(clean)}`);
-    } else if (parts.length >= 3) {
-      const catalog = parts[0];
-      const schema = parts[1];
-      const filename = parts.slice(2).join('/');
-      const safeNb = filename.endsWith('.ipynb') ? filename.slice(0, -6) : filename;
+  function openNotebookInCatalog(entryOrPath: string | NotebookEntry, catalogName?: string, schemaName?: string, nbName?: string) {
+    let path = typeof entryOrPath === 'string' ? entryOrPath : entryOrPath.path;
+    let catalog = catalogName || (typeof entryOrPath !== 'string' ? entryOrPath.catalog_name : undefined);
+    let schema = schemaName || (typeof entryOrPath !== 'string' ? entryOrPath.schema_name : undefined);
+    let name = nbName || (typeof entryOrPath !== 'string' ? entryOrPath.name : undefined);
+
+    const clean = (path || '').replace(/\\/g, '/').replace(/^\//, '');
+
+    // Extract catalog / schema from full_name if present (e.g. "catalog.schema.notebook_name")
+    if (typeof entryOrPath !== 'string' && entryOrPath.full_name) {
+      const fnParts = entryOrPath.full_name.split('.');
+      if (fnParts.length >= 3) {
+        if (!catalog) catalog = fnParts[0];
+        if (!schema) schema = fnParts[1];
+        if (!name) name = fnParts.slice(2).join('.');
+      }
+    }
+
+    // Extract catalog / schema from path if it has >= 3 segments
+    if (!catalog || !schema) {
+      const parts = clean.split('/');
+      if (parts.length >= 3) {
+        catalog = parts[0];
+        schema = parts[1];
+        name = parts.slice(2).join('/');
+      }
+    }
+
+    if (catalog && schema) {
+      const finalName = name || clean.split('/').pop() || 'notebook';
+      const safeNb = finalName.endsWith('.ipynb') ? finalName.slice(0, -6) : finalName;
       navigate(`/data-catalog/${encodeURIComponent(catalog)}/${encodeURIComponent(schema)}/notebook/${encodeURIComponent(safeNb)}?path=${encodeURIComponent(clean)}`);
     } else {
       navigate(`/data-catalog?path=${encodeURIComponent(clean)}`);
@@ -198,8 +221,8 @@ export default function NotebooksListPage() {
     });
   }
 
-  function handleOpen(path: string) {
-    openNotebookInCatalog(path);
+  function handleOpen(notebook: NotebookEntry) {
+    openNotebookInCatalog(notebook);
   }
 
   function handleDelete(event: React.MouseEvent, path: string) {
@@ -450,7 +473,7 @@ export default function NotebooksListPage() {
         columns={columns}
         rows={filtered}
         rowKey={(notebook) => notebook.path}
-        onRowClick={(notebook) => handleOpen(notebook.path)}
+        onRowClick={(notebook) => handleOpen(notebook)}
         emptyText="No notebooks yet. Create one to get started."
         isLoading={isLoading}
       />

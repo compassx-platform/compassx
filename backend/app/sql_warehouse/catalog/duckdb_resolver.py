@@ -187,24 +187,34 @@ def build_duckdb_catalog_plan(db: Session) -> DuckDBCatalogPlan:
             .all()
         )
 
+        RESERVED_DUCKDB_DATABASES = {"main", "temp", "system", "memory"}
+
         for catalog in catalogs:
+            is_reserved = catalog.name.lower() in RESERVED_DUCKDB_DATABASES
+
             if (
                 catalog.catalog_type == "postgres"
                 and catalog.connection_id
                 and catalog.database_name
                 and conn_map.get(catalog.connection_id)
             ):
-                setup.extend([
-                    "INSTALL postgres",
-                    "LOAD postgres",
-                    f"ATTACH IF NOT EXISTS {_quote_literal(_pg_attach_string(conn_map.get(catalog.connection_id), catalog.database_name))} "
-                    f"AS {_quote_ident(catalog.name)} (TYPE postgres)",
-                ])
+                if not is_reserved:
+                    setup.extend([
+                        "INSTALL postgres",
+                        "LOAD postgres",
+                        f"ATTACH IF NOT EXISTS {_quote_literal(_pg_attach_string(conn_map.get(catalog.connection_id), catalog.database_name))} "
+                        f"AS {_quote_ident(catalog.name)} (TYPE postgres)",
+                    ])
                 continue
 
-            setup.append(f"ATTACH IF NOT EXISTS ':memory:' AS {_quote_ident(catalog.name)}")
+            if not is_reserved:
+                setup.append(f"ATTACH IF NOT EXISTS ':memory:' AS {_quote_ident(catalog.name)}")
+
             for schema in catalog.schemas:
-                setup.append(f"CREATE SCHEMA IF NOT EXISTS {_quote_ident(catalog.name)}.{_quote_ident(schema.name)}")
+                if not is_reserved:
+                    setup.append(f"CREATE SCHEMA IF NOT EXISTS {_quote_ident(catalog.name)}.{_quote_ident(schema.name)}")
+                else:
+                    setup.append(f"CREATE SCHEMA IF NOT EXISTS {_quote_ident(schema.name)}")
                 
                 storage_cfg = _resolve_duckdb_storage_config(sys_db, catalog, schema)
                 if not storage_cfg:
@@ -241,10 +251,17 @@ def build_duckdb_catalog_plan(db: Session) -> DuckDBCatalogPlan:
                     else:
                         logger.warning("Iceberg table %s has neither a data file nor metadata location", table.name)
                         continue
-                    setup.append(
-                        f"CREATE OR REPLACE VIEW {_quote_ident(catalog.name)}.{_quote_ident(schema.name)}.{_quote_ident(table.name)} AS "
-                        f"SELECT * FROM {source}"
-                    )
+                    
+                    if not is_reserved:
+                        setup.append(
+                            f"CREATE OR REPLACE VIEW {_quote_ident(catalog.name)}.{_quote_ident(schema.name)}.{_quote_ident(table.name)} AS "
+                            f"SELECT * FROM {source}"
+                        )
+                    else:
+                        setup.append(
+                            f"CREATE OR REPLACE VIEW {_quote_ident(schema.name)}.{_quote_ident(table.name)} AS "
+                            f"SELECT * FROM {source}"
+                        )
     finally:
         sys_db.close()
 

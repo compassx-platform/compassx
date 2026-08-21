@@ -16,6 +16,8 @@ type DashboardRow = {
   name: string;
   isDraft?: boolean;
   updatedAt: string;
+  catalog_name?: string;
+  schema_name?: string;
 };
 
 interface CatalogSchemaSummary {
@@ -72,6 +74,12 @@ export default function DashboardsPage() {
   const filtered = ((dashboards ?? []) as DashboardRow[]).filter((dashboard) =>
     !search.trim() || dashboard.name.toLowerCase().includes(search.trim().toLowerCase())
   );
+
+  function openDashboardInCatalog(dashboard: DashboardRow) {
+    const catalog = dashboard.catalog_name || 'main';
+    const schema = dashboard.schema_name || 'default';
+    navigate(`/data-catalog/${encodeURIComponent(catalog)}/${encodeURIComponent(schema)}/dashboard/${encodeURIComponent(dashboard.name)}?dashboard_id=${encodeURIComponent(dashboard.id)}`);
+  }
 
   function generateDefaultDashboardName() {
     const existingNames = new Set(((dashboards ?? []) as DashboardRow[]).map((d) => d.name.toLowerCase()));
@@ -169,7 +177,7 @@ export default function DashboardsPage() {
     try {
       const dashboard = await cloneMutation.mutateAsync(id);
       toast.success(`Cloned "${name}"`);
-      navigate(`/dashboards/${dashboard.id}/edit`);
+      openDashboardInCatalog(dashboard as any);
     } catch {
       toast.error('Failed to clone dashboard');
     }
@@ -194,7 +202,10 @@ export default function DashboardsPage() {
       key: 'name',
       header: 'Name',
       render: (dashboard) => (
-        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+        <span
+          style={{ display: 'inline-flex', alignItems: 'center', gap: 8, minWidth: 0, cursor: 'pointer' }}
+          onClick={() => openDashboardInCatalog(dashboard)}
+        >
           <LayoutDashboard size={14} color="var(--color-text-muted)" />
           <span style={{ fontWeight: 500 }}>{dashboard.name}</span>
           {dashboard.isDraft && <span className="dashboard-draft-pill">DRAFT</span>}
@@ -221,11 +232,11 @@ export default function DashboardsPage() {
         <>
           <button
             className="ghost-icon-btn"
-            title="Open"
+            title="Open in Data Catalog"
             aria-label={`Open ${dashboard.name}`}
             onClick={(event) => {
               event.stopPropagation();
-              navigate(`/dashboards/${dashboard.id}/edit`);
+              openDashboardInCatalog(dashboard);
             }}
           >
             <Pencil size={13} />
@@ -440,7 +451,7 @@ export default function DashboardsPage() {
         columns={columns}
         rows={filtered}
         rowKey={(dashboard) => dashboard.id}
-        onRowClick={(dashboard) => navigate(`/dashboards/${dashboard.id}/edit`)}
+        onRowClick={(dashboard) => openDashboardInCatalog(dashboard)}
         emptyText="No dashboards yet."
         isLoading={isLoading}
       />

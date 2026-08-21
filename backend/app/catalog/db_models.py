@@ -9,4 +9,8 @@ from app.catalog.models import (  # noqa: F401
     UnifiedCatalogLineage,
     UnifiedCatalogNotebook,
     UnifiedCatalogDashboard,
+    UnifiedCatalogTool,
+    UnifiedCatalogConnection,
+    UnifiedCatalogQuery,
+    UnifiedCatalogQueryVersion,
 )
