@@ -90,10 +90,13 @@ const UMSuspense: React.FC<React.PropsWithChildren> = ({ children }) => (
 );
 
 function RootRedirect() {
-  const { data: workspaces, isLoading } = useMyWorkspaces();
+  const { data: workspaces, isLoading, isError } = useMyWorkspaces();
   if (isLoading) return null;
-  if (!workspaces || workspaces.length === 0) {
-    return <Navigate to="/workspace/create" replace />;
+  if (isError || !workspaces) {
+    return <Navigate to="/login" replace />;
+  }
+  if (workspaces.length === 0) {
+    return <Navigate to="/no-workspace-access" replace />;
   }
   const lastWs = localStorage.getItem('compassx_last_workspace');
   const matched = workspaces.find(w => w.id === lastWs || w.slug === lastWs);
@@ -101,41 +104,55 @@ function RootRedirect() {
   return <Navigate to={`/w/${targetSlug}`} replace />;
 }
 
-/** EntryPointGuard — replaces RootRedirect for new auth system.
- *  Checks login → setup → entry-point resolution → redirect.
+/** EntryPointGuard — checks login → setup → entry-point resolution → redirect.
  */
 function EntryPointGuard() {
   const navigate = useNavigate();
   const [checking, setChecking] = React.useState(true);
+  const [errorMsg, setErrorMsg] = React.useState<string | null>(null);
+
+  const resolve = React.useCallback(async () => {
+    setChecking(true);
+    setErrorMsg(null);
+    try {
+      // 1. Check if setup is needed
+      const { needs_setup } = await fetchSetupStatus();
+      if (needs_setup) { navigate('/setup', { replace: true }); return; }
+
+      // 2. Check if logged in
+      if (!isLoggedIn()) { navigate('/login', { replace: true }); return; }
+
+      // 3. Resolve entry point
+      const ep = await fetchEntryPoint();
+      if (ep.route === '/workspace-picker') { navigate('/workspace-picker', { replace: true }); return; }
+      if (ep.route === '/no-workspace-access') { navigate('/no-workspace-access', { replace: true }); return; }
+      if (ep.route === '/workspace/create') { navigate('/workspace/create', { replace: true }); return; }
+
+      // 4. Fall back to resolved entry point route if available
+      if (ep.workspace_id || ep.route) {
+        navigate(ep.route, { replace: true });
+      } else {
+        navigate('/login', { replace: true });
+      }
+    } catch (err: any) {
+      if (err?.response?.status === 401 || !isLoggedIn()) {
+        navigate('/login', { replace: true });
+        return;
+      }
+      // If 404 on UM endpoints (backend running older legacy version without UM routes), fall back to legacy
+      if (err?.response?.status === 404) {
+        setChecking(false);
+        return;
+      }
+      // Backend unreachable / network error / 500 error
+      setErrorMsg(err?.message || "Failed to connect to backend server");
+      setChecking(false);
+    }
+  }, [navigate]);
 
   React.useEffect(() => {
-    (async () => {
-      try {
-        // 1. Check if setup is needed
-        const { needs_setup } = await fetchSetupStatus();
-        if (needs_setup) { navigate('/setup', { replace: true }); return; }
-
-        // 2. Check if logged in
-        if (!isLoggedIn()) { navigate('/login', { replace: true }); return; }
-
-        // 3. Resolve entry point
-        const ep = await fetchEntryPoint();
-        if (ep.route === '/workspace-picker') { navigate('/workspace-picker', { replace: true }); return; }
-        if (ep.route === '/no-workspace-access') { navigate('/no-workspace-access', { replace: true }); return; }
-        if (ep.route === '/workspace/create') { navigate('/workspace/create', { replace: true }); return; }
-
-        // 4. Fall back to resolved entry point route if available
-        if (ep.workspace_id || ep.route) {
-          navigate(ep.route, { replace: true });
-        } else {
-          navigate('/login', { replace: true });
-        }
-      } catch {
-        // If new auth fails (e.g. backend not migrated), fall through to legacy workspace routing
-        setChecking(false);
-      }
-    })();
-  }, []);
+    resolve();
+  }, [resolve]);
 
   if (checking) {
     return (
@@ -144,6 +161,29 @@ function EntryPointGuard() {
       </div>
     );
   }
+
+  if (errorMsg) {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', background: 'var(--color-bg)', padding: 24 }}>
+        <div className="glass" style={{ maxWidth: 440, width: '100%', padding: '36px 28px', textAlign: 'center', borderRadius: 'var(--radius-lg)', background: 'var(--color-surface)', border: '1px solid var(--color-border)' }}>
+          <div style={{ fontSize: 32, marginBottom: 12 }}>🔌</div>
+          <h2 style={{ margin: '0 0 8px', fontSize: 18, color: 'var(--color-text)' }}>Backend Connection Error</h2>
+          <p style={{ color: 'var(--color-text-muted)', fontSize: 14, marginBottom: 20 }}>
+            Unable to connect to the Compass backend server. Please ensure the backend service is running.
+          </p>
+          <div style={{ display: 'flex', gap: 12, justifyContent: 'center' }}>
+            <button className="btn-primary" style={{ padding: '8px 16px', borderRadius: 8, cursor: 'pointer' }} onClick={() => resolve()}>
+              Retry Connection
+            </button>
+            <button className="btn-outline" style={{ padding: '8px 16px', borderRadius: 8, cursor: 'pointer' }} onClick={() => navigate('/login')}>
+              Go to Login
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   // Legacy fallback
   return <RootRedirect />;
 }

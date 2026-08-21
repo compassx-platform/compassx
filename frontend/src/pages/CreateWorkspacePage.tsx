@@ -8,6 +8,7 @@ import { useNavigate } from "react-router-dom";
 import { Loader2, CompassIcon, FolderPlus, Database, ChevronDown, ChevronUp, CheckCircle2 } from "lucide-react";
 import { useCreateWorkspace } from "@/lib/workspaceApi";
 import { useMe } from "@/lib/userManagerApi";
+import { isLoggedIn } from "@/lib/auth";
 import { useQueryClient } from "@tanstack/react-query";
 
 const STORAGE_BACKENDS = ["minio", "s3", "azure"] as const;
@@ -40,7 +41,21 @@ export default function CreateWorkspacePage() {
     );
   }
 
-  if (me && !isAccountAdmin) {
+  if (!isLoggedIn() || !me) {
+    return (
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "100vh", background: "var(--color-bg)" }}>
+        <div className="glass" style={{ padding: 32, maxWidth: 440, textAlign: "center", borderRadius: "var(--radius-lg)", background: "var(--color-surface)", border: "1px solid var(--color-border)" }}>
+          <h2 style={{ margin: "0 0 8px", fontSize: 18, color: "var(--color-danger)" }}>Authentication Required</h2>
+          <p style={{ color: "var(--color-text-muted)", fontSize: 14, marginBottom: 20 }}>
+            You must be logged in as an Account Administrator to create workspaces.
+          </p>
+          <button className="btn-primary" onClick={() => navigate("/login")}>Go to Login</button>
+        </div>
+      </div>
+    );
+  }
+
+  if (!isAccountAdmin) {
     return (
       <div style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "100vh", background: "var(--color-bg)" }}>
         <div className="glass" style={{ padding: 32, maxWidth: 440, textAlign: "center", borderRadius: "var(--radius-lg)", background: "var(--color-surface)", border: "1px solid var(--color-border)" }}>
