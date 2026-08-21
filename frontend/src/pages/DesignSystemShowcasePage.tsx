@@ -720,7 +720,6 @@ export default function DesignSystemShowcasePage() {
                 { id: 'columns', label: 'Columns (18)' },
                 { id: 'sample', label: 'Sample Data' },
                 { id: 'lineage', label: 'Lineage' },
-                { id: 'ai-profile', label: 'AI Profile' },
                 { id: 'details', label: 'Details' },
                 { id: 'permissions', label: 'Permissions' },
               ].map((t) => (

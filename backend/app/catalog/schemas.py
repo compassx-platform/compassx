@@ -170,27 +170,6 @@ class LineageGraphRead(BaseModel):
     downstream: list[LineageEdgeRead] = Field(default_factory=list)
 
 
-class DataSourceProfileRead(BaseModel):
-    """AI-inferred profiling data for a table, produced by the Layer-1 Profiler agent."""
-
-    id: int
-    connection_id: int | None = None
-    target_type: str | None = None
-    catalog_name: str | None = None
-    schema_name: str | None = None
-    table_name: str | None = None
-    row_count: int | None = None
-    last_profiled_at: datetime | None = None
-    profiled_by_agent_run_id: int | None = None
-    detected_layer: str | None = None
-    columns: list[Any] = Field(default_factory=list)
-    candidate_relationships: list[Any] = Field(default_factory=list)
-    prior_art_references: list[Any] = Field(default_factory=list)
-    unresolved_ambiguities: list[Any] = Field(default_factory=list)
-    domain_inference: dict[str, Any] = Field(default_factory=dict)
-    timeseries_profile: dict[str, Any] = Field(default_factory=dict)
-
-
 class NotebookCreate(BaseModel):
     name: str = Field(..., pattern=r"^[a-zA-Z0-9_]+$")
     comment: str | None = None

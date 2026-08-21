@@ -21,13 +21,12 @@ from app.catalog.models import (
     UnifiedCatalogQuery,
     UnifiedCatalogQueryVersion,
 )
-from app.models.agents import DBConnection, DataSourceProfile
+from app.models.agents import DBConnection
 from app.catalog.schemas import (
     CatalogColumnRead,
     CatalogSchemaSummary,
     CatalogSummary,
     CatalogTableRead,
-    DataSourceProfileRead,
     LineageEdgeCreate,
     LineageEdgeRead,
     LineageGraphRead,
@@ -801,147 +800,6 @@ def get_lineage(db: Session, fqn: str) -> LineageGraphRead:
             )
             for edge, related, schema, catalog in downstream_rows
         ],
-    )
-
-
-def get_data_profile(db: Session, fqn: str) -> DataSourceProfileRead | None:
-    """Return the AI-inferred data profile for a catalog table, or None if not yet profiled."""
-    catalog_name, schema_name, table_name = _parse_fqn(fqn)
-    cat_model = db.query(UnifiedCatalog).filter(UnifiedCatalog.name == catalog_name).first()
-
-    # Determine connection_id and the effective table name used during profiling
-    connection_id: int | None = None
-    effective_table: str = table_name
-
-    if cat_model and cat_model.catalog_type == "postgres" and cat_model.connection_id:
-        connection_id = cat_model.connection_id
-        effective_table = table_name  # pg_table == table_name in dynamic catalogs
-    else:
-        # Registered iceberg/native table — resolve via ORM
-        tbl_model = (
-            db.query(UnifiedCatalogTable)
-            .join(UnifiedCatalogSchema, UnifiedCatalogTable.schema_id == UnifiedCatalogSchema.id)
-            .join(UnifiedCatalog, UnifiedCatalogSchema.catalog_id == UnifiedCatalog.id)
-            .filter(
-                UnifiedCatalog.name == catalog_name,
-                UnifiedCatalogSchema.name == schema_name,
-                UnifiedCatalogTable.name == table_name,
-            )
-            .first()
-        )
-        if tbl_model:
-            connection_id = tbl_model.connection_id
-            effective_table = tbl_model.pg_table or table_name
-
-    profile = db.query(DataSourceProfile).filter(
-        DataSourceProfile.connection_id == connection_id if connection_id else DataSourceProfile.connection_id.is_(None),
-        DataSourceProfile.target_type == "table",
-        DataSourceProfile.catalog_name == catalog_name,
-        DataSourceProfile.schema_name == schema_name,
-        DataSourceProfile.table_name == effective_table,
-    ).first()
-    if not profile:
-        profile = db.query(DataSourceProfile).filter(
-            DataSourceProfile.connection_id == connection_id,
-            DataSourceProfile.target_type == "table",
-            DataSourceProfile.catalog_name.is_(None),
-            DataSourceProfile.table_name == effective_table,
-        ).first()
-    if not profile:
-        return None
-
-    return DataSourceProfileRead(
-        id=profile.id,
-        connection_id=profile.connection_id,
-        target_type=profile.target_type,
-        catalog_name=profile.catalog_name,
-        schema_name=profile.schema_name,
-        table_name=profile.table_name,
-        row_count=profile.row_count,
-        last_profiled_at=profile.last_profiled_at,
-        profiled_by_agent_run_id=profile.profiled_by_agent_run_id,
-        detected_layer=profile.detected_layer,
-        columns=list(profile.columns or []),
-        candidate_relationships=list(profile.candidate_relationships or []),
-        prior_art_references=list(profile.prior_art_references or []),
-        unresolved_ambiguities=list(profile.unresolved_ambiguities or []),
-        domain_inference=dict(profile.domain_inference or {}),
-        timeseries_profile=dict(profile.timeseries_profile or {}),
-    )
-
-
-def get_catalog_data_profile(db: Session, catalog_name: str) -> DataSourceProfileRead | None:
-    cat_model = db.query(UnifiedCatalog).filter(UnifiedCatalog.name == catalog_name).first()
-    if not cat_model:
-        return None
-
-    profile = (
-        db.query(DataSourceProfile)
-        .filter(
-            DataSourceProfile.connection_id == cat_model.connection_id if cat_model.connection_id else DataSourceProfile.connection_id.is_(None),
-            DataSourceProfile.target_type == "catalog",
-            DataSourceProfile.catalog_name == catalog_name,
-        )
-        .first()
-    )
-    if not profile:
-        return None
-
-    return DataSourceProfileRead(
-        id=profile.id,
-        connection_id=profile.connection_id,
-        target_type=profile.target_type,
-        catalog_name=profile.catalog_name,
-        schema_name=profile.schema_name,
-        table_name=profile.table_name,
-        row_count=profile.row_count,
-        last_profiled_at=profile.last_profiled_at,
-        profiled_by_agent_run_id=profile.profiled_by_agent_run_id,
-        detected_layer=profile.detected_layer,
-        columns=list(profile.columns or []),
-        candidate_relationships=list(profile.candidate_relationships or []),
-        prior_art_references=list(profile.prior_art_references or []),
-        unresolved_ambiguities=list(profile.unresolved_ambiguities or []),
-        domain_inference=dict(profile.domain_inference or {}),
-        timeseries_profile=dict(profile.timeseries_profile or {}),
-    )
-
-
-def get_schema_data_profile(db: Session, catalog_name: str, schema_name: str) -> DataSourceProfileRead | None:
-    cat_model = db.query(UnifiedCatalog).filter(UnifiedCatalog.name == catalog_name).first()
-    if not cat_model:
-        return None
-
-    profile = (
-        db.query(DataSourceProfile)
-        .filter(
-            DataSourceProfile.connection_id == cat_model.connection_id if cat_model.connection_id else DataSourceProfile.connection_id.is_(None),
-            DataSourceProfile.target_type == "schema",
-            DataSourceProfile.catalog_name == catalog_name,
-            DataSourceProfile.schema_name == schema_name,
-        )
-        .first()
-    )
-    if not profile:
-        return None
-
-    return DataSourceProfileRead(
-        id=profile.id,
-        connection_id=profile.connection_id,
-        target_type=profile.target_type,
-        catalog_name=profile.catalog_name,
-        schema_name=profile.schema_name,
-        table_name=profile.table_name,
-        row_count=profile.row_count,
-        last_profiled_at=profile.last_profiled_at,
-        profiled_by_agent_run_id=profile.profiled_by_agent_run_id,
-        detected_layer=profile.detected_layer,
-        columns=list(profile.columns or []),
-        candidate_relationships=list(profile.candidate_relationships or []),
-        prior_art_references=list(profile.prior_art_references or []),
-        unresolved_ambiguities=list(profile.unresolved_ambiguities or []),
-        domain_inference=dict(profile.domain_inference or {}),
-        timeseries_profile=dict(profile.timeseries_profile or {}),
     )
 
 

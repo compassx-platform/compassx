@@ -11,7 +11,6 @@ from app.catalog.schemas import (
     CatalogRead,
     CatalogSummary,
     CatalogTableRead,
-    DataSourceProfileRead,
     LineageEdgeCreate,
     LineageGraphRead,
     RemoteDatabaseRead,
@@ -53,9 +52,6 @@ from app.catalog.service import (
     delete_catalog,
     delete_schema,
     ensure_default_catalog,
-    get_catalog_data_profile,
-    get_schema_data_profile,
-    get_data_profile,
     get_lineage,
     get_sample_data,
     get_table,
@@ -442,131 +438,6 @@ def refresh_table_columns(
         return refresh_columns(db, f"{catalog}.{schema_name}.{table_name}")
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
-
-
-@router.get("/tables/{catalog}/{schema_name}/{table_name}/data-profile", response_model=DataSourceProfileRead | None)
-def read_data_profile(
-    catalog: str,
-    schema_name: str,
-    table_name: str,
-    db: Session = Depends(get_db),
-):
-    """Return the AI-inferred data profile for a table, or null if not yet profiled."""
-    return get_data_profile(db, f"{catalog}.{schema_name}.{table_name}")
-
-
-@router.get("/catalogs/{catalog}/data-profile", response_model=DataSourceProfileRead | None)
-def read_catalog_data_profile(
-    catalog: str,
-    db: Session = Depends(get_db),
-):
-    """Return the AI-inferred data profile for a catalog, or null if not yet profiled."""
-    return get_catalog_data_profile(db, catalog)
-
-
-@router.get("/schemas/{catalog}/{schema_name}/data-profile", response_model=DataSourceProfileRead | None)
-def read_schema_data_profile(
-    catalog: str,
-    schema_name: str,
-    db: Session = Depends(get_db),
-):
-    """Return the AI-inferred data profile for a schema, or null if not yet profiled."""
-    return get_schema_data_profile(db, catalog, schema_name)
-
-
-def _queue_catalog_profiling(
-    *, catalog: str, schema_name: str | None, table_name: str | None,
-    background_tasks: BackgroundTasks, db: Session, user: dict,
-) -> dict:
-    """Resolve profiling infrastructure from a catalog asset and queue its profiler."""
-    from app.agents.models.agents import DBConnection
-    from app.agents.routes.db_connection_routes import trigger_profiling
-    from app.catalog.models import UnifiedCatalog, UnifiedCatalogSchema, UnifiedCatalogTable
-
-    catalog_model = db.query(UnifiedCatalog).filter(UnifiedCatalog.name == catalog).first()
-    if not catalog_model:
-        raise HTTPException(status_code=404, detail=f"Catalog '{catalog}' not found")
-
-    connection_id = catalog_model.connection_id
-    physical_table = table_name
-    if schema_name:
-        schema_model = db.query(UnifiedCatalogSchema).filter(
-            UnifiedCatalogSchema.catalog_id == catalog_model.id,
-            UnifiedCatalogSchema.name == schema_name,
-        ).first()
-        if not schema_model:
-            raise HTTPException(status_code=404, detail=f"Schema '{catalog}.{schema_name}' not found")
-        if table_name:
-            table_model = db.query(UnifiedCatalogTable).filter(
-                UnifiedCatalogTable.schema_id == schema_model.id,
-                UnifiedCatalogTable.name == table_name,
-            ).first()
-            if table_model:
-                connection_id = table_model.connection_id or connection_id
-                physical_table = table_model.pg_table or table_model.name
-            elif catalog_model.catalog_type != "postgres":
-                raise HTTPException(status_code=404, detail=f"Table '{catalog}.{schema_name}.{table_name}' not found")
-
-    target_type = "table" if table_name else ("schema" if schema_name else "catalog")
-    if catalog_model.catalog_type == "iceberg":
-        async def run_iceberg_profile() -> None:
-            from app.catalog.profiling import profile_iceberg_scope
-            from app.database import SessionLocal
-
-            background_db = SessionLocal()
-            try:
-                await profile_iceberg_scope(
-                    background_db, catalog_name=catalog, schema_name=schema_name, table_name=table_name,
-                )
-            finally:
-                background_db.close()
-
-        background_tasks.add_task(run_iceberg_profile)
-        return {"status": "queued", "target": target_type, "catalog": catalog, "schema": schema_name, "table": table_name}
-
-    if not connection_id:
-        raise HTTPException(status_code=400, detail="This catalog asset has no profileable database connection")
-    from app.database import AccountSessionLocal
-    sys_db = AccountSessionLocal()
-    try:
-        connection = sys_db.query(DBConnection).filter(DBConnection.id == connection_id).first()
-        if connection:
-            sys_db.expunge(connection)
-    finally:
-        sys_db.close()
-    if not connection:
-        raise HTTPException(status_code=400, detail="The catalog asset's database connection is unavailable")
-    if not connection.profiler_agent_id:
-        raise HTTPException(status_code=400, detail="No profiler agent is configured for this catalog's connection")
-
-    scope = {"target_type": target_type, "catalog_name": catalog}
-    if schema_name:
-        scope["schema_name"] = schema_name
-    if physical_table:
-        scope["table_name"] = physical_table
-    trigger_profiling(
-        connection,
-        user.get("id") or user.get("sub") or "default_user",
-        user.get("org_id") or "default",
-        background_tasks,
-        catalog_scope=scope,
-    )
-    return {"status": "queued", "target": target_type, "catalog": catalog, "schema": schema_name, "table": table_name}
-
-
-@router.post("/catalogs/{catalog}/profile", status_code=202)
-def profile_catalog(catalog: str, background_tasks: BackgroundTasks, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
-    return _queue_catalog_profiling(catalog=catalog, schema_name=None, table_name=None, background_tasks=background_tasks, db=db, user=user)
-
-
-@router.post("/catalogs/{catalog}/schemas/{schema_name}/profile", status_code=202)
-def profile_schema(catalog: str, schema_name: str, background_tasks: BackgroundTasks, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
-    return _queue_catalog_profiling(catalog=catalog, schema_name=schema_name, table_name=None, background_tasks=background_tasks, db=db, user=user)
-
-
-@router.post("/catalogs/{catalog}/schemas/{schema_name}/tables/{table_name}/profile", status_code=202)
-def profile_table(catalog: str, schema_name: str, table_name: str, background_tasks: BackgroundTasks, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
-    return _queue_catalog_profiling(catalog=catalog, schema_name=schema_name, table_name=table_name, background_tasks=background_tasks, db=db, user=user)
 
 
 @router.post("/lineage", status_code=201)

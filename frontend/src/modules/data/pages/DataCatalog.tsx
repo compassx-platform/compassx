@@ -242,37 +242,6 @@ type SampleData = {
   row_count: number;
 };
 
-type DataSourceProfile = {
-  id: number;
-  connection_id: number | null;
-  table_name: string;
-  row_count: number | null;
-  last_profiled_at: string | null;
-  profiled_by_agent_run_id: number | null;
-  detected_layer: string | null;
-  columns: Array<{
-    name: string;
-    data_type?: string;
-    type?: string;
-    nullable?: boolean;
-    notes?: string;
-    stats?: Record<string, unknown>;
-    [key: string]: unknown;
-  }>;
-  candidate_relationships: Array<{
-    from_column?: string;
-    to_table?: string;
-    to_column?: string;
-    confidence?: number;
-    reasoning?: string;
-    [key: string]: unknown;
-  }>;
-  prior_art_references: any[];
-  unresolved_ambiguities: any[];
-  domain_inference?: Record<string, any>;
-  timeseries_profile?: Record<string, any>;
-};
-
 type CatalogForm = {
   name: string;
   description: string;
@@ -366,19 +335,6 @@ const catalogApi = {
   getLineage: (catalog: string, schema: string, table: string) => api.get<LineageGraph>('/catalog/lineage/' + catalog + '/' + schema + '/' + table).then((r) => r.data),
   getSampleData: (catalog: string, schema: string, table: string, limit = 100) =>
     api.get<{ columns: string[]; rows: (string | null)[][]; row_count: number }>(`/catalog/tables/${catalog}/${schema}/${table}/sample-data`, { params: { limit } }).then((r) => r.data),
-  getDataProfile: (catalog: string, schema: string, table: string) =>
-    api.get<DataSourceProfile | null>(`/catalog/tables/${catalog}/${schema}/${table}/data-profile`).then((r) => r.data),
-  getSchemaDataProfile: (catalog: string, schema: string) =>
-    api.get<DataSourceProfile | null>(`/catalog/schemas/${catalog}/${schema}/data-profile`).then((r) => r.data),
-  getCatalogDataProfile: (catalog: string) =>
-    api.get<DataSourceProfile | null>(`/catalog/catalogs/${catalog}/data-profile`).then((r) => r.data),
-  triggerProfile: (selection: Extract<Selection, { kind: 'catalog' | 'schema' | 'table' }>) => {
-    const base = `/catalog/catalogs/${encodeURIComponent(selection.catalog)}`;
-    if (selection.kind === 'catalog') return api.post(`${base}/profile`).then((r) => r.data);
-    const schema = `/schemas/${encodeURIComponent(selection.schema)}`;
-    if (selection.kind === 'schema') return api.post(`${base}${schema}/profile`).then((r) => r.data);
-    return api.post(`${base}${schema}/tables/${encodeURIComponent(selection.table)}/profile`).then((r) => r.data);
-  },
   // Remote database browsing endpoints using app-wide DB Connection IDs
   browseDatabases: (connId: number) => api.get<Array<{ name: string }>>(`/catalog/connections/${connId}/browse/databases`).then((r) => r.data),
   browseSchemas: (connId: number, database: string) => api.get<Array<{ name: string }>>(`/catalog/connections/${connId}/browse/schemas`, { params: { database } }).then((r) => r.data),
@@ -1167,26 +1123,6 @@ export default function DataCatalog() {
     queryKey: ['uc-sample', selection?.kind === 'table' ? selection.catalog : null, selection?.kind === 'table' ? selection.schema : null, selection?.kind === 'table' ? selection.table : null],
     queryFn: () => catalogApi.getSampleData((selection as any).catalog, (selection as any).schema, (selection as any).table),
     enabled: !!selection && selection.kind === 'table' && activeTab === 'sample',
-  });
-
-  const dataProfileQuery = useQuery<DataSourceProfile | null>({
-    queryKey: ['uc-data-profile', selection?.kind, selection && 'catalog' in selection ? selection.catalog : null, selection && 'schema' in selection ? selection.schema : null, selection && 'table' in selection ? (selection as any).table : null],
-    queryFn: () => {
-      if (!selection) return null;
-      if (selection.kind === 'catalog') return catalogApi.getCatalogDataProfile(selection.catalog);
-      if (selection.kind === 'schema') return catalogApi.getSchemaDataProfile(selection.catalog, selection.schema);
-      if (selection.kind === 'table') return catalogApi.getDataProfile(selection.catalog, selection.schema, selection.table);
-      return null;
-    },
-    enabled: !!selection && ['catalog', 'schema', 'table'].includes(selection.kind) && activeTab === 'ai-profile',
-  });
-
-  const profileMutation = useMutation({
-    mutationFn: () => {
-      if (!selection || !['catalog', 'schema', 'table'].includes(selection.kind)) throw new Error('Select a profileable catalog asset');
-      return catalogApi.triggerProfile(selection as Extract<Selection, { kind: 'catalog' | 'schema' | 'table' }>);
-    },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['uc-data-profile'] }),
   });
 
   const [bindAll, setBindAll] = useState(false);
@@ -2896,232 +2832,6 @@ export default function DataCatalog() {
       );
     }
 
-    // ── AI Profile Helper ──────────────────────────────────────────────────────
-    const renderAiProfileContent = () => (
-      <div className="uc-tab-content">
-        {dataProfileQuery.isLoading && (
-          <div className="uc-empty-inline"><Loader2 size={16} className="spin" style={{ display: 'inline' }} /> Loading AI profile...</div>
-        )}
-        {dataProfileQuery.isError && (
-          <div className="uc-empty-inline" style={{ color: 'var(--color-danger)' }}>Failed to load AI profile data.</div>
-        )}
-        {!dataProfileQuery.isLoading && !dataProfileQuery.isError && !dataProfileQuery.data && (
-          <div className="uc-ai-profile-empty">
-            <div className="uc-ai-profile-empty-icon">✦</div>
-            <h3>No AI Profile Yet</h3>
-            <p>This catalog asset has not been profiled yet. Profiling includes every table below the selected scope.</p>
-            <button className="uc-btn uc-btn-primary" onClick={() => profileMutation.mutate()} disabled={profileMutation.isPending}>
-              {profileMutation.isPending ? <><Loader2 size={14} className="spin" /> Queuing...</> : 'Run data profile'}
-            </button>
-            {profileMutation.isSuccess && <p style={{ color: 'var(--color-success)' }}>Profiling queued. Results will appear here when the agent finishes.</p>}
-            {profileMutation.isError && <p style={{ color: 'var(--color-danger)' }}>{(profileMutation.error as any)?.response?.data?.detail || 'Unable to start profiling.'}</p>}
-          </div>
-        )}
-        {dataProfileQuery.data && (() => {
-          const profile = dataProfileQuery.data!;
-          const layerColors: Record<string, { bg: string; color: string; border: string }> = {
-            bronze: { bg: 'rgba(180,83,9,0.12)', color: '#b45309', border: 'rgba(180,83,9,0.3)' },
-            silver: { bg: 'rgba(100,116,139,0.12)', color: '#64748b', border: 'rgba(100,116,139,0.3)' },
-            gold: { bg: 'rgba(234,179,8,0.12)', color: '#ca8a04', border: 'rgba(234,179,8,0.3)' },
-            platinum: { bg: 'rgba(99,102,241,0.12)', color: '#6366f1', border: 'rgba(99,102,241,0.3)' },
-          };
-          const layer = profile.detected_layer?.toLowerCase() || '';
-          const layerStyle = layerColors[layer] || { bg: 'var(--color-surface-2)', color: 'var(--color-text-muted)', border: 'var(--color-border)' };
-
-          return (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-              <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-                <button className="uc-btn uc-btn-secondary" onClick={() => profileMutation.mutate()} disabled={profileMutation.isPending}>
-                  <RefreshCw size={14} className={profileMutation.isPending ? 'spin' : ''} /> Reprofile
-                </button>
-              </div>
-
-              {/* Summary Banner */}
-              <div className="uc-ai-profile-banner">
-                {profile.row_count != null && (
-                  <div className="uc-ai-profile-banner-stat">
-                    <span>Row Count</span>
-                    <strong>{profile.row_count.toLocaleString()}</strong>
-                  </div>
-                )}
-                <div className="uc-ai-profile-banner-stat">
-                  <span>Detected Layer</span>
-                  {profile.detected_layer ? (
-                    <span className="uc-ai-layer-badge" style={{ background: layerStyle.bg, color: layerStyle.color, border: `1px solid ${layerStyle.border}` }}>
-                      {profile.detected_layer}
-                    </span>
-                  ) : <strong>—</strong>}
-                </div>
-                <div className="uc-ai-profile-banner-stat">
-                  <span>Profiled At</span>
-                  <strong>{profile.last_profiled_at ? new Date(profile.last_profiled_at).toLocaleString() : '—'}</strong>
-                </div>
-                {profile.columns && profile.columns.length > 0 && (
-                  <div className="uc-ai-profile-banner-stat">
-                    <span>Columns Profiled</span>
-                    <strong>{profile.columns.length}</strong>
-                  </div>
-                )}
-              </div>
-
-              {/* Domain Inference */}
-              {profile.domain_inference && Object.keys(profile.domain_inference).length > 0 && (
-                <div className="uc-detail-card">
-                  <div className="uc-section-header" style={{ marginBottom: 12 }}>
-                    <h3>Domain Inference</h3>
-                    <span className="uc-chip">AI Synthesized</span>
-                  </div>
-                  <div className="uc-key-values">
-                    {Object.entries(profile.domain_inference).map(([k, v]) => (
-                      <div key={k}>
-                        <span style={{ textTransform: 'capitalize' }}>{k.replace(/_/g, ' ')}</span>
-                        <strong>{typeof v === 'string' ? v : JSON.stringify(v)}</strong>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* Timeseries Profile */}
-              {profile.timeseries_profile && Object.keys(profile.timeseries_profile).length > 0 && (
-                <div className="uc-detail-card">
-                  <div className="uc-section-header" style={{ marginBottom: 12 }}>
-                    <h3>Timeseries Profile</h3>
-                    <span className="uc-chip">Operational Stats</span>
-                  </div>
-                  <div className="uc-key-values">
-                    {Object.entries(profile.timeseries_profile).map(([k, v]) => (
-                      <div key={k}>
-                        <span style={{ textTransform: 'capitalize' }}>{k.replace(/_/g, ' ')}</span>
-                        <strong>{typeof v === 'string' ? v : JSON.stringify(v)}</strong>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* Column Profiles */}
-              {profile.columns && profile.columns.length > 0 && (
-                <div className="uc-detail-card">
-                  <div className="uc-section-header" style={{ marginBottom: 12 }}>
-                    <h3>Column Profiles</h3>
-                    <span className="uc-chip">{profile.columns.length} columns</span>
-                  </div>
-                  <div className="uc-columns-table-wrap">
-                    <table className="uc-columns-table">
-                      <thead>
-                        <tr>
-                          <th>Column</th>
-                          <th>Type</th>
-                          <th>Nullable</th>
-                          <th>Notes / Stats</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {profile.columns.map((col: any, i: number) => (
-                          <tr key={col.name ?? i}>
-                            <td style={{ fontWeight: 600 }}>{String(col.name ?? '—')}</td>
-                            <td style={{ fontFamily: 'monospace', fontSize: 12 }}>{String(col.data_type ?? col.type ?? '—')}</td>
-                            <td>{col.nullable != null ? (col.nullable ? 'YES' : 'NO') : '—'}</td>
-                            <td style={{ fontSize: 12, color: 'var(--color-text-muted)', maxWidth: 300 }}>
-                              {col.notes ? String(col.notes) : (
-                                col.stats && Object.keys(col.stats).length > 0
-                                  ? Object.entries(col.stats).map(([k, v]) => `${k}: ${v}`).join(' · ')
-                                  : '—'
-                              )}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              )}
-
-              {/* Candidate Relationships */}
-              {profile.candidate_relationships && profile.candidate_relationships.length > 0 && (
-                <div className="uc-detail-card">
-                  <div className="uc-section-header" style={{ marginBottom: 12 }}>
-                    <h3>Candidate Relationships</h3>
-                    <span className="uc-chip">{profile.candidate_relationships.length}</span>
-                  </div>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                    {profile.candidate_relationships.map((rel: any, i: number) => (
-                      <div key={i} className="uc-ai-rel-row">
-                        <Link2 size={13} style={{ color: 'var(--color-primary)', flexShrink: 0 }} />
-                        <div style={{ flex: 1, minWidth: 0 }}>
-                          <span style={{ fontWeight: 600, fontSize: 13 }}>
-                            {rel.from_column ? String(rel.from_column) : '—'}
-                          </span>
-                          <span style={{ color: 'var(--color-text-muted)', margin: '0 6px' }}>→</span>
-                          <span style={{ fontWeight: 600, fontSize: 13, color: 'var(--color-primary)' }}>
-                            {rel.to_table ? String(rel.to_table) : '?'}
-                            {rel.to_column ? `.${String(rel.to_column)}` : ''}
-                          </span>
-                          {rel.confidence != null && (
-                            <span className="uc-chip" style={{ marginLeft: 8 }}>
-                              {Math.round(Number(rel.confidence) * 100)}% confidence
-                            </span>
-                          )}
-                          {rel.reasoning && (
-                            <p style={{ margin: '4px 0 0', fontSize: 12, color: 'var(--color-text-muted)' }}>{String(rel.reasoning)}</p>
-                          )}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* Prior Art References */}
-              {profile.prior_art_references && profile.prior_art_references.length > 0 && (
-                <div className="uc-detail-card">
-                  <div className="uc-section-header" style={{ marginBottom: 12 }}>
-                    <h3>Prior Art References</h3>
-                    <span className="uc-chip">{profile.prior_art_references.length}</span>
-                  </div>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                    {profile.prior_art_references.map((ref: any, i: number) => (
-                      <div key={i} className="uc-ai-ref-row">
-                        {typeof ref === 'string'
-                          ? <span style={{ fontSize: 13 }}>{ref}</span>
-                          : <pre style={{ margin: 0, fontSize: 11, fontFamily: 'monospace', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{JSON.stringify(ref, null, 2)}</pre>
-                        }
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* Unresolved Ambiguities */}
-              {profile.unresolved_ambiguities && profile.unresolved_ambiguities.length > 0 && (
-                <div className="uc-detail-card">
-                  <div className="uc-section-header" style={{ marginBottom: 12 }}>
-                    <h3>Unresolved Ambiguities</h3>
-                    <span className="uc-chip" style={{ background: 'rgba(234,179,8,0.1)', color: '#ca8a04', borderColor: 'rgba(234,179,8,0.3)' }}>
-                      {profile.unresolved_ambiguities.length} open
-                    </span>
-                  </div>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                    {profile.unresolved_ambiguities.map((amb: any, i: number) => (
-                      <div key={i} className="uc-ai-ambiguity-row">
-                        <span className="uc-ai-ambiguity-dot" />
-                        {typeof amb === 'string'
-                          ? <span style={{ fontSize: 13 }}>{amb}</span>
-                          : <pre style={{ margin: 0, fontSize: 11, fontFamily: 'monospace', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{JSON.stringify(amb, null, 2)}</pre>
-                        }
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-            </div>
-          );
-        })()}
-      </div>
-    );
-
     //  VOLUME level 
     if (selection && selection.kind === 'volume') {
       const vol = activeVolume;
@@ -4640,7 +4350,6 @@ export default function DataCatalog() {
         { value: 'columns', label: 'Columns' },
         { value: 'sample', label: 'Sample Data' },
         { value: 'lineage', label: 'Lineage' },
-        { value: 'ai-profile', label: '✦ AI Profile' },
         { value: 'details', label: 'Details' },
       ] as const;
 
@@ -4784,8 +4493,6 @@ export default function DataCatalog() {
             </div>
           )}
 
-          {activeTab === 'ai-profile' && renderAiProfileContent()}
-
           {activeTab === 'details' && (
             <div className="uc-tab-content">
               <div className="uc-detail-card" style={{ maxWidth: 560 }}>
@@ -4818,7 +4525,6 @@ export default function DataCatalog() {
         { value: 'overview', label: 'Overview' },
         { value: 'schemas', label: 'Schemas' },
         { value: 'workspaces', label: 'Workspaces' },
-        { value: 'ai-profile', label: '✦ AI Profile' },
         { value: 'details', label: 'Details' },
       ] as const;
 
@@ -4875,8 +4581,6 @@ export default function DataCatalog() {
 
           {activeTab === 'workspaces' && renderWorkspaceBindings()}
 
-          {activeTab === 'ai-profile' && renderAiProfileContent()}
-
           {activeTab === 'details' && (
             <div className="uc-tab-content">
               <div className="uc-detail-card" style={{ maxWidth: 560 }}>
@@ -4904,7 +4608,6 @@ export default function DataCatalog() {
       const tables = schemaTablesCache[`${selection.catalog}.${selection.schema}`] || [];
       const schemaTabs = [
         { value: 'overview', label: 'Overview' },
-        { value: 'ai-profile', label: '✦ AI Profile' },
         { value: 'details', label: 'Details' },
         { value: 'permissions', label: 'Permissions' },
       ] as const;
@@ -4923,8 +4626,6 @@ export default function DataCatalog() {
               {renderSchemaOverviewTab(tables)}
             </div>
           )}
-
-          {activeTab === 'ai-profile' && renderAiProfileContent()}
 
           {activeTab === 'permissions' && (
             <div className="uc-tab-content">
