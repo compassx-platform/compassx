@@ -8,7 +8,7 @@ Tables in this DB (SystemBase):
           agent_context_entries, agent_skill_attachments, conversations, messages,
           tasks, triggers, chat_sessions, chat_messages, skills
   LLM/Budget: llm_call_logs, budgets, budget_statuses
-  Research: research_memory, research_engine_runs, research_proposals, research_proposal_messages
+  Research: research_engine_runs, research_proposals, research_proposal_messages
   RAG: rag_documents, rag_chunks, business_context_entries
   Dashboard: dashboards
   SQL Warehouse: sql_warehouse_warehouses

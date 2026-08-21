@@ -108,38 +108,10 @@ def _build_extra_tools(
             workspace_id=workspace_id,
         )
 
-    if "fetch_memory" in enabled_tool_keys:
-        from app.agents.services.agent.tools.fetch_memory_tool import FetchMemoryTool
+    if "fetch_research_proposal_history" in enabled_tool_keys:
+        from app.agents.services.agent.tools.research_engine_tools import FetchResearchProposalHistoryTool
 
-        extra["fetch_memory"] = FetchMemoryTool(
-            session_id=session_id,
-            db=db,
-            user_id=user_id,
-            workspace_id=workspace_id,
-        )
-
-    if "fetch_research_memory" in enabled_tool_keys or "save_research_memory" in enabled_tool_keys:
-        from app.agents.services.agent.tools.research_memory_tool import FetchResearchMemoryTool, SaveResearchMemoryTool
-
-        if "fetch_research_memory" in enabled_tool_keys:
-            extra["fetch_research_memory"] = FetchResearchMemoryTool(workspace_id=workspace_id)
-        if "save_research_memory" in enabled_tool_keys:
-            extra["save_research_memory"] = SaveResearchMemoryTool(session_id=session_id, workspace_id=workspace_id)
-
-    research_context_tools = {
-        "harvest_research_memory",
-        "fetch_research_proposal_history",
-    }
-    if research_context_tools.intersection(enabled_tool_keys):
-        from app.agents.services.agent.tools.research_engine_tools import (
-            HarvestResearchMemoryTool,
-            FetchResearchProposalHistoryTool,
-        )
-
-        if "harvest_research_memory" in enabled_tool_keys:
-            extra["harvest_research_memory"] = HarvestResearchMemoryTool(workspace_id=workspace_id)
-        if "fetch_research_proposal_history" in enabled_tool_keys:
-            extra["fetch_research_proposal_history"] = FetchResearchProposalHistoryTool(workspace_id=workspace_id)
+        extra["fetch_research_proposal_history"] = FetchResearchProposalHistoryTool(workspace_id=workspace_id)
 
     if "save_data_profile" in enabled_tool_keys:
         from app.agents.services.agent.tools.profiling_tools import SaveDataProfileTool
@@ -479,14 +451,6 @@ async def orchestrate_stream(
         user_msg_id = user_msg.id
 
     messages.append({"role": "user", "content": user_content, "id": user_msg_id})
-
-    # Notify Memory Activity (always register session user/workspace mapping)
-    try:
-        from app.memory import memory_orchestrator
-        if memory_orchestrator:
-            await memory_orchestrator.on_activity(str(session_id), user_id, workspace_id)
-    except Exception as e:
-        logger.error("Failed to notify activity to memory orchestrator: %s", e)
 
     # ── Resolve Agent Manifest (Spec v2 Part C) ──────────────────────────────
     manifest_data = getattr(agent, "manifest", None) or {}
@@ -962,15 +926,6 @@ async def orchestrate_stream(
             )
             db.add(asst_msg)
             db.commit()
-
-    # Notify Memory Activity
-    if not sandbox and full_response_text:
-        try:
-            from app.memory import memory_orchestrator
-            if memory_orchestrator:
-                await memory_orchestrator.on_activity(str(session_id), user_id, workspace_id)
-        except Exception as e:
-            logger.error("Failed to notify activity to memory orchestrator: %s", e)
 
         if not session.title:
             session.title = user_content[:80]

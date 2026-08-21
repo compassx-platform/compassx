@@ -133,41 +133,12 @@ async def lifespan(app: FastAPI):
         # Fail loud with root causes but keep serving so /health can report it.
         logger.error("Platform not healthy at startup:\n%s", exc)
 
-    # Initialize Agent Memory Orchestration
-    from app.database import SessionLocal
-    from app.agents.services.llm_client import chat_stream
-    from app.memory.store import MemoryStore
-    from app.memory.extractor import FactExtractor
-    from app.memory.session_tracker import SessionTracker
-    from app.memory.orchestrator import MemoryOrchestrator
-
-    # TEMP DISABLED: memory extraction (ai.memory_extraction_log table missing)
-    # memory_store = MemoryStore(SessionLocal)
-    # fact_extractor = FactExtractor(chat_stream, SessionLocal)
-    # session_tracker = SessionTracker(memory_store, fact_extractor)
-    # memory_orchestrator = MemoryOrchestrator(session_tracker)
-    # memory_orchestrator.start_inactivity_checker()
-    memory_orchestrator = None
-
-    # Store references on app state and global app.memory module variable
-    app.state.memory_orchestrator = memory_orchestrator
-
     # Auto-run workspace migrations then first boot setup
     from app.workspace.startup import run_workspace_startup
     try:
         run_workspace_startup()
     except Exception as exc:
         logger.error("Workspace startup/migrations failed (non-fatal): %s", exc)
-
-    # Start retention worker
-    # from app.workspace.retention import RetentionWorker
-    # _retention_worker = RetentionWorker()
-    # _retention_worker.start()
-    # app.state.retention_worker = _retention_worker
-
-    import importlib
-    memory_module = importlib.import_module("app.memory")
-    memory_module.memory_orchestrator = memory_orchestrator
 
     # Default compute and SQL warehouse bootstrap per workspace (business concern — stays in the backend).
     async def _bootstrap_default_resources() -> None:

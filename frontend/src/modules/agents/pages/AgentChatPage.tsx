@@ -918,7 +918,7 @@ export default function AgentChatPage() {
   }, [urlSessionId]);
 
   const { data: messages = [] } = useChatMessages(agentId, activeSessionId);
-  const isResearchEngineAgent = (agent?.tools ?? []).some((tool) => ["fetch_research_memory", "fetch_research_proposal_history"].includes(tool.tool_name));
+  const isResearchEngineAgent = (agent?.tools ?? []).some((tool) => ["fetch_research_proposal_history"].includes(tool.tool_name));
   const researchRunsForAgent = researchRuns.filter((run) => run.agent_id === agentId);
 
   const {

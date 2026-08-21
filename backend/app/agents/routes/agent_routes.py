@@ -33,14 +33,6 @@ def _research_review_prompt() -> str:
         "- Ask for missing business decisions needed to proceed\n"
         "- Never invent proposal status changes; instead, summarize what the user approved, rejected, or modified\n"
         "- Keep the conversation collaborative and decision-oriented\n"
-        "\n"
-        "Research Memory save rules:\n"
-        "- Use save_research_memory when the user states a durable strategic fact that future research runs should remember.\n"
-        "- Save business priorities, deployment conventions, operational constraints, rejected proposal context, strategic decisions, and data trust signals.\n"
-        "- Do not save questions, uncertainty, temporary focus, or facts that can be queried from the database.\n"
-        "- Save only high-confidence, explicit guidance.\n"
-        "- Classify facts with one of: organizational_context, business_priority, deployment_convention, operational_constraint, rejected_proposal_context, strategic_decision, data_trust_signal.\n"
-        "- If the user corrects an earlier rule, save the corrected rule so future runs use the latest guidance.\n"
     )
 
 
@@ -162,8 +154,6 @@ def provision_research_review_agent(
     db.flush()
 
     _sync_tools(db, agent.id, [
-        {"tool_name": "fetch_research_memory"},
-        {"tool_name": "save_research_memory"},
         {"tool_name": "fetch_research_proposal_history"},
     ])
 

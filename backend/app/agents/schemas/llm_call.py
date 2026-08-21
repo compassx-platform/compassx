@@ -35,7 +35,6 @@ class LlmCallLogDetailResponse(BaseModel):
     system_prompt_base: str | None = None
     skills_available: list[dict[str, Any]] = []
     skills_injected: list[dict[str, Any]] = []
-    memory_injected: list[dict[str, Any]] = []
     message_history: list[dict[str, Any]] = []
     tools_available: list[dict[str, Any]] = []
     response_text: str | None = None

@@ -12,7 +12,6 @@ export interface LLMConnection {
   timeout_s: number;
   max_tokens: number;
   is_fallback: boolean;
-  use_for_memory: boolean;
   use_for_embedding: boolean;
   input_cost_per_1k_tokens?: number;
   output_cost_per_1k_tokens?: number;
@@ -46,7 +45,6 @@ export function useCreateLLMConnection() {
         model_name: string;
         api_key?: string;
         base_url?: string;
-        use_for_memory?: boolean;
         use_for_embedding?: boolean;
         input_cost_per_1k_tokens?: number;
         output_cost_per_1k_tokens?: number;
@@ -74,7 +72,6 @@ export function useUpdateLLMConnection() {
         model_name?: string;
         api_key?: string;
         base_url?: string;
-        use_for_memory?: boolean;
         use_for_embedding?: boolean;
         input_cost_per_1k_tokens?: number;
         output_cost_per_1k_tokens?: number;
@@ -97,17 +94,6 @@ export function useDeleteLLMConnection() {
       connId: number;
     }) => {
       await api.delete(`/llm-connections/${connId}`);
-    },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["llm-connections"] }),
-  });
-}
-
-export function useSetMemoryLLMConnection() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: async ({ connId }: { connId: number }) => {
-      const { data } = await api.post<LLMConnection>(`/llm-connections/${connId}/set-memory`, {});
-      return data;
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ["llm-connections"] }),
   });

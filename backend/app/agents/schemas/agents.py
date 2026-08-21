@@ -74,7 +74,6 @@ class LLMConnectionCreate(BaseModel):
     max_tokens: int = 4096
     config: dict[str, Any] = {}
     is_fallback: bool = False
-    use_for_memory: bool = False
     use_for_embedding: bool = False
     input_cost_per_1k_tokens: float | None = None
     output_cost_per_1k_tokens: float | None = None
@@ -90,7 +89,6 @@ class LLMConnectionUpdate(BaseModel):
     max_tokens: int | None = None
     config: dict[str, Any] | None = None
     is_fallback: bool | None = None
-    use_for_memory: bool | None = None
     use_for_embedding: bool | None = None
     input_cost_per_1k_tokens: float | None = None
     output_cost_per_1k_tokens: float | None = None
@@ -108,7 +106,6 @@ class LLMConnectionResponse(BaseModel):
     max_tokens: int
     config: dict[str, Any]
     is_fallback: bool
-    use_for_memory: bool
     use_for_embedding: bool
     input_cost_per_1k_tokens: float | None = None
     output_cost_per_1k_tokens: float | None = None

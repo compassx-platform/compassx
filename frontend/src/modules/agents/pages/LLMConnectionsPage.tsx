@@ -73,7 +73,6 @@ function LLMConnectionForm({
     model_name: string;
     api_key?: string;
     base_url?: string;
-    use_for_memory?: boolean;
     use_for_embedding?: boolean;
     input_cost_per_1k_tokens?: number;
     output_cost_per_1k_tokens?: number;
@@ -87,7 +86,6 @@ function LLMConnectionForm({
   const [modelName, setModelName] = useState(initial?.model_name ?? "");
   const [apiKey, setApiKey] = useState("");
   const [baseUrl, setBaseUrl] = useState(initial?.base_url ?? "");
-  const [useForMemory, setUseForMemory] = useState(initial?.use_for_memory ?? false);
   const [useForEmbedding, setUseForEmbedding] = useState(initial?.use_for_embedding ?? false);
   const [inputCost, setInputCost] = useState(initial?.input_cost_per_1k_tokens?.toString() ?? "");
   const [outputCost, setOutputCost] = useState(initial?.output_cost_per_1k_tokens?.toString() ?? "");
@@ -103,7 +101,6 @@ function LLMConnectionForm({
       model_name: modelName,
       api_key: apiKey || undefined,
       base_url: baseUrl || undefined,
-      use_for_memory: useForMemory,
       use_for_embedding: useForEmbedding,
       input_cost_per_1k_tokens: inputCost !== "" ? Number(inputCost) : undefined,
       output_cost_per_1k_tokens: outputCost !== "" ? Number(outputCost) : undefined,
@@ -208,19 +205,6 @@ function LLMConnectionForm({
         </div>
       </div>
 
-      <div className="form-group" style={{ display: "flex", alignItems: "center", gap: 8 }}>
-        <input
-          id="llm-connection-memory"
-          type="checkbox"
-          checked={useForMemory}
-          onChange={(e) => setUseForMemory(e.target.checked)}
-          style={{ width: "auto", cursor: "pointer" }}
-        />
-        <label className="form-label" htmlFor="llm-connection-memory" style={{ marginBottom: 0, cursor: "pointer", userSelect: "none" }}>
-          <BrainCircuit size={13} style={{ display: "inline", marginRight: 4, verticalAlign: "middle" }} />
-          Use for Memory Extraction
-        </label>
-      </div>
       <div className="form-group" style={{ display: "flex", alignItems: "center", gap: 8 }}>
         <input
           id="llm-connection-embedding"
@@ -377,16 +361,6 @@ export default function LLMConnectionsPage() {
               </td>
               <td>
                 <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                  {conn.use_for_memory && (
-                    <span style={{
-                      display: "inline-flex", alignItems: "center", gap: 4,
-                      fontSize: "0.68rem", fontWeight: 500, padding: "2px 6px",
-                      borderRadius: 4, background: "var(--color-surface-hover)",
-                      color: "var(--color-text-muted)", border: "1px solid var(--color-border)",
-                    }}>
-                      <BrainCircuit size={10} /> Memory
-                    </span>
-                  )}
                   {conn.use_for_embedding && (
                     <span style={{
                       display: "inline-flex", alignItems: "center", gap: 4,

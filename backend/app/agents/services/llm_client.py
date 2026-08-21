@@ -226,9 +226,8 @@ async def save_llm_call_log(
                     "position": att.position,
                 })
 
-        # 2. Extract injected skills and memory facts from message history
+        # 2. Extract injected skills from message history
         skills_injected = []
-        memory_injected = []
 
         tool_call_to_name = {}
         for msg in messages:
@@ -255,23 +254,6 @@ async def save_llm_call_log(
                                     "body": data.get("body"),
                                     "version": data.get("version"),
                                 })
-                        except Exception:
-                            pass
-                elif tool_name == "fetch_memory":
-                    content = msg.get("content")
-                    if content:
-                        try:
-                            data = json.loads(content) if isinstance(content, str) else content
-                            if isinstance(data, dict) and "facts" in data:
-                                for fact in data["facts"]:
-                                    memory_injected.append({
-                                        "id": fact.get("id"),
-                                        "fact": fact.get("fact"),
-                                        "fact_type": fact.get("fact_type"),
-                                        "tags": fact.get("tags"),
-                                        "confidence": fact.get("confidence"),
-                                        "tier": fact.get("tier"),
-                                    })
                         except Exception:
                             pass
 
@@ -321,7 +303,6 @@ async def save_llm_call_log(
             system_prompt_base=system_prompt,
             skills_available=skills_available,
             skills_injected=skills_injected,
-            memory_injected=memory_injected,
             message_history=message_history,
             tools_available=tools_available,
             response_text=response_text or None,

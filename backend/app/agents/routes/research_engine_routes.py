@@ -12,19 +12,9 @@ from sqlalchemy.orm import Session
 
 from app.database import get_system_db as get_db
 from app.dependencies import get_current_user
-from app.memory.research_store import RESEARCH_FACT_TYPES, ResearchMemoryStore
 from app.models.agents import ChatSession
 
 router = APIRouter(prefix="/api/v1/research-engine", tags=["Research Engine"])
-
-
-class ResearchMemoryCreate(BaseModel):
-    fact: str = Field(..., min_length=1)
-    fact_type: str
-    confidence: float = Field(..., ge=0.8, le=1.0)
-    scope: str = "workspace"
-    tags: list[str] = []
-    source_type: str = "research_engine"
 
 
 class ResearchEngineRunCreate(BaseModel):
@@ -72,58 +62,6 @@ def _user_id(current_user: dict) -> str:
     return current_user.get("id") or current_user.get("sub") or "default_user"
 
 
-@router.get("/memory")
-def list_research_memory(
-    fact_type: str | None = None,
-    scope: str | None = None,
-    tags: list[str] | None = None,
-    db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user),
-):
-    store = ResearchMemoryStore(lambda: db, close_sessions=False)
-    return store.fetch(
-        workspace_id=_workspace_id(current_user),
-        fact_type=fact_type,
-        scope=scope,
-        tags=tags,
-        limit=200,
-    )
-
-
-@router.post("/memory", status_code=201)
-def create_research_memory(
-    body: ResearchMemoryCreate,
-    db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user),
-):
-    if body.fact_type not in RESEARCH_FACT_TYPES:
-        raise HTTPException(400, "Unsupported research memory fact_type")
-    store = ResearchMemoryStore(lambda: db, close_sessions=False)
-    return store.save(
-        workspace_id=_workspace_id(current_user),
-        fact=body.fact,
-        fact_type=body.fact_type,
-        confidence=body.confidence,
-        source_agent="api",
-        source_session_id=None,
-        source_type=body.source_type,
-        promoted_via="user_stated_in_engine",
-        scope=body.scope,
-        tags=body.tags,
-    )
-
-
-@router.post("/memory/harvest")
-def harvest_research_memory(
-    days: int = 30,
-    limit: int = 200,
-    db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user),
-):
-    store = ResearchMemoryStore(lambda: db, close_sessions=False)
-    return store.harvest_recent_agent_memory(workspace_id=_workspace_id(current_user), days=days, limit=limit)
-
-
 @router.post("/trigger", status_code=201)
 def trigger_research_engine_run(
     body: ResearchEngineTriggerRequest,
@@ -167,16 +105,8 @@ def trigger_research_engine_run(
         "session_title": session_title,
         "initial_prompt": body.prompt or (
             "You are running a Research Engine cycle for this workspace. "
-            "First fetch the latest Research Memory and prior proposal history, then assess current platform maturity and produce a focused set of proposals. "
+            "First assess current platform maturity and produce a focused set of proposals based on connected context. "
             "\n\n"
-            "Research Memory save rules:\n"
-            "- Use save_research_memory immediately when the user states a durable business priority, deployment-specific convention, operational constraint, rejected proposal reason, strategic decision, or data trust signal.\n"
-            "- Save only facts that cannot be retrieved from the database at query time and that would meaningfully change how future research runs reason about this deployment.\n"
-            "- Do not save transient statements, questions, uncertainty, temporary weekly focus, or facts derivable from connected data sources.\n"
-            "- Confidence must be high: save only explicit, durable guidance, not guesses.\n"
-            "- Classify saved facts using one of: organizational_context, business_priority, deployment_convention, operational_constraint, rejected_proposal_context, strategic_decision, data_trust_signal.\n"
-            "- If the user corrects or overrides earlier guidance, save the new fact so the newer rule becomes the active one for future research.\n"
-            "\n"
             "Output rules:\n"
             "- Distinguish confirmed facts from assumptions and open questions.\n"
             "- Default to 3-5 prioritized proposals, not an exhaustive backlog.\n"

@@ -330,25 +330,6 @@ def test_agent_subsystem_resource_scoping(db_session: Session):
     finally:
         stream_registry.finish(stream_id)
 
-    # 6. Test Memory Scoping
-    db_session.execute(text("""
-        INSERT INTO ai.agent_memory (
-            user_id, workspace_id, fact, fact_type, tags, confidence, tier, source
-        ) VALUES (
-            :user_id, :workspace_id, 'User prefer dark mode', 'ui_preference', '{}', 1.0, 2, 'session'
-        )
-    """), {"user_id": principal.id, "workspace_id": ws1.id})
-    db_session.flush()
-
-    # Fetch memories under WS1
-    ws1_memories = get_user_memories(req1, db=db_session, current_user={"id": principal.id})
-    assert len(ws1_memories) == 1
-    assert ws1_memories[0]["fact"] == "User prefer dark mode"
-
-    # Fetch memories under WS2
-    ws2_memories = get_user_memories(req2, db=db_session, current_user={"id": principal.id})
-    assert len(ws2_memories) == 0
-
 
 def test_catalog_metadata_scoping(db_session: Session):
     import asyncio

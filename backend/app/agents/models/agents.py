@@ -98,7 +98,6 @@ class LLMConnection(AccountBase):
     max_tokens = Column(Integer, nullable=False, default=4096)
     config = Column(JSONB, default=dict)
     is_fallback = Column(Boolean, default=False)
-    use_for_memory = Column(Boolean, default=False, nullable=False)
     use_for_embedding = Column(Boolean, default=False, nullable=False, server_default="false")
     input_cost_per_1k_tokens = Column(Numeric(10, 4), nullable=True)
     output_cost_per_1k_tokens = Column(Numeric(10, 4), nullable=True)
@@ -430,7 +429,6 @@ class LlmCallLog(Base):
     system_prompt_base = Column(Text, nullable=True)
     skills_available = Column(JSONB, default=list)  # list of {skill_id, name, description}
     skills_injected = Column(JSONB, default=list)    # list of {skill_id, name, full_body}
-    memory_injected = Column(JSONB, default=list)    # list of {fact, fact_type, tags, source, query_filter}
     message_history = Column(JSONB, default=list)    # list of {role, message_id, content}
     tools_available = Column(JSONB, default=list)    # list of {name, description}
 
@@ -531,39 +529,6 @@ class DataSourceProfile(Base):
             "table_name",
             unique=True,
         ),
-    )
-
-
-
-
-
-
-class ResearchMemory(Base):
-    __tablename__ = "research_memory"
-
-    id = Column(UUID(as_uuid=True), primary_key=True)
-    workspace_id = Column(Text, nullable=False, default="default")
-    fact = Column(Text, nullable=False)
-    fact_type = Column(Text, nullable=False)
-    confidence = Column(Numeric(3, 2), nullable=False, default=1.0)
-    source_agent = Column(Text, nullable=True)
-    source_session_id = Column(Text, nullable=True)
-    source_type = Column(Text, nullable=False, default="notebook")
-    promoted_via = Column(Text, nullable=False)
-    scope = Column(Text, nullable=False, default="workspace")
-    tags = Column(ARRAY(Text), nullable=False, default=list)
-    valid_from = Column(DateTime(timezone=True), nullable=False, default=_utcnow)
-    valid_to = Column(DateTime(timezone=True), nullable=True)
-    superseded_by = Column(UUID(as_uuid=True), ForeignKey("ai.research_memory.id", ondelete="SET NULL"), nullable=True)
-    last_confirmed_at = Column(DateTime(timezone=True), nullable=False, default=_utcnow)
-    confirmation_count = Column(Integer, nullable=False, default=1)
-    created_at = Column(DateTime(timezone=True), nullable=False, default=_utcnow)
-
-    __table_args__ = (
-        Index("idx_research_memory_workspace_active", "workspace_id", "valid_to"),
-        Index("idx_research_memory_fact_type", "workspace_id", "fact_type"),
-        Index("idx_research_memory_scope", "workspace_id", "scope"),
-        {"schema": "ai"},
     )
 
 

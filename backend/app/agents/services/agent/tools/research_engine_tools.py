@@ -9,35 +9,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.agents.services.agent.tools.base_tool import BaseTool, ToolResult
-from app.memory.research_store import ResearchMemoryStore
 from app.models.agents import Agent, DataSourceProfile
-
-
-class HarvestResearchMemoryTool(BaseTool):
-    key = "harvest_research_memory"
-    name = "Harvest Research Memory"
-    description = "Scan recent Tier 1 agent memory for qualifying Tier 2 Research Memory facts before a Research Engine run."
-    is_async = False
-    input_schema = {
-        "type": "object",
-        "properties": {
-            "days": {"type": "integer", "default": 30},
-            "limit": {"type": "integer", "default": 200},
-        },
-    }
-
-    def __init__(self, workspace_id: str | None = None) -> None:
-        self._workspace_id = workspace_id
-
-    def execute(self, args: dict[str, Any], agent: Agent, db: Session) -> ToolResult:
-        start = time.monotonic()
-        store = ResearchMemoryStore(lambda: db, close_sessions=False)
-        stats = store.harvest_recent_agent_memory(
-            workspace_id=self._workspace_id or "default",
-            days=args.get("days") or 30,
-            limit=args.get("limit") or 200,
-        )
-        return ToolResult(ok=True, result=stats, duration_ms=int((time.monotonic() - start) * 1000))
 
 
 class FetchLayer1ProfilesTool(BaseTool):

@@ -27,7 +27,6 @@ export interface LlmCallLogDetail {
   system_prompt_base?: string;
   skills_available: any[];
   skills_injected: any[];
-  memory_injected: any[];
   message_history: any[];
   tools_available: any[];
   response_text?: string;

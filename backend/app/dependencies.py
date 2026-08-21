@@ -17,13 +17,6 @@ async def get_current_user(
         "is_account_admin": True,
     }
 
-
-def get_memory_orchestrator(request: Request):
-    """Retrieve the global MemoryOrchestrator instance from application state."""
-    from app.memory import memory_orchestrator
-    return getattr(request.app.state, "memory_orchestrator", memory_orchestrator)
-
-
 # ── Platform layer (DI via app.state.platform) ───────────────────────────────
 
 def get_platform(request: Request):

@@ -260,31 +260,6 @@ def db_session(create_tables) -> Generator[Session, None, None]:
         except (sqlite3.OperationalError, sqlite3.ProgrammingError):
             # Already attached
             pass
-        try:
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS ai.agent_memory (
-                    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
-                    user_id             TEXT NOT NULL,
-                    workspace_id        TEXT NOT NULL,
-                    fact                TEXT NOT NULL,
-                    fact_type           TEXT NOT NULL,
-                    tags                TEXT NOT NULL DEFAULT '[]',
-                    confidence          NUMERIC(4,3) NOT NULL DEFAULT 1.0,
-                    tier                INTEGER NOT NULL DEFAULT 2,
-                    source              TEXT NOT NULL,
-                    source_session_id   TEXT,
-                    is_active           BOOLEAN NOT NULL DEFAULT 1,
-                    reinforcement_count INTEGER NOT NULL DEFAULT 0,
-                    created_at          DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                    last_reinforced_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                    expires_at          DATETIME
-                )
-            """)
-            cursor.execute("CREATE INDEX IF NOT EXISTS ai.idx_agent_memory_user_workspace ON agent_memory (user_id, workspace_id)")
-            cursor.execute("CREATE INDEX IF NOT EXISTS ai.idx_agent_memory_fact_type ON agent_memory (fact_type)")
-            cursor.execute("CREATE INDEX IF NOT EXISTS ai.idx_agent_memory_active ON agent_memory (is_active)")
-        except (sqlite3.OperationalError, sqlite3.ProgrammingError):
-            pass
         cursor.close()
     transaction = connection.begin()
     session = TestSessionLocal(bind=connection)

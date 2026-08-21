@@ -38,7 +38,6 @@ def _to_response(conn: LLMConnection) -> LLMConnectionResponse:
         max_tokens=conn.max_tokens,
         config=conn.config or {},
         is_fallback=conn.is_fallback,
-        use_for_memory=conn.use_for_memory,
         use_for_embedding=conn.use_for_embedding,
         input_cost_per_1k_tokens=float(conn.input_cost_per_1k_tokens) if conn.input_cost_per_1k_tokens is not None else None,
         output_cost_per_1k_tokens=float(conn.output_cost_per_1k_tokens) if conn.output_cost_per_1k_tokens is not None else None,
@@ -69,8 +68,6 @@ def create_llm_connection(
     current_user: dict = Depends(get_current_user)
 ):
     workspace_id = getattr(request.state, "workspace", None) and request.state.workspace.workspace_id
-    if body.use_for_memory:
-        db.query(LLMConnection).filter(LLMConnection.workspace_id == workspace_id).update({LLMConnection.use_for_memory: False})
     if body.use_for_embedding:
         db.query(LLMConnection).filter(LLMConnection.workspace_id == workspace_id).update({LLMConnection.use_for_embedding: False})
     
@@ -87,7 +84,6 @@ def create_llm_connection(
         max_tokens=body.max_tokens,
         config=body.config,
         is_fallback=body.is_fallback,
-        use_for_memory=body.use_for_memory,
         use_for_embedding=body.use_for_embedding,
         input_cost_per_1k_tokens=body.input_cost_per_1k_tokens,
         output_cost_per_1k_tokens=body.output_cost_per_1k_tokens,
@@ -122,8 +118,6 @@ def update_llm_connection(
     workspace_id = getattr(request.state, "workspace", None) and request.state.workspace.workspace_id
     conn = _get_or_404(db, connection_id, workspace_id)
     data = body.model_dump(exclude_none=True)
-    if data.get("use_for_memory"):
-        db.query(LLMConnection).filter(LLMConnection.workspace_id == workspace_id).update({LLMConnection.use_for_memory: False})
     if data.get("use_for_embedding"):
         db.query(LLMConnection).filter(LLMConnection.workspace_id == workspace_id).update({LLMConnection.use_for_embedding: False})
     if "api_key" in data:
@@ -147,28 +141,12 @@ def update_llm_connection(
     return _to_response(conn)
 
 
-@router.post("/{connection_id}/set-memory", response_model=LLMConnectionResponse)
-def set_memory_llm(request: Request, connection_id: int, db: Session = Depends(get_account_db)):
-    workspace_id = getattr(request.state, "workspace", None) and request.state.workspace.workspace_id
-    db.query(LLMConnection).filter(LLMConnection.workspace_id == workspace_id).update({LLMConnection.use_for_memory: False})
-    conn = _get_or_404(db, connection_id, workspace_id)
-    conn.use_for_memory = True
-    try:
-        db.commit()
-        db.refresh(conn)
-    except SQLAlchemyError as exc:
-        db.rollback()
-        raise HTTPException(400, f"Failed to set memory LLM connection: {exc}") from exc
-    return _to_response(conn)
-
-
 @router.post("/{connection_id}/set-embedding", response_model=LLMConnectionResponse)
 def set_embedding_llm(request: Request, connection_id: int, db: Session = Depends(get_account_db)):
     """Mark a single LLM connection as the embedding provider (exclusive toggle)."""
     workspace_id = getattr(request.state, "workspace", None) and request.state.workspace.workspace_id
     db.query(LLMConnection).filter(LLMConnection.workspace_id == workspace_id).update({LLMConnection.use_for_embedding: False})
     conn = _get_or_404(db, connection_id, workspace_id)
-    conn.use_for_memory = True
     conn.use_for_embedding = True
     try:
         db.commit()

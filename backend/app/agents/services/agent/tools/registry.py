@@ -12,10 +12,7 @@ from app.agents.services.agent.tools.rag_search_tool import RagSearchTool
 from app.agents.services.agent.tools.claude_agent_tool import ClaudeAgentTool
 from app.agents.services.agent.tools.git_workspace_tool import GitWorkspaceTool
 from app.agents.services.agent.tools.invoke_agent_tool import InvokeAgentTool
-from app.agents.services.agent.tools.fetch_memory_tool import FetchMemoryTool
-from app.agents.services.agent.tools.research_memory_tool import FetchResearchMemoryTool, SaveResearchMemoryTool
 from app.agents.services.agent.tools.research_engine_tools import (
-    HarvestResearchMemoryTool,
     FetchLayer1ProfilesTool,
     ScanPlatformMaturityTool,
     FetchResearchProposalHistoryTool,
@@ -58,6 +55,7 @@ def _get_default_tools() -> list[BaseTool]:
         pass
     return tools
 
+
 TOOL_REGISTRY: list[BaseTool] = _get_default_tools() + [
     SqlQueryTool(),
     PythonCodeTool(),
@@ -69,10 +67,6 @@ TOOL_REGISTRY: list[BaseTool] = _get_default_tools() + [
     NotebookManagerTool(),
     DashboardManagerTool(),
     InvokeAgentTool(),
-    FetchMemoryTool(),
-    FetchResearchMemoryTool(),
-    SaveResearchMemoryTool(),
-    HarvestResearchMemoryTool(),
     FetchLayer1ProfilesTool(),
     ScanPlatformMaturityTool(),
     FetchResearchProposalHistoryTool(),

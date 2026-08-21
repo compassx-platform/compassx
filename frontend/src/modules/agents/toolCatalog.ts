@@ -71,9 +71,6 @@ export const AVAILABLE_TOOLS: AvailableToolInfo[] = [
   { key: "git_workspace", name: "Git Workspace Setup", description: "Clone a repo, create a branch, and set up a git worktree." },
   { key: "claude_agent", name: "Claude Agent", description: "AI-powered code review and code generation for GitHub and Azure DevOps." },
   { key: "invoke_agent", name: "Invoke Agent", description: "Invoke another agent to handle a specialist subtask." },
-  { key: "fetch_memory", name: "Fetch Memory", description: "Retrieve relevant semantic memory/facts about the user from past conversations." },
-  { key: "fetch_research_memory", name: "Fetch Research Memory", description: "Retrieve active Tier-2 research memory facts for the workspace." },
-  { key: "save_research_memory", name: "Save Research Memory", description: "Save durable deployment-specific strategic guidance to Tier-2 research memory." },
   { key: "fetch_research_proposal_history", name: "Fetch Research Proposal History", description: "Retrieve prior research proposals and review history." },
   { key: "get_data_profile", name: "Get Data Profile", description: "Retrieve compiled data profiling findings from Layer 1 without requiring an attached database connection." },
   {

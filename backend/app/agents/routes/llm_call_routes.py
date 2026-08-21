@@ -151,7 +151,6 @@ def get_llm_call_log_detail(
         system_prompt_base=log.system_prompt_base,
         skills_available=log.skills_available or [],
         skills_injected=log.skills_injected or [],
-        memory_injected=log.memory_injected or [],
         message_history=resolved_history,
         tools_available=log.tools_available or [],
         response_text=log.response_text,

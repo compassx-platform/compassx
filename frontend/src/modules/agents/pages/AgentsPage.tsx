@@ -25,8 +25,6 @@ import { PageTabs } from "@/components/common/PageTabs";
 import { AppTable, type AppTableColumn } from "@/components/common/AppTable";
 import { useAgents, useDeleteAgent, useCloneAgent, type AgentListItem } from "@/modules/agents/hooks/useAgents";
 import { useActiveStreams, type ActiveStream } from "@/modules/agents/hooks/useActiveStreams";
-import { useMemory, useDeleteMemory, useMemoryLogs, type MemoryItem, type MemoryExtractionLogItem } from "@/modules/agents/hooks/useMemory";
-import { useResearchMemory, type ResearchMemoryItem } from "@/modules/agents/hooks/useResearchMemory";
 import { AVAILABLE_TOOLS, type AvailableToolInfo } from "@/modules/agents/toolCatalog";
 import { useToast } from "@/lib/toast";
 import {
@@ -49,16 +47,13 @@ import { Bold, Italic, List, ListOrdered, Code, Sparkles, Tags, FileText, Chevro
 import { BudgetsTab } from "../components/BudgetsTab";
 import { UsageTab } from "../components/UsageTab";
 
-type AgentsPageTab = "agents" | "tools" | "skills" | "streams" | "memory" | "research_memory" | "logs" | "llm_calls" | "budgets" | "usage";
+type AgentsPageTab = "agents" | "tools" | "skills" | "streams" | "llm_calls" | "budgets" | "usage";
 
 const AGENTS_PAGE_TABS = [
   { value: "agents", label: "Agents" },
   { value: "tools", label: "Tools" },
   { value: "skills", label: "Skills Library" },
   { value: "streams", label: "Active Streams" },
-  { value: "memory", label: "Memory" },
-  { value: "research_memory", label: "Research Memory" },
-  { value: "logs", label: "Memory Logs" },
   { value: "llm_calls", label: "LLM Call Logs" },
   { value: "budgets", label: "Budgets" },
   { value: "usage", label: "Usage" },
@@ -328,330 +323,6 @@ function ActiveStreamsTab({ agents }: { agents: AgentListItem[] }) {
           rows={streams}
           rowKey={(stream) => stream.id}
           emptyText="No active streams."
-        />
-      )}
-    </div>
-  );
-}
-
-function MemoryTab() {
-  const { data: memories = [], isLoading, error, refetch, isFetching } = useMemory();
-  const deleteMutation = useDeleteMemory();
-  const toast = useToast();
-
-  const handleDelete = async (id: string, fact: string) => {
-    if (!confirm(`Delete memory fact: "${fact}"?`)) return;
-    try {
-      await deleteMutation.mutateAsync(id);
-      toast.success("Memory deleted successfully");
-    } catch {
-      toast.error("Failed to delete memory");
-    }
-  };
-
-  const columns: AppTableColumn<MemoryItem>[] = [
-    {
-      key: "fact",
-      header: "Fact / Statement",
-      width: "45%",
-      render: (m) => (
-        <div style={{ fontWeight: 500, color: "var(--color-text-main)" }}>{m.fact}</div>
-      ),
-    },
-    {
-      key: "fact_type",
-      header: "Type",
-      width: "12%",
-      render: (m) => (
-        <span
-          style={{
-            textTransform: "capitalize",
-            fontSize: "0.75rem",
-            fontWeight: 600,
-            color: "var(--color-text-muted)",
-            background: "#f4f4f5",
-            padding: "2px 6px",
-            borderRadius: 4,
-          }}
-        >
-          {m.fact_type}
-        </span>
-      ),
-    },
-    {
-      key: "tags",
-      header: "Tags",
-      width: "18%",
-      render: (m) => (
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
-          {m.tags.map((t) => (
-            <span
-              key={t}
-              style={{
-                fontSize: "0.7rem",
-                color: "#1e3a8a",
-                background: "#dbeafe",
-                padding: "1px 6px",
-                borderRadius: 4,
-              }}
-            >
-              {t}
-            </span>
-          ))}
-        </div>
-      ),
-    },
-    {
-      key: "confidence",
-      header: "Confidence",
-      width: "12%",
-      render: (m) => (
-        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          <div
-            style={{
-              height: 6,
-              width: 48,
-              background: "#e4e4e7",
-              borderRadius: 3,
-              overflow: "hidden",
-            }}
-          >
-            <div
-              style={{
-                height: "100%",
-                width: `${m.confidence * 100}%`,
-                background: m.confidence > 0.8 ? "#22c55e" : m.confidence > 0.6 ? "#eab308" : "#ef4444",
-                borderRadius: 3,
-              }}
-            />
-          </div>
-          <span style={{ fontSize: "0.75rem", fontWeight: 500 }}>
-            {Math.round(m.confidence * 100)}%
-          </span>
-        </div>
-      ),
-    },
-    {
-      key: "last_reinforced_at",
-      header: "Last Updated",
-      width: "9%",
-      render: (m) => (
-        <span style={{ fontSize: "0.75rem", color: "var(--color-text-muted)" }}>
-          {m.last_reinforced_at ? new Date(m.last_reinforced_at).toLocaleDateString() : "-"}
-        </span>
-      ),
-    },
-    {
-      key: "actions",
-      header: "",
-      width: "4%",
-      render: (m) => (
-        <button
-          className="btn-icon btn-icon-danger"
-          title="Delete Fact"
-          onClick={() => handleDelete(m.id, m.fact)}
-        >
-          <Trash2 size={13} />
-        </button>
-      ),
-    },
-  ];
-
-  return (
-    <div>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
-        <div style={{ fontSize: "0.82rem", color: "var(--color-text-muted)" }}>
-          Semantic facts about user preferences, goals, and technical conventions extracted automatically.
-        </div>
-        <button className="btn btn-secondary" onClick={() => refetch()} disabled={isFetching}>
-          {isFetching && <Loader2 size={14} className="spin" />}
-          Refresh
-        </button>
-      </div>
-      {isLoading ? (
-        <div className="table-empty"><Loader2 size={20} className="spin" /> Loading memory...</div>
-      ) : error ? (
-        <div className="table-empty error">Failed to load memory.</div>
-      ) : memories.length === 0 ? (
-        <div className="table-empty">No semantic memory entries found. Start a conversation with an agent to extract memories.</div>
-      ) : (
-        <AppTable
-          columns={columns}
-          rows={memories}
-          rowKey={(m) => m.id}
-          emptyText="No memory entries found."
-        />
-      )}
-    </div>
-  );
-}
-
-function ResearchMemoryTab() {
-  const { data: memory = [], isLoading, error } = useResearchMemory();
-
-  const columns: AppTableColumn<ResearchMemoryItem>[] = [
-    { key: "fact", header: "Fact", width: "34%", render: (item) => <span>{item.fact}</span> },
-    { key: "fact_type", header: "Type", width: "14%", render: (item) => <span className="badge">{item.fact_type}</span> },
-    { key: "scope", header: "Scope", width: "10%", render: (item) => <span>{item.scope}</span> },
-    { key: "confidence", header: "Confidence", width: "10%", render: (item) => <span>{Math.round(item.confidence * 100)}%</span> },
-    { key: "confirmation_count", header: "Confirmed", width: "10%", render: (item) => <span>{item.confirmation_count}</span> },
-    { key: "tags", header: "Tags", width: "22%", render: (item) => <span>{(item.tags ?? []).join(", ") || "-"}</span> },
-  ];
-
-  return (
-    <div className="admin-table-wrap">
-      <div className="section-caption" style={{ marginBottom: 12 }}>
-        High-confidence Tier-2 strategic memory used by the Research Engine across runs.
-      </div>
-      {isLoading ? (
-        <div className="table-empty"><Loader2 size={20} className="spin" /> Loading research memory...</div>
-      ) : error ? (
-        <div className="table-empty error">Failed to load research memory.</div>
-      ) : memory.length === 0 ? (
-        <div className="table-empty">No research memory entries found yet.</div>
-      ) : (
-        <AppTable columns={columns} rows={memory} emptyText="No research memory entries found." rowKey={(item) => item.id} />
-      )}
-    </div>
-  );
-}
-
-function MemoryLogsTab() {
-  const { data: logs = [], isLoading, error, refetch, isFetching } = useMemoryLogs();
-
-  const columns: AppTableColumn<MemoryExtractionLogItem>[] = [
-    {
-      key: "started_at",
-      header: "Started At",
-      width: "15%",
-      render: (log) => (
-        <span style={{ fontSize: "0.75rem", color: "var(--color-text-muted)" }}>
-          {log.started_at ? new Date(log.started_at).toLocaleString() : "-"}
-        </span>
-      ),
-    },
-    {
-      key: "trigger",
-      header: "Trigger",
-      width: "12%",
-      render: (log) => (
-        <span
-          style={{
-            textTransform: "capitalize",
-            fontSize: "0.75rem",
-            fontWeight: 600,
-            color: log.trigger === "explicit_close" ? "#1e3a8a" : "#b45309",
-            background: log.trigger === "explicit_close" ? "#dbeafe" : "#fef3c7",
-            padding: "2px 6px",
-            borderRadius: 4,
-          }}
-        >
-          {log.trigger === "explicit_close" ? "Explicit Close" : "Inactivity"}
-        </span>
-      ),
-    },
-    {
-      key: "session_id",
-      header: "Session ID",
-      width: "10%",
-      render: (log) => (
-        <code style={{ fontSize: "0.75rem", background: "var(--color-bg-light)", padding: "2px 4px", borderRadius: 4 }}>
-          {log.session_id}
-        </code>
-      ),
-    },
-    {
-      key: "turns_processed",
-      header: "Turns",
-      width: "8%",
-      render: (log) => <span style={{ fontWeight: 500 }}>{log.turns_processed}</span>,
-    },
-    {
-      key: "facts",
-      header: "Facts (Extracted/Created/Merged)",
-      width: "25%",
-      render: (log) => (
-        <div style={{ fontSize: "0.78rem" }}>
-          <span style={{ fontWeight: 600, color: "var(--color-text-main)" }}>{log.facts_extracted ?? 0}</span> extracted
-          <span style={{ color: "var(--color-text-muted)", margin: "0 4px" }}>â€¢</span>
-          <span style={{ fontWeight: 600, color: "#16a34a" }}>{log.facts_created ?? 0}</span> new
-          <span style={{ color: "var(--color-text-muted)", margin: "0 4px" }}>â€¢</span>
-          <span style={{ fontWeight: 600, color: "#2563eb" }}>{log.facts_merged ?? 0}</span> reinforced
-        </div>
-      ),
-    },
-    {
-      key: "status",
-      header: "Status",
-      width: "12%",
-      render: (log) => {
-        const isPending = log.status === "pending";
-        const isFailed = log.status === "failed";
-        const isDone = log.status === "done";
-        
-        return (
-          <span
-            style={{
-              display: "inline-flex",
-              alignItems: "center",
-              gap: 4,
-              fontSize: "0.75rem",
-              fontWeight: 600,
-              color: isDone ? "#15803d" : isFailed ? "#b91c1c" : "#b45309",
-              background: isDone ? "#dcfce7" : isFailed ? "#fee2e2" : "#fef3c7",
-              padding: "2px 8px",
-              borderRadius: 4,
-            }}
-          >
-            {isDone && <CheckCircle2 size={12} />}
-            {isFailed && <XCircle size={12} />}
-            {isPending && <Loader2 size={12} className="spin" />}
-            {log.status.toUpperCase()}
-          </span>
-        );
-      },
-    },
-    {
-      key: "error",
-      header: "Details / Error",
-      render: (log) => (
-        <span
-          style={{
-            fontSize: "0.75rem",
-            color: log.status === "failed" ? "#dc2626" : "var(--color-text-muted)",
-            wordBreak: "break-all",
-          }}
-          title={log.error || undefined}
-        >
-          {log.error ? (log.error.length > 80 ? `${log.error.substring(0, 80)}...` : log.error) : (log.status === "done" ? "Successfully completed" : "-")}
-        </span>
-      ),
-    },
-  ];
-
-  return (
-    <div>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
-        <div style={{ fontSize: "0.82rem", color: "var(--color-text-muted)" }}>
-          Audit logs of the background memory extraction runs, indicating trigger conditions and processing results.
-        </div>
-        <button className="btn btn-secondary" onClick={() => refetch()} disabled={isFetching}>
-          {isFetching && <Loader2 size={14} className="spin" />}
-          Refresh
-        </button>
-      </div>
-      {isLoading ? (
-        <div className="table-empty"><Loader2 size={20} className="spin" /> Loading logs...</div>
-      ) : error ? (
-        <div className="table-empty error">Failed to load memory logs.</div>
-      ) : logs.length === 0 ? (
-        <div className="table-empty">No memory extraction logs found. Logs are generated when memory extraction is triggered.</div>
-      ) : (
-        <AppTable
-          columns={columns}
-          rows={logs}
-          rowKey={(log) => log.id}
-          emptyText="No logs found."
         />
       )}
     </div>
@@ -1255,7 +926,6 @@ function LlmCallDetailModal({ callId, onClose }: { callId: number; onClose: () =
     systemPrompt: false,
     messageHistory: true,
     skillsInjected: true,
-    memoryInjected: true,
     tools: false,
     response: true,
   });
@@ -1462,41 +1132,7 @@ function LlmCallDetailModal({ callId, onClose }: { callId: number; onClose: () =
                 )}
               </div>
 
-              {/* 4. Injected Memory Section */}
-              <div style={sectionStyle}>
-                <div style={sectionHeaderStyle} onClick={() => toggleSection("memoryInjected")}>
-                  <span>Injected Memory ({detail.memory_injected?.length || 0})</span>
-                  {openSections.memoryInjected ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
-                </div>
-                {openSections.memoryInjected && (
-                  <div style={sectionBodyStyle}>
-                    {!detail.memory_injected || detail.memory_injected.length === 0 ? (
-                      <span style={{ fontSize: "0.78rem", color: "var(--color-text-muted)" }}>No memory facts were retrieved in this turn.</span>
-                    ) : (
-                      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                        {detail.memory_injected.map((m: any, i: number) => (
-                          <div key={i} style={{ display: "flex", justifyContent: "space-between", background: "#f9fafb", border: "1px solid var(--color-border)", borderRadius: 6, padding: 8 }}>
-                            <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-                              <span style={{ fontSize: "0.78rem", fontWeight: 500 }}>{m.fact}</span>
-                              <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                                <span style={{ fontSize: "0.68rem", textTransform: "capitalize", background: "#f3f4f6", padding: "1px 4px", borderRadius: 4 }}>{m.fact_type}</span>
-                                {m.tags && m.tags.map((t: string) => (
-                                  <span key={t} style={{ fontSize: "0.68rem", color: "#1e3a8a", background: "#dbeafe", padding: "1px 4px", borderRadius: 4 }}>{t}</span>
-                                ))}
-                              </div>
-                            </div>
-                            <span style={{ fontSize: "0.75rem", fontWeight: 600, color: "#16a34a" }}>
-                              {Math.round((m.confidence || 0) * 100)}%
-                            </span>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-
-              {/* 5. Tools Available Section */}
+              {/* 4. Tools Available Section */}
               <div style={sectionStyle}>
                 <div style={sectionHeaderStyle} onClick={() => toggleSection("tools")}>
                   <span>Tools Available ({detail.tools_available ? detail.tools_available.length : 0})</span>
@@ -1656,7 +1292,7 @@ export default function AgentsPage() {
   const toast = useToast();
   const [searchParams, setSearchParams] = useSearchParams();
   const tabParam = searchParams.get("tab");
-  const initialTab: AgentsPageTab = tabParam === "tools" ? "tools" : tabParam === "skills" ? "skills" : tabParam === "streams" ? "streams" : tabParam === "memory" ? "memory" : tabParam === "research_memory" ? "research_memory" : tabParam === "logs" ? "logs" : tabParam === "llm_calls" ? "llm_calls" : tabParam === "budgets" ? "budgets" : tabParam === "usage" ? "usage" : "agents";
+  const initialTab: AgentsPageTab = tabParam === "tools" ? "tools" : tabParam === "skills" ? "skills" : tabParam === "streams" ? "streams" : tabParam === "llm_calls" ? "llm_calls" : tabParam === "budgets" ? "budgets" : tabParam === "usage" ? "usage" : "agents";
   const [tab, setTab] = useState<AgentsPageTab>(initialTab);
   const [search, setSearch] = useState("");
 
@@ -1694,7 +1330,7 @@ export default function AgentsPage() {
           <>
             <span>/</span>
             <span className="asset-breadcrumb-current">
-              {tab === "tools" ? "Tools" : tab === "skills" ? "Skills Library" : tab === "streams" ? "Active Streams" : tab === "memory" ? "Memory" : tab === "research_memory" ? "Research Memory" : tab === "logs" ? "Memory Logs" : tab === "llm_calls" ? "LLM Call Logs" : tab === "budgets" ? "Budgets" : "Usage"}
+              {tab === "tools" ? "Tools" : tab === "skills" ? "Skills Library" : tab === "streams" ? "Active Streams" : tab === "llm_calls" ? "LLM Call Logs" : tab === "budgets" ? "Budgets" : "Usage"}
             </span>
           </>
         )}
@@ -1747,12 +1383,6 @@ export default function AgentsPage() {
         <SkillsTab />
       ) : tab === "streams" ? (
         <ActiveStreamsTab agents={agents ?? []} />
-      ) : tab === "memory" ? (
-        <MemoryTab />
-      ) : tab === "research_memory" ? (
-        <ResearchMemoryTab />
-      ) : tab === "logs" ? (
-        <MemoryLogsTab />
       ) : tab === "llm_calls" ? (
         <LlmCallLogsTab agents={agents ?? []} />
       ) : tab === "budgets" ? (
