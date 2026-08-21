@@ -79,7 +79,7 @@ def timeseries(
     metric: str = Query(..., pattern="^(cpu|memory|network_in|network_out|disk_read|disk_write)$"),
     start: int = Query(0, ge=0),
     end: int = Query(0, ge=0),
-    resolution: int = Query(300, ge=1, le=86400),
+    resolution: int = Query(60, ge=1, le=86400),
     service: MonitoringService = Depends(get_monitoring_service),
 ):
     if end <= start:
@@ -93,7 +93,7 @@ def service_timeseries(
     metric: str = Query(..., pattern="^(cpu|memory|network_in|network_out|disk_read|disk_write)$"),
     start: int = Query(0, ge=0),
     end: int = Query(0, ge=0),
-    resolution: int = Query(300, ge=60, le=86400),
+    resolution: int = Query(60, ge=60, le=86400),
     service: MonitoringService = Depends(get_monitoring_service),
 ):
     if end <= start:
@@ -106,7 +106,7 @@ def service_timeseries(
 def health(service: MonitoringService = Depends(get_monitoring_service)):
     return HealthResponse(
         status="Healthy",
-        prometheus="Connected" if service.resource_manager.prometheus_connected else "Fallback",
+        prometheus="Connected" if service.resource_manager.prometheus_connected else "Disconnected",
         runtime=service.resource_manager.source,
-        message="Prometheus history is active" if service.resource_manager.prometheus_connected else "Using local history fallback",
+        message="Prometheus history is active" if service.resource_manager.prometheus_connected else "Prometheus is disconnected",
     )

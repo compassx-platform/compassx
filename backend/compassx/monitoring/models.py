@@ -21,6 +21,7 @@ class ObservedResource:
     cpu_percent: float = 0
     memory_percent: float = 0
     memory_mb: float = 0
+    memory_limit_mb: float = 0
     disk_percent: float = 0
     network_in_kbps: float = 0
     network_out_kbps: float = 0

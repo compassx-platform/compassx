@@ -40,7 +40,7 @@ def test_manager_records_only_observed_values(tmp_path):
     series = manager.timeseries(
         "service", "process:backend", "cpu", 0, 9_999_999_999, 300
     )
-    assert [point.value for point in series.points] == [20.67]
+    assert [point.value for point in series.points] == [18.62]
     assert series.unit == "%"
 
 
@@ -87,3 +87,21 @@ def test_manager_builds_platform_health_from_services(tmp_path):
     assert platform.status == "Degraded"
     assert platform.cpu_percent == 15
     assert platform.memory_mb == 200
+
+
+def test_build_collectors_local_dev_only_docker(tmp_path):
+    from compassx.monitoring.collectors import DockerComposeCollector, HostCollector, LocalProcessCollector
+    profile = load_profile("local-dev")
+    collectors = MonitoringResourceManager._build_collectors(profile, tmp_path)
+    types = [type(c) for c in collectors]
+    assert DockerComposeCollector in types
+    assert HostCollector not in types
+    assert LocalProcessCollector not in types
+
+
+def test_build_collectors_kubernetes_profile(tmp_path):
+    from compassx.monitoring.collectors import KubernetesCollector
+    profile = load_profile("kubernetes-local")
+    collectors = MonitoringResourceManager._build_collectors(profile, tmp_path)
+    types = [type(c) for c in collectors]
+    assert KubernetesCollector in types

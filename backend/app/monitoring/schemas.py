@@ -19,6 +19,7 @@ class Resource(BaseModel):
     cpu_percent: float
     memory_percent: float
     memory_mb: float
+    memory_limit_mb: float = 0
     disk_percent: float
     network_in_kbps: float
     network_out_kbps: float

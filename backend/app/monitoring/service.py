@@ -66,13 +66,10 @@ class MonitoringService:
         self, metric: str, start: int, end: int, step: int
     ) -> GroupedTimeseriesResponse:
         services = self.resources("service")
+        unit, grouped = self.resource_manager.timeseries_grouped(metric, start, end, step)
         series = []
-        unit = ""
         for resource in services:
-            observed = self.resource_manager.timeseries(
-                "service", resource.id, metric, start, end, step
-            )
-            unit = observed.unit
+            points = grouped.get(resource.id, [])
             series.append(
                 NamedTimeseries(
                     resource_id=resource.id,
@@ -80,7 +77,7 @@ class MonitoringService:
                     status=resource.status,
                     points=[
                         MetricPoint.model_validate(point, from_attributes=True)
-                        for point in observed.points
+                        for point in points
                     ],
                 )
             )

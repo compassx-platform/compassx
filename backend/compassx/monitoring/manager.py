@@ -10,6 +10,7 @@ from compassx.models import ServiceMode
 from compassx.monitoring.collectors import (
     DockerComposeCollector,
     HostCollector,
+    KubernetesCollector,
     LocalProcessCollector,
     ResourceCollector,
 )
@@ -58,6 +59,13 @@ class MonitoringResourceManager:
     def _build_collectors(profile: DeploymentProfile, repo_root: Path) -> list[ResourceCollector]:
         collectors: list[ResourceCollector] = []
         modes = set(profile.service_modes().values()) | {profile.default_mode}
+        if profile.name == "local-dev":
+            try:
+                collectors.append(DockerComposeCollector(profile.compose_project))
+            except Exception as exc:
+                logger.warning("Docker monitoring is unavailable: %s", exc)
+            return collectors
+
         if ServiceMode.LOCAL in modes:
             collectors.extend([HostCollector(), LocalProcessCollector(profile, repo_root)])
         if ServiceMode.DOCKER in modes:
@@ -65,6 +73,11 @@ class MonitoringResourceManager:
                 collectors.append(DockerComposeCollector(profile.compose_project))
             except Exception as exc:
                 logger.warning("Docker monitoring is unavailable: %s", exc)
+        if ServiceMode.KUBERNETES in modes:
+            try:
+                collectors.append(KubernetesCollector(profile.k8s_namespace))
+            except Exception as exc:
+                logger.warning("Kubernetes monitoring is unavailable: %s", exc)
         return collectors
 
     @property
@@ -76,8 +89,15 @@ class MonitoringResourceManager:
         return bool(getattr(self._repository, "connected", False))
 
     def resources(self, kind: str | None = None) -> list[ObservedResource]:
+        now = time.monotonic()
+        if not self._resources or self._cache_seconds == 0:
+            with self._collection_lock:
+                if not self._resources or self._cache_seconds == 0:
+                    self._collect_unlocked()
+        elif now - self._last_collection >= self._cache_seconds:
+            self.request_refresh()
+
         with self._collection_lock:
-            self._collect_unlocked()
             return [item for item in self._resources if kind is None or item.kind == kind]
 
     def resource_snapshot(self) -> list[ObservedResource]:
@@ -89,7 +109,7 @@ class MonitoringResourceManager:
         if self._refresh_thread is not None and self._refresh_thread.is_alive():
             return
         self._refresh_thread = Thread(
-            target=self.resources,
+            target=self._collect,
             name="compassx-monitoring-refresh",
             daemon=True,
         )
@@ -98,13 +118,20 @@ class MonitoringResourceManager:
     def timeseries(
         self, resource_type: str, resource_id: str, metric: str, start: int, end: int, step: int
     ) -> Timeseries:
-        with self._collection_lock:
-            self._collect_unlocked()
-            _field, unit = _METRICS[metric]
-            points = self._repository.query(
-                self.profile.name, resource_id, metric, start, end, step
-            )
+        _field, unit = _METRICS[metric]
+        points = self._repository.query(
+            self.profile.name, resource_id, metric, start, end, step
+        )
         return Timeseries(resource_type, resource_id, metric, unit, points)
+
+    def timeseries_grouped(
+        self, metric: str, start: int, end: int, step: int
+    ) -> tuple[str, dict[str, list[MetricPoint]]]:
+        _field, unit = _METRICS[metric]
+        grouped = self._repository.query_grouped(
+            self.profile.name, metric, start, end, step
+        )
+        return unit, grouped
 
     def _collect(self) -> None:
         with self._collection_lock:

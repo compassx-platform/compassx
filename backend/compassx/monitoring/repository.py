@@ -36,6 +36,11 @@ class MetricRepository(ABC):
         self, profile: str, resource_id: str, metric: str, start: int, end: int, step: int
     ) -> list[MetricPoint]: ...
 
+    def query_grouped(
+        self, profile: str, metric: str, start: int, end: int, step: int
+    ) -> dict[str, list[MetricPoint]]:
+        return {}
+
 
 def _aggregate(samples: list[MetricSample], start: int, end: int, step: int) -> list[MetricPoint]:
     buckets: dict[int, list[float]] = defaultdict(list)
@@ -72,6 +77,18 @@ class InMemoryMetricRepository(MetricRepository):
             and sample.metric == metric
         ]
         return _aggregate(matching, start, end, max(1, step))
+
+    def query_grouped(
+        self, profile: str, metric: str, start: int, end: int, step: int
+    ) -> dict[str, list[MetricPoint]]:
+        by_resource: dict[str, list[MetricSample]] = defaultdict(list)
+        for sample in self._samples:
+            if sample.profile == profile and sample.metric == metric:
+                by_resource[sample.resource_id].append(sample)
+        return {
+            res_id: _aggregate(samples, start, end, max(1, step))
+            for res_id, samples in by_resource.items()
+        }
 
 
 class SqliteMetricRepository(MetricRepository):
@@ -172,10 +189,10 @@ def _prometheus_label(value: str) -> str:
 
 
 class PrometheusMetricRepository(MetricRepository):
-    """Prometheus query backend with a durable degraded-mode repository."""
+    """Direct Prometheus time-series query backend."""
 
     def __init__(
-        self, url: str, fallback: MetricRepository, *, timeout_seconds: float = 3
+        self, url: str, fallback: MetricRepository | None = None, *, timeout_seconds: float = 3
     ) -> None:
         self._url = url.rstrip("/")
         self._fallback = fallback
@@ -183,9 +200,9 @@ class PrometheusMetricRepository(MetricRepository):
         self.connected = False
 
     def record(self, samples: list[MetricSample]) -> None:
-        # Prometheus pulls live gauges from the monitoring exporter. The fallback
-        # is written here so local history remains available during an outage.
-        self._fallback.record(samples)
+        # Prometheus pulls live gauges directly from the monitoring exporter.
+        if self._fallback is not None:
+            self._fallback.record(samples)
 
     def query(
         self, profile: str, resource_id: str, metric: str, start: int, end: int, step: int
@@ -197,19 +214,24 @@ class PrometheusMetricRepository(MetricRepository):
             f'metric="{_prometheus_label(metric)}"'
             '}'
         )
-        window = max(300, step)
+        bucket = max(60, (step // 60) * 60 if step >= 60 else 60)
+        start_aligned = (start // bucket) * bucket
+        end_aligned = (end // bucket) * bucket
+        if end_aligned <= start_aligned:
+            end_aligned = start_aligned + bucket
+
         query = (
             "avg by (profile, resource_id, metric) "
-            f"(avg_over_time({selector}[{window}s]))"
+            f"(avg_over_time({selector}[{bucket}s]))"
         )
         try:
             response = httpx.get(
                 f"{self._url}/api/v1/query_range",
                 params={
                     "query": query,
-                    "start": start,
-                    "end": end,
-                    "step": max(60, step),
+                    "start": start_aligned,
+                    "end": end_aligned,
+                    "step": f"{bucket}s",
                 },
                 timeout=self._timeout,
             )
@@ -228,7 +250,67 @@ class PrometheusMetricRepository(MetricRepository):
                     for timestamp, value in result[0].get("values", [])
                     if value not in {"NaN", "Inf", "-Inf"}
                 ]
+            return []
         except Exception as exc:
             self.connected = False
             logger.warning("Prometheus history query unavailable: %s", exc)
-        return self._fallback.query(profile, resource_id, metric, start, end, step)
+            if self._fallback is not None:
+                return self._fallback.query(profile, resource_id, metric, start, end, step)
+            return []
+
+    def query_grouped(
+        self, profile: str, metric: str, start: int, end: int, step: int
+    ) -> dict[str, list[MetricPoint]]:
+        selector = (
+            'compassx_resource_metric{'
+            f'profile="{_prometheus_label(profile)}",'
+            f'metric="{_prometheus_label(metric)}"'
+            '}'
+        )
+        bucket = max(60, (step // 60) * 60 if step >= 60 else 60)
+        start_aligned = (start // bucket) * bucket
+        end_aligned = (end // bucket) * bucket
+        if end_aligned <= start_aligned:
+            end_aligned = start_aligned + bucket
+
+        query = (
+            "avg by (resource_id) "
+            f"(avg_over_time({selector}[{bucket}s]))"
+        )
+        try:
+            response = httpx.get(
+                f"{self._url}/api/v1/query_range",
+                params={
+                    "query": query,
+                    "start": start_aligned,
+                    "end": end_aligned,
+                    "step": f"{bucket}s",
+                },
+                timeout=self._timeout,
+            )
+            response.raise_for_status()
+            payload = response.json()
+            if payload.get("status") != "success":
+                raise RuntimeError(payload.get("error") or "Prometheus query failed")
+            self.connected = True
+            results = payload.get("data", {}).get("result", [])
+            output: dict[str, list[MetricPoint]] = {}
+            for item in results:
+                res_id = (item.get("metric") or {}).get("resource_id")
+                if not res_id:
+                    continue
+                output[res_id] = [
+                    MetricPoint(
+                        datetime.fromtimestamp(float(timestamp), timezone.utc),
+                        round(float(value), 2),
+                    )
+                    for timestamp, value in item.get("values", [])
+                    if value not in {"NaN", "Inf", "-Inf"}
+                ]
+            return output
+        except Exception as exc:
+            self.connected = False
+            logger.warning("Prometheus grouped history query unavailable: %s", exc)
+            if self._fallback is not None and hasattr(self._fallback, "query_grouped"):
+                return self._fallback.query_grouped(profile, metric, start, end, step)
+            return {}

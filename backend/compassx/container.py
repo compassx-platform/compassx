@@ -97,17 +97,13 @@ class PlatformContainer:
         from compassx.monitoring import (
             MonitoringResourceManager,
             PrometheusMetricRepository,
-            SqliteMetricRepository,
         )
 
-        fallback = SqliteMetricRepository(
-            self._repo_root / ".compassx" / "monitoring" / "metrics.db"
-        )
         repository = PrometheusMetricRepository(
-            self.service_registry.get_url("prometheus"), fallback
+            self.service_registry.get_url("prometheus")
         )
         return MonitoringResourceManager(
-            self.profile, self._repo_root, repository=repository
+            self.profile, self._repo_root, repository=repository, cache_seconds=3.0
         )
 
     # ── runtime side (used by the backend) ───────────────────────────────

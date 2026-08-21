@@ -601,9 +601,10 @@ textarea.form-input { resize: vertical; min-height: 80px; }
   flex-direction: column;
 }
 
-/* Zero padding for full-height / full-bleed pages (e.g. Chat Page) */
+/* Zero padding for full-height / full-bleed pages (e.g. Chat Page, Monitoring) */
 .page-content:has(> [style*="height: 100%"]),
-.page-content:has(> [style*="calc(100vh"]) {
+.page-content:has(> [style*="calc(100vh"]),
+.page-content:has(.monitoring-root) {
   padding: 0;
 }
 
@@ -1930,7 +1931,8 @@ html {
 .page-content:has(.agents-page),
 .page-content:has(.notebooks-page),
 .page-content:has(.sql-warehouse-page),
-.page-content:has(.connections-page) {
+.page-content:has(.connections-page),
+.page-content:has(.monitoring-root) {
   padding: 0;
 }
 

@@ -95,3 +95,17 @@ def test_prometheus_repository_falls_back_when_unavailable():
 
     assert repository.connected is False
     assert points[0].value == 256
+
+
+def test_prometheus_repository_without_fallback_returns_empty_when_unavailable():
+    repository = PrometheusMetricRepository("http://prometheus:9090")
+    with patch(
+        "compassx.monitoring.repository.httpx.get",
+        side_effect=OSError("unreachable"),
+    ):
+        points = repository.query(
+            "local-dev", "docker:redis", "cpu",
+            1_000_000, 2_000_000, 300,
+        )
+    assert repository.connected is False
+    assert points == []
