@@ -25,14 +25,22 @@ api.interceptors.response.use(
   (res) => res,
   async (err) => {
     const original = err.config;
-    if (err.response?.status === 401 && original && !original._retry) {
+    const isAuthEndpoint = Boolean(
+      original?.url && (
+        original.url.includes("/auth/login") ||
+        original.url.includes("/auth/refresh") ||
+        original.url.includes("/setup") ||
+        original.url.includes("/invites/")
+      )
+    );
+    if (err.response?.status === 401 && original && !original._retry && !isAuthEndpoint) {
       original._retry = true;
       try {
         const newToken = await refreshAccessToken();
         original.headers["Authorization"] = `Bearer ${newToken}`;
         return api(original);
-      } catch (refreshErr) {
-        return Promise.reject(refreshErr);
+      } catch {
+        return Promise.reject(err);
       }
     }
     return Promise.reject(err);

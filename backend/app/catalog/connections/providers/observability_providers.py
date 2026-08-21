@@ -10,6 +10,7 @@ from app.catalog.connections.base_provider import (
     BaseConnectionProvider,
     ConnectionFieldDefinition,
     ConnectionTestResult,
+    format_exception_message,
 )
 from services.compassx_tools.client import ConnectionClient
 
@@ -110,7 +111,7 @@ class LokiProvider(BaseConnectionProvider):
             latency_ms = int((time.time() - start) * 1000)
             return ConnectionTestResult(
                 success=False,
-                message=f"Loki connection test failed: {str(exc)}",
+                message=f"Loki connection test failed: {format_exception_message(exc)}",
                 latency_ms=latency_ms,
             )
 
@@ -203,6 +204,6 @@ class PrometheusProvider(BaseConnectionProvider):
             latency_ms = int((time.time() - start) * 1000)
             return ConnectionTestResult(
                 success=False,
-                message=f"Prometheus connection test failed: {str(exc)}",
+                message=f"Prometheus connection test failed: {format_exception_message(exc)}",
                 latency_ms=latency_ms,
             )

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useParams, useNavigate, Link, useSearchParams } from 'react-router-dom';
+import { useParams, useNavigate, Link, useSearchParams, Navigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Database, Loader2, Play, Plus, Power, Square, TerminalSquare, Code2, Server, History, CheckCircle2, ChevronRight, Activity, Clock, Search, ServerCog, Folder, ChevronDown, Star, Sparkles, Download, Maximize2, BarChart2, Settings, MoreVertical, Share2, FileText, RefreshCw, XCircle, HelpCircle, ExternalLink, Zap, LayoutGrid, List, X, GitBranch, Edit2, Trash2, Check, Bookmark, BookOpen } from 'lucide-react';
 import api from '@/lib/api';
@@ -343,12 +343,15 @@ const warehouseApi = {
   deleteDraft: (id: string) => api.delete<{ deleted: boolean; id: string }>(`/sql/drafts/${id}`).then((r) => r.data),
   catalogs: () => api.get<{ catalogs: { name: string; catalog_type: string }[] }>('/sql-warehouse/catalog/catalogs').then((r) => r.data.catalogs),
   schemas: (catalog: string) => api.get<{ schemas: string[] }>('/sql-warehouse/catalog/schemas', { params: { catalog } }).then((r) => r.data.schemas),
-  tables: (catalog: string, schema: string) => api.get<{ tables: string[] }>('/sql-warehouse/catalog/tables', { params: { catalog, schema } }).then((r) => r.data.tables),
 };
 
 export default function SqlWarehousePage() {
-  const qc = useQueryClient();
   const { tab } = useParams();
+  if (tab === 'explorer') {
+    return <Navigate to="../editor" replace relative="path" />;
+  }
+
+  const qc = useQueryClient();
   const activeTab = tab || 'editor';
   const navigate = useNavigate();
   
@@ -668,7 +671,6 @@ export default function SqlWarehousePage() {
   
   const catalogsQuery = useQuery({ queryKey: ['swh-catalogs'], queryFn: warehouseApi.catalogs });
   const schemasQuery = useQuery({ queryKey: ['swh-schemas', activeCatalog], queryFn: () => warehouseApi.schemas(activeCatalog), enabled: !!activeCatalog });
-  const tablesQuery = useQuery({ queryKey: ['swh-tables', activeCatalog, activeSchema], queryFn: () => warehouseApi.tables(activeCatalog, activeSchema), enabled: !!activeCatalog && !!activeSchema });
   const historyQuery = useQuery({
     queryKey: ['swh-history', detailsWarehouseId || 'all', historyUser],
     queryFn: () => warehouseApi.history(detailsWarehouseId || undefined, historyUser as 'me' | 'all')
@@ -1080,52 +1082,6 @@ export default function SqlWarehousePage() {
 
   return (
     <div className="sql-warehouse-page" style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
-        {activeTab === 'explorer' && (
-          <div style={{ display: 'flex', flexDirection: 'column', height: '100%', padding: '24px' }}>
-            <div className="swh-view-header" style={{ padding: '0 0 24px 0', borderBottom: 'none' }}>
-              <div className="swh-view-title">
-                <h1>Data Explorer</h1>
-              </div>
-            </div>
-            <div style={{ display: 'flex', gap: '24px', flex: 1, minHeight: 0 }}>
-              <div style={{ width: '280px', display: 'flex', flexDirection: 'column', gap: '16px', background: 'var(--color-background-subtle)', padding: '16px', borderRadius: '8px', border: '1px solid var(--color-border, var(--color-border))' }}>
-                <div className="swh-select-wrap">
-                  <label>Catalog</label>
-                  <select className="swh-select" value={activeCatalog} onChange={e => { setActiveCatalog(e.target.value); setActiveSchema(''); }}>
-                    {(catalogsQuery.data || []).map(c => <option key={c.name} value={c.name}>{c.name}</option>)}
-                  </select>
-                </div>
-                <div className="swh-select-wrap">
-                  <label>Schema</label>
-                  <select className="swh-select" value={activeSchema} onChange={e => setActiveSchema(e.target.value)}>
-                    {(schemasQuery.data || []).map(s => <option key={s} value={s}>{s}</option>)}
-                  </select>
-                </div>
-              </div>
-              <div style={{ flex: 1, overflow: 'auto', background: 'var(--color-background-subtle)', padding: '16px', borderRadius: '8px', border: '1px solid var(--color-border, var(--color-border))', display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '12px', alignContent: 'start' }}>
-                {(tablesQuery.data || []).map(t => (
-                  <button key={t} className="swh-table-item" onClick={() => {
-                    const queryText = `SELECT * FROM "${activeCatalog}"."${activeSchema}"."${t}" LIMIT 100;`;
-                    setSql(queryText);
-                    setQueryTabs(prev => prev.map(tab => {
-                      if (tab.id === activeQueryTabId) {
-                        return { ...tab, sql: queryText, name: queryText };
-                      }
-                      return tab;
-                    }));
-                    navigate('../editor', { relative: 'path' });
-                  }} style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)', padding: '12px' }}>
-                    <Database size={14} /> {t}
-                  </button>
-                ))}
-                {(!tablesQuery.data || tablesQuery.data.length === 0) && (
-                  <div className="swh-empty" style={{ gridColumn: '1 / -1' }}>No tables found.</div>
-                )}
-              </div>
-            </div>
-          </div>
-        )}
-
         {activeTab === 'editor' && (
           <div className="swh-editor-layout">
             {/* Left Sidebar */}

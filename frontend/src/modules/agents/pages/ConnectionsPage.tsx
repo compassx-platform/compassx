@@ -30,6 +30,7 @@ import {
   useDeleteCatalogConnection,
   useToggleConnectionStatus,
   useTestConnection,
+  extractErrorMessage,
   type CatalogConnection,
 } from '@/modules/agents/hooks/useCatalogConnections';
 import { ProviderLogo } from '@/modules/agents/components/CreateConnectionWizard';
@@ -93,7 +94,7 @@ export default function ConnectionsPage() {
         toast.error(`Test failed: ${res.message}`);
       }
     } catch (err: any) {
-      toast.error(err.message || 'Connection test failed');
+      toast.error(extractErrorMessage(err, 'Connection test failed'));
     } finally {
       setTestingRowId(null);
     }
@@ -103,8 +104,8 @@ export default function ConnectionsPage() {
     try {
       const res = await toggleStatus.mutateAsync(row.id);
       toast.success(`Connection is now ${res.status}`);
-    } catch {
-      toast.error('Failed to update connection status');
+    } catch (err: any) {
+      toast.error(extractErrorMessage(err, 'Failed to update connection status'));
     }
   }
 
@@ -113,8 +114,8 @@ export default function ConnectionsPage() {
     try {
       await action();
       toast.success('Connection deleted');
-    } catch {
-      toast.error('Failed to delete connection');
+    } catch (err: any) {
+      toast.error(extractErrorMessage(err, 'Failed to delete connection'));
     }
   }
 

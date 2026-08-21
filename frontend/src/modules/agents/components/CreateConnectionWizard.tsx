@@ -20,6 +20,7 @@ import {
   useConnectionProviders,
   useCreateCatalogConnection,
   useTestConnection,
+  extractErrorMessage,
   type ProviderMetadata,
 } from "@/modules/agents/hooks/useCatalogConnections";
 import { useToast } from "@/lib/toast";
@@ -285,13 +286,14 @@ export function CreateConnectionWizard({
           }
         },
         onError: (err: any) => {
+          const errMsg = extractErrorMessage(err, "Failed to reach server");
           setTestResult({
             tested: true,
             success: false,
-            message: err.message || "Failed to reach server",
+            message: errMsg,
             latency_ms: 0,
           });
-          toast.error("Test connection failed");
+          toast.error(errMsg);
         },
       }
     );
@@ -320,7 +322,7 @@ export function CreateConnectionWizard({
       toast.success(`Catalog Connection "${connName}" created successfully!`);
       onClose();
     } catch (err: any) {
-      toast.error(err.message || "Failed to save connection");
+      toast.error(extractErrorMessage(err, "Failed to save connection"));
     }
   }
 

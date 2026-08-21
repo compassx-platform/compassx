@@ -17,9 +17,10 @@ export default function WorkspacePickerPage() {
 
     setSubmitting(true);
     try {
-      if (makeDefault) {
-        await setDefaultWorkspace(selectedWorkspace);
-      }
+      await setDefaultWorkspace(selectedWorkspace);
+      try {
+        localStorage.setItem("compassx_last_workspace", selectedWorkspace);
+      } catch {}
       const selectedWsObj = workspaces.find(w => w.workspace_id === selectedWorkspace);
       const targetSlug = selectedWsObj?.workspace_slug || selectedWorkspace;
 

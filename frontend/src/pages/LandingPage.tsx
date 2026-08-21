@@ -78,7 +78,6 @@ export default function LandingPage() {
   // State
   const [draft, setDraft] = useState('');
   const [activeTab, setActiveTab] = useState<TabId>('suggested');
-  const [showTipBanner, setShowTipBanner] = useState(true);
   const [chatActive, setChatActive] = useState(false);
   const [limit, setLimit] = useState(8);
   const [favorites, setFavorites] = useState<string[]>(() => {
@@ -320,33 +319,7 @@ export default function LandingPage() {
         </div>
       </section>
 
-      {/* ── 3. Assistant Tip Banner ───────────────────────────────────────── */}
-      {showTipBanner && (
-        <div className="landing-tip-banner">
-          <div className="landing-tip-left">
-            <Sparkles size={16} className="landing-tip-icon" />
-            <div className="landing-tip-text">
-              <strong>CompassX AI</strong> lets you ask questions from all data across your workspace without needing to search schemas or write SQL queries manually.
-              <span
-                className="landing-tip-link"
-                onClick={() => openAssistant('Help me explore this workspace and show what queries I can run.')}
-              >
-                Try CompassX AI
-              </span>
-            </div>
-          </div>
-          <button
-            type="button"
-            className="landing-tip-close"
-            onClick={() => setShowTipBanner(false)}
-            title="Dismiss"
-          >
-            <X size={14} />
-          </button>
-        </div>
-      )}
-
-      {/* ── 4. Filter Tabs Row ────────────────────────────────────────────── */}
+      {/* ── 3. Filter Tabs Row ────────────────────────────────────────────── */}
       <div className="landing-tabs-row">
         {TABS.map((tab) => {
           const Icon = tab.icon;

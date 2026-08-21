@@ -12,6 +12,7 @@ from app.catalog.connections.base_provider import (
     BaseConnectionProvider,
     ConnectionFieldDefinition,
     ConnectionTestResult,
+    format_exception_message,
 )
 
 
@@ -57,7 +58,7 @@ class BaseSqlProvider(BaseConnectionProvider):
             latency_ms = int((time.time() - start) * 1000)
             return ConnectionTestResult(
                 success=False,
-                message=f"Connection failed: {str(exc)}",
+                message=f"Connection failed: {format_exception_message(exc)}",
                 latency_ms=latency_ms,
             )
 

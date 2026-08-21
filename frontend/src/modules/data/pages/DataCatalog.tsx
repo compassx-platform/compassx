@@ -48,6 +48,7 @@ import NotebookPage from '@/modules/notebooks/pages/NotebookPage';
 import DashboardEditorPage from '@/modules/dashboards/pages/DashboardEditorPage';
 import { useNotebookStore } from '@/modules/notebooks/store/notebookStore';
 import { CatalogQueryEditorTab, CatalogQueryVersion } from '../components/CatalogQueryEditorTab';
+import { useCatalogConnections } from '@/modules/agents/hooks/useCatalogConnections';
 
 const CATALOG_TABS_STORAGE_KEY = 'compassx_catalog_open_tabs_v1';
 
@@ -335,10 +336,10 @@ const catalogApi = {
   getLineage: (catalog: string, schema: string, table: string) => api.get<LineageGraph>('/catalog/lineage/' + catalog + '/' + schema + '/' + table).then((r) => r.data),
   getSampleData: (catalog: string, schema: string, table: string, limit = 100) =>
     api.get<{ columns: string[]; rows: (string | null)[][]; row_count: number }>(`/catalog/tables/${catalog}/${schema}/${table}/sample-data`, { params: { limit } }).then((r) => r.data),
-  // Remote database browsing endpoints using app-wide DB Connection IDs
-  browseDatabases: (connId: number) => api.get<Array<{ name: string }>>(`/catalog/connections/${connId}/browse/databases`).then((r) => r.data),
-  browseSchemas: (connId: number, database: string) => api.get<Array<{ name: string }>>(`/catalog/connections/${connId}/browse/schemas`, { params: { database } }).then((r) => r.data),
-  browseTables: (connId: number, database: string, schemaName: string) => api.get<Array<{ name: string }>>(`/catalog/connections/${connId}/browse/tables`, { params: { database, schema_name: schemaName } }).then((r) => r.data),
+  // Remote database browsing endpoints using app-wide DB Connection IDs or External Connection IDs
+  browseDatabases: (connId: number | string) => api.get<Array<{ name: string }>>(`/catalog/connections/${connId}/browse/databases`).then((r) => r.data),
+  browseSchemas: (connId: number | string, database: string) => api.get<Array<{ name: string }>>(`/catalog/connections/${connId}/browse/schemas`, { params: { database } }).then((r) => r.data),
+  browseTables: (connId: number | string, database: string, schemaName: string) => api.get<Array<{ name: string }>>(`/catalog/connections/${connId}/browse/tables`, { params: { database, schema_name: schemaName } }).then((r) => r.data),
   // Iceberg blob-storage routes
   createIcebergSchema: (catalog: string, schemaName: string, storageBacked: string, description?: string) =>
     api.post<any>(`/catalog/iceberg/schemas`, null, { params: { catalog, schema_name: schemaName, storage_backend: storageBacked, description } }).then((r) => r.data),
@@ -890,6 +891,9 @@ export default function DataCatalog() {
 
   const catalogsQuery = useQuery({ queryKey: ['uc-catalogs'], queryFn: catalogApi.listCatalogs });
   
+  // Query external connections from '/connections'
+  const externalConnectionsQuery = useCatalogConnections();
+
   // Query application-wide DB Connections from '/db-connections'
   const connectionsQuery = useQuery({ 
     queryKey: ['db-connections'], 
@@ -927,12 +931,38 @@ export default function DataCatalog() {
     }
   }, [catalogsQuery.data, selection, selectedCatalogName, selectedSchemaName, showTableModal]);
 
-  // Filter connections list to only show Postgres connections
+  // Filter connections list to only show Postgres connections (external connections + db connections)
   const postgresConnections = useMemo(() => {
-    return (connectionsQuery.data || []).filter(
-      (conn) => conn.db_type?.toLowerCase() === 'postgres'
-    );
-  }, [connectionsQuery.data]);
+    const extList = (externalConnectionsQuery.data || [])
+      .filter((conn) => {
+        const t = (conn.connector_type || (conn as any).type_id || '').toLowerCase();
+        return t === 'postgres' || t === 'postgresql';
+      })
+      .map((conn) => ({
+        id: String(conn.id),
+        name: conn.name,
+        type: 'external' as const,
+      }));
+
+    const dbList = (connectionsQuery.data || [])
+      .filter((conn) => {
+        const t = (conn.db_type || '').toLowerCase();
+        return t === 'postgres' || t === 'postgresql';
+      })
+      .map((conn) => ({
+        id: String(conn.id),
+        name: conn.name,
+        type: 'db' as const,
+      }));
+
+    const combined = [...extList];
+    for (const dbConn of dbList) {
+      if (!combined.some((item) => item.id === dbConn.id || item.name === dbConn.name)) {
+        combined.push(dbConn);
+      }
+    }
+    return combined;
+  }, [externalConnectionsQuery.data, connectionsQuery.data]);
 
   const activeCatalog = selection && selection.kind !== 'root' ? selection.catalog : null;
   const activeSchema = selection && selection.kind !== 'root' && selection.kind !== 'catalog' ? selection.schema : null;
@@ -1604,7 +1634,7 @@ export default function DataCatalog() {
       name: catalogForm.name,
       description: catalogForm.description || null,
       catalog_type: catalogForm.catalog_type,
-      connection_id: catalogForm.catalog_type === 'postgres' ? Number(catalogForm.connection_id) : null,
+      connection_id: catalogForm.catalog_type === 'postgres' ? (catalogForm.connection_id || null) : null,
       database_name: catalogForm.catalog_type === 'postgres' ? catalogForm.database_name : null,
       storage_backend_id: catalogForm.storageBackend
         ? (storageBackends.find(b => b.name === catalogForm.storageBackend)?.id ?? null)
@@ -1837,7 +1867,7 @@ export default function DataCatalog() {
 
     setLoadingCatalogDbs(true);
     try {
-      const dbs = await catalogApi.browseDatabases(Number(connIdVal));
+      const dbs = await catalogApi.browseDatabases(connIdVal);
       setCatalogFormDbs(dbs);
     } catch (err: any) {
       console.error("Failed to browse databases for catalog form", err);
@@ -4735,7 +4765,7 @@ export default function DataCatalog() {
         <div className="uc-panel-hero">
           <div>
             <div className="uc-panel-eyebrow uc-chip">Workspace</div>
-            <h2>Data Explorer</h2>
+            <h2>Data Catalog</h2>
             <p>Unity Catalog — select a catalog, schema, or table from the sidebar.</p>
           </div>
         </div>

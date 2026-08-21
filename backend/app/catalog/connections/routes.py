@@ -132,7 +132,8 @@ def create_connection(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
     except Exception as exc:
         logger.error("Failed to create connection: %s", exc, exc_info=True)
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to create connection")
+        from app.catalog.connections.base_provider import format_exception_message
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Failed to create connection: {format_exception_message(exc)}")
 
 
 @router.get("/catalog/connections", response_model=List[CatalogConnectionResponse])
@@ -185,10 +186,17 @@ def update_connection(
 ):
     """Update connection config or credentials."""
     user_id = str(current_user.get("email") or current_user.get("id") or "default_user")
-    conn = connection_service.update_connection(db, connection_id, body, user_id=user_id)
-    if not conn:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Connection not found")
-    return _to_response(conn)
+    try:
+        conn = connection_service.update_connection(db, connection_id, body, user_id=user_id)
+        if not conn:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Connection not found")
+        return _to_response(conn)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    except Exception as exc:
+        logger.error("Failed to update connection: %s", exc, exc_info=True)
+        from app.catalog.connections.base_provider import format_exception_message
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Failed to update connection: {format_exception_message(exc)}")
 
 
 @router.post("/catalog/connections/{connection_id}/toggle-status", response_model=CatalogConnectionResponse)

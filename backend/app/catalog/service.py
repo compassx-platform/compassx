@@ -6,7 +6,7 @@ from typing import Any
 import httpx
 import psycopg2
 import psycopg2.extras
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session, joinedload
 
 from app.catalog.models import (
@@ -20,6 +20,7 @@ from app.catalog.models import (
     UnifiedCatalogDashboard,
     UnifiedCatalogQuery,
     UnifiedCatalogQueryVersion,
+    UnifiedCatalogConnection,
 )
 from app.models.agents import DBConnection
 from app.catalog.schemas import (
@@ -553,7 +554,7 @@ def list_tables(db: Session, catalog: str | None = None, schema_name: str | None
                             created_at=cat_model.created_at,
                             updated_at=cat_model.created_at,
                             connection_id=cat_model.connection_id,
-                            connection_name=cat_model.connection.name if cat_model.connection else None,
+                            connection_name=cat_model.connection.name if cat_model.connection else _get_connection_name(db, cat_model.connection_id),
                             source_database=cat_model.database_name,
                             pg_schema=schema_name,
                             pg_table=tbl.name,
@@ -624,7 +625,7 @@ def get_table(db: Session, fqn: str) -> CatalogTableRead:
                 created_at=cat_model.created_at,
                 updated_at=cat_model.created_at,
                 connection_id=cat_model.connection_id,
-                connection_name=cat_model.connection.name if cat_model.connection else None,
+                connection_name=cat_model.connection.name if cat_model.connection else _get_connection_name(db, cat_model.connection_id),
                 source_database=cat_model.database_name,
                 pg_schema=schema_name,
                 pg_table=table_name,
@@ -653,7 +654,7 @@ def get_table(db: Session, fqn: str) -> CatalogTableRead:
 
 
 
-def browse_connection_databases(db: Session, connection_id: int) -> list[RemoteDatabaseRead]:
+def browse_connection_databases(db: Session, connection_id: int | str) -> list[RemoteDatabaseRead]:
     record = _get_connection(db, connection_id)
     conn = _connect_record(record)
     try:
@@ -672,7 +673,7 @@ def browse_connection_databases(db: Session, connection_id: int) -> list[RemoteD
         conn.close()
 
 
-def browse_connection_schemas(db: Session, connection_id: int, database: str) -> list[RemoteSchemaRead]:
+def browse_connection_schemas(db: Session, connection_id: int | str, database: str) -> list[RemoteSchemaRead]:
     record = _get_connection(db, connection_id)
     conn = _connect_record(record, database)
     try:
@@ -693,7 +694,7 @@ def browse_connection_schemas(db: Session, connection_id: int, database: str) ->
         conn.close()
 
 
-def browse_connection_tables(db: Session, connection_id: int, database: str, schema_name: str) -> list[RemoteTableRead]:
+def browse_connection_tables(db: Session, connection_id: int | str, database: str, schema_name: str) -> list[RemoteTableRead]:
     record = _get_connection(db, connection_id)
     conn = _connect_record(record, database)
     try:
@@ -1050,19 +1051,54 @@ def _parse_fqn(fqn: str) -> tuple[str, str, str]:
     return parts[0], parts[1], parts[2]
 
 
-def _get_connection(db: Session, connection_id: int | None) -> DBConnection:
+def _get_connection(db: Session, connection_id: Any) -> Any:
     if not connection_id:
         raise ValueError("Connection not found")
     from app.database import AccountSessionLocal
     sys_db = AccountSessionLocal()
     try:
-        record = sys_db.query(DBConnection).filter(DBConnection.id == connection_id).first()
-        if not record:
-            raise ValueError("Connection not found")
-        sys_db.expunge(record)
-        return record
+        # 1. Check DBConnection by integer ID if int or digit string
+        if isinstance(connection_id, int) or (isinstance(connection_id, str) and connection_id.isdigit()):
+            record = sys_db.query(DBConnection).filter(DBConnection.id == int(connection_id)).first()
+            if record:
+                sys_db.expunge(record)
+                return record
+
+        # 2. Check UnifiedCatalogConnection (External Connection) by UUID or name
+        cat_conn = sys_db.query(UnifiedCatalogConnection).filter(
+            or_(
+                UnifiedCatalogConnection.id == str(connection_id),
+                UnifiedCatalogConnection.name == str(connection_id),
+            )
+        ).first()
+        if cat_conn:
+            sys_db.expunge(cat_conn)
+            return cat_conn
+
+        # 3. Fallback: check DBConnection by name or str(id)
+        record = sys_db.query(DBConnection).filter(
+            or_(
+                DBConnection.id == connection_id if isinstance(connection_id, int) else False,
+                DBConnection.name == str(connection_id),
+            )
+        ).first()
+        if record:
+            sys_db.expunge(record)
+            return record
+
+        raise ValueError(f"Connection '{connection_id}' not found")
     finally:
         sys_db.close()
+
+
+def _get_connection_name(db: Session, connection_id: Any) -> str | None:
+    if not connection_id:
+        return None
+    try:
+        conn = _get_connection(db, connection_id)
+        return conn.name if conn else None
+    except Exception:
+        return None
 
 
 def _get_table_model(db: Session, fqn: str) -> UnifiedCatalogTable:
@@ -1110,7 +1146,39 @@ def _ensure_schema_by_name(db: Session, catalog: UnifiedCatalog, name: str, acto
     return schema
 
 
-def _connect_record(record: DBConnection, database: str | None = None):
+def _connect_record(record: Any, database: str | None = None):
+    if isinstance(record, UnifiedCatalogConnection):
+        config = record.config or {}
+        decrypted_password = ""
+        decrypted_username = config.get("username") or config.get("user") or ""
+        if record.auth_config:
+            try:
+                decrypted_raw = decrypt_field(record.auth_config)
+                if decrypted_raw:
+                    try:
+                        auth_json = json.loads(decrypted_raw)
+                        if isinstance(auth_json, dict):
+                            decrypted_password = auth_json.get("password") or auth_json.get("secret") or auth_json.get("pass") or decrypted_raw
+                            if not decrypted_username and auth_json.get("username"):
+                                decrypted_username = auth_json.get("username")
+                        else:
+                            decrypted_password = str(auth_json)
+                    except Exception:
+                        decrypted_password = decrypted_raw
+            except Exception as exc:
+                import logging
+                logging.getLogger(__name__).warning("Could not decrypt auth_config for connection %s: %s", record.name, exc)
+
+        ssl_mode = "require" if (config.get("ssl_required") or config.get("ssl")) else "prefer"
+        return _connect_raw(
+            host=config.get("host") or "localhost",
+            port=int(config.get("port") or 5432),
+            database=database or config.get("database") or config.get("db_name") or "postgres",
+            username=decrypted_username,
+            password=decrypted_password,
+            ssl_mode=ssl_mode,
+        )
+
     ssl_mode = "require" if (record.ssl_config and record.ssl_config.get("ssl_required")) else "prefer"
     return _connect_raw(
         host=record.host or "localhost",

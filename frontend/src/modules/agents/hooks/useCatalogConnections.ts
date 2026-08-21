@@ -195,3 +195,49 @@ export function useCatalogs() {
     staleTime: 60_000,
   });
 }
+
+export function extractErrorMessage(err: any, fallback: string = "An error occurred"): string {
+  if (!err) return fallback;
+
+  // Direct string
+  if (typeof err === "string" && err.trim().length > 0) return err;
+
+  // Check response data detail/message/error
+  const detail =
+    err.response?.data?.detail ??
+    err.response?.data?.message ??
+    err.response?.data?.error ??
+    err.data?.detail ??
+    err.data?.message;
+
+  if (typeof detail === "string" && detail.trim().length > 0) {
+    return detail;
+  }
+
+  // Handle FastAPI 422 validation error list: [{ loc: [...], msg: "..." }]
+  if (Array.isArray(detail) && detail.length > 0) {
+    const messages = detail.map((d: any) => {
+      if (typeof d === "string") return d;
+      const field = Array.isArray(d.loc)
+        ? d.loc.filter((p: any) => p !== "body").join(".")
+        : "";
+      return field ? `${field}: ${d.msg}` : d.msg || JSON.stringify(d);
+    });
+    return messages.join(", ");
+  }
+
+  if (typeof detail === "object" && detail !== null) {
+    return JSON.stringify(detail);
+  }
+
+  // If Axios has a specific message that is not just generic status code text
+  if (
+    err.message &&
+    typeof err.message === "string" &&
+    !err.message.toLowerCase().includes("status code")
+  ) {
+    return err.message;
+  }
+
+  return fallback;
+}

@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { useInviteDetails, acceptInvite } from "../../lib/userManagerApi";
 import { saveTokens } from "../../lib/auth";
+import { CompassXLogo } from "@/components/common/CompassXLogo";
 
 export default function InviteAcceptancePage() {
   const { token } = useParams<{ token: string }>();
@@ -128,22 +129,8 @@ export default function InviteAcceptancePage() {
         }}
       >
         <div style={{ textAlign: "center", marginBottom: "28px" }}>
-          <div
-            style={{
-              width: "44px",
-              height: "44px",
-              borderRadius: "var(--radius)",
-              background: "var(--sb-logo-bg)",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              fontSize: "20px",
-              fontWeight: 800,
-              color: "#fff",
-              margin: "0 auto 16px",
-            }}
-          >
-            C
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px" }}>
+            <CompassXLogo size={44} color="var(--color-primary, #1B6EF3)" />
           </div>
           <h1
             style={{

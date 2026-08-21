@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { completeSetup } from "../../lib/userManagerApi";
 import { saveTokens, setPrincipalInfo } from "../../lib/auth";
+import { CompassXLogo } from "@/components/common/CompassXLogo";
 
 export default function SetupWizardPage() {
   const navigate = useNavigate();
@@ -85,22 +86,8 @@ export default function SetupWizardPage() {
       >
         {/* Header */}
         <div style={{ textAlign: "center", marginBottom: "28px" }}>
-          <div
-            style={{
-              width: "44px",
-              height: "44px",
-              borderRadius: "var(--radius)",
-              background: "var(--sb-logo-bg)",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              fontSize: "20px",
-              fontWeight: 800,
-              color: "#fff",
-              margin: "0 auto 16px",
-            }}
-          >
-            C
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px" }}>
+            <CompassXLogo size={44} color="var(--color-primary, #1B6EF3)" />
           </div>
           <h1
             style={{
@@ -110,7 +97,7 @@ export default function SetupWizardPage() {
               color: "var(--color-text)",
             }}
           >
-            Compass Initial Setup
+            Compass<span style={{ color: "var(--color-primary, #1B6EF3)" }}>X</span> Initial Setup
           </h1>
           <p style={{ margin: "6px 0 0", color: "var(--color-text-muted)", fontSize: "14px" }}>
             Set up your organization account & admin user

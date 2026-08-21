@@ -25,7 +25,15 @@ api.interceptors.response.use(
   (response) => response,
   async (error: AxiosError) => {
     const original = error.config as (typeof error.config & { _retry?: boolean });
-    if (error.response?.status === 401 && original && !original._retry) {
+    const isAuthEndpoint = Boolean(
+      original?.url && (
+        original.url.includes("/auth/login") ||
+        original.url.includes("/auth/refresh") ||
+        original.url.includes("/setup") ||
+        original.url.includes("/invites/")
+      )
+    );
+    if (error.response?.status === 401 && original && !original._retry && !isAuthEndpoint) {
       original._retry = true;
       try {
         const newToken = await refreshAccessToken();
@@ -33,8 +41,8 @@ api.interceptors.response.use(
           original.headers["Authorization"] = `Bearer ${newToken}`;
         }
         return api(original);
-      } catch (refreshErr) {
-        return Promise.reject(refreshErr);
+      } catch {
+        return Promise.reject(error);
       }
     }
     return Promise.reject(error);

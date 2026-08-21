@@ -7,6 +7,7 @@ import {
   type UserListItem, type InviteOut, type GroupOut, type WorkspaceAdminOut, type AuditLogItem, type InviteIn,
 } from "../../lib/userManagerApi";
 import { clearSession } from "../../lib/auth";
+import { CompassXLogo } from "@/components/common/CompassXLogo";
 
 const TABS = ["Users", "Invites", "Groups", "Workspaces", "Audit Log"] as const;
 type Tab = typeof TABS[number];
@@ -434,11 +435,10 @@ export default function AccountConsolePage() {
       <div style={{ borderBottom: "1px solid var(--color-border)", padding: "0 32px",
         display: "flex", alignItems: "center", justifyContent: "space-between", height: 56, background: "var(--color-surface)" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-          <div style={{ width: 28, height: 28, borderRadius: 6,
-            background: "var(--sb-logo-bg)",
-            display: "flex", alignItems: "center", justifyContent: "center",
-            fontSize: 13, fontWeight: 800, color: "#fff" }}>C</div>
-          <span style={{ fontWeight: 700, fontSize: 16, color: "var(--color-text)" }}>Compass</span>
+          <CompassXLogo size={26} color="var(--color-primary, #1B6EF3)" />
+          <span style={{ fontWeight: 700, fontSize: 16, color: "var(--color-text)" }}>
+            Compass<span style={{ color: "var(--color-primary, #1B6EF3)" }}>X</span>
+          </span>
           <span style={{ color: "var(--color-border)", margin: "0 4px" }}>›</span>
           <span style={{ color: "var(--color-text-muted)", fontSize: 14 }}>Account Console</span>
         </div>

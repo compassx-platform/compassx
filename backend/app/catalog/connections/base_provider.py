@@ -31,6 +31,27 @@ class ConnectionTestResult:
     details: dict[str, Any] = field(default_factory=dict)
 
 
+def format_exception_message(exc: Exception) -> str:
+    """Format exceptions into human-readable user-friendly error messages."""
+    orig = getattr(exc, "orig", None)
+    if orig is not None:
+        msg = str(orig).strip()
+    else:
+        msg = str(exc).strip()
+
+    # Strip SQL query boilerplate
+    if "[SQL:" in msg:
+        msg = msg.split("[SQL:")[0].strip()
+    # Strip SQLAlchemy background URL
+    if "(Background on this error" in msg:
+        msg = msg.split("(Background on this error")[0].strip()
+    # Strip leading class wrapper if formatted like (psycopg2.OperationalError)
+    if msg.startswith("(") and ")" in msg[:35]:
+        msg = msg[msg.find(")") + 1:].strip()
+
+    return msg or str(exc)
+
+
 class BaseConnectionProvider(ABC):
     """Abstract connection provider contract.
 

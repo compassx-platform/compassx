@@ -52,7 +52,7 @@ class CatalogTableRead(BaseModel):
     properties: dict[str, Any]
     created_at: datetime
     updated_at: datetime
-    connection_id: int | None = None
+    connection_id: int | str | None = None
     connection_name: str | None = None
     source_database: str | None = None
     pg_schema: str | None = None
@@ -106,7 +106,7 @@ class CatalogCreate(BaseModel):
     name: str
     description: str | None = None
     catalog_type: str | None = None  # "postgres" or "iceberg"
-    connection_id: int | None = None
+    connection_id: int | str | None = None
     database_name: str | None = None
     storage_backend_id: str | None = None
     base_path: str | None = None
@@ -119,7 +119,7 @@ class CatalogRead(BaseModel):
     name: str
     description: str | None = None
     catalog_type: str | None = None
-    connection_id: int | None = None
+    connection_id: int | str | None = None
     database_name: str | None = None
     storage_backend_id: str | None = None
     base_path: str | None = None
@@ -139,7 +139,7 @@ class CatalogSummary(BaseModel):
     name: str
     description: str | None = None
     catalog_type: str | None = None
-    connection_id: int | None = None
+    connection_id: int | str | None = None
     database_name: str | None = None
     schema_count: int = 0
     table_count: int = 0

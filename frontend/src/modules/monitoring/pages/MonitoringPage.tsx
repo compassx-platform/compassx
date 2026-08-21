@@ -895,7 +895,7 @@ export default function MonitoringPage() {
               </div>
               <div className="drawer-info-item">
                 <span>Restart Count</span>
-                <strong>{selectedService.restart_count}</strong>
+                <strong>{selectedService.restarts}</strong>
               </div>
               <div className="drawer-info-item">
                 <span>Uptime</span>
@@ -911,11 +911,11 @@ export default function MonitoringPage() {
               </div>
             </div>
 
-            {selectedService.image_version && (
+            {selectedService.image && (
               <div className="drawer-info-item" style={{ wordBreak: 'break-all' }}>
                 <span>Container Image</span>
                 <strong style={{ fontSize: '12px', fontFamily: 'var(--cx-font-mono)' }}>
-                  {selectedService.image_version}
+                  {selectedService.image}
                 </strong>
               </div>
             )}

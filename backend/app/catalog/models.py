@@ -5,7 +5,7 @@ from enum import Enum
 from typing import Any, Optional
 from uuid import uuid4
 
-from sqlalchemy import DateTime, Enum as SqlEnum, ForeignKey, Integer, String, Text, UniqueConstraint, func, Computed, Boolean
+from sqlalchemy import DateTime, Enum as SqlEnum, ForeignKey, Integer, String, Text, UniqueConstraint, func, Computed, Boolean, cast
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.types import JSON
 from sqlalchemy.dialects.postgresql import UUID
@@ -30,7 +30,7 @@ class UnifiedCatalog(Base):
     name: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     catalog_type: Mapped[str | None] = mapped_column(String(32), nullable=True)
-    connection_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    connection_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     database_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     created_by: Mapped[str] = mapped_column(String(255), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
@@ -42,7 +42,7 @@ class UnifiedCatalog(Base):
     schemas: Mapped[list["UnifiedCatalogSchema"]] = relationship(back_populates="catalog", cascade="all, delete-orphan")
 
     connection: Mapped[Optional["DBConnection"]] = relationship(
-        primaryjoin="foreign(UnifiedCatalog.connection_id) == DBConnection.id",
+        primaryjoin="cast(foreign(UnifiedCatalog.connection_id), String) == cast(DBConnection.id, String)",
         viewonly=True,
         uselist=False,
     )
@@ -116,7 +116,7 @@ class UnifiedCatalogTable(Base):
     table_type: Mapped[CatalogTableType] = mapped_column(
         SqlEnum(CatalogTableType, native_enum=False, validate_strings=True), nullable=False
     )
-    connection_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    connection_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     source_database: Mapped[str | None] = mapped_column(String(255), nullable=True)
     pg_schema: Mapped[str | None] = mapped_column(String(255), nullable=True)
     pg_table: Mapped[str | None] = mapped_column(String(255), nullable=True)
@@ -138,7 +138,7 @@ class UnifiedCatalogTable(Base):
     columns: Mapped[list["UnifiedCatalogColumn"]] = relationship(back_populates="table", cascade="all, delete-orphan")
 
     connection: Mapped[Optional["DBConnection"]] = relationship(
-         primaryjoin="foreign(UnifiedCatalogTable.connection_id) == DBConnection.id",
+         primaryjoin="cast(foreign(UnifiedCatalogTable.connection_id), String) == cast(DBConnection.id, String)",
          viewonly=True,
          uselist=False,
      )

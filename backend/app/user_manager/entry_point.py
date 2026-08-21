@@ -209,10 +209,15 @@ def resolve_entry_point(
     resolved_role: str | None = None
 
     if deep_link_workspace_id:
-        # 1a. Deep link
-        match = next((r for ws_id, r in memberships if ws_id == deep_link_workspace_id), None)
+        # 1a. Deep link (support both UUID and slug)
+        from app.workspace.models import Workspace as LegacyWs
+        dl_ws = account_db.query(LegacyWs).filter(
+            (LegacyWs.id == deep_link_workspace_id) | (LegacyWs.slug == deep_link_workspace_id)
+        ).first()
+        target_dl_id = dl_ws.id if dl_ws else deep_link_workspace_id
+        match = next((r for ws_id, r in memberships if ws_id == target_dl_id or ws_id == deep_link_workspace_id), None)
         if match:
-            workspace_id = deep_link_workspace_id
+            workspace_id = target_dl_id
             resolved_role = match
 
     if workspace_id is None:
@@ -227,10 +232,12 @@ def resolve_entry_point(
             .first()
         )
         if default_row:
-            workspace_id = default_row.workspace_id
-            resolved_role = next(
-                (r for ws_id, r in memberships if ws_id == workspace_id), default_row.role_id
+            matching_role = next(
+                (r for ws_id, r in memberships if ws_id == default_row.workspace_id), None
             )
+            if matching_role:
+                workspace_id = default_row.workspace_id
+                resolved_role = matching_role
 
     if workspace_id is None and len(memberships) == 1:
         # 1c. Single membership

@@ -47,7 +47,6 @@ const PLATFORM_NAV_GROUPS: NavGroup[] = [
     title: 'Data',
     items: [
       { to: '/data-catalog', icon: BookOpen, label: 'Data Catalog', end: false },
-      { to: '/sql-warehouse/explorer', icon: Database, label: 'Data Explorer', end: false },
       { to: '/sql-warehouse/editor', icon: Code2, label: 'SQL Editor', end: false },
       { to: '/sql-warehouse/warehouses', icon: ServerCog, label: 'SQL Warehouses', end: false },
       { to: '/sql-warehouse/history', icon: History, label: 'Query History', end: false },

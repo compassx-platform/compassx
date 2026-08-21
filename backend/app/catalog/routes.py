@@ -462,7 +462,7 @@ def read_lineage(catalog: str, schema_name: str, table_name: str, db: Session = 
 
 
 @router.get("/connections/{connection_id}/browse/databases", response_model=list[RemoteDatabaseRead])
-def read_remote_databases(connection_id: int, db: Session = Depends(get_db)):
+def read_remote_databases(connection_id: str, db: Session = Depends(get_db)):
     try:
         return browse_connection_databases(db, connection_id)
     except ValueError as exc:
@@ -470,7 +470,7 @@ def read_remote_databases(connection_id: int, db: Session = Depends(get_db)):
 
 
 @router.get("/connections/{connection_id}/browse/schemas", response_model=list[RemoteSchemaRead])
-def read_remote_schemas(connection_id: int, database: str, db: Session = Depends(get_db)):
+def read_remote_schemas(connection_id: str, database: str, db: Session = Depends(get_db)):
     try:
         return browse_connection_schemas(db, connection_id, database)
     except ValueError as exc:
@@ -478,7 +478,7 @@ def read_remote_schemas(connection_id: int, database: str, db: Session = Depends
 
 
 @router.get("/connections/{connection_id}/browse/tables", response_model=list[RemoteTableRead])
-def read_remote_tables(connection_id: int, database: str, schema_name: str, db: Session = Depends(get_db)):
+def read_remote_tables(connection_id: str, database: str, schema_name: str, db: Session = Depends(get_db)):
     try:
         return browse_connection_tables(db, connection_id, database, schema_name)
     except ValueError as exc:

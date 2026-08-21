@@ -1,6 +1,7 @@
 import * as ReactLib from 'react';
 import * as ReactDOMLib from 'react-dom';
 import React, { lazy, Suspense } from 'react';
+import { Loader2 } from 'lucide-react';
 import './_ingestion_styles.css';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { queryClient } from '@/lib/queryClient';
@@ -77,7 +78,13 @@ const WorkspacePickerPage  = lazy(() => import('@/pages/workspace-picker/Workspa
 const NoWorkspacePage      = lazy(() => import('@/pages/no-workspace/NoWorkspacePage'));
 
 const UMSuspense: React.FC<React.PropsWithChildren> = ({ children }) => (
-  <Suspense fallback={<div style={{ display:'flex', alignItems:'center', justifyContent:'center', height:'100vh', background:'#0A0A0F', color:'#6366f1', fontSize:24 }}>⟳</div>}>
+  <Suspense
+    fallback={
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', background: 'var(--color-bg)' }}>
+        <Loader2 size={24} className="spin" style={{ color: 'var(--color-text-muted)' }} />
+      </div>
+    }
+  >
     {children}
   </Suspense>
 );
@@ -88,7 +95,10 @@ function RootRedirect() {
   if (!workspaces || workspaces.length === 0) {
     return <Navigate to="/workspace/create" replace />;
   }
-  return <Navigate to={`/w/${workspaces[0].slug}`} replace />;
+  const lastWs = localStorage.getItem('compassx_last_workspace');
+  const matched = workspaces.find(w => w.id === lastWs || w.slug === lastWs);
+  const targetSlug = matched ? matched.slug : workspaces[0].slug;
+  return <Navigate to={`/w/${targetSlug}`} replace />;
 }
 
 /** EntryPointGuard — replaces RootRedirect for new auth system.
@@ -127,7 +137,13 @@ function EntryPointGuard() {
     })();
   }, []);
 
-  if (checking) return <div style={{ display:'flex', alignItems:'center', justifyContent:'center', height:'100vh', background:'#0A0A0F' }} />;
+  if (checking) {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', background: 'var(--color-bg)' }}>
+        <Loader2 size={24} className="spin" style={{ color: 'var(--color-text-muted)' }} />
+      </div>
+    );
+  }
   // Legacy fallback
   return <RootRedirect />;
 }

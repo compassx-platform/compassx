@@ -4,12 +4,14 @@
  * - Fetches workspace info from /api/w/:slug/api/workspace.
  * - Injects WorkspaceContext for child routes.
  */
+import { useEffect } from "react";
 import { Navigate, Outlet, useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { Loader2 } from "lucide-react";
 import { getToken, getRefreshToken, isLoggedIn, refreshAccessToken } from "@/lib/auth";
 import api from "@/lib/api";
 import { WorkspaceContext, type WorkspaceInfo } from "@/lib/workspaceContext";
+import { setDefaultWorkspace } from "@/lib/userManagerApi";
 
 export default function WorkspaceGuard() {
   const { workspaceSlug } = useParams<{ workspaceSlug: string }>();
@@ -31,6 +33,15 @@ export default function WorkspaceGuard() {
     retry: 1,
     enabled: !!workspaceSlug,
   });
+
+  useEffect(() => {
+    if (data?.id) {
+      setDefaultWorkspace(data.id).catch(() => {});
+      try {
+        localStorage.setItem("compassx_last_workspace", data.id);
+      } catch {}
+    }
+  }, [data?.id]);
 
   if (isLoading) {
     return (

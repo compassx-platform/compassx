@@ -2,6 +2,7 @@ import React, { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { login, fetchEntryPoint, fetchSetupStatus } from "../../lib/userManagerApi";
 import { saveTokens, setPrincipalInfo } from "../../lib/auth";
+import { CompassXLogo } from "@/components/common/CompassXLogo";
 
 export default function LoginPage() {
   const navigate = useNavigate();
@@ -30,7 +31,7 @@ export default function LoginPage() {
   }, [navigate]);
 
   if (checkingSetup) {
-    return <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", background: "#0A0A0F" }} />;
+    return <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", background: "var(--color-bg)" }} />;
   }
 
   const handleLogin = async (e: React.FormEvent) => {
@@ -53,11 +54,15 @@ export default function LoginPage() {
       const entryPoint = await fetchEntryPoint();
       navigate(entryPoint.route || "/");
     } catch (err: any) {
-      setError(
-        err.response?.data?.detail ||
-          err.message ||
-          "Invalid email or password. Please try again."
-      );
+      const detail = err.response?.data?.detail;
+      let msg = detail;
+      if (!msg && err.message && !err.message.toLowerCase().includes("refresh token")) {
+        msg = err.message;
+      }
+      if (!msg || msg === "Invalid credentials") {
+        msg = "Invalid email or password. Please try again.";
+      }
+      setError(msg);
     } finally {
       setLoading(false);
     }
@@ -83,11 +88,15 @@ export default function LoginPage() {
       const entryPoint = await fetchEntryPoint();
       navigate(entryPoint.route || "/");
     } catch (err: any) {
-      setError(
-        err.response?.data?.detail ||
-          err.message ||
-          "Auto-login failed. Please check user credentials."
-      );
+      const detail = err.response?.data?.detail;
+      let msg = detail;
+      if (!msg && err.message && !err.message.toLowerCase().includes("refresh token")) {
+        msg = err.message;
+      }
+      if (!msg || msg === "Invalid credentials") {
+        msg = "Auto-login failed. Please check user credentials.";
+      }
+      setError(msg);
     } finally {
       setLoading(false);
     }
@@ -121,22 +130,8 @@ export default function LoginPage() {
       >
         {/* Header */}
         <div style={{ textAlign: "center", marginBottom: "28px" }}>
-          <div
-            style={{
-              width: "44px",
-              height: "44px",
-              borderRadius: "var(--radius)",
-              background: "var(--sb-logo-bg)",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              fontSize: "20px",
-              fontWeight: 800,
-              color: "#fff",
-              margin: "0 auto 16px",
-            }}
-          >
-            C
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px" }}>
+            <CompassXLogo size={44} color="var(--color-primary, #1B6EF3)" />
           </div>
           <h1
             style={{
@@ -146,7 +141,7 @@ export default function LoginPage() {
               color: "var(--color-text)",
             }}
           >
-            Compass
+            Compass<span style={{ color: "var(--color-primary, #1B6EF3)" }}>X</span>
           </h1>
           <p style={{ margin: "6px 0 0", color: "var(--color-text-muted)", fontSize: "14px" }}>
             Sign in to your account

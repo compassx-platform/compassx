@@ -45,7 +45,7 @@ import {
   useScopedPath,
 } from '@/lib/appNavigation';
 import { useWorkspaceContext } from '@/lib/workspaceContext';
-import { useMe, useMyWorkspaces } from '@/lib/userManagerApi';
+import { useMe, useMyWorkspaces, setDefaultWorkspace } from '@/lib/userManagerApi';
 
 
 const EXPERIMENTAL_NAV: NavItem[] = [
@@ -426,6 +426,10 @@ export default function AppShell() {
                           type="button"
                           onClick={() => {
                             setWorkspaceMenuOpen(false);
+                            try {
+                              localStorage.setItem("compassx_last_workspace", ws.workspace_id);
+                            } catch {}
+                            setDefaultWorkspace(ws.workspace_id).catch(() => {});
                             window.location.href = `/w/${wsSlug}/${activeAppId}${scopedPathname}${location.search}${location.hash}`;
                           }}
                           className={`app-switcher-option ${isActive ? 'is-active' : ''}`}
