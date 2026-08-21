@@ -78,21 +78,19 @@ def _record_to_dict(record: SqlQueryRecord) -> dict:
 
 @router.get("/warehouses", response_model=list[WarehouseRead])
 def list_wh(request: Request, db: Session = Depends(get_system_db), user=Depends(get_current_user)):
-    del user
-    workspace_id = getattr(request.state, "workspace", None) and request.state.workspace.workspace_id
+    _user_id, workspace_id = _resolve_user_and_workspace(request, user)
     return list_warehouses(db, workspace_id=workspace_id)
 
 
 @router.post("/warehouses", response_model=WarehouseRead)
 def create_wh(request: Request, req: WarehouseCreate, db: Session = Depends(get_system_db), user=Depends(get_current_user)):
-    workspace_id = getattr(request.state, "workspace", None) and request.state.workspace.workspace_id
-    return create_warehouse(db, req, created_by=user.id, workspace_id=workspace_id)
+    user_id, workspace_id = _resolve_user_and_workspace(request, user)
+    return create_warehouse(db, req, created_by=user_id, workspace_id=workspace_id)
 
 
 @router.get("/warehouses/{warehouse_id}", response_model=WarehouseRead)
 def get_wh(request: Request, warehouse_id: str, db: Session = Depends(get_system_db), user=Depends(get_current_user)):
-    del user
-    workspace_id = getattr(request.state, "workspace", None) and request.state.workspace.workspace_id
+    _user_id, workspace_id = _resolve_user_and_workspace(request, user)
     wh = get_warehouse_by_id(db, warehouse_id, workspace_id=workspace_id)
     if not wh:
         raise HTTPException(404, "Warehouse not found")
@@ -101,22 +99,19 @@ def get_wh(request: Request, warehouse_id: str, db: Session = Depends(get_system
 
 @router.post("/warehouses/{warehouse_id}/start", response_model=WarehouseRead)
 def start_wh(request: Request, warehouse_id: str, db: Session = Depends(get_system_db), user=Depends(get_current_user)):
-    del user
-    workspace_id = getattr(request.state, "workspace", None) and request.state.workspace.workspace_id
+    _user_id, workspace_id = _resolve_user_and_workspace(request, user)
     return update_warehouse_status(db, warehouse_id, "running", workspace_id=workspace_id)
 
 
 @router.post("/warehouses/{warehouse_id}/stop", response_model=WarehouseRead)
 def stop_wh(request: Request, warehouse_id: str, db: Session = Depends(get_system_db), user=Depends(get_current_user)):
-    del user
-    workspace_id = getattr(request.state, "workspace", None) and request.state.workspace.workspace_id
+    _user_id, workspace_id = _resolve_user_and_workspace(request, user)
     return update_warehouse_status(db, warehouse_id, "stopped", workspace_id=workspace_id)
 
 
 @router.delete("/warehouses/{warehouse_id}")
 def delete_wh(request: Request, warehouse_id: str, db: Session = Depends(get_system_db), user=Depends(get_current_user)):
-    del user
-    workspace_id = getattr(request.state, "workspace", None) and request.state.workspace.workspace_id
+    _user_id, workspace_id = _resolve_user_and_workspace(request, user)
     delete_warehouse(db, warehouse_id, workspace_id=workspace_id)
     return {"deleted": True}
 

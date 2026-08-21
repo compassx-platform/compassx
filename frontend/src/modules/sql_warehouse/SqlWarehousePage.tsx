@@ -1,14 +1,30 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useParams, useNavigate, Link, useSearchParams, Navigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Database, Loader2, Play, Plus, Power, Square, TerminalSquare, Code2, Server, History, CheckCircle2, ChevronRight, Activity, Clock, Search, ServerCog, Folder, ChevronDown, Star, Sparkles, Download, Maximize2, BarChart2, Settings, MoreVertical, Share2, FileText, RefreshCw, XCircle, HelpCircle, ExternalLink, Zap, LayoutGrid, List, X, GitBranch, Edit2, Trash2, Check, Bookmark, BookOpen } from 'lucide-react';
+import { Database, Loader2, Play, Plus, Power, Square, TerminalSquare, Code2, Server, History, CheckCircle2, ChevronRight, Activity, Clock, Search, ServerCog, Folder, ChevronDown, Star, Sparkles, Download, Maximize2, BarChart2, Settings, MoreVertical, FileText, RefreshCw, XCircle, Zap, X, GitBranch, Edit2, Trash2, Check, Bookmark, BookOpen } from 'lucide-react';
+import Plot from 'react-plotly.js';
+import type { Data } from 'plotly.js';
 import api from '@/lib/api';
+import { useScopedNavigate } from '@/lib/appNavigation';
 import { AppTable, type AppTableColumn } from '@/components/common/AppTable';
 import { PageTabs } from '@/components/common/PageTabs';
 import { ModularSqlEditor } from './components/ModularSqlEditor';
 import { CatalogExplorerTree } from '../data/components/CatalogExplorerTree';
 import './sql-warehouse.css';
 import './sql-editor-custom.css';
+
+const PALETTE = [
+  '#077A9D',
+  '#FFAB00',
+  '#00A972',
+  '#FF3621',
+  '#8BCAE7',
+  '#AB4057',
+  '#99DDB4',
+  '#FCA4A1',
+  '#919191',
+  '#BF7080',
+];
 
 type Warehouse = {
   id: string;
@@ -346,14 +362,18 @@ const warehouseApi = {
 };
 
 export default function SqlWarehousePage() {
-  const { tab } = useParams();
+  const { tab, warehouseId, subtab } = useParams<{
+    tab?: string;
+    warehouseId?: string;
+    subtab?: string;
+  }>();
   if (tab === 'explorer') {
     return <Navigate to="../editor" replace relative="path" />;
   }
 
   const qc = useQueryClient();
   const activeTab = tab || 'editor';
-  const navigate = useNavigate();
+  const navigate = useScopedNavigate();
   
   const [searchParams] = useSearchParams();
   const initialSqlParam = searchParams.get('sql');
@@ -363,8 +383,10 @@ export default function SqlWarehousePage() {
 
   const [search, setSearch] = useState('');
   
-  const [detailsWarehouseId, setDetailsWarehouseId] = useState<string | null>(null);
-  const [detailsTab, setDetailsTab] = useState<'overview' | 'monitoring'>('monitoring');
+  const detailsWarehouseId = warehouseId || null;
+  const detailsTab: 'monitoring' | 'overview' =
+    subtab === 'overview' ? 'overview' : 'monitoring';
+  const [warehouseTimeRange, setWarehouseTimeRange] = useState<'1h' | '8h' | '24h' | '7d'>('8h');
   
   const [activeWarehouseId, setActiveWarehouseId] = useState('');
   const [activeCatalog, setActiveCatalog] = useState(initialCatalogParam || '');
@@ -1460,7 +1482,7 @@ export default function SqlWarehousePage() {
                 columns={warehouseColumns}
                 rows={filteredWarehouses}
                 rowKey={(w) => w.id}
-                onRowClick={(w) => setDetailsWarehouseId(w.id)}
+                onRowClick={(w) => navigate(`/sql-warehouse/warehouses/${w.id}/monitoring`)}
                 emptyText="No SQL Warehouses available."
                 isLoading={warehousesQuery.isLoading}
               />
@@ -1471,332 +1493,566 @@ export default function SqlWarehousePage() {
         {activeTab === 'warehouses' && detailsWarehouseId && (
           <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
             {(() => {
-              const dw = warehouses.find(w => w.id === detailsWarehouseId);
-              if (!dw) { setDetailsWarehouseId(null); return null; }
+              if (warehousesQuery.isLoading) {
+                return (
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', gap: '8px', color: 'var(--color-text-muted)' }}>
+                    <Loader2 size={18} className="spin" />
+                    <span>Loading warehouse...</span>
+                  </div>
+                );
+              }
 
-              const warehouseHistory = historyQuery.data || [];
-              
-              // Seed some mock data points if no history exists yet to make the dashboard look stunning:
-              const finalHistory = warehouseHistory.length > 0 ? warehouseHistory : [
-                { id: 'h1', status: 'succeeded', created_at: new Date(Date.now() - 10 * 60 * 1000).toISOString(), warehouse_id: dw.id },
-                { id: 'h2', status: 'succeeded', created_at: new Date(Date.now() - 25 * 60 * 1000).toISOString(), warehouse_id: dw.id },
-                { id: 'h3', status: 'running', created_at: new Date(Date.now() - 5 * 60 * 1000).toISOString(), warehouse_id: dw.id },
-                { id: 'h4', status: 'queued', created_at: new Date(Date.now() - 2 * 60 * 1000).toISOString(), warehouse_id: dw.id },
-                { id: 'h5', status: 'succeeded', created_at: new Date(Date.now() - 40 * 60 * 1000).toISOString(), warehouse_id: dw.id },
-                { id: 'h6', status: 'succeeded', created_at: new Date(Date.now() - 120 * 60 * 1000).toISOString(), warehouse_id: dw.id },
-                { id: 'h7', status: 'succeeded', created_at: new Date(Date.now() - 180 * 60 * 1000).toISOString(), warehouse_id: dw.id },
-                { id: 'h8', status: 'succeeded', created_at: new Date(Date.now() - 300 * 60 * 1000).toISOString(), warehouse_id: dw.id },
-              ];
+              const dw = warehouses.find((w) => w.id === detailsWarehouseId);
+              if (!dw) {
+                return (
+                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', gap: '12px' }}>
+                    <p style={{ color: 'var(--color-text-muted)' }}>Warehouse not found or has been removed.</p>
+                    <button className="btn btn-secondary btn-sm" onClick={() => navigate('/sql-warehouse/warehouses')}>
+                      Back to SQL Warehouses
+                    </button>
+                  </div>
+                );
+              }
 
-              const runningQueriesCount = finalHistory.filter(h => h.status === 'running').length;
-              const queuedQueriesCount = finalHistory.filter(h => h.status === 'queued' || h.status === 'pending').length;
+              const warehouseHistory = (historyQuery.data || []).filter(
+                (h) => h.warehouse_id === dw.id
+              );
+              const runningQueriesCount = warehouseHistory.filter(
+                (h) => h.status === 'running'
+              ).length;
+              const queuedQueriesCount = warehouseHistory.filter(
+                (h) => h.status === 'queued' || h.status === 'pending'
+              ).length;
+              const succeededQueriesCount = warehouseHistory.filter(
+                (h) => h.status === 'succeeded'
+              ).length;
+              const failedQueriesCount = warehouseHistory.filter(
+                (h) => h.status === 'failed' || h.status === 'error'
+              ).length;
 
-              // Compute monitoring data
-              // 24 bins of 20 minutes for last 8 hours
-              const monitoringData = (() => {
-                const now = new Date();
-                const binsCount = 24;
-                const binWidthMs = (8 * 60 * 60 * 1000) / binsCount; // 20 mins
+              // Compute real time-series bins
+              const timeRangeHours =
+                warehouseTimeRange === '1h'
+                  ? 1
+                  : warehouseTimeRange === '24h'
+                  ? 24
+                  : warehouseTimeRange === '7d'
+                  ? 168
+                  : 8;
+              const totalMs = timeRangeHours * 3600 * 1000;
+              const binsCount = warehouseTimeRange === '1h' ? 12 : 24;
+              const binWidthMs = totalMs / binsCount;
+              const now = new Date();
 
-                const bins = Array.from({ length: binsCount }, (_, i) => {
-                  const binTime = new Date(now.getTime() - (binsCount - 1 - i) * binWidthMs);
-                  return {
-                    time: binTime,
-                    runningCount: 0,
-                    queuedCount: 0,
-                    completedCount: 0,
-                  };
-                });
+              const monitoringBins = Array.from({ length: binsCount }, (_, i) => {
+                const binTime = new Date(now.getTime() - (binsCount - 1 - i) * binWidthMs);
+                return {
+                  time: binTime,
+                  runningCount: 0,
+                  queuedCount: 0,
+                  succeededCount: 0,
+                  failedCount: 0,
+                  avgDurationMs: 0,
+                  durationTotalMs: 0,
+                  durationCount: 0,
+                };
+              });
 
-                finalHistory.forEach(h => {
-                  const queryTime = new Date(h.created_at).getTime();
-                  const diffMs = now.getTime() - queryTime;
-                  if (diffMs >= 0 && diffMs < 8 * 60 * 60 * 1000) {
-                    const binIndex = Math.floor(diffMs / binWidthMs);
-                    const idx = binsCount - 1 - binIndex;
-                    if (idx >= 0 && idx < binsCount) {
-                      if (h.status === 'running') {
-                        bins[idx].runningCount += 1;
-                      } else if (h.status === 'queued' || h.status === 'pending') {
-                        bins[idx].queuedCount += 1;
-                      } else {
-                        bins[idx].completedCount += 1;
-                      }
+              warehouseHistory.forEach((h) => {
+                const queryTime = new Date(h.created_at).getTime();
+                const diffMs = now.getTime() - queryTime;
+                if (diffMs >= 0 && diffMs < totalMs) {
+                  const binIndex = Math.floor(diffMs / binWidthMs);
+                  const idx = binsCount - 1 - binIndex;
+                  if (idx >= 0 && idx < binsCount) {
+                    if (h.status === 'running') {
+                      monitoringBins[idx].runningCount += 1;
+                    } else if (h.status === 'queued' || h.status === 'pending') {
+                      monitoringBins[idx].queuedCount += 1;
+                    } else if (h.status === 'failed' || h.status === 'error') {
+                      monitoringBins[idx].failedCount += 1;
+                    } else {
+                      monitoringBins[idx].succeededCount += 1;
+                    }
+                    if (h.duration_ms && h.duration_ms > 0) {
+                      monitoringBins[idx].durationTotalMs += h.duration_ms;
+                      monitoringBins[idx].durationCount += 1;
                     }
                   }
-                });
-                return bins;
-              })();
+                }
+              });
+
+              monitoringBins.forEach((b) => {
+                if (b.durationCount > 0) {
+                  b.avgDurationMs = Math.round(b.durationTotalMs / b.durationCount);
+                }
+              });
+
+              const timestamps = monitoringBins.map((b) => b.time.toISOString());
+
+              const concurrencyData: Data[] = [
+                {
+                  x: timestamps,
+                  y: monitoringBins.map((b) => b.runningCount),
+                  type: 'bar',
+                  name: 'Running',
+                  marker: { color: PALETTE[0] }, // #077A9D
+                  hovertemplate: 'Running: %{y}<extra></extra>',
+                },
+                {
+                  x: timestamps,
+                  y: monitoringBins.map((b) => b.queuedCount),
+                  type: 'bar',
+                  name: 'Queued',
+                  marker: { color: PALETTE[1] }, // #FFAB00
+                  hovertemplate: 'Queued: %{y}<extra></extra>',
+                },
+              ];
+
+              const throughputData: Data[] = [
+                {
+                  x: timestamps,
+                  y: monitoringBins.map((b) => b.succeededCount),
+                  type: 'bar',
+                  name: 'Succeeded',
+                  marker: { color: PALETTE[2] }, // #00A972
+                  hovertemplate: 'Succeeded: %{y}<extra></extra>',
+                },
+                {
+                  x: timestamps,
+                  y: monitoringBins.map((b) => b.failedCount),
+                  type: 'bar',
+                  name: 'Failed',
+                  marker: { color: PALETTE[3] }, // #FF3621
+                  hovertemplate: 'Failed: %{y}<extra></extra>',
+                },
+              ];
+
+              const latencyData: Data[] = [
+                {
+                  x: timestamps,
+                  y: monitoringBins.map((b) => b.avgDurationMs),
+                  type: 'bar',
+                  name: 'Avg Latency (ms)',
+                  marker: { color: PALETTE[4] }, // #8BCAE7
+                  hovertemplate: 'Avg Duration: %{y} ms<extra></extra>',
+                },
+              ];
+
+              const sharedChartLayout = {
+                autosize: true,
+                height: 280,
+                margin: { l: 28, r: 0, t: 8, b: 64 },
+                paper_bgcolor: 'transparent',
+                plot_bgcolor: 'transparent',
+                bargap: 0.25,
+                barmode: 'stack' as const,
+                showlegend: true,
+                legend: {
+                  orientation: 'h' as const,
+                  x: 0,
+                  xanchor: 'left' as const,
+                  y: -0.28,
+                  yanchor: 'top' as const,
+                  font: { size: 9.5, color: '#334155' },
+                  itemgap: 6,
+                },
+                xaxis: {
+                  type: 'date' as const,
+                  showgrid: false,
+                  showline: true,
+                  linecolor: '#64748b',
+                  linewidth: 1.5,
+                  tickfont: { size: 10, color: '#475569' },
+                  ticks: '',
+                  nticks: 6,
+                  tickformat: warehouseTimeRange === '7d' ? '%m/%d %H:%M' : '%H:%M',
+                },
+                yaxis: {
+                  showgrid: true,
+                  gridcolor: '#e2e8f0',
+                  gridwidth: 1,
+                  showline: false,
+                  zeroline: true,
+                  zerolinecolor: '#64748b',
+                  zerolinewidth: 1.5,
+                  rangemode: 'tozero' as const,
+                  tickfont: { size: 10, color: '#64748b' },
+                },
+                hovermode: 'x unified' as const,
+                hoverlabel: {
+                  bgcolor: '#1e293b',
+                  bordercolor: '#334155',
+                  font: { color: '#ffffff', size: 11 },
+                },
+              };
 
               return (
                 <>
-                  <div className="db-page-header" style={{ borderBottom: 'none', paddingBottom: 0, flexDirection: 'column', alignItems: 'flex-start', gap: '4px', padding: '16px 24px' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '12px', color: 'var(--color-primary)', cursor: 'pointer' }} onClick={() => setDetailsWarehouseId(null)}>
+                  <div
+                    className="db-page-header"
+                    style={{
+                      borderBottom: 'none',
+                      paddingBottom: 0,
+                      flexDirection: 'column',
+                      alignItems: 'flex-start',
+                      gap: '4px',
+                      padding: '16px 24px',
+                    }}
+                  >
+                    <div
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '4px',
+                        fontSize: '12px',
+                        color: 'var(--color-primary)',
+                        cursor: 'pointer',
+                      }}
+                      onClick={() => navigate('/sql-warehouse/warehouses')}
+                    >
                       <span>SQL Warehouses</span>
                       <ChevronRight size={12} />
                     </div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', width: '100%', alignItems: 'center' }}>
-                      <h1 className="db-page-title" style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: '24px', fontWeight: 600 }}>
+                    <div
+                      style={{
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        width: '100%',
+                        alignItems: 'center',
+                      }}
+                    >
+                      <h1
+                        className="db-page-title"
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 10,
+                          fontSize: '22px',
+                          fontWeight: 600,
+                        }}
+                      >
                         {dw.name}
-                        <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: dw.status === 'running' ? 'var(--color-success)' : dw.status === 'error' ? 'var(--color-danger)' : 'var(--color-text-muted)', display: 'inline-block' }}></div>
+                        <span
+                          style={{
+                            fontSize: '11px',
+                            fontWeight: 600,
+                            padding: '2px 8px',
+                            borderRadius: '4px',
+                            background: '#f1f5f9',
+                            color: '#475569',
+                            textTransform: 'uppercase',
+                          }}
+                        >
+                          {dw.engine}
+                        </span>
+                        <div
+                          style={{
+                            width: '8px',
+                            height: '8px',
+                            borderRadius: '50%',
+                            background:
+                              dw.status === 'running'
+                                ? '#10b981'
+                                : dw.status === 'error'
+                                ? '#ef4444'
+                                : '#94a3b8',
+                            display: 'inline-block',
+                          }}
+                        />
                       </h1>
                       <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                        <button className="btn-link" style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', color: 'var(--color-text-muted)', background: 'none', border: 'none', cursor: 'pointer', paddingRight: '12px' }}>
-                          <Share2 size={14} /> Send feedback
+                        <button
+                          className="btn btn-secondary btn-sm"
+                          style={{
+                            padding: '6px 12px',
+                            height: '32px',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '6px',
+                          }}
+                          onClick={() => {
+                            warehousesQuery.refetch();
+                            historyQuery.refetch();
+                          }}
+                          title="Refresh warehouse status and metrics"
+                        >
+                          <RefreshCw size={13} /> Refresh
                         </button>
-                        <button className="btn btn-secondary" style={{ padding: '4px 12px', height: '32px', display: 'flex', alignItems: 'center', gap: '6px' }}><CheckCircle2 size={14}/> Permissions</button>
-                        <button className="btn btn-secondary" style={{ padding: '4px 12px', height: '32px', display: 'flex', alignItems: 'center', gap: '6px' }}><Code2 size={14}/> Edit</button>
                         {dw.status === 'running' ? (
-                          <button className="btn btn-secondary" style={{ padding: '4px 12px', height: '32px', display: 'flex', alignItems: 'center', gap: '6px' }} onClick={() => stopMutation.mutate(dw.id)}><Square size={14}/> Stop</button>
+                          <button
+                            className="btn btn-secondary"
+                            style={{
+                              padding: '4px 12px',
+                              height: '32px',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '6px',
+                            }}
+                            onClick={() => stopMutation.mutate(dw.id)}
+                          >
+                            <Square size={14} /> Stop
+                          </button>
                         ) : (
-                          <button className="btn btn-primary" style={{ padding: '4px 12px', height: '32px', display: 'flex', alignItems: 'center', gap: '6px' }} onClick={() => startMutation.mutate(dw.id)}><Power size={14}/> Start</button>
+                          <button
+                            className="btn btn-primary"
+                            style={{
+                              padding: '4px 12px',
+                              height: '32px',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '6px',
+                            }}
+                            onClick={() => startMutation.mutate(dw.id)}
+                          >
+                            <Power size={14} /> Start
+                          </button>
                         )}
                       </div>
                     </div>
                   </div>
-                  
-                  <div style={{ padding: '0 24px', background: 'var(--color-surface, var(--color-surface))' }}>
+
+                  <div style={{ padding: '0 24px', background: 'var(--color-surface)' }}>
                     <PageTabs
                       tabs={[
-                        { value: 'overview', label: 'Overview' },
                         { value: 'monitoring', label: 'Monitoring' },
+                        { value: 'overview', label: 'Overview' },
                       ]}
                       value={detailsTab}
-                      onChange={(v) => setDetailsTab(v as any)}
+                      onChange={(v) => navigate(`/sql-warehouse/warehouses/${dw.id}/${v}`)}
                     />
                   </div>
-                  
+
                   <div className="swh-details-content">
                     {detailsTab === 'monitoring' && (
-                      <div className="swh-monitoring-view" style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
-                        {/* Stats Row */}
-                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '16px', borderBottom: '1px solid var(--color-border)', paddingBottom: '20px' }}>
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                            <span style={{ fontSize: '12px', color: 'var(--color-text-muted)' }}>Status</span>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '18px', fontWeight: 500, color: dw.status === 'running' ? 'var(--color-success)' : 'var(--color-text-muted)' }}>
-                              <CheckCircle2 size={18} /> <span>{dw.status === 'running' ? 'Running' : 'Stopped'}</span>
+                      <div className="swh-monitoring-view">
+                        {/* Real-time Summary Metrics Strip */}
+                        <div className="swh-metrics-strip">
+                          <div className="swh-metric-item">
+                            <span className="swh-metric-label">Status</span>
+                            <div className="swh-metric-value">
+                              <div
+                                style={{
+                                  width: '8px',
+                                  height: '8px',
+                                  borderRadius: '50%',
+                                  background: dw.status === 'running' ? '#10b981' : '#94a3b8',
+                                }}
+                              />
+                              <span style={{ textTransform: 'capitalize' }}>{dw.status}</span>
                             </div>
                           </div>
 
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                            <span style={{ fontSize: '12px', color: 'var(--color-text-muted)', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
-                              Running queries <HelpCircle size={12} className="text-muted" />
-                            </span>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '18px', fontWeight: 500, color: 'var(--color-primary)' }}>
+                          <div className="swh-metric-divider" />
+
+                          <div className="swh-metric-item">
+                            <span className="swh-metric-label">Running Queries</span>
+                            <div className="swh-metric-value" style={{ color: '#077A9D' }}>
                               <span>{runningQueriesCount}</span>
-                              <ExternalLink size={14} style={{ cursor: 'pointer' }} />
                             </div>
                           </div>
 
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                            <span style={{ fontSize: '12px', color: 'var(--color-text-muted)', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
-                              Queued queries <HelpCircle size={12} className="text-muted" />
-                            </span>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '18px', fontWeight: 500, color: 'var(--color-primary)' }}>
+                          <div className="swh-metric-divider" />
+
+                          <div className="swh-metric-item">
+                            <span className="swh-metric-label">Queued Queries</span>
+                            <div className="swh-metric-value" style={{ color: '#FFAB00' }}>
                               <span>{queuedQueriesCount}</span>
-                              <ExternalLink size={14} style={{ cursor: 'pointer' }} />
                             </div>
                           </div>
 
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                            <span style={{ fontSize: '12px', color: 'var(--color-text-muted)' }}>Clusters</span>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '18px', fontWeight: 500 }}>
-                              <span>{dw.status === 'running' ? '1' : '0'}</span>
-                              <Search size={14} style={{ cursor: 'pointer', color: 'var(--color-text-muted)' }} />
+                          <div className="swh-metric-divider" />
+
+                          <div className="swh-metric-item">
+                            <span className="swh-metric-label">Succeeded ({warehouseTimeRange})</span>
+                            <div className="swh-metric-value" style={{ color: '#00A972' }}>
+                              <span>{succeededQueriesCount}</span>
                             </div>
                           </div>
-                        </div>
 
-                        {/* Controls Row */}
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                            <select className="swh-select" style={{ width: '150px', padding: '4px 8px', borderRadius: '4px', border: '1px solid var(--color-border)' }}>
-                              <option>Last 8 hours</option>
-                              <option>Last 24 hours</option>
-                              <option>Last 7 days</option>
-                            </select>
-                            <button className="btn btn-secondary btn-sm" style={{ padding: '6px' }} title="Query acceleration enabled">
-                              <Zap size={13} color="var(--color-warning)" />
-                            </button>
-                          </div>
+                          <div className="swh-metric-divider" />
 
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                            <Settings size={16} className="text-muted cursor-pointer" />
-                            <div style={{ display: 'flex', border: '1px solid var(--color-border)', borderRadius: '4px', overflow: 'hidden' }}>
-                              <button style={{ padding: '4px 8px', background: 'var(--color-background-muted)', border: 'none', cursor: 'pointer' }}><LayoutGrid size={14} /></button>
-                              <button style={{ padding: '4px 8px', background: 'var(--color-surface)', border: 'none', borderLeft: '1px solid var(--color-border)', cursor: 'pointer' }}><List size={14} /></button>
+                          <div className="swh-metric-item">
+                            <span className="swh-metric-label">Failed ({warehouseTimeRange})</span>
+                            <div className="swh-metric-value" style={{ color: '#FF3621' }}>
+                              <span>{failedQueriesCount}</span>
                             </div>
                           </div>
                         </div>
 
-                        {/* Charts Grid */}
-                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '20px' }}>
-                          {/* Peak query count chart */}
-                          <div className="swh-chart-card" style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)', borderRadius: '6px', padding: '16px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                              <span style={{ fontSize: '13px', fontWeight: 600 }}>Peak query count</span>
-                              <div style={{ display: 'flex', gap: '12px', fontSize: '10px' }}>
-                                <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}><div style={{ width: '8px', height: '8px', background: 'var(--color-primary)' }}></div> Peak running</span>
-                                <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}><div style={{ width: '8px', height: '8px', background: '#f59e0b' }}></div> Peak queued</span>
-                              </div>
+                        <div
+                          style={{
+                            width: '100%',
+                            height: '1px',
+                            background: 'var(--color-border, #e2e8f0)',
+                            margin: '4px 0 6px',
+                          }}
+                        />
+
+                        {/* Controls Toolbar */}
+                        <div className="swh-monitoring-controls">
+                          <div className="swh-time-range-group">
+                            {(['1h', '8h', '24h', '7d'] as const).map((r) => (
+                              <button
+                                key={r}
+                                className={`swh-time-range-btn ${
+                                  warehouseTimeRange === r ? 'active' : ''
+                                }`}
+                                onClick={() => setWarehouseTimeRange(r)}
+                              >
+                                {r}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+
+                        {/* 3 Real-time Plotly Charts */}
+                        <div className="swh-monitoring-charts">
+                          <div className="swh-chart-card">
+                            <div className="swh-chart-card-header">
+                              <h3 className="swh-chart-card-title">Query Concurrency (Queries)</h3>
                             </div>
-                            
-                            <div style={{ height: '150px', position: 'relative' }}>
-                              <svg viewBox="0 0 500 150" width="100%" height="150" preserveAspectRatio="none">
-                                {/* Grid lines */}
-                                <line x1="0" y1="37.5" x2="500" y2="37.5" stroke="var(--color-border)" strokeDasharray="2" />
-                                <line x1="0" y1="75" x2="500" y2="75" stroke="var(--color-border)" strokeDasharray="2" />
-                                <line x1="0" y1="112.5" x2="500" y2="112.5" stroke="var(--color-border)" strokeDasharray="2" />
-                                
-                                {monitoringData.map((b, i) => {
-                                  const x = (i / monitoringData.length) * 500 + 4;
-                                  const w = (500 / monitoringData.length) - 4;
-                                  const maxVal = Math.max(...monitoringData.map(d => d.runningCount + d.queuedCount), 4);
-                                  const runH = (b.runningCount / maxVal) * 120;
-                                  const queueH = (b.queuedCount / maxVal) * 120;
-                                  
-                                  return (
-                                    <g key={i}>
-                                      {/* Running Bar */}
-                                      <rect x={x} y={130 - runH} width={w} height={runH} fill="var(--color-primary)" />
-                                      {/* Queued Bar */}
-                                      <rect x={x} y={130 - runH - queueH} width={w} height={queueH} fill="#f59e0b" />
-                                    </g>
-                                  );
-                                })}
-                                <line x1="0" y1="130" x2="500" y2="130" stroke="var(--color-text)" strokeWidth="1" />
-                              </svg>
-                              
-                              {/* Y-axis labels */}
-                              <div style={{ position: 'absolute', left: 4, top: 0, fontSize: '9px', color: 'var(--color-text-muted)', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', height: '130px' }}>
-                                <span>{Math.max(...monitoringData.map(d => d.runningCount + d.queuedCount), 4)}</span>
-                                <span>0</span>
-                              </div>
-                            </div>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10px', color: 'var(--color-text-muted)' }}>
-                              <span>{new Date(Date.now() - 8 * 3600 * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-                              <span>{new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-                            </div>
-                            <span style={{ fontSize: '11px', color: 'var(--color-text-muted)' }}>↺ 1 minute ago</span>
+                            <Plot
+                              data={concurrencyData}
+                              layout={sharedChartLayout}
+                              config={{ displaylogo: false, responsive: true }}
+                              style={{ width: '100%' }}
+                              useResizeHandler
+                            />
                           </div>
 
-                          {/* Completed query count chart */}
-                          <div className="swh-chart-card" style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)', borderRadius: '6px', padding: '16px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                              <span style={{ fontSize: '13px', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
-                                Completed query count <HelpCircle size={12} className="text-muted" />
-                              </span>
-                              <span style={{ fontSize: '10px', display: 'flex', alignItems: 'center', gap: '4px' }}><div style={{ width: '12px', height: '2px', background: '#10b981' }}></div> Queries/min</span>
+                          <div className="swh-chart-card">
+                            <div className="swh-chart-card-header">
+                              <h3 className="swh-chart-card-title">Query Throughput (Queries)</h3>
                             </div>
-
-                            <div style={{ height: '150px', position: 'relative' }}>
-                              <svg viewBox="0 0 500 150" width="100%" height="150" preserveAspectRatio="none">
-                                <line x1="0" y1="37.5" x2="500" y2="37.5" stroke="var(--color-border)" strokeDasharray="2" />
-                                <line x1="0" y1="75" x2="500" y2="75" stroke="var(--color-border)" strokeDasharray="2" />
-                                <line x1="0" y1="112.5" x2="500" y2="112.5" stroke="var(--color-border)" strokeDasharray="2" />
-                                
-                                <path
-                                  d={(() => {
-                                    const maxVal = Math.max(...monitoringData.map(d => d.completedCount), 4);
-                                    return monitoringData.map((b, i) => {
-                                      const x = (i / (monitoringData.length - 1)) * 500;
-                                      const y = 130 - (b.completedCount / maxVal) * 120;
-                                      return `${i === 0 ? 'M' : 'L'} ${x} ${y}`;
-                                    }).join(' ');
-                                  })()}
-                                  fill="none"
-                                  stroke="#10b981"
-                                  strokeWidth="2"
-                                />
-                                <line x1="0" y1="130" x2="500" y2="130" stroke="var(--color-text)" strokeWidth="1" />
-                              </svg>
-                              
-                              <div style={{ position: 'absolute', left: 4, top: 0, fontSize: '9px', color: 'var(--color-text-muted)', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', height: '130px' }}>
-                                <span>{Math.max(...monitoringData.map(d => d.completedCount), 4)}</span>
-                                <span>0</span>
-                              </div>
-                            </div>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10px', color: 'var(--color-text-muted)' }}>
-                              <span>{new Date(Date.now() - 8 * 3600 * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-                              <span>{new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-                            </div>
-                            <span style={{ fontSize: '11px', color: 'var(--color-text-muted)' }}>↺ 1 minute ago</span>
+                            <Plot
+                              data={throughputData}
+                              layout={sharedChartLayout}
+                              config={{ displaylogo: false, responsive: true }}
+                              style={{ width: '100%' }}
+                              useResizeHandler
+                            />
                           </div>
 
-                          {/* Running clusters chart */}
-                          <div className="swh-chart-card" style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)', borderRadius: '6px', padding: '16px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                              <span style={{ fontSize: '13px', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
-                                Running clusters <HelpCircle size={12} className="text-muted" />
-                              </span>
-                              <span style={{ fontSize: '10px', display: 'flex', alignItems: 'center', gap: '4px' }}><div style={{ width: '12px', height: '2px', background: '#0284c7' }}></div> Cluster count</span>
+                          <div className="swh-chart-card">
+                            <div className="swh-chart-card-header">
+                              <h3 className="swh-chart-card-title">Average Latency (ms)</h3>
                             </div>
-
-                            <div style={{ height: '150px', position: 'relative' }}>
-                              <svg viewBox="0 0 500 150" width="100%" height="150" preserveAspectRatio="none">
-                                <line x1="0" y1="37.5" x2="500" y2="37.5" stroke="var(--color-border)" strokeDasharray="2" />
-                                <line x1="0" y1="75" x2="500" y2="75" stroke="var(--color-border)" strokeDasharray="2" />
-                                <line x1="0" y1="112.5" x2="500" y2="112.5" stroke="var(--color-border)" strokeDasharray="2" />
-                                
-                                <path
-                                  d={(() => {
-                                    return monitoringData.map((b, i) => {
-                                      const x = (i / (monitoringData.length - 1)) * 500;
-                                      const y = dw.status === 'running' ? 30 : 130;
-                                      return `${i === 0 ? 'M' : 'L'} ${x} ${y}`;
-                                    }).join(' ');
-                                  })()}
-                                  fill="none"
-                                  stroke="#0284c7"
-                                  strokeWidth="2"
-                                />
-                                <line x1="0" y1="130" x2="500" y2="130" stroke="var(--color-text)" strokeWidth="1" />
-                              </svg>
-                              
-                              <div style={{ position: 'absolute', left: 4, top: 0, fontSize: '9px', color: 'var(--color-text-muted)', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', height: '130px' }}>
-                                <span>1</span>
-                                <span>0</span>
-                              </div>
-                            </div>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10px', color: 'var(--color-text-muted)' }}>
-                              <span>{new Date(Date.now() - 8 * 3600 * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-                              <span>{new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-                            </div>
-                            <span style={{ fontSize: '11px', color: 'var(--color-text-muted)' }}>↺ just now</span>
+                            <Plot
+                              data={latencyData}
+                              layout={sharedChartLayout}
+                              config={{ displaylogo: false, responsive: true }}
+                              style={{ width: '100%' }}
+                              useResizeHandler
+                            />
                           </div>
                         </div>
                       </div>
                     )}
+
                     {detailsTab === 'overview' && (
-                      <div className="swh-overview-table" style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '16px', maxWidth: '800px' }}>
-                        <div style={{ display: 'grid', gridTemplateColumns: '150px 1fr', rowGap: '18px', fontSize: '13px', alignItems: 'center' }}>
-                          <span style={{ fontWeight: 500, color: 'var(--color-text)' }}>Status</span>
+                      <div
+                        style={{
+                          padding: '24px',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          gap: '16px',
+                          maxWidth: '800px',
+                        }}
+                      >
+                        <div
+                          style={{
+                            display: 'grid',
+                            gridTemplateColumns: '160px 1fr',
+                            rowGap: '16px',
+                            fontSize: '13px',
+                            alignItems: 'center',
+                          }}
+                        >
+                          <span style={{ fontWeight: 500, color: 'var(--color-text)' }}>
+                            Status
+                          </span>
                           <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
-                            <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: dw.status === 'running' ? 'var(--color-success)' : dw.status === 'error' ? 'var(--color-danger)' : 'var(--color-text-muted)' }}></div>
+                            <div
+                              style={{
+                                width: '8px',
+                                height: '8px',
+                                borderRadius: '50%',
+                                background:
+                                  dw.status === 'running'
+                                    ? '#10b981'
+                                    : dw.status === 'error'
+                                    ? '#ef4444'
+                                    : '#94a3b8',
+                              }}
+                            />
                             <span style={{ textTransform: 'capitalize' }}>{dw.status}</span>
                           </span>
 
-                          <span style={{ fontWeight: 500, color: 'var(--color-text)' }}>Name</span>
-                          <span>{dw.name} <span style={{ color: 'var(--color-text-muted)', fontSize: '12px' }}>(ID: {dw.id})</span></span>
+                          <span style={{ fontWeight: 500, color: 'var(--color-text)' }}>
+                            Warehouse Name
+                          </span>
+                          <span style={{ fontWeight: 500 }}>{dw.name}</span>
 
-                          <span style={{ fontWeight: 500, color: 'var(--color-text)' }}>Type</span>
-                          <span style={{ background: '#f3e8ff', color: '#6b21a8', padding: '2px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 600, width: 'fit-content' }}>Serverless</span>
+                          <span style={{ fontWeight: 500, color: 'var(--color-text)' }}>
+                            Warehouse ID
+                          </span>
+                          <span
+                            style={{
+                              fontFamily: 'monospace',
+                              fontSize: '12px',
+                              color: 'var(--color-text-muted)',
+                            }}
+                          >
+                            {dw.id}
+                          </span>
 
-                          <span style={{ fontWeight: 500, color: 'var(--color-text)' }}>Cluster size</span>
-                          <span>2X-Small</span>
+                          <span style={{ fontWeight: 500, color: 'var(--color-text)' }}>
+                            Engine
+                          </span>
+                          <span>
+                            <span
+                              style={{
+                                fontSize: '11px',
+                                fontWeight: 600,
+                                padding: '2px 8px',
+                                borderRadius: '4px',
+                                background: '#f1f5f9',
+                                color: '#475569',
+                                textTransform: 'uppercase',
+                              }}
+                            >
+                              {dw.engine}
+                            </span>
+                          </span>
 
-                          <span style={{ fontWeight: 500, color: 'var(--color-text)' }}>Auto stop</span>
-                          <span>After 10 minutes of inactivity</span>
+                          <span style={{ fontWeight: 500, color: 'var(--color-text)' }}>
+                            Description
+                          </span>
+                          <span style={{ color: dw.description ? 'var(--color-text)' : 'var(--color-text-muted)' }}>
+                            {dw.description || 'No description provided.'}
+                          </span>
 
-                          <span style={{ fontWeight: 500, color: 'var(--color-text)' }}>Scaling</span>
-                          <span>Cluster count: Active 1 Min 1 Max 1</span>
+                          <span style={{ fontWeight: 500, color: 'var(--color-text)' }}>
+                            Configuration
+                          </span>
+                          <span style={{ fontFamily: 'monospace', fontSize: '12px' }}>
+                            {dw.config && Object.keys(dw.config).length > 0
+                              ? JSON.stringify(dw.config)
+                              : 'Default configuration'}
+                          </span>
 
-                          <span style={{ fontWeight: 500, color: 'var(--color-text)' }}>Channel</span>
-                          <span>Current <span style={{ color: 'var(--color-text-muted)', fontSize: '12px' }}>(v 2026.15)</span></span>
+                          <span style={{ fontWeight: 500, color: 'var(--color-text)' }}>
+                            Resource Policy
+                          </span>
+                          <span style={{ fontFamily: 'monospace', fontSize: '12px' }}>
+                            {dw.resource_policy && Object.keys(dw.resource_policy).length > 0
+                              ? JSON.stringify(dw.resource_policy)
+                              : 'Standard'}
+                          </span>
                         </div>
                       </div>
                     )}
-
                   </div>
                 </>
               );

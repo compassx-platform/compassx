@@ -741,7 +741,7 @@ export default function MonitoringPage() {
                     layout={{
                       autosize: true,
                       height: 360,
-                      margin: { l: 28, r: 0, t: 10, b: 56 },
+                      margin: { l: 28, r: 0, t: 10, b: 64 },
                       paper_bgcolor: 'transparent',
                       plot_bgcolor: 'transparent',
                       bargap: 0.25,
@@ -794,7 +794,7 @@ export default function MonitoringPage() {
                         orientation: 'h',
                         x: -0.06,
                         xanchor: 'left',
-                        y: -0.22,
+                        y: -0.28,
                         yanchor: 'top',
                         font: { size: 9.5, color: '#334155' },
                         itemgap: 4,
@@ -806,6 +806,11 @@ export default function MonitoringPage() {
                         linewidth: 1.5,
                         tickfont: { size: 10, color: '#475569' },
                         ticks: '',
+                        nticks: 6,
+                        tickformat:
+                          timeRange.value.includes('d') || timeRange.value.includes('w')
+                            ? '%m/%d %H:%M'
+                            : '%H:%M',
                       },
                       yaxis: {
                         showgrid: true,

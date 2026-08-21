@@ -312,6 +312,8 @@ export default function App() {
                   <Route path="data-catalog/:catalog/:schema/:table" element={<DataCatalog />} />
                   <Route path="sql-warehouse" element={<Navigate to="editor" replace />} />
                   <Route path="sql-warehouse/:tab" element={<SqlWarehousePage />} />
+                  <Route path="sql-warehouse/:tab/:warehouseId" element={<SqlWarehousePage />} />
+                  <Route path="sql-warehouse/:tab/:warehouseId/:subtab" element={<SqlWarehousePage />} />
                   <Route path="agents" element={<AgentsPage />} />
                   <Route path="agents/tools/:toolKey" element={<AgentToolDetailPage />} />
                   <Route path="agents/new" element={<AgentBuilderPage />} />

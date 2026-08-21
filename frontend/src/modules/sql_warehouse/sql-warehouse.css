@@ -497,59 +497,144 @@
 .spin { animation: spin 1s linear infinite; }
 @keyframes spin { 100% { transform: rotate(360deg); } }
 
-/* Details View */
+/* Details & Monitoring View */
 .swh-details-content {
   flex: 1;
   overflow: auto;
-  padding: 24px;
+  padding: 0;
 }
-.swh-monitoring-stats {
+
+.swh-monitoring-view {
+  padding: 16px 24px 24px;
   display: flex;
-  border-bottom: 1px solid var(--color-border, var(--color-border));
-  padding-bottom: 24px;
-  margin-bottom: 24px;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+  box-sizing: border-box;
 }
-.swh-stat-box {
+
+.swh-metrics-strip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 4px 0;
+  background: transparent;
+  border: none;
+  gap: 16px;
+}
+
+.swh-metric-item {
   flex: 1;
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  border-right: 1px solid var(--color-border, var(--color-border));
-  padding: 0 24px;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  min-width: 0;
+  text-align: center;
 }
-.swh-stat-box:last-child { border-right: none; }
-.swh-stat-box:first-child { padding-left: 0; }
-.swh-stat-box label { font-size: 13px; color: var(--color-text-muted, var(--color-text-muted)); }
-.swh-stat-value { font-size: 24px; color: #3b82f6; font-weight: 500; }
+
+.swh-metric-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-text-muted, #64748b);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+
+.swh-metric-value {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--color-text, #0f172a);
+  line-height: 1.2;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.swh-metric-divider {
+  width: 1px;
+  height: 28px;
+  background: var(--color-border, #e2e8f0);
+  flex-shrink: 0;
+}
+
+.swh-monitoring-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0;
+  margin: 0;
+}
+
+.swh-time-range-group {
+  display: flex;
+  background: #f1f5f9;
+  padding: 2px;
+  border-radius: 6px;
+  gap: 2px;
+}
+
+.swh-time-range-btn {
+  padding: 4px 10px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  font-size: 12px;
+  font-weight: 500;
+  color: #64748b;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.swh-time-range-btn.active {
+  background: #ffffff;
+  color: #2563eb;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+  font-weight: 600;
+}
 
 .swh-monitoring-charts {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  gap: 24px;
-  margin-top: 16px;
+  gap: 20px;
+  width: 100%;
 }
+
+@media (max-width: 1200px) {
+  .swh-monitoring-charts {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 768px) {
+  .swh-monitoring-charts {
+    grid-template-columns: 1fr;
+  }
+}
+
 .swh-chart-card {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  background: transparent;
+  border: none;
+  padding: 4px 0;
 }
-.swh-chart-title { font-size: 13px; font-weight: 600; }
-.swh-chart-placeholder {
-  height: 200px;
-  border-bottom: 1px solid var(--color-border, var(--color-border));
-  position: relative;
-  background: repeating-linear-gradient(0deg, transparent, transparent 39px, var(--color-border, var(--color-border)) 39px, var(--color-border, var(--color-border)) 40px);
+
+.swh-chart-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
 }
-.swh-chart-placeholder.bar-chart::after {
-  content: ''; position: absolute; bottom: 0; left: 10%; right: 10%; height: 60%;
-  background: repeating-linear-gradient(90deg, #0ea5e9 0px, #0ea5e9 8px, transparent 8px, transparent 12px);
-}
-.swh-chart-placeholder.line-chart::after {
-  content: ''; position: absolute; bottom: 20%; left: 0; right: 0; height: 2px; background: #10b981;
-  box-shadow: 0 -20px 0 #10b981, 20px -40px 0 #10b981, 40px -10px 0 #10b981, 60px 10px 0 #10b981;
-}
-.swh-chart-placeholder.flat-chart::after {
-  content: ''; position: absolute; top: 20%; left: 0; right: 0; height: 2px; background: #0ea5e9;
+
+.swh-chart-card-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text, #0f172a);
+  margin: 0;
 }
 
 /* Query Profiling Drawer Styles */
