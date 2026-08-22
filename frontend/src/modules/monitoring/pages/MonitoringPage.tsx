@@ -808,7 +808,7 @@ export default function MonitoringPage() {
                         ticks: '',
                         nticks: 6,
                         tickformat:
-                          timeRange.value.includes('d') || timeRange.value.includes('w')
+                          timeRange?.label?.includes('d') || timeRange?.label?.includes('w')
                             ? '%m/%d %H:%M'
                             : '%H:%M',
                       },
