@@ -382,26 +382,6 @@ class ReadNotebookTool(BaseNovaTool):
         )
 
 
-class ExecuteCellTool(BaseNovaTool):
-    key = "execute_cell"
-    description = "Record that Nova wants a notebook cell execution. This backend does not execute the cell directly."
-    input_schema = {
-        "type": "object",
-        "properties": {"cell_index": {"type": "integer", "minimum": 0}},
-        "required": ["cell_index"],
-    }
-
-    def execute(self, arguments: dict[str, Any], context: dict[str, Any]) -> NovaToolResult:
-        return NovaToolResult(
-            ok=True,
-            result={
-                "cell_index": int(arguments["cell_index"]),
-                "status": "execution_requested",
-                "message": "Frontend or notebook runtime should execute this cell.",
-            },
-        )
-
-
 class EditCellTool(BaseNovaTool):
     key = "edit_cell"
     description = "Propose replacing the source of one existing notebook cell by index. The UI must request user approval before committing it."
@@ -603,7 +583,8 @@ def run_async(coro):
         return loop.run_until_complete(coro)
 
 
-async def execute_code_on_kernel(kernel_id: str, code: str) -> list[dict[str, Any]]:
+async def execute_code_on_kernel(kernel_id: str, code: str | list[str]) -> list[dict[str, Any]]:
+    code_str = _join_source(code)
     upstream_ws_url = eg_settings.internal_url().replace("http://", "ws://").replace("https://", "wss://")
     ws_url = f"{upstream_ws_url}/api/kernels/{kernel_id}/channels"
     
@@ -621,7 +602,7 @@ async def execute_code_on_kernel(kernel_id: str, code: str) -> list[dict[str, An
         "parent_header": {},
         "metadata": {},
         "content": {
-            "code": code,
+            "code": code_str,
             "silent": False,
             "store_history": True,
             "user_expressions": {},
@@ -779,20 +760,46 @@ def _start_kernel_for_compute(resource_id: str, job_id: str, runtime: str, sessi
         },
         timeout=120.0,
     )
-    resp.raise_for_status()
+    if not resp.is_success:
+        err_detail = resp.text
+        try:
+            err_json = resp.json()
+            err_detail = err_json.get("message") or err_json.get("reason") or resp.text
+        except Exception:
+            pass
+        raise RuntimeError(f"Enterprise Gateway ({eg_url}) returned HTTP {resp.status_code}: {err_detail}")
     return resp.json()["id"]
 
 
-def _find_resource_id_by_name(resource_name: str) -> tuple[str, str, str] | None:
-    """Look up a compute resource by name. Returns (resource_id, job_id, runtime) or None."""
+def _find_resource_id_by_name(resource_name: str, workspace_id: str | None = None) -> tuple[str, str, str] | None:
+    """Look up a compute resource by name and workspace. Returns (resource_id, job_id, runtime) or None."""
     from app.database import SystemSessionLocal
     from app.compute.models.compute_resources import ComputeResource
 
     db = SystemSessionLocal()
     try:
+        if workspace_id:
+            resource = db.query(ComputeResource).filter(
+                ComputeResource.name == resource_name,
+                ComputeResource.workspace_id == workspace_id,
+            ).first()
+            if not resource:
+                # Fall back to default compute marked is_default in that workspace
+                resource = db.query(ComputeResource).filter(
+                    ComputeResource.is_default == True,
+                    ComputeResource.workspace_id == workspace_id,
+                ).first()
+            if resource:
+                return resource.id, resource.id, resource.runtime
+
+        # Fall back to global/null workspace or matching name
         resource = db.query(ComputeResource).filter(
             ComputeResource.name == resource_name
         ).first()
+        if not resource:
+            resource = db.query(ComputeResource).filter(
+                ComputeResource.is_default == True
+            ).first()
         if resource:
             return resource.id, resource.id, resource.runtime
         return None
@@ -821,122 +828,171 @@ def _persist_cell_execution_outputs(context: dict[str, Any], cell_index: int, ou
 class StartKernelAndRunCellTool(BaseNovaTool):
     key = "run_cell"
     description = (
-        "Execute a notebook cell and return the outputs. "
+        "Execute one or more notebook cells and return the outputs. "
         "This tool is BLOCKING — it waits until execution finishes before returning. "
+        "Supports running a single cell via cell_index, multiple cells via cell_indices: [0, 1, 2], "
+        "or all cells in the notebook via run_all: true. "
         "If no kernel is currently connected, it will automatically start one using the "
-        "notebook's last-connected compute resource (or the 'default' compute if none is stored). "
-        "Returns outputs on success. Returns an error if kernel start or execution fails — "
-        "do NOT fall back to frontend; report the failure to the user."
+        "notebook's compute resource. Returns outputs and persists results to the notebook."
     )
     input_schema = {
         "type": "object",
         "properties": {
-            "cell_index": {"type": "integer", "minimum": 0},
+            "cell_index": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "Specific 0-based cell index to execute (e.g. 0, 1, 2).",
+            },
+            "cell_indices": {
+                "type": "array",
+                "items": {"type": "integer", "minimum": 0},
+                "description": "List of cell indices to execute in sequence (e.g. [0, 1, 2]).",
+            },
+            "run_all": {
+                "type": "boolean",
+                "description": "If true, executes all cells in the notebook sequentially from first to last.",
+            },
         },
-        "required": ["cell_index"],
     }
 
     def execute(self, arguments: dict[str, Any], context: dict[str, Any]) -> NovaToolResult:
-        cell_index = int(arguments["cell_index"])
-        cell = _context_cell_at(context, cell_index)
-        if cell is None:
-            return NovaToolResult(ok=False, error=f"Cell {cell_index} not found")
-
-        code = cell.get("source", "")
-        if cell.get("cell_status") == "pending" and cell.get("pending_source"):
-            code = cell.get("pending_source")
+        # Determine target cell indices
+        target_indices: list[int] = []
+        if "cell_indices" in arguments and isinstance(arguments["cell_indices"], list):
+            target_indices = [int(i) for i in arguments["cell_indices"]]
+        elif "cell_index" in arguments and arguments["cell_index"] is not None:
+            target_indices = [int(arguments["cell_index"])]
+        elif arguments.get("run_all"):
+            notebook_data = _load_persisted_notebook(context)
+            cells = context.get("cells") or (notebook_data.get("cells") if isinstance(notebook_data, dict) else [])
+            target_indices = list(range(len(cells))) if isinstance(cells, list) and cells else [0]
+        else:
+            target_indices = [0]
 
         notebook_ctx = _notebook_context(context)
         kernel_id = notebook_ctx.get("kernel_id")
 
-        # If kernel already connected, execute directly
-        if kernel_id:
-            try:
-                outputs = run_async(execute_code_on_kernel(kernel_id, code))
-                _persist_cell_execution_outputs(context, cell_index, outputs)
+        # Start kernel if not yet connected
+        if not kernel_id:
+            notebook_id = notebook_ctx.get("notebook_id")
+            notebook_path = notebook_ctx.get("notebook_path") or notebook_ctx.get("path")
+            workspace_id = context.get("workspace_id") or context.get("workspace")
+            resource_id = None
+            job_id = None
+            runtime = "duckdb"
+
+            # Try last-connected compute from DB (lookup by notebook_id or notebook_path)
+            if notebook_id or notebook_path:
+                try:
+                    from app.database import SystemSessionLocal
+                    account_db = AccountSessionLocal()
+                    try:
+                        from app.catalog.models import UnifiedCatalogNotebook
+                        nb_query = account_db.query(UnifiedCatalogNotebook)
+                        if notebook_id:
+                            nb = nb_query.filter(UnifiedCatalogNotebook.id == notebook_id).first()
+                        else:
+                            nb = nb_query.filter(UnifiedCatalogNotebook.full_name == notebook_path).first()
+                            if not nb and isinstance(notebook_path, str) and "." in notebook_path:
+                                parts = notebook_path.split(".")
+                                if len(parts) == 3:
+                                    nb = nb_query.filter(
+                                        UnifiedCatalogNotebook.catalog_name == parts[0],
+                                        UnifiedCatalogNotebook.schema_name == parts[1],
+                                        UnifiedCatalogNotebook.name == parts[2],
+                                    ).first()
+                        last_resource_id = nb.last_compute_resource_id if nb else None
+                    finally:
+                        account_db.close()
+                    if last_resource_id:
+                        system_db = SystemSessionLocal()
+                        try:
+                            from app.compute.models.compute_resources import ComputeResource
+                            cr = system_db.query(ComputeResource).filter(
+                                ComputeResource.id == last_resource_id
+                            ).first()
+                            if cr:
+                                resource_id = cr.id
+                                job_id = cr.id
+                                runtime = cr.runtime
+                                resource_phase = cr.phase or "Stopped"
+                                resource_name = cr.name or resource_id
+                                if resource_phase != "Running":
+                                    return NovaToolResult(
+                                        ok=False,
+                                        error=(
+                                            f"Cell execution failed: compute resource '{resource_name}' ({resource_id}) is currently in '{resource_phase}' state. "
+                                            "Please start this compute resource before executing notebook cells."
+                                        ),
+                                    )
+                        finally:
+                            system_db.close()
+                except Exception as exc:
+                    logger.warning("Could not look up last compute for notebook %s: %s", notebook_id or notebook_path, exc)
+
+            # Fall back to "default" compute in the current workspace if no resource found
+            if not resource_id:
+                result = _find_resource_id_by_name("default", workspace_id=workspace_id)
+                if result:
+                    resource_id, job_id, runtime = result
+
+            if not resource_id:
                 return NovaToolResult(
-                    ok=True,
-                    result={"cell_index": cell_index, "status": "success", "outputs": outputs},
+                    ok=False,
+                    error=(
+                        "Cell execution failed: no kernel is connected and no compute resource is available. "
+                        "Please open the notebook, connect a compute resource, and try again."
+                    ),
                 )
+
+            # Start kernel on the compute resource
+            session_token = context.get("session_token", "")
+            try:
+                kernel_id = _start_kernel_for_compute(resource_id, job_id, runtime, session_token)
             except Exception as exc:
                 return NovaToolResult(
                     ok=False,
-                    error=f"Cell execution failed on kernel {kernel_id}: {exc}",
+                    error=f"Cell execution failed: could not start kernel on compute resource '{resource_id}': {exc}",
                 )
 
-        # No kernel connected — find compute and start kernel
-        notebook_id = notebook_ctx.get("notebook_id")
-        resource_id = None
-        job_id = None
-        runtime = "duckdb"
+        # Execute target cells in order
+        all_results = []
+        for idx in target_indices:
+            cell = _context_cell_at(context, idx)
+            if cell is None:
+                return NovaToolResult(
+                    ok=False,
+                    error=f"Cell {idx} not found in notebook",
+                    result={"completed_cells": all_results},
+                )
 
-        # Try last-connected compute from DB
-        if notebook_id:
+            code = cell.get("source", "")
+            if cell.get("cell_status") == "pending" and cell.get("pending_source"):
+                code = cell.get("pending_source")
+            code = _join_source(code)
+
             try:
-                from app.database import SystemSessionLocal
-                account_db = AccountSessionLocal()
-                try:
-                    from app.catalog.models import UnifiedCatalogNotebook
-                    nb = account_db.query(UnifiedCatalogNotebook).filter(
-                        UnifiedCatalogNotebook.id == notebook_id
-                    ).first()
-                    last_resource_id = nb.last_compute_resource_id if nb else None
-                finally:
-                    account_db.close()
-                if last_resource_id:
-                    system_db = SystemSessionLocal()
-                    try:
-                        from app.compute.models.compute_resources import ComputeResource
-                        cr = system_db.query(ComputeResource).filter(
-                            ComputeResource.id == last_resource_id
-                        ).first()
-                        if cr:
-                            resource_id = cr.id
-                            job_id = cr.id
-                            runtime = cr.runtime
-                    finally:
-                        system_db.close()
+                outputs = run_async(execute_code_on_kernel(kernel_id, code))
+                _persist_cell_execution_outputs(context, idx, outputs)
+                all_results.append({"cell_index": idx, "status": "success", "outputs": outputs})
             except Exception as exc:
-                logger.warning("Could not look up last compute for notebook %s: %s", notebook_id, exc)
+                return NovaToolResult(
+                    ok=False,
+                    error=f"Cell {idx} execution failed on kernel {kernel_id}: {exc}",
+                    result={"completed_cells": all_results, "failed_cell_index": idx},
+                )
 
-        # Fall back to "default" compute if no resource found
-        if not resource_id:
-            result = _find_resource_id_by_name("default")
-            if result:
-                resource_id, job_id, runtime = result
-
-        if not resource_id:
-            return NovaToolResult(
-                ok=False,
-                error=(
-                    "Cell execution failed: no kernel is connected and no compute resource is available. "
-                    "Please open the notebook, connect a compute resource, and try again."
-                ),
-            )
-
-        # Start kernel on the compute resource
-        session_token = context.get("session_token", "")
-        try:
-            new_kernel_id = _start_kernel_for_compute(resource_id, job_id, runtime, session_token)
-        except Exception as exc:
-            return NovaToolResult(
-                ok=False,
-                error=f"Cell execution failed: could not start kernel on compute resource '{resource_id}': {exc}",
-            )
-
-        # Execute on the newly started kernel
-        try:
-            outputs = run_async(execute_code_on_kernel(new_kernel_id, code))
-            _persist_cell_execution_outputs(context, cell_index, outputs)
+        # Return single cell result format if only one cell was requested for backward compatibility
+        if len(target_indices) == 1 and all_results:
             return NovaToolResult(
                 ok=True,
-                result={"cell_index": cell_index, "status": "success", "outputs": outputs},
+                result={"cell_index": target_indices[0], "status": "success", "outputs": all_results[0]["outputs"]},
             )
-        except Exception as exc:
-            return NovaToolResult(
-                ok=False,
-                error=f"Cell execution failed after kernel start: {exc}",
-            )
+
+        return NovaToolResult(
+            ok=True,
+            result={"status": "success", "executed_cells": all_results, "total_executed": len(all_results)},
+        )
 
 
 class ApproveCellEditTool(BaseNovaTool):
@@ -1003,9 +1059,9 @@ class GetCellStateTool(BaseNovaTool):
             result={
                 "cell_index": index,
                 "cell_type": cell.get("cell_type", "code"),
-                "source": cell.get("source", ""),
-                "committed_source": cell.get("committed_source"),
-                "pending_source": cell.get("pending_source"),
+                "source": _join_source(cell.get("source", "")),
+                "committed_source": _join_source(cell.get("committed_source")) if cell.get("committed_source") is not None else None,
+                "pending_source": _join_source(cell.get("pending_source")) if cell.get("pending_source") is not None else None,
                 "cell_status": cell.get("cell_status", "clean"),
                 "output": cell.get("output", []),
             },

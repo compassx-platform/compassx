@@ -75,10 +75,8 @@ export default function DashboardsPage() {
     !search.trim() || dashboard.name.toLowerCase().includes(search.trim().toLowerCase())
   );
 
-  function openDashboardInCatalog(dashboard: DashboardRow) {
-    const catalog = dashboard.catalog_name || 'main';
-    const schema = dashboard.schema_name || 'default';
-    navigate(`/data-catalog/${encodeURIComponent(catalog)}/${encodeURIComponent(schema)}/dashboard/${encodeURIComponent(dashboard.name)}?dashboard_id=${encodeURIComponent(dashboard.id)}`);
+  function openDashboard(dashboard: DashboardRow) {
+    navigate(`/dashboards/${encodeURIComponent(dashboard.id)}`);
   }
 
   function generateDefaultDashboardName() {
@@ -141,7 +139,7 @@ export default function DashboardsPage() {
       setFormError(null);
       toast.success(`Created dashboard "${data.name}"`);
       const dashId = data.dashboard_id || data.id;
-      navigate(`/data-catalog/${encodeURIComponent(data.catalog_name)}/${encodeURIComponent(data.schema_name)}/dashboard/${encodeURIComponent(data.name)}?dashboard_id=${encodeURIComponent(dashId)}`);
+      navigate(`/dashboards/${encodeURIComponent(dashId)}`);
     },
     onError: (err: any) => {
       const msg = err?.response?.data?.detail || err?.message || 'Failed to create dashboard.';
@@ -204,7 +202,7 @@ export default function DashboardsPage() {
       render: (dashboard) => (
         <span
           style={{ display: 'inline-flex', alignItems: 'center', gap: 8, minWidth: 0, cursor: 'pointer' }}
-          onClick={() => openDashboardInCatalog(dashboard)}
+          onClick={() => openDashboard(dashboard)}
         >
           <LayoutDashboard size={14} color="var(--color-text-muted)" />
           <span style={{ fontWeight: 500 }}>{dashboard.name}</span>
@@ -232,11 +230,11 @@ export default function DashboardsPage() {
         <>
           <button
             className="ghost-icon-btn"
-            title="Open in Data Catalog"
+            title="Open Dashboard"
             aria-label={`Open ${dashboard.name}`}
             onClick={(event) => {
               event.stopPropagation();
-              openDashboardInCatalog(dashboard);
+              openDashboard(dashboard);
             }}
           >
             <Pencil size={13} />

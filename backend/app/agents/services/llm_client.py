@@ -20,6 +20,7 @@ The `chat_stream()` method yields either:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from typing import Any
@@ -130,7 +131,7 @@ async def chat_stream(
     finally:
         if agent_id is not None:
             try:
-                import asyncio
+                connection_id = getattr(conn, "id", None)
                 # Snapshot messages at the exact time of call to prevent subsequent loop mutations from polluting this log
                 snapshot_messages = [dict(m) for m in messages]
                 task = asyncio.create_task(

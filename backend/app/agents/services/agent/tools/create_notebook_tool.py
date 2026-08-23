@@ -25,7 +25,10 @@ class CreateNotebookTool(BaseTool):
     name = "Create Notebook"
     description = (
         "Create and register a new Jupyter notebook (.ipynb) inside a specific catalog and schema. "
-        "You can supply the executable Python code directly via the 'code' parameter or 'cells' list."
+        "You can supply the executable Python code directly via the 'code' parameter or 'cells' list. "
+        "The notebook runtime has 'import services.compassx_sql as cx' pre-imported. "
+        "To save DataFrames as Catalog tables (Iceberg or Postgres), use cx.write_table(df, 'catalog.schema.table', mode='overwrite'|'append') or df.write_table(...). "
+        "To query registered tables, use cx.sql('SELECT ...')."
     )
     is_async = False
 
@@ -34,11 +37,11 @@ class CreateNotebookTool(BaseTool):
         "properties": {
             "catalog_name": {
                 "type": "string",
-                "description": "Name of the catalog (e.g. 'main' or 'workspace').",
+                "description": "Name of the catalog (e.g. 'test_default', 'main', 'workspace').",
             },
             "schema_name": {
                 "type": "string",
-                "description": "Name of the schema within the catalog (e.g. 'sandbox' or 'default').",
+                "description": "Name of the schema within the catalog (e.g. 'default', 'dgr_synthetic').",
             },
             "notebook_name": {
                 "type": "string",
@@ -50,7 +53,10 @@ class CreateNotebookTool(BaseTool):
             },
             "code": {
                 "type": "string",
-                "description": "Executable Python code to populate the primary code cell in the notebook.",
+                "description": (
+                    "Executable Python code to populate the primary code cell in the notebook. "
+                    "Use cx.write_table(df, 'catalog.schema.table', mode='overwrite') or df.write_table(...) to register and persist DataFrames to Catalog tables."
+                ),
             },
             "cells": {
                 "type": "array",

@@ -102,17 +102,268 @@ def _normalize_chart_config(cfg: dict[str, Any] | None) -> dict[str, Any]:
     return normalized
 
 
-def _workspace_id_from_context(context: dict[str, Any]) -> str | None:
+def _workspace_id_from_context(context: dict[str, Any] | None) -> str | None:
+
+    if not isinstance(context, dict):
+        return None
     return context.get("workspace_id") or context.get("workspaceId")
 
 
-def _warehouse_id_from_context(context: dict[str, Any]) -> str | None:
+def _warehouse_id_from_context(context: dict[str, Any] | None) -> str | None:
+    if not isinstance(context, dict):
+        return None
     return context.get("warehouse_id") or context.get("warehouseId")
+
+
+VALID_WIDGET_TYPES = ["chart", "text", "filter", "html", "image"]
+
+
+VALID_CHART_TYPES = [
+    "bar", "line", "area", "pie", "counter", "table", "pivot",
+    "waterfall", "scatter", "funnel", "heatmap", "box", "bubble",
+    "combo", "sankey", "choropleth", "point_map", "cohort", "histogram"
+]
+
+WIDGET_SPECS_CATALOG: dict[str, dict[str, Any]] = {
+    "counter": {
+        "chartType": "counter",
+        "name": "Metric Card / Single Stat",
+        "description": "Displays a single primary KPI metric value with optional secondary comparison (target, previous period, or sparkline trend).",
+        "requiredFields": ["datasetId", "yFields (1 measure column)"],
+        "optionalFields": {
+            "title": "Widget title shown in header",
+            "comparisonField": "Secondary column to compare against",
+            "showSparkline": "boolean (renders mini trendline if date ordered rows available)",
+            "conditionalFormatting": "[{min: 90, max: 100, color: '#22c55e'}, {max: 89, color: '#ef4444'}]",
+            "numberFormat": "{type: 'number'|'currency'|'percent', abbreviation: 'compact'|'none', currencySymbol: '₹'|'$', decimals: 2}"
+        },
+        "example": {
+            "widget_type": "chart",
+            "title": "Total Generation MWh",
+            "chart_config": {
+                "chartType": "counter",
+                "datasetId": "DATASET_UUID",
+                "yFields": ["total_generation_mwh"],
+                "numberFormat": {"type": "number", "abbreviation": "compact", "decimals": 2}
+            }
+        }
+    },
+    "bar": {
+        "chartType": "bar",
+        "name": "Bar / Column Chart",
+        "description": "Vertical or horizontal bars comparing discrete categories across one or more numeric metrics.",
+        "requiredFields": ["datasetId", "xField (dimension)", "yFields (array of measure columns)"],
+        "optionalFields": {
+            "colorField": "Dimension column for grouped / multi-color series",
+            "layout": "'group' (default side-by-side) | 'stack' (stacked bars) | '100stack' (percentage stack)",
+            "facetField": "Dimension column to split into grid sub-charts",
+            "showValueLabels": "boolean (display exact numbers on top of bars)",
+            "showGridlines": "boolean"
+        },
+        "example": {
+            "widget_type": "chart",
+            "title": "Capacity by Site (AC vs DC MW)",
+            "chart_config": {
+                "chartType": "bar",
+                "datasetId": "DATASET_UUID",
+                "xField": "site",
+                "yFields": ["ac_capacity_mw", "dc_capacity_mwp"],
+                "layout": "group",
+                "showValueLabels": True,
+                "showGridlines": True
+            }
+        }
+    },
+    "line": {
+        "chartType": "line",
+        "name": "Time-Series Trend Line Chart",
+        "description": "Continuous multi-line or single-line trend charts across dates, timestamps, or sequential values.",
+        "requiredFields": ["datasetId", "xField (date/time/sequence)", "yFields (array of measures)"],
+        "optionalFields": {
+            "colorField": "Dimension to produce one line per category",
+            "lineThickness": "integer (1 to 5)",
+            "showGridlines": "boolean",
+            "annotations": "[{axis: 'y', value: 100.0, label: 'Target Line', color: '#ef4444'}]",
+            "aiForecast": "boolean"
+        },
+        "example": {
+            "widget_type": "chart",
+            "title": "Daily Actual vs Budget Energy",
+            "chart_config": {
+                "chartType": "line",
+                "datasetId": "DATASET_UUID",
+                "xField": "report_date",
+                "yFields": ["me_mwh", "be_mwh"],
+                "showGridlines": True
+            }
+        }
+    },
+    "table": {
+        "chartType": "table",
+        "name": "Interactive Data Table",
+        "description": "Tabular grid showing all or selected dataset columns with search, sorting, and pagination.",
+        "requiredFields": ["datasetId"],
+        "optionalFields": {
+            "pageSize": "integer (default 10 or 25)",
+            "showSearch": "boolean (default True)",
+            "wrapText": "boolean",
+            "showRowNumbers": "boolean"
+        },
+        "example": {
+            "widget_type": "chart",
+            "title": "Site Operations Master Log",
+            "chart_config": {
+                "chartType": "table",
+                "datasetId": "DATASET_UUID",
+                "pageSize": 25,
+                "showSearch": True
+            }
+        }
+    },
+    "pie": {
+        "chartType": "pie",
+        "name": "Pie / Donut Breakdown Chart",
+        "description": "Circular slice breakdown showing proportional contribution of categories to a total.",
+        "requiredFields": ["datasetId", "xField (slice category)", "yFields (1 slice measure)"],
+        "optionalFields": {
+            "showValueLabels": "boolean (show percentage / values on slices)"
+        },
+        "example": {
+            "widget_type": "chart",
+            "title": "Revenue Loss by Equipment Type",
+            "chart_config": {
+                "chartType": "pie",
+                "datasetId": "DATASET_UUID",
+                "xField": "equipment_type",
+                "yFields": ["revenue_loss_mn"],
+                "showValueLabels": True
+            }
+        }
+    },
+    "combo": {
+        "chartType": "combo",
+        "name": "Dual-Axis Combo Chart (Bar + Line)",
+        "description": "Combines bars on primary left Y-axis with lines on secondary right Y2-axis for comparing measures on different scales.",
+        "requiredFields": ["datasetId", "xField", "yFields (primary left axis measures)", "y2Fields (secondary right axis measures)"],
+        "optionalFields": {
+            "showGridlines": "boolean",
+            "showValueLabels": "boolean"
+        },
+        "example": {
+            "widget_type": "chart",
+            "title": "Energy Generation (MWh) vs Availability (%)",
+            "chart_config": {
+                "chartType": "combo",
+                "datasetId": "DATASET_UUID",
+                "xField": "report_date",
+                "yFields": ["actual_energy_mwh"],
+                "y2Fields": ["plant_availability_pct"],
+                "showGridlines": True
+            }
+        }
+    },
+    "waterfall": {
+        "chartType": "waterfall",
+        "name": "Waterfall Variance Chart",
+        "description": "Sequential bar chart showing cumulative positive and negative steps from initial baseline to final total.",
+        "requiredFields": ["datasetId", "xField (step category)", "yFields (step variance delta)"],
+        "optionalFields": {
+            "showValueLabels": "boolean"
+        },
+        "example": {
+            "widget_type": "chart",
+            "title": "Energy Generation Loss Waterfall (MWh)",
+            "chart_config": {
+                "chartType": "waterfall",
+                "datasetId": "DATASET_UUID",
+                "xField": "loss_component",
+                "yFields": ["variance_mwh"]
+            }
+        }
+    },
+    "pivot": {
+        "chartType": "pivot",
+        "name": "Multi-Dimensional Pivot Matrix",
+        "description": "Aggregated pivot matrix grouping rows and columns across hierarchical dimensions.",
+        "requiredFields": ["datasetId", "xField (columns)", "yFields (values)"],
+        "optionalFields": {
+            "facetField": "Row grouping dimension"
+        },
+        "example": {
+            "widget_type": "chart",
+            "title": "Monthly Cleaning Matrix by Site",
+            "chart_config": {
+                "chartType": "pivot",
+                "datasetId": "DATASET_UUID",
+                "xField": "cleaning_status",
+                "yFields": ["cleaned_modules_count"],
+                "facetField": "site"
+            }
+        }
+    }
+}
+
+
+# ── Describe Widget ────────────────────────────────────────────────────────────
+
+class DescribeWidgetTool(BaseNovaTool):
+    key = "describe_widget"
+    description = (
+        "Inspect required fields, optional configurations, and copy-pasteable JSON examples "
+        "for any chart widget type (counter, bar, line, table, pie, combo, waterfall, pivot, etc.). "
+        "Call this tool to get exact parameter definitions before adding widgets."
+    )
+    input_schema = {
+        "type": "object",
+        "properties": {
+            "chart_type": {
+                "type": "string",
+                "enum": VALID_CHART_TYPES,
+                "description": "Specific chart type to inspect (e.g. 'counter', 'bar', 'line', 'table', 'pie', 'combo', 'waterfall', 'pivot'). If omitted, returns list of all supported chart types.",
+            },
+        },
+    }
+
+    def execute(self, arguments: dict[str, Any], context: dict[str, Any]) -> NovaToolResult:
+        chart_type = (arguments.get("chart_type") or "").strip().lower()
+        if not chart_type:
+            return NovaToolResult(
+                ok=True,
+                result={
+                    "supportedChartTypes": VALID_CHART_TYPES,
+                    "supportedWidgetTypes": VALID_WIDGET_TYPES,
+                    "message": "Pass chart_type (e.g. 'counter', 'bar', 'line', 'table', 'combo', 'waterfall') to inspect its full schema and example.",
+                },
+            )
+
+        spec = WIDGET_SPECS_CATALOG.get(chart_type)
+        if spec:
+            return NovaToolResult(ok=True, result=spec)
+
+        return NovaToolResult(
+            ok=True,
+            result={
+                "chartType": chart_type,
+                "requiredFields": ["datasetId", "xField", "yFields"],
+                "optionalFields": {"colorField": "string", "showGridlines": "boolean", "showValueLabels": "boolean"},
+                "example": {
+                    "widget_type": "chart",
+                    "title": f"Sample {chart_type.title()} Chart",
+                    "chart_config": {
+                        "chartType": chart_type,
+                        "datasetId": "DATASET_UUID",
+                        "xField": "dimension_column",
+                        "yFields": ["measure_column"]
+                    }
+                }
+            },
+        )
 
 
 # ── List Dashboards ────────────────────────────────────────────────────────────
 
 class ListDashboardsTool(BaseNovaTool):
+
     key = "list_dashboards"
     description = (
         "List all dashboards accessible in this workspace. "
@@ -289,11 +540,10 @@ class CreateDashboardTool(BaseNovaTool):
             db.add(d)
             db.flush()
 
-            if workspace_id:
-                try:
-                    _register_in_catalog(db, workspace_id, dash_id, name, actor)
-                except Exception as catalog_exc:
-                    logger.warning("Failed to register dashboard in catalog: %s", catalog_exc)
+            try:
+                _register_in_catalog(db, workspace_id, dash_id, name, actor)
+            except Exception as catalog_exc:
+                logger.warning("Failed to register dashboard in catalog: %s", catalog_exc)
 
             db.commit()
             db.refresh(d)
@@ -315,24 +565,38 @@ class CreateDashboardTool(BaseNovaTool):
             db.close()
 
 
-def _register_in_catalog(db, workspace_id: str, dashboard_id: str, name: str, actor: str | None) -> None:
+def _register_in_catalog(db, workspace_id: str | None, dashboard_id: str, name: str, actor: str | None) -> None:
     """Register a dashboard in the default catalog — mirrors dashboard_routes._register_dashboard_in_default_catalog."""
     from app.catalog.models import (
         UnifiedCatalog, UnifiedCatalogSchema, UnifiedCatalogDashboard, CatalogWorkspaceBinding,
     )
 
-    binding = (
-        db.query(CatalogWorkspaceBinding)
-        .filter(CatalogWorkspaceBinding.workspace_id == workspace_id)
-        .order_by(CatalogWorkspaceBinding.is_default.desc())
-        .first()
-    )
-
     catalog = None
-    if binding:
-        catalog = db.query(UnifiedCatalog).filter(UnifiedCatalog.id == binding.catalog_id).first()
+    if workspace_id:
+        binding = (
+            db.query(CatalogWorkspaceBinding)
+            .filter(CatalogWorkspaceBinding.workspace_id == workspace_id)
+            .order_by(CatalogWorkspaceBinding.is_default.desc())
+            .first()
+        )
+        if binding:
+            catalog = db.query(UnifiedCatalog).filter(UnifiedCatalog.id == binding.catalog_id).first()
+
+    if not catalog:
+        default_binding = (
+            db.query(CatalogWorkspaceBinding)
+            .filter(CatalogWorkspaceBinding.is_default == True)
+            .first()
+        )
+        if default_binding:
+            catalog = db.query(UnifiedCatalog).filter(UnifiedCatalog.id == default_binding.catalog_id).first()
+
     if not catalog:
         catalog = db.query(UnifiedCatalog).filter(UnifiedCatalog.all_workspaces == True).first()
+
+    if not catalog:
+        catalog = db.query(UnifiedCatalog).order_by(UnifiedCatalog.created_at.asc()).first()
+
     if not catalog:
         return
 
@@ -346,18 +610,29 @@ def _register_in_catalog(db, workspace_id: str, dashboard_id: str, name: str, ac
         db.add(schema)
         db.flush()
 
-    catalog_dashboard = UnifiedCatalogDashboard(
-        schema_id=schema.id,
-        catalog_name=catalog.name,
-        schema_name=schema.name,
-        name=name,
-        dashboard_id=dashboard_id,
-        owner=actor,
-        created_by=actor or "system",
-        updated_by=actor or "system",
+    existing_cd = (
+        db.query(UnifiedCatalogDashboard)
+        .filter(UnifiedCatalogDashboard.dashboard_id == dashboard_id)
+        .first()
     )
-    db.add(catalog_dashboard)
-    db.flush()
+    if not existing_cd:
+        catalog_dashboard = UnifiedCatalogDashboard(
+            schema_id=schema.id,
+            catalog_name=catalog.name,
+            schema_name=schema.name,
+            name=name,
+            dashboard_id=dashboard_id,
+            owner=actor,
+            created_by=actor or "system",
+            updated_by=actor or "system",
+        )
+        db.add(catalog_dashboard)
+        db.flush()
+    else:
+        existing_cd.name = name
+        existing_cd.updated_by = actor or "system"
+        db.flush()
+
 
 
 # ── Update Dashboard ───────────────────────────────────────────────────────────
@@ -403,8 +678,44 @@ class UpdateDashboardTool(BaseNovaTool):
                 d.permission_mode = str(arguments["permission_mode"])
             if "settings" in arguments and isinstance(arguments["settings"], dict):
                 existing = d.settings or {}
-                d.settings = {**existing, **arguments["settings"]}
-                flag_modified(d, "settings")
+            if "pages" in arguments and isinstance(arguments["pages"], list):
+                new_pages = []
+                existing_pages_by_id = {p.get("id"): p for p in (d.pages or []) if isinstance(p, dict)}
+                existing_pages_by_name = {p.get("name"): p for p in (d.pages or []) if isinstance(p, dict)}
+                for idx, p in enumerate(arguments["pages"]):
+                    if isinstance(p, str):
+                        existing_match = existing_pages_by_name.get(p)
+                        p_id = existing_match.get("id") if existing_match else str(uuid.uuid4())
+                        existing_layout = existing_match.get("layout", []) if existing_match else []
+                        new_pages.append({
+                            "id": p_id,
+                            "dashboardId": d.id,
+                            "name": p,
+                            "order": idx,
+                            "layout": existing_layout,
+                        })
+                    elif isinstance(p, dict):
+                        p_name = p.get("name") or f"Page {idx + 1}"
+                        existing_match = (
+                            existing_pages_by_id.get(p.get("id"))
+                            or existing_pages_by_name.get(p_name)
+                        )
+                        p_id = p.get("id") or (existing_match.get("id") if existing_match else str(uuid.uuid4()))
+                        existing_layout = (
+                            p.get("layout")
+                            or (existing_match.get("layout", []) if existing_match else [])
+                        )
+                        new_pages.append({
+                            "id": p_id,
+                            "dashboardId": d.id,
+                            "name": p_name,
+                            "order": int(p.get("order", idx)),
+                            "layout": existing_layout,
+                        })
+                if new_pages:
+                    d.pages = new_pages
+                    flag_modified(d, "pages")
+
 
             db.commit()
             db.refresh(d)
@@ -412,6 +723,7 @@ class UpdateDashboardTool(BaseNovaTool):
                 "id": d.id,
                 "name": d.name,
                 "isDraft": d.is_draft,
+                "pages": d.pages,
                 "settings": d.settings,
                 "message": "Dashboard updated successfully.",
             })
@@ -423,14 +735,58 @@ class UpdateDashboardTool(BaseNovaTool):
             db.close()
 
 
+def _validate_sql_query(sql: str, context: dict[str, Any] | None = None) -> tuple[bool, list[str], str | None]:
+
+    workspace_id = _workspace_id_from_context(context)
+    warehouse_id = _warehouse_id_from_context(context)
+
+    first_token = sql.lstrip().split()[0].upper() if sql.strip() else ""
+    if first_token not in {"SELECT", "WITH", "SHOW", "DESCRIBE", "EXPLAIN"}:
+        return False, [], "Only SELECT/WITH/SHOW/DESCRIBE/EXPLAIN queries are permitted."
+
+    dry_run_sql = f"SELECT * FROM ({sql}) _dry_run_q LIMIT 0"
+    system_db = _get_system_db()
+    try:
+        from app.sql_warehouse.warehouse.manager import get_warehouse_by_id, list_warehouses
+        from app.sql_warehouse.query.executor import QueryExecutor
+
+        if warehouse_id:
+            wh = get_warehouse_by_id(system_db, warehouse_id)
+            warehouse = wh
+        else:
+            warehouses = list_warehouses(system_db, workspace_id=workspace_id)
+            running = [w for w in warehouses if getattr(w, "status", None) and str(w.status).lower() == "running"]
+            warehouse = running[0] if running else (warehouses[0] if warehouses else None)
+
+        if not warehouse:
+            return True, [], None
+
+        executor = QueryExecutor(system_db)
+        result = _run_async(
+            executor.run(
+                warehouse=warehouse,
+                sql=dry_run_sql,
+                user_id="agent",
+                session_id=None,
+                max_rows=1,
+            )
+        )
+        return True, result.get("columns", []), None
+    except Exception as exc:
+        err_msg = str(exc)
+        return False, [], f"SQL ValidationError: {err_msg}"
+    finally:
+        system_db.close()
+
+
 # ── Add Dataset ────────────────────────────────────────────────────────────────
 
 class AddDatasetTool(BaseNovaTool):
+
     key = "add_dataset"
     description = (
-        "Add a SQL dataset to a dashboard. The SQL should be a valid SELECT query. "
-        "Use run_query first to validate the SQL and preview the columns before adding. "
-        "Returns the new dataset id which you need when adding widgets."
+        "Add a new named SQL dataset to a dashboard. "
+        "The SQL query is executed through the SQL warehouse and its columns are bound to chart widgets."
     )
     input_schema = {
         "type": "object",
@@ -470,6 +826,11 @@ class AddDatasetTool(BaseNovaTool):
         if not name:
             return NovaToolResult(ok=False, error="name must not be empty")
 
+        # Validate SQL against warehouse before persisting
+        is_valid, cols, err = _validate_sql_query(sql, context)
+        if not is_valid:
+            return NovaToolResult(ok=False, error=err)
+
         db = _get_account_db()
         try:
             d = db.query(Dashboard).filter(Dashboard.id == dashboard_id).first()
@@ -483,7 +844,7 @@ class AddDatasetTool(BaseNovaTool):
                 "name": name,
                 "sql": sql,
                 "params": params if isinstance(params, list) else [],
-                "schema": [],
+                "schema": [{"name": col, "type": "unknown"} for col in cols],
             }
 
             datasets = copy.deepcopy(d.datasets or [])
@@ -496,7 +857,8 @@ class AddDatasetTool(BaseNovaTool):
             return NovaToolResult(ok=True, result={
                 "datasetId": dataset_id,
                 "name": name,
-                "message": f"Dataset '{name}' added to dashboard. Use add_widget to wire it to a chart.",
+                "columns": cols,
+                "message": f"Dataset '{name}' added to dashboard. Verified columns: {cols}. Use add_widget to wire it to a chart.",
             })
         except Exception as exc:
             db.rollback()
@@ -542,11 +904,17 @@ class UpdateDatasetTool(BaseNovaTool):
             if target is None:
                 return NovaToolResult(ok=False, error=f"Dataset '{dataset_id}' not found in dashboard")
 
+            cols = []
+            if "sql" in arguments and arguments["sql"]:
+                new_sql = str(arguments["sql"]).strip()
+                is_valid, cols, err = _validate_sql_query(new_sql, context)
+                if not is_valid:
+                    return NovaToolResult(ok=False, error=err)
+                target["sql"] = new_sql
+                target["schema"] = [{"name": col, "type": "unknown"} for col in cols]
+
             if "name" in arguments and arguments["name"]:
                 target["name"] = str(arguments["name"]).strip()
-            if "sql" in arguments and arguments["sql"]:
-                target["sql"] = str(arguments["sql"]).strip()
-                target["schema"] = []  # reset schema cache when SQL changes
 
             d.datasets = datasets
             flag_modified(d, "datasets")
@@ -570,8 +938,9 @@ class AddWidgetTool(BaseNovaTool):
     key = "add_widget"
     description = (
         "Add a chart, text, or filter widget to a dashboard page. "
-        "For chart widgets, specify chartConfig with chartType, datasetId, xField, and yFields. "
-        "The gridItem controls size/position on the page grid (12-column layout, rows ≈ 150px each)."
+        "For chart widgets, widget_type MUST be 'chart', and chart_config MUST specify chartType (e.g. 'counter', 'bar', 'line', 'table', 'pie', 'combo', 'waterfall') and a valid datasetId. "
+        "Use describe_widget to inspect the exact schema and examples for any chart type. "
+        "The gridItem controls size/position on the 12-column grid (x: 0-11, y: row, w: cols 1-12, h: rows 1-12)."
     )
     input_schema = {
         "type": "object",
@@ -581,16 +950,30 @@ class AddWidgetTool(BaseNovaTool):
             "widget_type": {
                 "type": "string",
                 "enum": ["chart", "text", "filter", "html", "image"],
-                "description": "Type of widget to add.",
+                "description": "Type of widget to add. MUST be 'chart' for any data visualization (metric cards, bar charts, trend lines, tables, pie charts, waterfalls).",
             },
             "title": {"type": "string", "description": "Optional widget title shown in the header."},
             "chart_config": {
                 "type": "object",
                 "description": (
-                    "Chart configuration (required for widget_type=chart). "
-                    "Properties: chartType (bar|line|area|pie|scatter|table|counter|histogram|heatmap|...), "
-                    "datasetId, xField, yFields (array), colorField, sizeField, layout (stack|group|100stack)."
+                    "Chart configuration (REQUIRED when widget_type='chart'). "
+                    "Fields: chartType (one of: bar, line, area, pie, counter, table, pivot, waterfall, scatter, funnel, heatmap, combo), "
+                    "datasetId (REQUIRED, must be an existing dataset on the dashboard), "
+                    "xField (dimension column), yFields (array of measure columns), y2Fields (secondary Y axis for combo), "
+                    "colorField, showGridlines, showValueLabels, numberFormat, annotations."
                 ),
+                "properties": {
+                    "chartType": {"type": "string", "enum": VALID_CHART_TYPES},
+                    "datasetId": {"type": "string", "description": "UUID of the dataset bound to this chart."},
+                    "xField": {"type": "string", "description": "Dimension column name for X axis or category breakdown."},
+                    "yFields": {"type": "array", "items": {"type": "string"}, "description": "List of measure column names for Y axis."},
+                    "y2Fields": {"type": "array", "items": {"type": "string"}, "description": "Secondary Y-axis measure columns (for combo charts)."},
+                    "colorField": {"type": "string", "description": "Dimension column to split series by color."},
+                    "showGridlines": {"type": "boolean"},
+                    "showValueLabels": {"type": "boolean"},
+                    "layout": {"type": "string", "enum": ["group", "stack", "100stack"]},
+                },
+                "required": ["chartType", "datasetId"],
                 "additionalProperties": True,
             },
             "content": {
@@ -617,9 +1000,20 @@ class AddWidgetTool(BaseNovaTool):
     def execute(self, arguments: dict[str, Any], context: dict[str, Any]) -> NovaToolResult:
         from app.models.dashboard import Dashboard
 
-        dashboard_id = str(arguments["dashboard_id"])
-        page_id = str(arguments["page_id"])
-        widget_type = str(arguments["widget_type"])
+        dashboard_id = str(arguments.get("dashboard_id") or "")
+        page_id = str(arguments.get("page_id") or "")
+        widget_type = str(arguments.get("widget_type") or "").strip().lower()
+
+        if widget_type not in VALID_WIDGET_TYPES:
+            return NovaToolResult(
+                ok=False,
+                error=(
+                    f"ValidationError: Invalid widget_type '{widget_type}'. "
+                    f"Must be one of: {VALID_WIDGET_TYPES}. "
+                    "To add charts, bar graphs, trend lines, tables, or metric KPI cards, "
+                    "use widget_type='chart' with chart_config.chartType ('bar'|'line'|'counter'|'table'|'pie'|'combo'|...)."
+                ),
+            )
 
         db = _get_account_db()
         try:
@@ -630,15 +1024,57 @@ class AddWidgetTool(BaseNovaTool):
             pages = d.pages or []
             page = next((p for p in pages if p.get("id") == page_id), None)
             if page is None:
-                return NovaToolResult(ok=False, error=f"Page '{page_id}' not found in dashboard")
+                avail_pages = [{"id": p.get("id"), "name": p.get("name")} for p in pages]
+                return NovaToolResult(
+                    ok=False,
+                    error=f"ValidationError: Page '{page_id}' not found in dashboard. Available pages: {avail_pages}",
+                )
+
+            chart_config = None
+            if widget_type == "chart":
+                raw_cfg = arguments.get("chart_config")
+                if not isinstance(raw_cfg, dict):
+                    return NovaToolResult(
+                        ok=False,
+                        error="ValidationError: 'chart_config' object is required when widget_type='chart'. Must specify chartType and datasetId. Use describe_widget for examples.",
+                    )
+                chart_config = _normalize_chart_config(raw_cfg)
+                chart_type = str(chart_config.get("chartType") or "").strip().lower()
+                if not chart_type or chart_type not in VALID_CHART_TYPES:
+                    return NovaToolResult(
+                        ok=False,
+                        error=f"ValidationError: Invalid or missing chartType in chart_config ('{chart_type}'). Must be one of: {VALID_CHART_TYPES}.",
+                    )
+                chart_config["chartType"] = chart_type
+
+                dataset_id = chart_config.get("datasetId")
+                if not dataset_id:
+                    avail_ds = [{"id": ds.get("id"), "name": ds.get("name")} for ds in (d.datasets or [])]
+                    return NovaToolResult(
+                        ok=False,
+                        error=f"ValidationError: 'datasetId' is required in chart_config. Available datasets on this dashboard: {avail_ds}.",
+                    )
+
+                valid_ds_ids = {ds.get("id") for ds in (d.datasets or [])}
+                if dataset_id not in valid_ds_ids:
+                    avail_ds = [{"id": ds.get("id"), "name": ds.get("name")} for ds in (d.datasets or [])]
+                    return NovaToolResult(
+                        ok=False,
+                        error=f"ValidationError: datasetId '{dataset_id}' does not exist on this dashboard. Available datasets: {avail_ds}.",
+                    )
 
             widget_id = str(uuid.uuid4())
 
             # Build grid item — auto-stack below existing widgets if no position given
             raw_grid = arguments.get("grid_item") or {}
-            existing_widgets_on_page = [w for w in (d.widgets or []) if w.get("pageId") == page_id]
-            max_y = max((w.get("gridItem", {}).get("y", 0) + w.get("gridItem", {}).get("h", 4)
-                         for w in existing_widgets_on_page), default=0)
+            existing_widgets_on_page = [w for w in (d.widgets or []) if isinstance(w, dict) and w.get("pageId") == page_id]
+            max_y = max(
+                (
+                    (w.get("gridItem") or {}).get("y", 0) + (w.get("gridItem") or {}).get("h", 4)
+                    for w in existing_widgets_on_page
+                ),
+                default=0,
+            )
             grid_item = {
                 "i": widget_id,
                 "x": int(raw_grid.get("x", 0)),
@@ -646,6 +1082,7 @@ class AddWidgetTool(BaseNovaTool):
                 "w": int(raw_grid.get("w", 6)),
                 "h": int(raw_grid.get("h", 4)),
             }
+
 
             new_widget: dict[str, Any] = {
                 "id": widget_id,
@@ -657,8 +1094,8 @@ class AddWidgetTool(BaseNovaTool):
             if arguments.get("title"):
                 new_widget["title"] = str(arguments["title"])
 
-            if widget_type == "chart" and isinstance(arguments.get("chart_config"), dict):
-                new_widget["chartConfig"] = _normalize_chart_config(arguments["chart_config"])
+            if chart_config is not None:
+                new_widget["chartConfig"] = chart_config
 
             if widget_type in {"text", "html", "image"} and arguments.get("content"):
                 new_widget["content"] = str(arguments["content"])
@@ -679,13 +1116,16 @@ class AddWidgetTool(BaseNovaTool):
                 flag_modified(d, "pages")
 
             db.commit()
-            return NovaToolResult(ok=True, result={
-                "widgetId": widget_id,
-                "widgetType": widget_type,
-                "gridItem": grid_item,
-                "chartConfig": new_widget.get("chartConfig"),
-                "message": f"Widget '{widget_type}' added to page. Use update_widget to refine chart config.",
-            })
+            return NovaToolResult(
+                ok=True,
+                result={
+                    "widgetId": widget_id,
+                    "widgetType": widget_type,
+                    "gridItem": grid_item,
+                    "chartConfig": new_widget.get("chartConfig"),
+                    "message": f"Widget '{widget_type}' (chartType: {chart_config.get('chartType') if chart_config else None}) added to page successfully.",
+                },
+            )
         except Exception as exc:
             db.rollback()
             logger.exception("add_widget failed")
@@ -751,7 +1191,21 @@ class UpdateWidgetTool(BaseNovaTool):
             if isinstance(arguments.get("chart_config"), dict):
                 existing_cfg = _normalize_chart_config(target.get("chartConfig") or {})
                 patch_cfg = _normalize_chart_config(arguments["chart_config"])
-                target["chartConfig"] = {**existing_cfg, **patch_cfg}
+                merged_cfg = {**existing_cfg, **patch_cfg}
+                if "datasetId" in merged_cfg:
+                    valid_ds_ids = {ds.get("id") for ds in (d.datasets or [])}
+                    if merged_cfg["datasetId"] not in valid_ds_ids:
+                        avail_ds = [{"id": ds.get("id"), "name": ds.get("name")} for ds in (d.datasets or [])]
+                        return NovaToolResult(
+                            ok=False,
+                            error=f"ValidationError: datasetId '{merged_cfg['datasetId']}' does not exist on dashboard. Available: {avail_ds}",
+                        )
+                if "chartType" in merged_cfg and merged_cfg["chartType"] not in VALID_CHART_TYPES:
+                    return NovaToolResult(
+                        ok=False,
+                        error=f"ValidationError: Invalid chartType '{merged_cfg['chartType']}'. Must be one of: {VALID_CHART_TYPES}",
+                    )
+                target["chartConfig"] = merged_cfg
             if isinstance(arguments.get("grid_item"), dict):
                 existing_grid = target.get("gridItem") or {}
                 target["gridItem"] = {**existing_grid, **arguments["grid_item"], "i": widget_id}
@@ -820,17 +1274,18 @@ class RunQueryTool(BaseNovaTool):
             from app.sql_warehouse.query.executor import QueryExecutor
 
             if warehouse_id:
-                warehouse = get_warehouse_by_id(system_db, warehouse_id, workspace_id=workspace_id)
-                if warehouse is None:
+                wh = get_warehouse_by_id(system_db, warehouse_id)
+                if not wh:
                     return NovaToolResult(ok=False, error=f"Warehouse '{warehouse_id}' not found")
+                warehouse = wh
             else:
                 warehouses = list_warehouses(system_db, workspace_id=workspace_id)
-                warehouse = next((w for w in warehouses if w.status == "running"), None)
-                if warehouse is None:
-                    return NovaToolResult(
-                        ok=False,
-                        error="No running SQL warehouse available. Start a warehouse first.",
-                    )
+                running = [w for w in warehouses if getattr(w, "status", None) and str(w.status).lower() == "running"]
+                if not running and warehouses:
+                    running = warehouses
+                if not running:
+                    return NovaToolResult(ok=False, error="No active SQL warehouse found in workspace.")
+                warehouse = running[0]
 
             executor = QueryExecutor(system_db)
             result = _run_async(
@@ -877,6 +1332,8 @@ class PublishDashboardTool(BaseNovaTool):
         from app.models.dashboard import Dashboard
 
         dashboard_id = str(arguments["dashboard_id"])
+        workspace_id = _workspace_id_from_context(context)
+        actor = context.get("user") or context.get("principal_id") or "agent"
         db = _get_account_db()
         try:
             d = db.query(Dashboard).filter(Dashboard.id == dashboard_id).first()
@@ -885,8 +1342,14 @@ class PublishDashboardTool(BaseNovaTool):
 
             d.is_draft = False
             d.published_at = datetime.now(timezone.utc)
+            try:
+                _register_in_catalog(db, workspace_id, d.id, d.name, actor)
+            except Exception as catalog_exc:
+                logger.warning("Failed to sync dashboard in catalog on publish: %s", catalog_exc)
+
             db.commit()
             db.refresh(d)
+
 
             return NovaToolResult(ok=True, result={
                 "id": d.id,
@@ -908,6 +1371,7 @@ class PublishDashboardTool(BaseNovaTool):
 DASHBOARD_NOVA_TOOLS: list[BaseNovaTool] = [
     ListDashboardsTool(),
     GetDashboardTool(),
+    DescribeWidgetTool(),
     CreateDashboardTool(),
     UpdateDashboardTool(),
     AddDatasetTool(),
@@ -917,3 +1381,4 @@ DASHBOARD_NOVA_TOOLS: list[BaseNovaTool] = [
     RunQueryTool(),
     PublishDashboardTool(),
 ]
+

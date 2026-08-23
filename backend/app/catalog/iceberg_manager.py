@@ -165,3 +165,77 @@ class IcebergManager:
             reverse=True,
         )
         return metadata_files[0].file_path
+
+    async def append_data_file(
+        self,
+        table_path: str,
+        data_file_name: str,
+        records_count: int,
+        properties: dict | None = None,
+    ) -> str:
+        """
+        Append a new data file commit to an existing Iceberg table metadata.
+        Generates the next metadata version (v{N+1}.metadata.json), records snapshot,
+        and updates version-hint.text.
+        """
+        latest_meta_rel = await self.get_metadata_location(table_path)
+        raw_meta = await self.storage.read_bytes(latest_meta_rel)
+        meta = json.loads(raw_meta.decode())
+
+        # Determine current and next version numbers
+        curr_ver_str = latest_meta_rel.split("/")[-1].split(".")[0].lstrip("v")
+        try:
+            curr_ver = int(curr_ver_str)
+        except ValueError:
+            curr_ver = 1
+        next_ver = curr_ver + 1
+
+        now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+        snapshot_id = int(datetime.now(timezone.utc).timestamp() * 1000)
+
+        data_file_rel = f"{table_path.rstrip('/')}/data/{data_file_name}"
+
+        # Create new snapshot entry
+        new_snapshot = {
+            "snapshot-id": snapshot_id,
+            "parent-snapshot-id": meta.get("current-snapshot-id", -1) if meta.get("current-snapshot-id", -1) != -1 else None,
+            "timestamp-ms": now_ms,
+            "summary": {
+                "operation": "append",
+                "added-data-files": "1",
+                "added-records": str(records_count),
+                "added-files-size": "0",
+                **(properties or {}),
+            },
+            "manifest-list": data_file_rel,
+            "schema-id": meta.get("current-schema-id", 0),
+        }
+
+        snapshots = meta.get("snapshots", [])
+        snapshots.append(new_snapshot)
+        meta["snapshots"] = snapshots
+        meta["current-snapshot-id"] = snapshot_id
+        meta["last-updated-ms"] = now_ms
+
+        snapshot_log = meta.get("snapshot-log", [])
+        snapshot_log.append({"timestamp-ms": now_ms, "snapshot-id": snapshot_id})
+        meta["snapshot-log"] = snapshot_log
+
+        metadata_log = meta.get("metadata-log", [])
+        metadata_log.append({"timestamp-ms": now_ms, "metadata-file": latest_meta_rel})
+        meta["metadata-log"] = metadata_log
+
+        next_meta_path = f"{table_path.rstrip('/')}/metadata/v{next_ver}.metadata.json"
+        await self.storage.write_bytes(
+            path=next_meta_path,
+            data=json.dumps(meta, indent=2).encode(),
+            content_type="application/json",
+        )
+        await self.storage.write_bytes(
+            path=f"{table_path.rstrip('/')}/metadata/version-hint.text",
+            data=str(next_ver).encode(),
+            content_type="text/plain",
+        )
+        logger.info("Iceberg table updated at %s (v%d snapshot %d)", table_path, next_ver, snapshot_id)
+        return next_meta_path
+

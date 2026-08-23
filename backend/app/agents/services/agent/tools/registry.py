@@ -92,6 +92,7 @@ class ToolRegistry:
         from app.agents.services.agent.tools.platform.asset_manager import AssetManagerTool
         from app.agents.services.agent.tools.platform.notebooks import NotebookManagerTool
         from app.agents.services.agent.tools.platform.dashboards import DashboardManagerTool
+        from app.agents.services.agent.tools.platform.sql_warehouse import SqlWarehouseTool
         from app.agents.services.agent.tools.list_available_skills_tool import ListAvailableSkillsTool
         from app.agents.services.agent.tools.read_skill_tool import ReadSkillTool
         from app.agents.services.agent.tools.profiling_tools import (
@@ -120,6 +121,7 @@ class ToolRegistry:
 
         core_tool_classes = [
             SqlQueryTool,
+            SqlWarehouseTool,
             PythonCodeTool,
             VisualizationTool,
             RagSearchTool,

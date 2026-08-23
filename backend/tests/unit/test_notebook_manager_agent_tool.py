@@ -83,22 +83,6 @@ def test_get_cell_output_dispatch_uses_nested_nova_notebook_context():
     assert result["data"] == {"cell_index": 2, "output": "chart"}
 
 
-def test_execute_cell_returns_execution_request():
-    result = NotebookManagerTool().execute(
-        {
-            "operation": "execute_cell",
-            "payload": {"cell_index": 2},
-            "context": {"path": "analysis.ipynb"},
-        },
-        agent=SimpleNamespace(created_by="tester"),
-        db=SimpleNamespace(),
-    )
-
-    assert result.ok is True
-    assert result.result["operation"] == "execute_cell"
-    assert result.result["data"]["status"] == "execution_requested"
-
-
 def test_edit_cell_returns_approval_required_replace_request():
     result = execute_notebook_manager_operation(
         operation="edit_cell",

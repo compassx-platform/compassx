@@ -471,7 +471,7 @@ async def orchestrate_stream(
             f"   a. Call get_next_step(plan_id='{active_plan.plan_id}') to get the next pending step.\n"
             f"   b. If get_next_step indicates blocked=True or completed=True, STOP immediately.\n"
             f"   c. Call mark_step(..., step_id=<id>, status='in_progress').\n"
-            f"   d. Perform the ACTUAL work for that step. When creating notebooks or assets, use the registered catalogs (e.g. 'main', 'sandbox') and pass complete code into create_notebook(code='...').\n"
+            f"   d. Perform the ACTUAL work for that step. When creating notebooks or assets, use the registered catalogs (e.g. 'main', 'sandbox') and pass complete code into create_notebook(code='...'). Always execute the notebook cells using notebook_manager(operation='run_cell', payload={{'run_all': True}}) or specific cell_index / cell_indices to test and persist cell outputs.\n"
             f"   e. If tool execution encounters an error, DO NOT mark it 'done' and DO NOT skip to the next step! Either fix the error and retry that same step until successful, or record the failure and halt.\n"
             f"   f. Call mark_step(..., step_id=<id>, status='done', result={{...}}).\n"
             f"   g. IMMEDIATELY continue to the next step.\n"
@@ -753,6 +753,7 @@ async def orchestrate_stream(
                     logger.debug("Asset registry update failed (non-fatal): %s", _reg_err)
 
                 # ── G5: Capture before/after change record if tool edited/created an asset ──────
+                captured_change_info = None
                 if ok and isinstance(result_payload, dict):
                     try:
                         args = tc.get("arguments", {})
@@ -918,6 +919,19 @@ async def orchestrate_stream(
         if not session.title:
             session.title = user_content[:80]
             db.commit()
+
+        # Reconcile plan steps to completed if agent delivered its final response cleanly
+        if active_plan and full_response_text and not full_response_text.startswith("_(Agent reached maximum"):
+            try:
+                from app.agents.services.agent.plan_service import PlanService, StepStatus
+                ps = PlanService()
+                cur_p = ps.get_plan(active_plan.plan_id)
+                if cur_p and any(s.status in (StepStatus.PENDING, StepStatus.IN_PROGRESS) for s in cur_p.steps):
+                    for st in cur_p.steps:
+                        if st.status in (StepStatus.PENDING, StepStatus.IN_PROGRESS):
+                            ps.mark_step(cur_p.plan_id, st.id, StepStatus.DONE, result={"auto_completed": True})
+            except Exception as _sync_err:
+                logger.debug("Plan step reconciliation skipped: %s", _sync_err)
 
     yield {
         "type": "done",

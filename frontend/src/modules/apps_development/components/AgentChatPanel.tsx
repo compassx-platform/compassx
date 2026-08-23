@@ -313,12 +313,35 @@ export default function AgentChatPanel({ appId, branchId }: Props) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
+  const isUserScrolledUpRef = useRef(false);
+  const [showScrollBottomBtn, setShowScrollBottomBtn] = useState(false);
+
+  const scrollToBottom = useCallback((behavior: ScrollBehavior = "smooth") => {
+    isUserScrolledUpRef.current = false;
+    setShowScrollBottomBtn(false);
+    if (scrollRef.current) {
+      scrollRef.current.scrollTo({
+        top: scrollRef.current.scrollHeight,
+        behavior,
+      });
+    }
+  }, []);
+
+  const handleScroll = useCallback(() => {
+    if (!scrollRef.current) return;
+    const { scrollTop, scrollHeight, clientHeight } = scrollRef.current;
+    const distanceFromBottom = scrollHeight - scrollTop - clientHeight;
+    const isUp = distanceFromBottom > 120;
+    isUserScrolledUpRef.current = isUp;
+    setShowScrollBottomBtn(isUp);
+  }, []);
+
   // Auto-scroll to bottom on new messages
   useEffect(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    if (!isUserScrolledUpRef.current) {
+      scrollToBottom(isStreaming ? "smooth" : "auto");
     }
-  }, [liveMessages, messages]);
+  }, [liveMessages, messages, isStreaming, scrollToBottom]);
 
   // Auto-pick first LLM connection
   useEffect(() => {
@@ -340,10 +363,14 @@ export default function AgentChatPanel({ appId, branchId }: Props) {
           toolCalls: [],
         }));
       setLiveMessages(live);
+      isUserScrolledUpRef.current = false;
+      requestAnimationFrame(() => {
+        scrollToBottom("auto");
+      });
     } else if (!loadingMessages && messages.length === 0) {
       setLiveMessages([]);
     }
-  }, [messages, loadingMessages, setLiveMessages]);
+  }, [messages, loadingMessages, setLiveMessages, scrollToBottom]);
 
   const handleSend = useCallback(async () => {
     const text = input.trim();
@@ -352,8 +379,12 @@ export default function AgentChatPanel({ appId, branchId }: Props) {
     if (textareaRef.current) {
       textareaRef.current.style.height = "38px";
     }
+    isUserScrolledUpRef.current = false;
+    requestAnimationFrame(() => {
+      scrollToBottom("smooth");
+    });
     await sendMessage(text);
-  }, [input, isStreaming, sendMessage]);
+  }, [input, isStreaming, sendMessage, scrollToBottom]);
 
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -536,10 +567,12 @@ export default function AgentChatPanel({ appId, branchId }: Props) {
       {/* ── Message list ── */}
       <div
         ref={scrollRef}
+        onScroll={handleScroll}
         style={{
           flex: 1,
           overflowY: "auto",
           padding: "12px",
+          paddingBottom: "min(50vh, 360px)",
           display: "flex",
           flexDirection: "column",
           gap: 10,
@@ -620,6 +653,7 @@ export default function AgentChatPanel({ appId, branchId }: Props) {
         {liveMessages.map((msg, i) => (
           <MessageBubble key={i} msg={msg} />
         ))}
+        <div style={{ height: "min(30vh, 200px)", flexShrink: 0 }} />
       </div>
 
       {/* ── Composer ── */}
@@ -629,8 +663,38 @@ export default function AgentChatPanel({ appId, branchId }: Props) {
           borderTop: "1px solid var(--color-border)",
           background: "var(--color-surface)",
           flexShrink: 0,
+          position: "relative",
         }}
       >
+        {showScrollBottomBtn && (
+          <button
+            type="button"
+            onClick={() => scrollToBottom("smooth")}
+            title="Scroll to bottom"
+            style={{
+              position: "absolute",
+              top: -15,
+              left: "50%",
+              transform: "translateX(-50%)",
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 4,
+              padding: "3px 10px",
+              borderRadius: 14,
+              background: "var(--color-surface, #ffffff)",
+              color: "var(--color-text, #1e293b)",
+              border: "1px solid var(--color-border, #e2e8f0)",
+              boxShadow: "0 2px 8px rgba(0, 0, 0, 0.1)",
+              fontSize: "0.72rem",
+              fontWeight: 600,
+              cursor: "pointer",
+              zIndex: 10,
+            }}
+          >
+            <ChevronDown size={13} color="var(--color-primary, #2563eb)" />
+            <span>Scroll to bottom</span>
+          </button>
+        )}
         <div
           style={{
             display: "flex",

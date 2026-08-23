@@ -38,6 +38,9 @@ from app.catalog.schemas import (
     QueryMove,
     QueryVersionRead,
     QueryCreateVersion,
+    NotebookTableCreateRequest,
+    NotebookTableWriteRequest,
+    NotebookTableColumnDef,
 )
 from app.catalog.service import (
     _to_table_read,
@@ -1808,3 +1811,470 @@ async def run_notebook_query(
         return result
     except Exception as exc:
         raise HTTPException(400, {"error": "Query execution failed", "detail": str(exc)}) from exc
+
+
+# ── Notebook Table Write & Create (Spec Implementation) ───────────────────────
+
+def _parse_table_ref(table_ref: str) -> tuple[str, str, str]:
+    parts = [p.strip(' "`') for p in table_ref.strip().split(".")]
+    if len(parts) >= 3:
+        return parts[0], parts[1], parts[2]
+    elif len(parts) == 2:
+        return "compassx", parts[0], parts[1]
+    elif len(parts) == 1:
+        return "compassx", "default", parts[0]
+    raise ValueError(f"Invalid table reference: {table_ref!r}")
+
+
+def _infer_column_type(dtype) -> str:
+    import pandas as pd
+    if pd.api.types.is_integer_dtype(dtype):
+        return "int64"
+    elif pd.api.types.is_float_dtype(dtype):
+        return "float64"
+    elif pd.api.types.is_bool_dtype(dtype):
+        return "boolean"
+    elif pd.api.types.is_datetime64_any_dtype(dtype):
+        return "timestamp"
+    return "string"
+
+
+def _normalize_type(t: str) -> str:
+    t = (t or "").lower().strip()
+    if t in ("int", "int32", "integer", "short", "int16", "bigint", "int64", "long"):
+        return "integer"
+    if t in ("float", "float32", "float64", "double", "real", "decimal"):
+        return "float"
+    if t in ("bool", "boolean"):
+        return "boolean"
+    if t in ("timestamp", "timestamptz", "datetime"):
+        return "timestamp"
+    if t in ("date",):
+        return "date"
+    return "string"
+
+
+@router.post("/table/create")
+async def create_table_from_notebook(
+    request: Request,
+    req: NotebookTableCreateRequest,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    """Create a new catalog table from a DataFrame with immediate registration."""
+    import io
+    import uuid
+    import pandas as pd
+    import numpy as np
+    from datetime import datetime, timezone
+    from app.catalog.models import (
+        UnifiedCatalog,
+        UnifiedCatalogSchema,
+        UnifiedCatalogTable,
+        UnifiedCatalogColumn,
+        CatalogTableType,
+    )
+    from app.catalog.service import (
+        _current_actor,
+        _get_connection,
+        _connect_record,
+        resolve_catalog_storage,
+        ensure_default_catalog,
+    )
+    from app.catalog.iceberg_manager import IcebergManager
+
+    actor = _current_actor(user)
+    try:
+        catalog_name, schema_name, table_name = _parse_table_ref(req.table_ref)
+    except ValueError as exc:
+        raise HTTPException(400, {"status": "error", "error_type": "invalid_ref", "message": str(exc)})
+
+    # Resolve Catalog
+    catalog = db.query(UnifiedCatalog).filter(UnifiedCatalog.name == catalog_name).first()
+    if not catalog:
+        if catalog_name == "compassx":
+            catalog = ensure_default_catalog(db, created_by=actor)
+        else:
+            raise HTTPException(404, {"status": "error", "error_type": "catalog_not_found", "message": f"Catalog '{catalog_name}' not found."})
+
+    # Resolve Schema (ensure exists)
+    schema = (
+        db.query(UnifiedCatalogSchema)
+        .filter(UnifiedCatalogSchema.catalog_id == catalog.id, UnifiedCatalogSchema.name == schema_name)
+        .first()
+    )
+    if not schema:
+        schema = UnifiedCatalogSchema(catalog_id=catalog.id, name=schema_name, created_by=actor)
+        db.add(schema)
+        db.commit()
+        db.refresh(schema)
+
+    # Check Existing Table
+    existing = (
+        db.query(UnifiedCatalogTable)
+        .filter(UnifiedCatalogTable.schema_id == schema.id, UnifiedCatalogTable.name == table_name)
+        .first()
+    )
+    if existing:
+        if req.mode.lower() not in ("overwrite", "replace"):
+            raise HTTPException(
+                409,
+                {
+                    "status": "error",
+                    "error_type": "table_exists",
+                    "message": f"Table '{req.table_ref}' already exists. Use mode='overwrite' to replace.",
+                },
+            )
+        # Drop existing catalog table record for overwrite
+        db.delete(existing)
+        db.commit()
+
+    # Parse and prepare data
+    df = pd.DataFrame(req.data) if req.data else pd.DataFrame()
+
+    # Determine columns
+    columns = []
+    if req.schema_def:
+        for c in req.schema_def:
+            columns.append({
+                "name": c.name,
+                "data_type": c.type,
+                "nullable": c.nullable,
+                "description": c.description,
+            })
+    elif not df.empty:
+        for col_name, dtype in zip(df.columns, df.dtypes):
+            columns.append({
+                "name": str(col_name),
+                "data_type": _infer_column_type(dtype),
+                "nullable": True,
+                "description": None,
+            })
+    else:
+        raise HTTPException(400, {"status": "error", "error_type": "invalid_schema", "message": "Cannot create table without columns or data."})
+
+    # Determine physical engine by catalog type
+    catalog_type = (catalog.catalog_type or "").lower()
+    is_postgres = catalog_type in ("postgres", "postgres_native") and catalog.connection_id
+
+    if is_postgres:
+        # ── PostgreSQL Native Table Creation ──────────────────────────────────
+        connection = _get_connection(db, catalog.connection_id)
+        cols_sql = []
+        for c in columns:
+            col_name = c["name"]
+            norm_type = _normalize_type(c.get("data_type", "string"))
+            null_str = "NULL" if c.get("nullable", True) else "NOT NULL"
+            if norm_type == "integer":
+                pg_type = "BIGINT"
+            elif norm_type == "float":
+                pg_type = "DOUBLE PRECISION"
+            elif norm_type == "boolean":
+                pg_type = "BOOLEAN"
+            elif norm_type == "timestamp":
+                pg_type = "TIMESTAMP WITH TIME ZONE"
+            elif norm_type == "date":
+                pg_type = "DATE"
+            else:
+                pg_type = "TEXT"
+            cols_sql.append(f'"{col_name}" {pg_type} {null_str}')
+
+        create_sql = f'CREATE TABLE IF NOT EXISTS "{schema_name}"."{table_name}" (\n  ' + ",\n  ".join(cols_sql) + "\n)"
+        conn = _connect_record(connection, catalog.database_name)
+        try:
+            cur = conn.cursor()
+            if req.mode.lower() in ("overwrite", "replace"):
+                cur.execute(f'DROP TABLE IF EXISTS "{schema_name}"."{table_name}"')
+            cur.execute(create_sql)
+
+            if not df.empty:
+                placeholders = ", ".join(["%s"] * len(columns))
+                col_names_str = ", ".join([f'"{c["name"]}"' for c in columns])
+                insert_sql = f'INSERT INTO "{schema_name}"."{table_name}" ({col_names_str}) VALUES ({placeholders})'
+                rows_to_insert = []
+                for _, row in df.iterrows():
+                    row_vals = []
+                    for c in columns:
+                        v = row.get(c["name"])
+                        if pd.isna(v) or v is None:
+                            row_vals.append(None)
+                        else:
+                            row_vals.append(v)
+                    rows_to_insert.append(row_vals)
+                cur.executemany(insert_sql, rows_to_insert)
+            conn.commit()
+        except Exception as exc:
+            conn.rollback()
+            raise HTTPException(400, {"status": "error", "error_type": "engine_error", "message": f"Postgres create failed: {exc}"})
+        finally:
+            conn.close()
+
+        table = UnifiedCatalogTable(
+            schema_id=schema.id,
+            name=table_name,
+            table_type=CatalogTableType.POSTGRES_NATIVE,
+            connection_id=catalog.connection_id,
+            source_database=catalog.database_name,
+            pg_schema=schema_name,
+            pg_table=table_name,
+            description=req.description,
+            owner=actor,
+            created_by=actor,
+        )
+        db.add(table)
+        db.commit()
+        db.refresh(table)
+        engine_name = "postgres"
+
+    else:
+        # ── Iceberg Table Creation ────────────────────────────────────────────
+        ctx_upload = resolve_catalog_storage(db, catalog.name, schema_name)
+        if not ctx_upload:
+            raise HTTPException(
+                400,
+                {
+                    "status": "error",
+                    "error_type": "storage_not_configured",
+                    "message": f"No blob storage backend configured for catalog '{catalog.name}'. Bind a storage backend first.",
+                },
+            )
+
+        table_path_abs = ctx_upload.abs_path(f"tables/{table_name}")
+        table_path_rel = ctx_upload.rel_path(f"tables/{table_name}")
+        mgr = IcebergManager(ctx_upload.backend)
+
+        # Convert DataFrame to Parquet
+        parquet_file_name = f"{table_name}.parquet"
+        if not df.empty:
+            buf = io.BytesIO()
+            df.to_parquet(buf, index=False, engine="pyarrow")
+            parquet_bytes = buf.getvalue()
+        else:
+            # Create empty parquet file matching schema
+            empty_df = pd.DataFrame({c["name"]: pd.Series(dtype="object") for c in columns})
+            buf = io.BytesIO()
+            empty_df.to_parquet(buf, index=False, engine="pyarrow")
+            parquet_bytes = buf.getvalue()
+
+        await ctx_upload.backend.write_bytes(
+            path=f"{table_path_rel}/data/{parquet_file_name}",
+            data=parquet_bytes,
+            content_type="application/octet-stream",
+        )
+
+        metadata_location_rel = await mgr.create_table(
+            table_path=table_path_rel,
+            table_name=table_name,
+            columns=columns,
+            properties={"file_format": "parquet", "data_file": parquet_file_name},
+        )
+        metadata_location_abs = f"{ctx_upload.backend_base}{metadata_location_rel}"
+
+        table = UnifiedCatalogTable(
+            schema_id=schema.id,
+            name=table_name,
+            table_type=CatalogTableType.ICEBERG,
+            metadata_location=metadata_location_abs,
+            storage_location=table_path_abs,
+            file_format="parquet",
+            description=req.description,
+            owner=actor,
+            created_by=actor,
+            properties={"data_file": parquet_file_name, "file_format": "parquet"},
+        )
+        db.add(table)
+        db.commit()
+        db.refresh(table)
+        engine_name = "iceberg"
+
+    # Register column metadata
+    for idx, col in enumerate(columns):
+        db.add(
+            UnifiedCatalogColumn(
+                table_id=table.id,
+                name=col["name"],
+                data_type=col.get("data_type", "string"),
+                nullable=col.get("nullable", True),
+                description=col.get("description"),
+                ordinal=idx + 1,
+            )
+        )
+    db.commit()
+
+    # Enqueue embedding for semantic search
+    try:
+        from app.catalog.search_indexer import enqueue_asset_for_embedding
+        enqueue_asset_for_embedding(
+            db,
+            object_type="table",
+            source_object_id=table.id,
+            catalog_name=catalog.name,
+            schema_name=schema.name,
+            object_name=table.name,
+            description=table.description,
+            content_summary=", ".join(c["name"] for c in columns),
+        )
+        db.commit()
+    except Exception as exc:
+        import logging
+        logging.getLogger(__name__).warning("Failed to enqueue embedding for table %s: %s", table.name, exc)
+
+    return {
+        "status": "ok",
+        "id": table.id,
+        "table_ref": f"{catalog.name}.{schema.name}.{table.name}",
+        "engine": engine_name,
+        "rows_written": len(df),
+    }
+
+
+@router.post("/table/write")
+async def write_table_from_notebook(
+    request: Request,
+    req: NotebookTableWriteRequest,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    """Append data to an existing catalog table with strict schema validation."""
+    import io
+    import time
+    import uuid
+    import pandas as pd
+    from app.catalog.models import (
+        UnifiedCatalog,
+        UnifiedCatalogSchema,
+        UnifiedCatalogTable,
+        CatalogTableType,
+    )
+    from app.catalog.service import (
+        _get_connection,
+        _connect_record,
+        resolve_catalog_storage,
+    )
+    from app.catalog.iceberg_manager import IcebergManager
+
+    start_time = time.monotonic()
+    try:
+        catalog_name, schema_name, table_name = _parse_table_ref(req.table_ref)
+    except ValueError as exc:
+        raise HTTPException(400, {"status": "error", "error_type": "invalid_ref", "message": str(exc)})
+
+    # Resolve Catalog, Schema, and Table
+    catalog = db.query(UnifiedCatalog).filter(UnifiedCatalog.name == catalog_name).first()
+    if not catalog:
+        raise HTTPException(404, {"status": "error", "error_type": "table_not_found", "message": f"Catalog '{catalog_name}' not found."})
+
+    schema = (
+        db.query(UnifiedCatalogSchema)
+        .filter(UnifiedCatalogSchema.catalog_id == catalog.id, UnifiedCatalogSchema.name == schema_name)
+        .first()
+    )
+    if not schema:
+        raise HTTPException(404, {"status": "error", "error_type": "table_not_found", "message": f"Schema '{schema_name}' not found."})
+
+    table = (
+        db.query(UnifiedCatalogTable)
+        .filter(UnifiedCatalogTable.schema_id == schema.id, UnifiedCatalogTable.name == table_name)
+        .first()
+    )
+    if not table:
+        raise HTTPException(404, {"status": "error", "error_type": "table_not_found", "message": f"Table '{req.table_ref}' not found in catalog. Use mode='overwrite' to create."})
+
+    # Prepare DataFrame and validate schema against registered columns
+    df = pd.DataFrame(req.data) if req.data else pd.DataFrame()
+    registered_cols = {c.name: _normalize_type(c.data_type) for c in table.columns}
+
+    if req.schema_def:
+        incoming_cols = {c.name: _normalize_type(c.type) for c in req.schema_def}
+    elif not df.empty:
+        incoming_cols = {str(col): _normalize_type(_infer_column_type(dtype)) for col, dtype in zip(df.columns, df.dtypes)}
+    else:
+        incoming_cols = {}
+
+    missing_columns = [col for col in registered_cols if col not in incoming_cols]
+    extra_columns = [col for col in incoming_cols if col not in registered_cols]
+    type_mismatches = []
+    for col in registered_cols:
+        if col in incoming_cols and registered_cols[col] != incoming_cols[col]:
+            type_mismatches.append({"column": col, "expected": registered_cols[col], "received": incoming_cols[col]})
+
+    if missing_columns or extra_columns or type_mismatches:
+        raise HTTPException(
+            422,
+            {
+                "status": "error",
+                "error_type": "schema_mismatch",
+                "message": f"Schema mismatch for table '{req.table_ref}'.",
+                "details": {
+                    "missing_columns": missing_columns,
+                    "extra_columns": extra_columns,
+                    "type_mismatches": type_mismatches,
+                },
+            },
+        )
+
+    # Execute physical write
+    if table.table_type == CatalogTableType.POSTGRES_NATIVE:
+        connection = _get_connection(db, table.connection_id or catalog.connection_id)
+        cols = list(table.columns)
+        placeholders = ", ".join(["%s"] * len(cols))
+        col_names_str = ", ".join([f'"{c.name}"' for c in cols])
+        insert_sql = f'INSERT INTO "{schema_name}"."{table_name}" ({col_names_str}) VALUES ({placeholders})'
+
+        conn = _connect_record(connection, table.source_database or catalog.database_name)
+        try:
+            cur = conn.cursor()
+            rows_to_insert = []
+            for _, row in df.iterrows():
+                row_vals = []
+                for c in cols:
+                    v = row.get(c.name)
+                    if pd.isna(v) or v is None:
+                        row_vals.append(None)
+                    else:
+                        row_vals.append(v)
+                rows_to_insert.append(row_vals)
+            if rows_to_insert:
+                cur.executemany(insert_sql, rows_to_insert)
+            conn.commit()
+        except Exception as exc:
+            conn.rollback()
+            raise HTTPException(400, {"status": "error", "error_type": "engine_error", "message": f"Postgres append failed: {exc}"})
+        finally:
+            conn.close()
+
+    else:
+        # Iceberg append
+        ctx_upload = resolve_catalog_storage(db, catalog.name, schema_name)
+        if not ctx_upload:
+            raise HTTPException(400, {"status": "error", "error_type": "storage_not_configured", "message": "Storage backend not configured for Iceberg table."})
+
+        table_path_rel = ctx_upload.rel_path(f"tables/{table_name}")
+        mgr = IcebergManager(ctx_upload.backend)
+
+        chunk_id = uuid.uuid4().hex[:8]
+        chunk_file_name = f"data_{chunk_id}.parquet"
+        buf = io.BytesIO()
+        df.to_parquet(buf, index=False, engine="pyarrow")
+        parquet_bytes = buf.getvalue()
+
+        await ctx_upload.backend.write_bytes(
+            path=f"{table_path_rel}/data/{chunk_file_name}",
+            data=parquet_bytes,
+            content_type="application/octet-stream",
+        )
+
+        await mgr.append_data_file(
+            table_path=table_path_rel,
+            data_file_name=chunk_file_name,
+            records_count=len(df),
+        )
+
+    duration_ms = int((time.monotonic() - start_time) * 1000)
+    return {
+        "status": "ok",
+        "table_ref": f"{catalog.name}.{schema.name}.{table.name}",
+        "rows_written": len(df),
+        "execution_ms": duration_ms,
+    }
+

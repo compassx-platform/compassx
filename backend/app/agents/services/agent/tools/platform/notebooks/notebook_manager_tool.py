@@ -18,7 +18,9 @@ class NotebookManagerTool(BaseTool):
     description = (
         "Interact with notebook-level functionality through one package tool. Use this tool to inspect "
         "cell outputs, variable state, schema hints, imports, or another referenced notebook; request "
-        "notebook cell execution; and return notebook edits. Choose one operation and pass its arguments in payload."
+        "notebook cell execution; and return notebook edits. "
+        "When writing cells that produce data to be saved as Catalog tables, use cx.write_table(df, 'catalog.schema.table', mode='overwrite'|'append') or df.write_table(...). "
+        "Choose one operation and pass its arguments in payload."
     )
     input_schema = {
         "type": "object",
@@ -34,9 +36,11 @@ class NotebookManagerTool(BaseTool):
                     "Operation-specific payload. Examples: get_cell_output uses {cell_index}; "
                     "get_variable_state uses {cell_index, variable_name}; get_schema uses "
                     "{table_or_view_name}; list_imports uses {}; read_notebook uses "
-                    "{notebook_path, include_outputs, max_cells}; execute_cell uses {cell_index}; "
+                    "{notebook_path, include_outputs, max_cells}; run_cell uses "
+                    "{cell_index, cell_indices, run_all}; "
                     "edit_cell uses {cell_index, cell_type, code, explanation}; "
-                    "add_multiple_cells uses {insert_after_cell_index, cells: [{cell_type, code, explanation}], explanation}."
+                    "add_multiple_cells uses {insert_after_cell_index, cells: [{cell_type, code, explanation}], explanation}. "
+                    "In generated Python code cells, use cx.write_table(df, 'catalog.schema.table', mode='overwrite') to persist tables into the Catalog."
                 ),
                 "additionalProperties": True,
             },
@@ -62,6 +66,9 @@ class NotebookManagerTool(BaseTool):
             return ToolResult(ok=False, error="payload must be an object")
         if not isinstance(context, dict):
             return ToolResult(ok=False, error="context must be an object")
+
+        if agent and getattr(agent, "workspace_id", None):
+            context.setdefault("workspace_id", str(agent.workspace_id))
 
         try:
             result = execute_notebook_manager_operation(

@@ -12,6 +12,19 @@ export type AvailableToolInfo = {
 };
 
 export const AVAILABLE_TOOLS: AvailableToolInfo[] = [
+  {
+    key: "sql_warehouse",
+    name: "SQL Warehouse",
+    description: "Execute SQL queries against CompassX SQL Warehouses, inspect warehouse status, explain plans, and retrieve query history.",
+    atomicTools: [
+      { key: "execute_query", name: "Execute Query", description: "Execute a SQL query against the warehouse and return rows and columns." },
+      { key: "list_warehouses", name: "List Warehouses", description: "List all configured SQL Warehouses and their running status." },
+      { key: "get_warehouse", name: "Get Warehouse", description: "Fetch configuration, engine type, and status for a specific warehouse." },
+      { key: "explain_query", name: "Explain Query", description: "Fetch the query execution plan from the warehouse engine." },
+      { key: "get_query_history", name: "Get Query History", description: "Retrieve recent query execution records and audit metrics." },
+      { key: "get_query_result", name: "Get Query Result", description: "Fetch result payload for a previously executed query ID." },
+    ],
+  },
   { key: "sql_query", name: "SQL Query", description: "Run SELECT queries on connected databases." },
   { key: "python_code", name: "Python Code Runner", description: "Execute Python code in a sandbox environment." },
   { key: "visualization", name: "Visualization", description: "Render Vega-Lite charts from data." },
@@ -45,7 +58,7 @@ export const AVAILABLE_TOOLS: AvailableToolInfo[] = [
       { key: "get_schema", name: "Get Schema", description: "Fetch schema metadata already attached to the notebook request." },
       { key: "list_imports", name: "List Imports", description: "List imports already present in the notebook." },
       { key: "read_notebook", name: "Read Notebook", description: "Read another .ipynb notebook by relative path for reference." },
-      { key: "execute_cell", name: "Execute Cell", description: "Record that the agent wants a notebook cell execution." },
+      { key: "run_cell", name: "Run Cell", description: "Execute one or more notebook cells and return the outputs." },
       { key: "edit_cell", name: "Edit Cell", description: "Propose replacing one existing notebook cell by index, with user approval in the notebook UI." },
       { key: "add_multiple_cells", name: "Add Multiple Cells", description: "Propose adding several notebook cells at once, with per-cell approval in the notebook UI." },
       { key: "apply_notebook_edit", name: "Apply Notebook Edit", description: "Return the final notebook edit to apply in the UI." },

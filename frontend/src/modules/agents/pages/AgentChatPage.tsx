@@ -1190,13 +1190,104 @@ export default function AgentChatPage({ initialView }: AgentChatPageProps = {}) 
   const [diffSheetRecord, setDiffSheetRecord] = useState<ChangeRecord | null>(null);
   // Known asset names for this session (for D14 deny-by-default resolution)
   const [knownAssetNames, setKnownAssetNames] = useState<Set<string>>(new Set());
+  const messagesContainerRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const latestUserMsgRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const isUserScrolledUpRef = useRef(false);
+  const initialScrollDoneRef = useRef<number | null>(null);
+  const [showScrollBottomBtn, setShowScrollBottomBtn] = useState(false);
 
+  const scrollToLatestUserMessage = useCallback((behavior: ScrollBehavior = "smooth") => {
+    const container = messagesContainerRef.current;
+    if (!container) return;
+
+    const targetEl =
+      latestUserMsgRef.current ||
+      (container.querySelector('[data-latest-user-msg="true"]') as HTMLElement | null) ||
+      (() => {
+        const userNodes = container.querySelectorAll('[data-role="user-message"]');
+        return userNodes.length > 0 ? (userNodes[userNodes.length - 1] as HTMLElement) : null;
+      })();
+
+    if (targetEl) {
+      targetEl.scrollIntoView({ behavior, block: "start" });
+    } else {
+      container.scrollTo({
+        top: container.scrollHeight,
+        behavior,
+      });
+    }
+  }, []);
+
+  const scrollToBottom = useCallback((behavior: ScrollBehavior = "smooth") => {
+    isUserScrolledUpRef.current = false;
+    setShowScrollBottomBtn(false);
+    if (messagesContainerRef.current) {
+      messagesContainerRef.current.scrollTo({
+        top: messagesContainerRef.current.scrollHeight,
+        behavior,
+      });
+    } else if (messagesEndRef.current) {
+      messagesEndRef.current.scrollIntoView({ behavior, block: "end" });
+    }
+  }, []);
+
+  const handleMessagesScroll = useCallback(() => {
+    if (!messagesContainerRef.current) return;
+    const { scrollTop, scrollHeight, clientHeight } = messagesContainerRef.current;
+    const distanceFromBottom = scrollHeight - scrollTop - clientHeight;
+    const isUp = distanceFromBottom > 160;
+    isUserScrolledUpRef.current = isUp;
+    setShowScrollBottomBtn(isUp);
+  }, []);
+
+  // When an optimistic user message is set (user sends a message), scroll so the user message is at the top of the page
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, streamingText]);
+    if (optimisticUserMsg) {
+      isUserScrolledUpRef.current = false;
+      const raf = requestAnimationFrame(() => {
+        scrollToLatestUserMessage("smooth");
+      });
+      const timer = setTimeout(() => {
+        scrollToLatestUserMessage("smooth");
+      }, 60);
+      return () => {
+        cancelAnimationFrame(raf);
+        clearTimeout(timer);
+      };
+    }
+  }, [optimisticUserMsg, scrollToLatestUserMessage]);
+
+  // While streaming, only follow if the response extends below the visible bottom of the viewport
+  useEffect(() => {
+    if (!isUserScrolledUpRef.current && isStreaming && streamingText) {
+      messagesEndRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }
+  }, [streamingText, isStreaming]);
+
+  // When opening an agent page, switching sessions, or when messages load for a session, scroll to bottom by default
+  useEffect(() => {
+    if (!activeSessionId) return;
+    if (messages.length > 0) {
+      if (initialScrollDoneRef.current !== activeSessionId) {
+        initialScrollDoneRef.current = activeSessionId;
+        isUserScrolledUpRef.current = false;
+        setShowScrollBottomBtn(false);
+        const raf = requestAnimationFrame(() => {
+          scrollToBottom("auto");
+        });
+        const timer = setTimeout(() => {
+          scrollToBottom("auto");
+        }, 80);
+        return () => {
+          cancelAnimationFrame(raf);
+          clearTimeout(timer);
+        };
+      }
+    }
+  }, [activeSessionId, messages, scrollToBottom]);
 
   // G1/D14: Fetch known asset names on session change so asset chips resolve correctly
   useEffect(() => {
@@ -1314,10 +1405,18 @@ export default function AgentChatPage({ initialView }: AgentChatPageProps = {}) 
       setInput("");
       setAttachedFiles([]);
       setUploadedDocIds([]);
+      if (textareaRef.current) {
+        textareaRef.current.style.height = "auto";
+      }
     }
+    isUserScrolledUpRef.current = false;
     setOptimisticUserMsg(content);
     resetStream();
     setStreaming(true);
+
+    requestAnimationFrame(() => {
+      scrollToLatestUserMessage("smooth");
+    });
 
     const baseUrl = (import.meta.env.VITE_API_BASE_URL || "/api/v1").replace(/\/$/, "");
     const match = window.location.pathname.match(/^\/w\/([^/]+)/);
@@ -1429,7 +1528,7 @@ export default function AgentChatPage({ initialView }: AgentChatPageProps = {}) 
       setActiveTool(null);
       setOptimisticUserMsg(null);
     }
-  }, [input, activeSessionId, agentId, selectedLlmConnectionId, isStreaming]);
+  }, [input, activeSessionId, agentId, selectedLlmConnectionId, isStreaming, attachedFiles, scrollToLatestUserMessage]);
 
   return (
     <div
@@ -2188,10 +2287,12 @@ export default function AgentChatPage({ initialView }: AgentChatPageProps = {}) 
 
             {/* Messages */}
             <div
+              ref={messagesContainerRef}
+              onScroll={handleMessagesScroll}
               style={{
                 flex: 1,
                 overflowY: "auto",
-                padding: "24px 24px 36px",
+                padding: "24px 24px 0",
                 display: "flex",
                 justifyContent: "center",
               }}
@@ -2203,6 +2304,7 @@ export default function AgentChatPage({ initialView }: AgentChatPageProps = {}) 
                   display: "flex",
                   flexDirection: "column",
                   gap: 20,
+                  paddingBottom: "calc(100vh - 140px)",
                 }}
               >
               {(() => {
@@ -2269,14 +2371,28 @@ export default function AgentChatPage({ initialView }: AgentChatPageProps = {}) 
                   }
                 }
 
-                return groups.map((grp) => {
+                const lastUserGroupIndex = (() => {
+                  for (let i = groups.length - 1; i >= 0; i--) {
+                    if (groups[i].type === "user") return i;
+                  }
+                  return -1;
+                })();
+
+                return groups.map((grp, idx) => {
                   if (grp.type === "user" && grp.userMsg) {
+                    const isLatestUserMsg = idx === lastUserGroupIndex;
                     return (
-                      <MessageBubble
+                      <div
                         key={grp.id}
-                        role="user"
-                        content={grp.userMsg.content}
-                      />
+                        ref={isLatestUserMsg ? latestUserMsgRef : undefined}
+                        data-role="user-message"
+                        data-latest-user-msg={isLatestUserMsg ? "true" : undefined}
+                      >
+                        <MessageBubble
+                          role="user"
+                          content={grp.userMsg.content}
+                        />
+                      </div>
                     );
                   }
 
@@ -2508,7 +2624,7 @@ export default function AgentChatPage({ initialView }: AgentChatPageProps = {}) 
                   );
                 });
               })()}
-              <div ref={messagesEndRef} />
+              <div ref={messagesEndRef} style={{ height: 32, flexShrink: 0 }} />
               </div>
             </div>
 
@@ -2608,11 +2724,53 @@ export default function AgentChatPage({ initialView }: AgentChatPageProps = {}) 
                 <div
                   style={{
                     borderTop: "none",
-                    padding: "0 24px 16px",
+                    padding: "16px 24px 16px",
                     display: "flex",
-                    justifyContent: "center",
+                    flexDirection: "column",
+                    alignItems: "center",
+                    position: "relative",
                   }}
                 >
+                  {/* Floating Scroll to Bottom Button */}
+                  {showScrollBottomBtn && (
+                    <button
+                      type="button"
+                      onClick={() => scrollToBottom("smooth")}
+                      title="Scroll to bottom"
+                      style={{
+                        position: "absolute",
+                        top: -16,
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: 6,
+                        padding: "6px 14px",
+                        borderRadius: 20,
+                        background: "#ffffff",
+                        color: "#1e293b",
+                        border: "1px solid var(--color-border, #e2e8f0)",
+                        boxShadow: "0 4px 12px rgba(0, 0, 0, 0.08), 0 1px 3px rgba(0, 0, 0, 0.04)",
+                        fontSize: "0.76rem",
+                        fontWeight: 600,
+                        cursor: "pointer",
+                        zIndex: 20,
+                        transition: "all 0.15s ease",
+                      }}
+                      onMouseEnter={(e) => {
+                        e.currentTarget.style.background = "#f8fafc";
+                        e.currentTarget.style.boxShadow = "0 6px 16px rgba(0, 0, 0, 0.12)";
+                        e.currentTarget.style.transform = "translateY(-2px)";
+                      }}
+                      onMouseLeave={(e) => {
+                        e.currentTarget.style.background = "#ffffff";
+                        e.currentTarget.style.boxShadow = "0 4px 12px rgba(0, 0, 0, 0.08), 0 1px 3px rgba(0, 0, 0, 0.04)";
+                        e.currentTarget.style.transform = "translateY(0)";
+                      }}
+                    >
+                      <ChevronDown size={14} color="#2563eb" style={{ strokeWidth: 2.5 }} />
+                      <span>Scroll to bottom</span>
+                    </button>
+                  )}
+
                   <div
                     style={{
                       width: "100%",

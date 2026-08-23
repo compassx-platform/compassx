@@ -137,7 +137,14 @@ export default function DashboardEditorPage({ dashboardId: dashboardIdProp, embe
 
   useEffect(() => {
     if (dashboard) {
-      if (initializedDashboardIdRef.current === dashboard.id) return;
+      const serverSnapshot = JSON.stringify(dashboard);
+      const isDifferentDashboard = initializedDashboardIdRef.current !== dashboard.id;
+      const isFreshServerContent =
+        isDifferentDashboard ||
+        (!useDashboardStore.getState().editMode && serverSnapshot !== lastSavedSnapshotRef.current) ||
+        (dashboard.widgets?.length ?? 0) !== (useDashboardStore.getState().activeDashboard?.widgets?.length ?? 0);
+
+      if (!isDifferentDashboard && !isFreshServerContent) return;
 
       initializedDashboardIdRef.current = dashboard.id;
       setActiveDashboard(dashboard);
@@ -155,12 +162,13 @@ export default function DashboardEditorPage({ dashboardId: dashboardIdProp, embe
         }
       }
 
-      lastSavedSnapshotRef.current = JSON.stringify(dashboard);
+      lastSavedSnapshotRef.current = serverSnapshot;
       latestDashboardRef.current = dashboard;
       isHydratedRef.current = true;
       setSaveStatus('idle');
     }
   }, [dashboard, setActiveDashboard, setEditMode, isBusinessCenter, isEditRoute, searchParams]);
+
 
   // Keep URL query parameter ?page= in sync when activePageId changes
   useEffect(() => {

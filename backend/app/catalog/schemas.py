@@ -68,6 +68,35 @@ class TableCreate(BaseModel):
     table_type: str = "iceberg"
 
 
+class NotebookTableColumnDef(BaseModel):
+    name: str
+    type: str
+    nullable: bool = True
+    description: str | None = None
+
+
+class NotebookTableCreateRequest(BaseModel):
+    table_ref: str
+    schema_def: list[NotebookTableColumnDef] | None = Field(default=None, alias="schema")
+    data: list[dict[str, Any]] = Field(default_factory=list)
+    mode: str = "overwrite"
+    description: str | None = None
+
+    class Config:
+        populate_by_name = True
+
+
+class NotebookTableWriteRequest(BaseModel):
+    table_ref: str
+    data: list[dict[str, Any]] = Field(default_factory=list)
+    schema_def: list[NotebookTableColumnDef] | None = Field(default=None, alias="schema")
+    mode: str = "append"
+
+    class Config:
+        populate_by_name = True
+
+
+
 class VolumeCreate(BaseModel):
     name: str
     description: str | None = None

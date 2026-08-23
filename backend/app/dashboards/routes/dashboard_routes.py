@@ -215,48 +215,13 @@ def _register_dashboard_in_default_catalog(db: Session, workspace_id: str, dashb
 
 @router.get("")
 def list_dashboards(request: Request, db: Session = Depends(get_db)):
-    workspace_id = _workspace_id(request)
-    from app.catalog.models import UnifiedCatalog, UnifiedCatalogSchema, UnifiedCatalogDashboard, CatalogWorkspaceBinding
-    
-    if workspace_id:
-        # Get all catalog IDs bound to this workspace or available to all workspaces
-        bound_catalog_ids_subquery = (
-            db.query(CatalogWorkspaceBinding.catalog_id)
-            .filter(CatalogWorkspaceBinding.workspace_id == workspace_id)
-            .subquery()
-        )
-        
-        catalog_ids_subquery = (
-            db.query(UnifiedCatalog.id)
-            .filter(
-                (UnifiedCatalog.id.in_(bound_catalog_ids_subquery)) |
-                (UnifiedCatalog.all_workspaces == True)
-            )
-            .subquery()
-        )
-        
-        # Get all schema IDs belonging to these catalogs
-        schema_ids_subquery = (
-            db.query(UnifiedCatalogSchema.id)
-            .filter(UnifiedCatalogSchema.catalog_id.in_(catalog_ids_subquery))
-            .subquery()
-        )
-        
-        # Get all dashboard IDs under those schemas
-        dashboard_ids = [
-            row[0] for row in db.query(UnifiedCatalogDashboard.dashboard_id)
-            .filter(UnifiedCatalogDashboard.schema_id.in_(schema_ids_subquery))
-            .filter(UnifiedCatalogDashboard.dashboard_id.isnot(None))
-            .all()
-        ]
-        
-        dashboards = db.query(Dashboard).filter(Dashboard.id.in_(dashboard_ids)).order_by(Dashboard.updated_at.desc()).all()
-    else:
-        dashboards = db.query(Dashboard).order_by(Dashboard.updated_at.desc()).all()
-        
+    from app.catalog.models import UnifiedCatalogDashboard
+
+    dashboards = db.query(Dashboard).order_by(Dashboard.updated_at.desc()).all()
     uc_dashboards = db.query(UnifiedCatalogDashboard).filter(UnifiedCatalogDashboard.dashboard_id.isnot(None)).all()
     uc_map = {uc.dashboard_id: uc for uc in uc_dashboards}
     return [_to_meta(d, uc_map.get(d.id)) for d in dashboards]
+
 
 
 class CreateBody(BaseModel):

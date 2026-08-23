@@ -16,10 +16,10 @@ class DashboardManagerTool(BaseTool):
     key = "dashboard_manager"
     name = "Dashboard Manager"
     description = (
-        "Interact with platform dashboards through one package tool. "
+        "Interact with platform dashboards through one unified tool. "
         "Use this tool to list, inspect, create, and configure dashboards — "
-        "add SQL datasets, add and configure chart/text/filter widgets, run SQL "
-        "previews to validate data, and publish the finished dashboard. "
+        "inspect widget schemas (describe_widget), add SQL datasets, add and configure chart/table/card widgets, "
+        "run SQL previews to validate data, and publish the finished dashboard. "
         "Choose one operation and pass its arguments in payload."
     )
     input_schema = {
@@ -30,21 +30,23 @@ class DashboardManagerTool(BaseTool):
                 "enum": DASHBOARD_MANAGER_OPERATIONS,
                 "description": (
                     "The Dashboard Manager operation to execute. "
-                    "Typical workflow: list_dashboards → get_dashboard → create_dashboard → "
-                    "run_query (validate SQL) → add_dataset → add_widget → update_widget → publish_dashboard."
+                    "Typical workflow: list_dashboards → create_dashboard → update_dashboard (pages) → "
+                    "run_query (validate SQL) → add_dataset → describe_widget (inspect widget schema) → "
+                    "add_widget → update_widget → publish_dashboard."
                 ),
             },
             "payload": {
                 "type": "object",
                 "description": (
                     "Operation-specific payload. Examples: "
+                    "describe_widget uses {chart_type: 'counter'|'bar'|'line'|'table'|'pie'|'combo'|'waterfall'|'pivot'}; "
                     "list_dashboards uses {include_draft, name_filter}; "
                     "get_dashboard uses {dashboard_id}; "
                     "create_dashboard uses {name, permission_mode}; "
-                    "update_dashboard uses {dashboard_id, name, settings}; "
+                    "update_dashboard uses {dashboard_id, name, pages: ['Page 1', 'Page 2'], settings}; "
                     "add_dataset uses {dashboard_id, name, sql, params}; "
                     "update_dataset uses {dashboard_id, dataset_id, sql}; "
-                    "add_widget uses {dashboard_id, page_id, widget_type, title, chart_config, grid_item}; "
+                    "add_widget uses {dashboard_id, page_id, widget_type: 'chart', title, chart_config: {chartType, datasetId, xField, yFields}, grid_item}; "
                     "update_widget uses {dashboard_id, widget_id, title, chart_config}; "
                     "run_query uses {sql, max_rows, warehouse_id}; "
                     "publish_dashboard uses {dashboard_id}."
@@ -64,6 +66,7 @@ class DashboardManagerTool(BaseTool):
         "additionalProperties": False,
     }
 
+
     def execute(self, args: dict[str, Any], agent: Agent, db: Session) -> ToolResult:
         operation = str(args.get("operation") or "")
         payload = args.get("payload") or {}
@@ -77,6 +80,11 @@ class DashboardManagerTool(BaseTool):
         # Inject agent identity into context for audit / created_by tracking
         if not context.get("user") and hasattr(agent, "created_by"):
             context = {**context, "user": agent.created_by}
+
+        # Inject agent workspace_id into context to ensure catalog & workspace binding
+        if not context.get("workspace_id") and getattr(agent, "workspace_id", None):
+            context = {**context, "workspace_id": str(agent.workspace_id)}
+
 
         try:
             result = execute_dashboard_manager_operation(

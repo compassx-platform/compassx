@@ -451,7 +451,7 @@ export const AgentCustomizationsView: React.FC<AgentCustomizationsViewProps> = (
                       />
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div style={{ fontSize: "0.82rem", fontWeight: 600, color: isSelected ? "#1d4ed8" : "#1e293b" }}>
-                          {tool.label}
+                          {tool.name}
                         </div>
                         <div style={{ fontSize: "0.72rem", color: "#64748b", marginTop: 2, lineHeight: 1.3 }}>
                           {tool.description}
