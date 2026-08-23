@@ -71,7 +71,6 @@ from app.agents.routes import (  # noqa: E402
     git_connection_routes,
     llm_connection_routes,
     stream_routes,
-    memory_routes,
     skill_routes,
     llm_call_routes,
     budget_routes,
@@ -381,7 +380,6 @@ app.include_router(storage_router_module.router)
 app.include_router(llm_connection_routes.router)
 app.include_router(db_connection_routes.router)
 app.include_router(git_connection_routes.router)
-app.include_router(memory_routes.router)
 app.include_router(agent_routes.router)
 app.include_router(agent_context_routes.router)
 app.include_router(skill_routes.router)

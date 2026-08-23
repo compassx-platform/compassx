@@ -1,6 +1,6 @@
 """Document processing pipeline: upload → parse → chunk → embed → pgvector.
 
-Supported file types: PDF (.pdf), Word (.docx), Excel (.xlsx), CSV (.csv), JSON (.json), plain text (.txt, .md).
+Supported file types: PDF (.pdf), Word (.docx), Excel (.xlsx), CSV (.csv), JSON (.json), plain text (.txt, .md), Images (.png, .jpg, .jpeg, .webp, .gif, .svg).
 """
 
 from __future__ import annotations
@@ -109,6 +109,9 @@ def parse_document(content: bytes, mime_type: str, filename: str) -> str:
             return "\n".join(p.text for p in doc.paragraphs)
         except ImportError:
             raise RuntimeError("python-docx not installed. Run: pip install python-docx")
+
+    if mime_type.startswith("image/") or ext in ("png", "jpg", "jpeg", "webp", "gif", "svg"):
+        return f"[Image Document: {filename} ({mime_type or f'image/{ext}'}) | Size: {len(content)} bytes]\n[Visual image file attached to session]"
 
     raise ValueError(f"Unsupported file type: {mime_type or ext}")
 

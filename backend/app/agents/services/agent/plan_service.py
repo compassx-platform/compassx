@@ -4,18 +4,27 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import json
+import logging
 import os
+import tempfile
 from typing import Any, Dict, List, Optional
 import uuid
 
 from app.agents.schemas.plan_models import Plan, PlanContext, PlanStep, StepStatus
 
+logger = logging.getLogger(__name__)
+
+DEFAULT_PLANS_DIR = os.environ.get(
+    "COMPASSX_PLANS_DIR",
+    os.path.join(tempfile.gettempdir(), "compassx_plans"),
+)
+
 
 class PlanService:
     """Manages creation, storage, state updates, and retrieval of Plan objects."""
 
-    def __init__(self, storage_dir: str = "/tmp/compassx_plans"):
-        self.storage_dir = storage_dir
+    def __init__(self, storage_dir: Optional[str] = None):
+        self.storage_dir = storage_dir or DEFAULT_PLANS_DIR
         os.makedirs(self.storage_dir, exist_ok=True)
 
     def _get_plan_path(self, plan_id: str) -> str:
@@ -34,7 +43,7 @@ class PlanService:
         plan_steps = [
             PlanStep(
                 id=idx + 1 if "id" not in step else step["id"],
-                description=step["description"],
+                description=step.get("description") or step.get("text") or f"Step {idx + 1}",
                 verification=step.get("verification", "Verification check passed"),
                 status=StepStatus(step.get("status", "pending")),
             )
@@ -62,31 +71,48 @@ class PlanService:
         filepath = self._get_plan_path(plan_id)
         if not os.path.exists(filepath):
             return None
-        with open(filepath, "r", encoding="utf-8") as f:
-            data = json.load(f)
-            return Plan.model_validate(data)
-
-    def get_active_plan_for_session(self, session_id: int) -> Optional[Plan]:
-        """Scan plan storage for an active (approved & in-progress/pending steps remaining) plan for session_id."""
-        if not os.path.exists(self.storage_dir):
+        try:
+            with open(filepath, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                return Plan.model_validate(data)
+        except Exception as exc:
+            logger.warning("Failed to load plan %s: %s", plan_id, exc)
             return None
+
+    def get_plans_for_session(self, session_id: int) -> List[Plan]:
+        """Return all plans created for a given session, ordered newest first."""
+        if not os.path.exists(self.storage_dir):
+            return []
+        plans: List[Plan] = []
         for filename in os.listdir(self.storage_dir):
             if filename.startswith("plan_") and filename.endswith(".json"):
                 filepath = os.path.join(self.storage_dir, filename)
                 try:
                     with open(filepath, "r", encoding="utf-8") as f:
                         data = json.load(f)
-                        plan = Plan.model_validate(data)
-                        if plan.session_id == session_id:
-                            # Check if plan is approved and has pending or in_progress steps
-                            has_incomplete_steps = any(
-                                step.status in (StepStatus.PENDING, StepStatus.IN_PROGRESS)
-                                for step in plan.steps
-                            )
-                            if plan.approved_at and has_incomplete_steps:
-                                return plan
+                        p = Plan.model_validate(data)
+                        if p.session_id == session_id:
+                            plans.append(p)
                 except Exception:
                     continue
+        plans.sort(key=lambda p: p.updated_at or p.created_at, reverse=True)
+        return plans
+
+    def get_latest_plan_for_session(self, session_id: int) -> Optional[Plan]:
+        """Return the most recently created or updated plan for a session."""
+        plans = self.get_plans_for_session(session_id)
+        return plans[0] if plans else None
+
+    def get_active_plan_for_session(self, session_id: int) -> Optional[Plan]:
+        """Return the latest active (approved & incomplete steps remaining) plan for session_id."""
+        plans = self.get_plans_for_session(session_id)
+        for plan in plans:
+            has_incomplete_steps = any(
+                step.status in (StepStatus.PENDING, StepStatus.IN_PROGRESS)
+                for step in plan.steps
+            )
+            if plan.approved_at and has_incomplete_steps:
+                return plan
         return None
 
     def get_next_step(self, plan_id: str) -> Optional[PlanStep]:
@@ -94,7 +120,10 @@ class PlanService:
         if not plan:
             return None
         for step in plan.steps:
-            if step.status == StepStatus.PENDING:
+            if step.status == StepStatus.FAILED:
+                # Execution is blocked on failed step
+                return None
+            if step.status in (StepStatus.PENDING, StepStatus.IN_PROGRESS):
                 return step
         return None
 
@@ -109,6 +138,7 @@ class PlanService:
         if not plan:
             return None
 
+        found = False
         for step in plan.steps:
             if step.id == step_id:
                 step.status = status
@@ -116,7 +146,11 @@ class PlanService:
                     step.result = result
                 if status == StepStatus.IN_PROGRESS:
                     step.attempts += 1
+                found = True
                 break
+
+        if not found:
+            logger.warning("Step %s not found in plan %s", step_id, plan_id)
 
         self.save_plan(plan)
         return plan

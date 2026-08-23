@@ -16,8 +16,11 @@ Event types emitted:
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import logging
+import os
+import re
 from dataclasses import dataclass
 from typing import AsyncIterator
 
@@ -32,7 +35,7 @@ from app.models.agents import (
     LLMConnection,
     MessageRole,
 )
-from app.agents.services.agent.context_builder import build_system_prompt
+from app.agents.services.agent.context_builder import build_agent_system_prompt, build_system_prompt
 from app.services.llm_client import chat_stream
 from app.agents.services.agent.tool_executor import execute_tool
 from app.asset_manager.schemas.agent_context import AssetManagerContextRequest
@@ -251,104 +254,6 @@ def _resolve_runtime_context(context: dict | None) -> dict:
     return resolved
 
 
-def _append_runtime_context_prompt(system_prompt: str, runtime_context: dict) -> str:
-    if not runtime_context:
-        return system_prompt
-
-    asset_context = runtime_context.get("asset_manager")
-    if isinstance(asset_context, dict):
-        selected_asset_id = asset_context.get("selected_asset_id")
-        selected_asset_type_id = asset_context.get("selected_asset_type_id")
-        lines = [
-            "## Current Frontend Context",
-            runtime_context.get("summary", "Asset Manager context is active."),
-            f"Route: {asset_context.get('route') or runtime_context.get('route') or 'unknown'}",
-            f"Mode: {asset_context.get('mode') or 'unknown'}",
-            f"Selected asset id: {selected_asset_id if selected_asset_id else 'none'}",
-            f"Selected asset type id: {selected_asset_type_id if selected_asset_type_id else 'none'}",
-        ]
-        if selected_asset_id:
-            lines.append(
-                "When the user says 'this asset' or 'selected asset', treat it as "
-                f"asset_id={selected_asset_id}. Use the asset_manager tool to fetch "
-                "the asset details before explaining it."
-            )
-        return f"{system_prompt}\n\n---\n\n" + "\n".join(lines)
-
-    return f"{system_prompt}\n\n---\n\n## Current Frontend Context\n{json.dumps(runtime_context, default=str)[:2000]}"
-
-
-def _append_attachment_context(system_prompt: str, session_id: int, db: Session) -> tuple[str, bool]:
-    """Append context for session-attached files to system prompt and return whether fetch_attachment tool is needed."""
-    from app.models.agents import NovaAttachment, RagDocument
-    from app.nova.services.attachment_service import get_context_payload
-
-    attachments = (
-        db.query(NovaAttachment)
-        .filter(NovaAttachment.session_id == session_id, NovaAttachment.status == "ready")
-        .all()
-    )
-    rag_docs = (
-        db.query(RagDocument)
-        .filter(RagDocument.session_id == session_id)
-        .all()
-    )
-
-    if not attachments and not rag_docs:
-        return system_prompt, False
-
-    attachment_blocks = ["## Attached Session Files"]
-    has_tool_fetch = False
-
-    for att in attachments:
-        payload = get_context_payload(att.file_id, db)
-        p_type = payload.get("type")
-        if p_type == "inline":
-            attachment_blocks.append(
-                f"### File Attachment: {payload.get('filename')} (ID: {payload.get('file_id')})\n"
-                f"Content:\n```\n{payload.get('content')}\n```"
-            )
-        elif p_type == "multimodal_native":
-            attachment_blocks.append(
-                f"### File Attachment: {payload.get('filename')} (ID: {payload.get('file_id')}, Image/Multimodal)\n"
-                f"[Native image attached with base64 data available]"
-            )
-        elif p_type == "tool_fetch":
-            has_tool_fetch = True
-            attachment_blocks.append(
-                f"### File Attachment: {payload.get('filename')} (ID: {payload.get('file_id')})\n"
-                f"Type: {payload.get('mime_type')}, Size: {payload.get('size_bytes')} bytes, Token Count: {payload.get('token_count')}\n"
-                f"Preview:\n```\n{payload.get('preview_text')}\n```\n"
-                f"Note: Full content is available via fetch_attachment(file_id='{payload.get('file_id')}', page=..., query=..., line_start=..., line_end=...)."
-            )
-
-    for rdoc in rag_docs:
-        has_tool_fetch = True
-        preview_text = rdoc.extracted_preview or ""
-        attachment_blocks.append(
-            f"### Attached Document: {rdoc.filename} (Doc ID: {rdoc.id})\n"
-            f"Size: {rdoc.size_bytes} bytes\n"
-            f"Content Preview:\n```\n{preview_text}\n```\n"
-            f"Note: Full content is available via fetch_attachment(file_id='{rdoc.id}', page=..., query=..., line_start=..., line_end=...)."
-        )
-
-    doc_instructions = (
-        "### ⚠️ MANDATORY TOOL EXECUTION INSTRUCTIONS FOR ATTACHED DOCUMENTS:\n"
-        "1. **AUTOMATIC TOOL CALL REQUIRED**: When an attached document is in `tool_fetch` mode or has multiple pages, YOUR VERY FIRST ACTION MUST BE A TOOL CALL to `fetch_attachment(file_id='<file_id>')` or `fetch_attachment(file_id='<file_id>', page=N)`.\n"
-        "2. **DO NOT output a final prose response to the user** before calling `fetch_attachment` to read the document content.\n"
-        "3. **DO NOT ask the user for more previews, pages, or OCR text**. You have server-side access to all pages via `fetch_attachment`.\n"
-        "4. **DO NOT claim you cannot see remaining pages**. Call `fetch_attachment` to inspect every page of the document.\n"
-        "5. **Deliver complete, multi-page structured explanations**:\n"
-        "   - **Executive Summary & Portfolio Totals**: Report overall status, total AC capacity, total DC capacity, site counts, and key metrics.\n"
-        "   - **Structured Markdown Tables**: Provide full tables for site-level capacity, state-level, regional manager, or category breakdowns.\n"
-        "   - **Glossary & Acronyms**: Define all domain terms and abbreviations found in the document.\n"
-    )
-
-    updated_prompt = system_prompt + "\n\n---\n\n" + "\n\n".join(attachment_blocks) + "\n\n" + doc_instructions
-    return updated_prompt, has_tool_fetch
-
-
-
 async def orchestrate_stream(
     session_id: int,
     user_content: str,
@@ -414,10 +319,16 @@ async def orchestrate_stream(
         yield {"type": "error", "message": "No LLM connection configured"}
         return
 
-    # ── Build system prompt ───────────────────────────────────────────────────
+    # ── Build system prompt (3-Tier Layered Architecture) ─────────────────────
     runtime_context = _resolve_runtime_context(context)
-    system_prompt = _append_runtime_context_prompt(build_system_prompt(db, agent), runtime_context)
-    system_prompt, has_attachment_tool_fetch = _append_attachment_context(system_prompt, session_id, db)
+    prompt_res = build_agent_system_prompt(
+        db=db,
+        agent=agent,
+        session_id=session_id,
+        runtime_context=runtime_context,
+    )
+    system_prompt = prompt_res.system_prompt
+    has_attachment_tool_fetch = prompt_res.has_attachment_tool_fetch
 
     # ── Load conversation history ─────────────────────────────────────────────
     history_rows = (
@@ -450,7 +361,47 @@ async def orchestrate_stream(
         db.refresh(user_msg)
         user_msg_id = user_msg.id
 
-    messages.append({"role": "user", "content": user_content, "id": user_msg_id})
+    # ── Resolve attached images for multimodal vision in current user turn ──
+    image_parts = []
+    try:
+        from app.nova.services.attachment_service import STORAGE_BASE_DIR
+        from app.models.agents import NovaAttachment, RagDocument
+        # 1. RagDocuments
+        rag_docs = db.query(RagDocument).filter(RagDocument.session_id == session_id).all()
+        for rdoc in rag_docs:
+            ext = (rdoc.filename or "").rsplit(".", 1)[-1].lower() if "." in (rdoc.filename or "") else ""
+            is_img = (rdoc.mime_type and rdoc.mime_type.startswith("image/")) or ext in ("png", "jpg", "jpeg", "webp", "gif", "svg")
+            if is_img:
+                doc_dir = os.path.join(STORAGE_BASE_DIR, "sessions", str(session_id), "rag_docs", str(rdoc.id))
+                img_file_path = os.path.join(doc_dir, rdoc.filename or "file")
+                if os.path.exists(img_file_path):
+                    with open(img_file_path, "rb") as f:
+                        b64 = base64.b64encode(f.read()).decode("utf-8")
+                    mime = rdoc.mime_type or f"image/{ext or 'png'}"
+                    image_parts.append({
+                        "type": "image_url",
+                        "image_url": {"url": f"data:{mime};base64,{b64}"}
+                    })
+
+        # 2. NovaAttachments
+        nova_atts = db.query(NovaAttachment).filter(NovaAttachment.session_id == session_id, NovaAttachment.status == "ready").all()
+        for n_att in nova_atts:
+            if n_att.delivery_mode == "multimodal_native" and os.path.exists(n_att.blob_path):
+                with open(n_att.blob_path, "rb") as f:
+                    b64 = base64.b64encode(f.read()).decode("utf-8")
+                image_parts.append({
+                    "type": "image_url",
+                    "image_url": {"url": f"data:{n_att.mime_type or 'image/png'};base64,{b64}"}
+                })
+    except Exception as img_err:
+        logger.warning("Failed to collect image attachments for session %s: %s", session_id, img_err)
+
+    if image_parts:
+        user_message_payload = [{"type": "text", "text": user_content}] + image_parts
+    else:
+        user_message_payload = user_content
+
+    messages.append({"role": "user", "content": user_message_payload, "id": user_msg_id})
 
     # ── Resolve Agent Manifest (Spec v2 Part C) ──────────────────────────────
     manifest_data = getattr(agent, "manifest", None) or {}
@@ -478,18 +429,18 @@ async def orchestrate_stream(
         if "read_skill" not in enabled_tool_keys:
             enabled_tool_keys.append("read_skill")
 
-    # Auto-set approved_at on plan if user message contains approval keywords
-    if any(user_content.lower().startswith(kw) for kw in ["approved", "approve", "yes, approve", "proceed"]):
-        import os
+    # Auto-set approved_at on plan if user message expresses approval intent
+    approval_pattern = re.compile(
+        r"^(i\s+)?(approve|approved|proceed|go\s+ahead|yes(,\s*|\s+)approve|looks\s+good|start\s+execution)",
+        re.IGNORECASE,
+    )
+    if approval_pattern.search(user_content.strip()):
         from app.agents.services.agent.plan_service import PlanService
         _plan_svc = PlanService()
-        if os.path.exists(_plan_svc.storage_dir):
-            for _fname in os.listdir(_plan_svc.storage_dir):
-                if _fname.startswith("plan_") and _fname.endswith(".json"):
-                    _p = _plan_svc.get_plan(_fname[5:-5])
-                    if _p and _p.session_id == session_id and not _p.approved_at:
-                        _plan_svc.approve_plan(_p.plan_id)
-                        logger.info("Marked plan %s approved_at via approval message", _p.plan_id)
+        for _p in _plan_svc.get_plans_for_session(session_id):
+            if not _p.approved_at:
+                _plan_svc.approve_plan(_p.plan_id)
+                logger.info("Marked plan %s approved_at via approval message", _p.plan_id)
 
     # ── Active Plan Enforcement ──────────────────────────────────────────────
     from app.agents.services.agent.plan_service import PlanService
@@ -518,21 +469,26 @@ async def orchestrate_stream(
             f"1. Execute ALL pending steps in sequence THIS TURN. Do NOT stop after completing one step.\n"
             f"2. For EACH pending step, in order:\n"
             f"   a. Call get_next_step(plan_id='{active_plan.plan_id}') to get the next pending step.\n"
-            f"   b. Call mark_step(..., step_id=<id>, status='in_progress').\n"
-            f"   c. Perform the actual work for that step (create notebooks, write Python code, etc).\n"
-            f"   d. Call mark_step(..., step_id=<id>, status='done').\n"
-            f"   e. IMMEDIATELY continue to the next step without pausing or asking.\n"
-            f"3. STOP only when get_next_step returns completed=True.\n"
+            f"   b. If get_next_step indicates blocked=True or completed=True, STOP immediately.\n"
+            f"   c. Call mark_step(..., step_id=<id>, status='in_progress').\n"
+            f"   d. Perform the ACTUAL work for that step. When creating notebooks or assets, use the registered catalogs (e.g. 'main', 'sandbox') and pass complete code into create_notebook(code='...').\n"
+            f"   e. If tool execution encounters an error, DO NOT mark it 'done' and DO NOT skip to the next step! Either fix the error and retry that same step until successful, or record the failure and halt.\n"
+            f"   f. Call mark_step(..., step_id=<id>, status='done', result={{...}}).\n"
+            f"   g. IMMEDIATELY continue to the next step.\n"
+            f"3. STOP when get_next_step returns completed=True or blocked=True.\n"
             f"4. Do NOT create a new plan. Do NOT ask for user approval again. START EXECUTING NOW.\n"
             f"\nFirst step to execute: {step_desc}\n"
         )
         system_prompt += plan_directive
-
-    # Spec v2 Part C3 / D11: If planning is enabled or an active plan exists, ensure plan tools exist
-    if active_plan or manifest.capabilities.planning.enabled or any(kw in user_content.lower() for kw in ["approve", "plan", "step", "proceed", "build"]):
+    # Spec v2 Part C3 / D11: If planning is enabled or an active plan exists or user is building assets, ensure plan & build tools exist
+    if active_plan or manifest.capabilities.planning.enabled or any(kw in user_content.lower() for kw in ["approve", "plan", "step", "proceed", "build", "notebook", "dashboard", "pipeline", "table"]):
         for plan_tool_name in ["create_plan", "get_plan", "get_next_step", "mark_step", "append_correction", "escalate_to_plan"]:
             if plan_tool_name not in enabled_tool_keys:
                 enabled_tool_keys.append(plan_tool_name)
+        # Ensure core build tools are available when executing build plans
+        for build_tool_name in ["create_notebook", "notebook_manager", "python_code", "sql_query", "asset_manager"]:
+            if build_tool_name not in enabled_tool_keys:
+                enabled_tool_keys.append(build_tool_name)
 
     from app.agents.services.agent.tools.registry import get_tool_definitions
     tools = get_tool_definitions(enabled_tool_keys)
@@ -808,6 +764,7 @@ async def orchestrate_stream(
                         ctx = args.get("context") if isinstance(args.get("context"), dict) else {}
                         pld = args.get("payload") if isinstance(args.get("payload"), dict) else {}
                         res_data = result_payload.get("data") if isinstance(result_payload.get("data"), dict) else {}
+                        step_res = args.get("result") if isinstance(args.get("result"), dict) else (result_payload.get("result") if isinstance(result_payload.get("result"), dict) else {})
 
                         fn = (
                             result_payload.get("full_name") or
@@ -816,22 +773,39 @@ async def orchestrate_stream(
                             ctx.get("notebook_path") or
                             pld.get("notebook_path") or
                             pld.get("full_name") or
-                            args.get("path")
+                            args.get("path") or
+                            (step_res.get("full_name") if isinstance(step_res, dict) else None) or
+                            (step_res.get("notebook_path") if isinstance(step_res, dict) else None)
                         )
                         if not fn:
                             cat = result_payload.get("catalog_name") or args.get("catalog_name") or pld.get("catalog_name")
                             sch = result_payload.get("schema_name") or args.get("schema_name") or pld.get("schema_name")
-                            nm = result_payload.get("notebook_name") or result_payload.get("name") or args.get("notebook_name") or args.get("name") or pld.get("notebook_name")
+                            nm = (
+                                result_payload.get("notebook_name") or
+                                result_payload.get("name") or
+                                args.get("notebook_name") or
+                                args.get("name") or
+                                pld.get("notebook_name") or
+                                (step_res.get("notebook_name") if isinstance(step_res, dict) else None)
+                            )
                             if cat and sch and nm:
                                 fn = f"{cat}.{sch}.{nm}"
 
-                        ot = result_payload.get("object_type") or args.get("object_type") or ("notebook" if "notebook" in tc["name"].lower() else "table")
+                        # Fallback asset name if code/notebook was produced in a step
+                        if not fn and isinstance(step_res, dict) and (step_res.get("notebook_content") or step_res.get("code") or step_res.get("query")):
+                            goal_slug = re.sub(r'[^a-zA-Z0-9_]', '_', (active_plan.goal if active_plan else "asset")[:30].strip()).strip('_').lower()
+                            fn = f"workspace.notebooks.{goal_slug or 'notebook_output'}"
+
+                        ot = result_payload.get("object_type") or args.get("object_type") or ("notebook" if ("notebook" in tc.get("name", "").lower() or (isinstance(step_res, dict) and step_res.get("notebook_content"))) else "table")
                         before = result_payload.get("before_content") or args.get("before_content")
 
                         after = (
                             result_payload.get("after_content") or
                             result_payload.get("content") or
                             result_payload.get("code") or
+                            (step_res.get("notebook_content") if isinstance(step_res, dict) else None) or
+                            (step_res.get("code") if isinstance(step_res, dict) else None) or
+                            (step_res.get("query") if isinstance(step_res, dict) else None) or
                             args.get("content") or
                             args.get("code") or
                             args.get("query")
@@ -844,40 +818,54 @@ async def orchestrate_stream(
                             elif "comment" in args:
                                 after = f"# Notebook/Asset created\n# Comment: {args['comment']}"
 
+                        captured_change_info = None
                         if fn and after and isinstance(fn, str) and isinstance(after, str):
                             curr_step = None
                             if active_plan:
                                 for st in active_plan.steps:
-                                    if st.status == "in_progress":
+                                    if st.status in ("in_progress", "done"):
                                         curr_step = st.id
                                         break
                             from app.agents.services.agent.change_capture_service import capture_change
-                            capture_change(
+                            rec = capture_change(
                                 db=db,
                                 session_id=session_id,
                                 full_name=fn,
                                 object_type=str(ot),
                                 before=before if isinstance(before, str) else None,
                                 after=after,
-                                step_id=curr_step,
+                                step_id=curr_step or (args.get("step_id") if isinstance(args.get("step_id"), int) else None),
                                 plan_id=_active_plan_id,
                             )
+                            if rec:
+                                captured_change_info = {
+                                    "change_id": rec.change_id,
+                                    "full_name": rec.full_name,
+                                    "object_type": rec.object_type,
+                                    "additions": rec.additions,
+                                    "deletions": rec.deletions,
+                                    "status": rec.status,
+                                }
                     except Exception as _cap_err:
-                        logger.debug("Change capture failed (non-fatal): %s", _cap_err)
+                        logger.warning("Change capture failed (non-fatal): %s", _cap_err)
 
                 if not sandbox:
+                    tool_res_dict = {
+                        "args": tc["arguments"],
+                        "result": result_payload,
+                        "error": error_payload,
+                        "ok": ok,
+                        "duration_ms": skill_result.get("duration_ms"),
+                    }
+                    if captured_change_info:
+                        tool_res_dict["change"] = captured_change_info
+
                     tool_msg = ChatMessage(
                         session_id=session_id,
                         role=MessageRole.tool,
                         content=None,
                         tool_name=tc["name"],
-                        tool_result={
-                            "args": tc["arguments"],
-                            "result": result_payload,
-                            "error": error_payload,
-                            "ok": ok,
-                            "duration_ms": skill_result.get("duration_ms"),
-                        },
+                        tool_result=tool_res_dict,
                         agent_name=agent.name,
                         invocation_depth=0,
                     )

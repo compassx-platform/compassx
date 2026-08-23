@@ -22,6 +22,7 @@ from app.agents.services.agent.change_capture_service import (
     accept_change,
     reject_change,
     get_changes_for_session,
+    get_change_record,
 )
 
 logger = logging.getLogger(__name__)
@@ -113,6 +114,23 @@ def list_changes(
     for r in records:
         r["url"] = _resolve_asset_url(r["full_name"], r["object_type"])
     return records
+
+
+@router.get("/changes/{change_id}")
+def get_change_endpoint(
+    request: Request,
+    agent_id: int,
+    session_id: int,
+    change_id: str,
+    db: Session = Depends(get_db),
+):
+    """Return a single change record with full before/after content (G5)."""
+    _get_session_or_404(db, agent_id, session_id)
+    record = get_change_record(db, change_id)
+    if not record:
+        raise HTTPException(404, f"Change {change_id} not found")
+    record["url"] = _resolve_asset_url(record["full_name"], record["object_type"])
+    return record
 
 
 @router.post("/changes/{change_id}/accept")

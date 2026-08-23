@@ -29,7 +29,7 @@ class CheckpointsCapability(BaseModel):
 class DocumentUploadCapability(BaseModel):
     enabled: bool = True
     accepted_types: List[str] = Field(
-        default_factory=lambda: ["pdf", "docx", "xlsx", "csv", "txt", "md", "json"]
+        default_factory=lambda: ["pdf", "docx", "xlsx", "csv", "txt", "md", "json", "png", "jpg", "jpeg", "webp", "gif", "svg"]
     )
 
 

@@ -1342,9 +1342,6 @@ export default function AgentsPage() {
           <p className="page-subtitle">Create agents and review the tools they can use.</p>
         </div>
         <div style={{ display: "flex", gap: 8 }}>
-          <button className="btn btn-secondary" onClick={() => navigate(`/agents/connections`)}>
-            <Settings2 size={14} /> Connections
-          </button>
           <button className="btn btn-primary" onClick={() => navigate(`/agents/new`)}>
             <Plus size={15} /> New Agent
           </button>

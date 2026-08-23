@@ -13,37 +13,115 @@ interface DiffSheetProps {
 // G7: diff_renderer registry — maps object_type to a renderer component
 type DiffRenderer = React.FC<{ before: string | null; after: string | null; fullName: string }>;
 
-const PlainTextDiff: DiffRenderer = ({ before, after }) => {
-  const beforeLines = (before ?? '').split('\n');
-  const afterLines  = (after  ?? '').split('\n');
+interface DiffLine {
+  type: 'add' | 'del' | 'ctx';
+  text: string;
+  oldLineNumber?: number;
+  newLineNumber?: number;
+}
 
-  // Simple line-level diff computation
-  const diffLines: Array<{ type: 'add' | 'del' | 'ctx'; text: string }> = [];
-  const maxLen = Math.max(beforeLines.length, afterLines.length);
+function computeLCSDiff(beforeText: string | null, afterText: string | null): DiffLine[] {
+  const beforeLines = (beforeText ?? '').replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
+  const afterLines = (afterText ?? '').replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
 
-  for (let i = 0; i < maxLen; i++) {
-    const b = beforeLines[i];
-    const a = afterLines[i];
-    if (b === undefined) {
-      diffLines.push({ type: 'add', text: a });
-    } else if (a === undefined) {
-      diffLines.push({ type: 'del', text: b });
-    } else if (b !== a) {
-      diffLines.push({ type: 'del', text: b });
-      diffLines.push({ type: 'add', text: a });
-    } else {
-      diffLines.push({ type: 'ctx', text: b });
+  if (beforeText === null || beforeText === undefined || beforeText === '') {
+    return afterLines.map((line, idx) => ({
+      type: 'add',
+      text: line,
+      newLineNumber: idx + 1,
+    }));
+  }
+  if (afterText === null || afterText === undefined || afterText === '') {
+    return beforeLines.map((line, idx) => ({
+      type: 'del',
+      text: line,
+      oldLineNumber: idx + 1,
+    }));
+  }
+
+  const n = beforeLines.length;
+  const m = afterLines.length;
+  const maxTableSize = 2500000;
+
+  if (n * m > maxTableSize) {
+    const diffLines: DiffLine[] = [];
+    const maxL = Math.max(n, m);
+    for (let i = 0; i < maxL; i++) {
+      const b = beforeLines[i];
+      const a = afterLines[i];
+      if (b === undefined) diffLines.push({ type: 'add', text: a, newLineNumber: i + 1 });
+      else if (a === undefined) diffLines.push({ type: 'del', text: b, oldLineNumber: i + 1 });
+      else if (b !== a) {
+        diffLines.push({ type: 'del', text: b, oldLineNumber: i + 1 });
+        diffLines.push({ type: 'add', text: a, newLineNumber: i + 1 });
+      } else {
+        diffLines.push({ type: 'ctx', text: b, oldLineNumber: i + 1, newLineNumber: i + 1 });
+      }
+    }
+    return diffLines;
+  }
+
+  const dp: number[][] = Array.from({ length: n + 1 }, () => new Array(m + 1).fill(0));
+  for (let i = 1; i <= n; i++) {
+    for (let j = 1; j <= m; j++) {
+      if (beforeLines[i - 1] === afterLines[j - 1]) {
+        dp[i][j] = dp[i - 1][j - 1] + 1;
+      } else {
+        dp[i][j] = Math.max(dp[i - 1][j], dp[i][j - 1]);
+      }
     }
   }
 
+  const result: DiffLine[] = [];
+  let i = n;
+  let j = m;
+
+  while (i > 0 || j > 0) {
+    if (i > 0 && j > 0 && beforeLines[i - 1] === afterLines[j - 1]) {
+      result.push({
+        type: 'ctx',
+        text: beforeLines[i - 1],
+        oldLineNumber: i,
+        newLineNumber: j,
+      });
+      i--;
+      j--;
+    } else if (j > 0 && (i === 0 || dp[i][j - 1] >= dp[i - 1][j])) {
+      result.push({
+        type: 'add',
+        text: afterLines[j - 1],
+        newLineNumber: j,
+      });
+      j--;
+    } else if (i > 0 && (j === 0 || dp[i][j - 1] < dp[i - 1][j])) {
+      result.push({
+        type: 'del',
+        text: beforeLines[i - 1],
+        oldLineNumber: i,
+      });
+      i--;
+    }
+  }
+
+  return result.reverse();
+}
+
+const PlainTextDiff: DiffRenderer = ({ before, after }) => {
+  const diffLines = computeLCSDiff(before, after);
+
   return (
-    <pre className="diff-sheet__plain-diff">
+    <pre className="diff-sheet__plain-diff" style={{ margin: 0, overflowX: 'auto' }}>
       {diffLines.map((line, i) => (
-        <div key={i} className={`diff-line diff-line--${line.type}`}>
-          <span className="diff-line__gutter">
+        <div key={i} className={`diff-line diff-line--${line.type}`} style={{ display: 'flex', alignItems: 'center' }}>
+          <span className="diff-line__gutter" style={{ userSelect: 'none', minWidth: 24, textAlign: 'center', opacity: 0.7 }}>
             {line.type === 'add' ? '+' : line.type === 'del' ? '-' : ' '}
           </span>
-          <span className="diff-line__text">{line.text}</span>
+          <span style={{ userSelect: 'none', minWidth: 44, fontSize: '0.72rem', color: '#9ca3af', textAlign: 'right', paddingRight: 8 }}>
+            {line.type === 'del' ? line.oldLineNumber : line.type === 'add' ? line.newLineNumber : `${line.newLineNumber}`}
+          </span>
+          <span className="diff-line__text" style={{ flex: 1, whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
+            {line.text}
+          </span>
         </div>
       ))}
     </pre>

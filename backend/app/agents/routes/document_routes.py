@@ -12,6 +12,7 @@ doc_id is linked into the active plan's context.uploaded_documents if one exists
 from __future__ import annotations
 
 import logging
+import os
 from typing import List
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Request, UploadFile
@@ -35,6 +36,11 @@ ACCEPTED_MIME_TYPES = {
     "text/plain",
     "text/markdown",
     "application/json",
+    "image/png",
+    "image/jpeg",
+    "image/webp",
+    "image/gif",
+    "image/svg+xml",
 }
 
 
@@ -83,7 +89,7 @@ async def upload_documents(
 
     # Resolve accepted types from agent manifest
     agent = db.query(Agent).filter(Agent.id == agent_id).first()
-    accepted_exts: set[str] = {"pdf", "docx", "xlsx", "csv", "txt", "md", "json"}
+    accepted_exts: set[str] = {"pdf", "docx", "xlsx", "csv", "txt", "md", "json", "png", "jpg", "jpeg", "webp", "gif", "svg"}
     if agent and agent.manifest:
         from app.agents.schemas.agent_manifest import AgentManifest
         try:
@@ -126,16 +132,23 @@ async def upload_documents(
         db.commit()
         db.refresh(doc)
 
-        # Persist full extracted text blob immediately so fetch_attachment can read it instantly
-        if full_text:
-            try:
-                from app.nova.services.attachment_service import STORAGE_BASE_DIR, _ensure_dir
-                doc_blob_path = os.path.join(STORAGE_BASE_DIR, "sessions", str(session_id), "rag_docs", str(doc.id), "full_text.txt")
-                _ensure_dir(doc_blob_path)
-                with open(doc_blob_path, "w", encoding="utf-8") as f:
+        # Persist full extracted text blob & raw binary file immediately
+        try:
+            from app.nova.services.attachment_service import STORAGE_BASE_DIR, _ensure_dir
+            doc_dir = os.path.join(STORAGE_BASE_DIR, "sessions", str(session_id), "rag_docs", str(doc.id))
+            _ensure_dir(os.path.join(doc_dir, "keep"))
+
+            # Save full parsed text
+            if full_text:
+                with open(os.path.join(doc_dir, "full_text.txt"), "w", encoding="utf-8") as f:
                     f.write(full_text)
-            except Exception as blob_err:
-                logger.warning("Failed to write rag doc full_text blob for doc %s: %s", doc.id, blob_err)
+
+            # Save raw original binary file
+            raw_filename = upload.filename or "file"
+            with open(os.path.join(doc_dir, raw_filename), "wb") as f:
+                f.write(content)
+        except Exception as blob_err:
+            logger.warning("Failed to write rag doc blob for doc %s: %s", doc.id, blob_err)
 
         # Background: chunk + embed
         background_tasks.add_task(process_document, doc.id, content, mime, upload.filename or "file", db)

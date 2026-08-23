@@ -16,7 +16,6 @@ def register_agent_routers(app: FastAPI) -> None:
         git_connection_routes,
         llm_connection_routes,
         stream_routes,
-        memory_routes,
         skill_routes,
         llm_call_routes,
         budget_routes,
@@ -30,7 +29,6 @@ def register_agent_routers(app: FastAPI) -> None:
     app.include_router(llm_connection_routes.router)
     app.include_router(db_connection_routes.router)
     app.include_router(git_connection_routes.router)
-    app.include_router(memory_routes.router)
     app.include_router(skill_routes.router)
     app.include_router(chat_routes.router)
     app.include_router(stream_routes.router)

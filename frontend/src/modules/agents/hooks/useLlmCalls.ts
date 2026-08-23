@@ -13,6 +13,7 @@ export interface LlmCallLogListItem {
   output_tokens?: number;
   finish_reason?: string;
   summary?: string;
+  response_tool_calls?: any[];
 }
 
 export interface LlmCallLogDetail {

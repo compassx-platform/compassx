@@ -95,48 +95,97 @@ class SearchAssetsTool(BaseTool):
         if limit < 1:
             limit = 1
 
-        # 1. Embed the query
+        # 1. Embed the query (or fallback to keyword search if embedding model is not configured)
         query_vec = get_embedding(query_text)
-        if query_vec is None:
-            return ToolResult(
-                ok=False,
-                error=(
-                    "Could not embed the search query. "
-                    "Ensure an LLM connection is marked 'use_for_embedding' "
-                    "and the embedding model is configured correctly."
-                ),
-            )
+        from app.database import account_engine
 
-        # 2. Run cosine-similarity search against vector_db.assets
-        # The account DB (compassx_account) holds vector_db.assets; we need its engine.
+        if query_vec is not None:
+            # 2. Run cosine-similarity search against vector_db.assets
+            try:
+                vec_literal = "[" + ",".join(str(v) for v in query_vec) + "]"
+
+                with account_engine.connect() as conn:
+                    rows = conn.execute(
+                        text(_SEARCH_SQL),
+                        {
+                            "query_vec": vec_literal,
+                            "object_type_filter": object_type,
+                            "limit": limit,
+                        },
+                    ).fetchall()
+                results = [
+                    {
+                        "full_name": row.full_name,
+                        "object_type": row.object_type,
+                        "description": row.description,
+                        "is_foreign": row.is_foreign,
+                        "similarity_score": round(float(row.similarity_score), 4),
+                    }
+                    for row in rows
+                ]
+                return ToolResult(
+                    ok=True,
+                    result={
+                        "query": query_text,
+                        "results": results,
+                        "count": len(results),
+                    },
+                )
+            except Exception as exc:
+                logger.error("search_assets vector query failed: %s", exc, exc_info=True)
+
+        # Fallback to Text / Keyword ILIKE search
+        logger.info("Semantic embedding not available for %r; falling back to keyword search", query_text)
+        kw_sql = """
+        SELECT
+            catalog_name || '.' || schema_name || '.' || object_name AS full_name,
+            object_type,
+            description,
+            is_foreign,
+            1.0 AS similarity_score
+        FROM vector_db.assets
+        WHERE (object_name ILIKE :kw OR description ILIKE :kw OR schema_name ILIKE :kw)
+        AND (:object_type_filter IS NULL OR object_type = :object_type_filter)
+        LIMIT :limit
+        """
         try:
-            from app.database import account_engine
-
-            vec_literal = "[" + ",".join(str(v) for v in query_vec) + "]"
-
             with account_engine.connect() as conn:
                 rows = conn.execute(
-                    text(_SEARCH_SQL),
+                    text(kw_sql),
                     {
-                        "query_vec": vec_literal,
+                        "kw": f"%{query_text}%",
                         "object_type_filter": object_type,
                         "limit": limit,
                     },
                 ).fetchall()
+            results = [
+                {
+                    "full_name": row.full_name,
+                    "object_type": row.object_type,
+                    "description": row.description,
+                    "is_foreign": row.is_foreign,
+                    "similarity_score": 1.0,
+                }
+                for row in rows
+            ]
+            return ToolResult(
+                ok=True,
+                result={
+                    "query": query_text,
+                    "results": results,
+                    "count": len(results),
+                },
+            )
         except Exception as exc:
-            logger.error("search_assets query failed: %s", exc, exc_info=True)
-            return ToolResult(ok=False, error=f"Search query failed: {exc}")
-
-        results = [
-            {
-                "full_name": row.full_name,
-                "object_type": row.object_type,
-                "description": row.description,
-                "is_foreign": row.is_foreign,
-                "similarity_score": round(float(row.similarity_score), 4),
-            }
-            for row in rows
-        ]
+            logger.error("search_assets keyword fallback failed: %s", exc, exc_info=True)
+            return ToolResult(
+                ok=True,
+                result={
+                    "query": query_text,
+                    "results": [],
+                    "count": 0,
+                },
+            )
 
         return ToolResult(
             ok=True,

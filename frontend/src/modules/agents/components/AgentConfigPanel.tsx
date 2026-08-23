@@ -28,7 +28,7 @@ export interface AgentManifestData {
 }
 
 const WRITE_CATEGORIES = ['catalog', 'storage', 'scheduler', 'dashboard', 'app'];
-const FILE_TYPES = ['pdf', 'docx', 'xlsx', 'csv', 'txt', 'md', 'json'];
+const FILE_TYPES = ['pdf', 'docx', 'xlsx', 'csv', 'txt', 'md', 'json', 'png', 'jpg', 'jpeg', 'webp', 'gif', 'svg'];
 
 const DEFAULT_MANIFEST: AgentManifestData = {
   agent_id: 'custom-agent',
@@ -37,7 +37,7 @@ const DEFAULT_MANIFEST: AgentManifestData = {
   capabilities: {
     planning: { enabled: false, router_thresholds: 'default', max_retry_attempts: 3 },
     checkpoints: { enabled: false, gated_write_categories: [] },
-    document_upload: { enabled: true, accepted_types: ['pdf', 'docx', 'xlsx', 'csv', 'txt', 'md', 'json'] },
+    document_upload: { enabled: true, accepted_types: ['pdf', 'docx', 'xlsx', 'csv', 'txt', 'md', 'json', 'png', 'jpg', 'jpeg', 'webp', 'gif', 'svg'] },
     artifact_visibility: { enabled: true, link_resolution: true, diff_capture: true },
   },
 };

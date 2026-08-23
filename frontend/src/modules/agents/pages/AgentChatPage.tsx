@@ -3,7 +3,7 @@
  * Supports multi-agent swarm: subagent messages are rendered with a colour-coded
  * agent badge so the user can see which agent produced each response.
  */
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { useParams } from "react-router-dom";
 import { useScopedNavigate } from "@/lib/appNavigation";
 import ReactMarkdown from "react-markdown";
@@ -27,6 +27,15 @@ import {
   Sparkles,
   MoreVertical,
   ArrowRight,
+  Copy,
+  Check,
+  PanelLeftClose,
+  PanelLeftOpen,
+  SquarePen,
+  SlidersHorizontal,
+  Search,
+  History,
+  Terminal,
 } from "lucide-react";
 import {
   useChatSessions,
@@ -47,6 +56,10 @@ import { PlanTaskViewer } from "@/modules/agents/components/PlanTaskViewer";
 import { AssetChip, parseAssetTags } from "@/modules/agents/components/AssetChip";
 import { DiffSummaryCard, ChangeRecord } from "@/modules/agents/components/DiffSummaryCard";
 import { DiffSheet } from "@/modules/agents/components/DiffSheet";
+import { SessionChangesDock } from "@/modules/agents/components/SessionChangesDock";
+import { TurnEditBadge, TurnEditInfo } from "@/modules/agents/components/TurnEditBadge";
+import { AgentCustomizationsView } from "@/modules/agents/components/AgentCustomizationsView";
+import { SessionLlmLogsView } from "@/modules/agents/components/SessionLlmLogsView";
 import { Paperclip, X as XIcon } from "lucide-react";
 
 // ── Vega-Lite chart renderer ──────────────────────────────────────────────────
@@ -502,6 +515,58 @@ function ConsolidatedThoughtBlock({
   );
 }
 
+// ── Copy Message Button ───────────────────────────────────────────────────────
+
+function CopyMessageButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (err) {
+      console.error("Failed to copy text:", err);
+    }
+  };
+
+  return (
+    <button
+      onClick={handleCopy}
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: "4px",
+        border: "none",
+        background: "transparent",
+        color: copied ? "#16a34a" : "#9ca3af",
+        cursor: "pointer",
+        userSelect: "none",
+        borderRadius: "4px",
+        transition: "color 0.15s ease, background 0.15s ease",
+        flexShrink: 0,
+      }}
+      onMouseEnter={(e) => {
+        if (!copied) {
+          e.currentTarget.style.color = "#4b5563";
+          e.currentTarget.style.background = "#f3f4f6";
+        }
+      }}
+      onMouseLeave={(e) => {
+        if (!copied) {
+          e.currentTarget.style.color = "#9ca3af";
+          e.currentTarget.style.background = "transparent";
+        }
+      }}
+      title={copied ? "Copied to clipboard!" : "Copy message"}
+    >
+      {copied ? <Check size={14} color="#16a34a" /> : <Copy size={14} />}
+    </button>
+  );
+}
+
 // ── Message bubble ────────────────────────────────────────────────────────────
 
 interface ParsedUserAttachmentContent {
@@ -655,6 +720,11 @@ function MessageBubble({
               ) : !thought ? (
                 <span style={{ opacity: 0.6, fontStyle: "italic" }}>*(No response content)*</span>
               ) : null}
+              {!isUser && response && (
+                <div style={{ display: "flex", justifyContent: "flex-start", marginTop: 6 }}>
+                  <CopyMessageButton text={response} />
+                </div>
+              )}
             </>
           )}
         </div>
@@ -756,6 +826,37 @@ function StreamingMessage({
   );
 }
 
+// ── Relative time formatter ───────────────────────────────────────────────────
+
+function formatRelativeTime(dateStr: string): string {
+  try {
+    const d = new Date(dateStr);
+    const now = new Date();
+    const diffMs = now.getTime() - d.getTime();
+    if (diffMs < 0) return "Just now";
+
+    const diffMins = Math.floor(diffMs / (1000 * 60));
+    if (diffMins < 1) return "Just now";
+    if (diffMins < 60) return `${diffMins}m`;
+
+    const diffHours = Math.floor(diffMins / 60);
+    if (diffHours < 24) return `${diffHours}h`;
+
+    const diffDays = Math.floor(diffHours / 24);
+    if (diffDays < 7) return `${diffDays}d`;
+    if (diffDays < 30) return `${Math.floor(diffDays / 7)}w`;
+
+    const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    const month = months[d.getMonth()];
+    const day = d.getDate();
+    return `${month} ${day}`;
+  } catch {
+    return "";
+  }
+}
+
+// ── Session list item ─────────────────────────────────────────────────────────
+
 function SessionListItem({
   session,
   isActive,
@@ -783,6 +884,11 @@ function SessionListItem({
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, [menuOpen]);
 
+  const title = session.title?.trim() || `Session #${session.id}`;
+  const snippet = session.last_message?.trim() || "No messages yet";
+  const timeFormatted = formatRelativeTime(session.updated_at || session.created_at);
+  const hasMessages = (session.message_count ?? 0) > 0 || !!session.last_message;
+
   return (
     <div
       onClick={onSelect}
@@ -790,72 +896,108 @@ function SessionListItem({
       onMouseLeave={() => setIsHovered(false)}
       style={{
         display: "flex",
-        alignItems: "center",
-        justifyContent: "space-between",
-        padding: "7px 10px",
-        borderRadius: 6,
+        alignItems: "flex-start",
+        gap: 8,
+        padding: "8px 10px",
+        borderRadius: 8,
         cursor: "pointer",
         background: isActive
-          ? "var(--color-primary-subtle, rgba(27,110,243,0.08))"
+          ? "rgba(0, 0, 0, 0.05)"
           : isHovered
-          ? "var(--color-surface-hover)"
+          ? "rgba(0, 0, 0, 0.025)"
           : "transparent",
-        color: isActive ? "var(--color-primary)" : "var(--color-text)",
-        fontSize: "0.78rem",
+        transition: "background 0.15s ease",
         marginBottom: 2,
         position: "relative",
       }}
     >
-      <span
-        style={{
-          flex: 1,
-          overflow: "hidden",
-          textOverflow: "ellipsis",
-          whiteSpace: "nowrap",
-          fontWeight: isActive ? 600 : 400,
-        }}
-      >
-        {session.title ?? `Session #${session.id}`}
-      </span>
+      {/* Status checkmark icon on left */}
+      <div style={{ paddingTop: 3, flexShrink: 0 }}>
+        {hasMessages ? (
+          <Check size={13} color="#16a34a" />
+        ) : (
+          <div style={{ width: 13, height: 13 }} />
+        )}
+      </div>
 
-      {(isHovered || menuOpen || isActive) && (
-        <div style={{ position: "relative" }} ref={menuRef} onClick={(e) => e.stopPropagation()}>
+      {/* Main content: Title + Time (row 1), Snippet (row 2) */}
+      <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 2 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6 }}>
+          <span
+            style={{
+              fontSize: "0.81rem",
+              fontWeight: isActive ? 600 : 500,
+              color: isActive ? "#0f172a" : "#1e293b",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+              flex: 1,
+            }}
+          >
+            {title}
+          </span>
+          <span
+            style={{
+              fontSize: "0.71rem",
+              color: "#94a3b8",
+              flexShrink: 0,
+            }}
+          >
+            {timeFormatted}
+          </span>
+        </div>
+
+        <div
+          style={{
+            fontSize: "0.73rem",
+            color: "#64748b",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+            lineHeight: 1.35,
+          }}
+        >
+          {snippet}
+        </div>
+      </div>
+
+      {/* Hover action menu (3 dots) */}
+      {(isHovered || menuOpen) && (
+        <div
+          ref={menuRef}
+          onClick={(e) => e.stopPropagation()}
+          style={{ position: "relative", flexShrink: 0, paddingTop: 1 }}
+        >
           <button
             type="button"
-            className="btn-icon"
+            onClick={() => setMenuOpen(!menuOpen)}
             style={{
-              padding: "2px 4px",
-              opacity: menuOpen || isHovered ? 0.8 : 0.4,
-              borderRadius: 4,
+              background: "none",
               border: "none",
-              background: "transparent",
               cursor: "pointer",
+              padding: "2px",
+              color: "#94a3b8",
               display: "flex",
               alignItems: "center",
-            }}
-            onClick={(e) => {
-              e.stopPropagation();
-              setMenuOpen((open) => !open);
+              borderRadius: 4,
             }}
             title="Session options"
           >
             <MoreVertical size={13} />
           </button>
-
           {menuOpen && (
             <div
               style={{
                 position: "absolute",
-                top: "100%",
                 right: 0,
-                marginTop: 4,
-                background: "var(--color-surface)",
-                border: "1px solid var(--color-border)",
+                top: 20,
+                background: "#ffffff",
+                border: "1px solid #e2e8f0",
                 borderRadius: 6,
-                boxShadow: "0 4px 12px rgba(0,0,0,0.12)",
-                zIndex: 999,
-                padding: "4px 0",
+                boxShadow: "0 4px 12px rgba(0,0,0,0.08)",
+                zIndex: 50,
                 minWidth: 100,
+                padding: 4,
               }}
             >
               <button
@@ -865,18 +1007,21 @@ function SessionListItem({
                   onDelete(e);
                 }}
                 style={{
-                  width: "100%",
-                  textAlign: "left",
-                  background: "transparent",
-                  border: "none",
-                  padding: "6px 12px",
-                  fontSize: "0.75rem",
-                  color: "var(--color-danger, #ef4444)",
-                  cursor: "pointer",
                   display: "flex",
                   alignItems: "center",
                   gap: 6,
+                  width: "100%",
+                  padding: "5px 8px",
+                  border: "none",
+                  background: "none",
+                  color: "#dc2626",
+                  fontSize: "0.75rem",
+                  cursor: "pointer",
+                  borderRadius: 4,
+                  textAlign: "left",
                 }}
+                onMouseEnter={(e) => (e.currentTarget.style.background = "#fee2e2")}
+                onMouseLeave={(e) => (e.currentTarget.style.background = "none")}
               >
                 <Trash2 size={12} />
                 <span>Delete</span>
@@ -891,7 +1036,11 @@ function SessionListItem({
 
 // ── Main component ────────────────────────────────────────────────────────────
 
-export default function AgentChatPage() {
+interface AgentChatPageProps {
+  initialView?: "chat" | "customizations" | "logs";
+}
+
+export default function AgentChatPage({ initialView }: AgentChatPageProps = {}) {
   const { agentId: agentIdStr, sessionId: sessionIdStr } = useParams<{ agentId: string; sessionId?: string }>();
   const agentId = agentIdStr ? parseInt(agentIdStr, 10) : null;
   const urlSessionId = sessionIdStr ? parseInt(sessionIdStr, 10) : null;
@@ -916,6 +1065,18 @@ export default function AgentChatPage() {
       setActiveSessionId(urlSessionId);
     }
   }, [urlSessionId]);
+
+  const isEditRoute = typeof window !== "undefined" && (window.location.pathname.endsWith("/edit") || window.location.pathname.endsWith("/customizations"));
+  // View mode: chat, customizations, or logs
+  const [mainView, setMainView] = useState<"chat" | "customizations" | "logs">(initialView ?? (isEditRoute ? "customizations" : "chat"));
+
+  useEffect(() => {
+    if (initialView) {
+      setMainView(initialView);
+    } else if (window.location.pathname.endsWith("/edit") || window.location.pathname.endsWith("/customizations")) {
+      setMainView("customizations");
+    }
+  }, [initialView]);
 
   const { data: messages = [] } = useChatMessages(agentId, activeSessionId);
   const isResearchEngineAgent = (agent?.tools ?? []).some((tool) => ["fetch_research_proposal_history"].includes(tool.tool_name));
@@ -942,6 +1103,85 @@ export default function AgentChatPage() {
   const [selectedLlmConnectionId, setSelectedLlmConnectionId] = useState<number | null>(null);
   const [optimisticUserMsg, setOptimisticUserMsg] = useState<string | null>(null);
   const [isCreatingSession, setIsCreatingSession] = useState(false);
+  // Sidebar state (resizable)
+  const [sidebarWidth, setSidebarWidth] = useState(() => {
+    try {
+      const saved = localStorage.getItem("agent_sidebar_width");
+      if (saved) {
+        const val = parseInt(saved, 10);
+        if (!isNaN(val) && val >= 240 && val <= 600) return val;
+      }
+    } catch {}
+    return 300; // Increased default width from 260 to 300
+  });
+  const [isResizingSidebar, setIsResizingSidebar] = useState(false);
+  const resizeStartXRef = useRef(0);
+  const resizeStartWidthRef = useRef(300);
+
+  const startSidebarResize = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    setIsResizingSidebar(true);
+    resizeStartXRef.current = e.clientX;
+    resizeStartWidthRef.current = sidebarWidth;
+  }, [sidebarWidth]);
+
+  useEffect(() => {
+    if (!isResizingSidebar) return;
+
+    const handleMouseMove = (e: MouseEvent) => {
+      const delta = e.clientX - resizeStartXRef.current;
+      const newWidth = Math.min(Math.max(resizeStartWidthRef.current + delta, 240), 600);
+      setSidebarWidth(newWidth);
+    };
+
+    const handleMouseUp = (e: MouseEvent) => {
+      setIsResizingSidebar(false);
+      const delta = e.clientX - resizeStartXRef.current;
+      const finalWidth = Math.min(Math.max(resizeStartWidthRef.current + delta, 240), 600);
+      try {
+        localStorage.setItem("agent_sidebar_width", String(finalWidth));
+      } catch {}
+    };
+
+    window.addEventListener("mousemove", handleMouseMove);
+    window.addEventListener("mouseup", handleMouseUp);
+    return () => {
+      window.removeEventListener("mousemove", handleMouseMove);
+      window.removeEventListener("mouseup", handleMouseUp);
+    };
+  }, [isResizingSidebar]);
+
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [visibleSessionLimit, setVisibleSessionLimit] = useState(15);
+  const [agentMenuOpen, setAgentMenuOpen] = useState(false);
+  const agentMenuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (agentMenuRef.current && !agentMenuRef.current.contains(e.target as Node)) {
+        setAgentMenuOpen(false);
+      }
+    }
+    if (agentMenuOpen) {
+      document.addEventListener("mousedown", handleClickOutside);
+    }
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [agentMenuOpen]);
+
+  const filteredSessions = useMemo(() => {
+    if (!searchQuery.trim()) return sessions;
+    const q = searchQuery.toLowerCase().trim();
+    return sessions.filter((s) =>
+      (s.title && s.title.toLowerCase().includes(q)) ||
+      (s.last_message && s.last_message.toLowerCase().includes(q))
+    );
+  }, [sessions, searchQuery]);
+
+  const visibleSessions = useMemo(() => {
+    return filteredSessions.slice(0, visibleSessionLimit);
+  }, [filteredSessions, visibleSessionLimit]);
+
   // File upload state (Part F)
   const [attachedFiles, setAttachedFiles] = useState<File[]>([]);
   const [uploadedDocIds, setUploadedDocIds] = useState<number[]>([]);
@@ -953,27 +1193,6 @@ export default function AgentChatPage() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const abortRef = useRef<AbortController | null>(null);
-
-  // Keep track of the active session ID to close it when switching or unmounting
-  const activeSessionRef = useRef<number | null>(activeSessionId);
-
-  useEffect(() => {
-    const prevSessionId = activeSessionRef.current;
-    activeSessionRef.current = activeSessionId;
-    
-    if (prevSessionId && prevSessionId !== activeSessionId) {
-      api.post(`/sessions/${prevSessionId}/close`, {}).catch(() => {});
-    }
-  }, [activeSessionId]);
-
-  useEffect(() => {
-    return () => {
-      const sessId = activeSessionRef.current;
-      if (sessId) {
-        api.post(`/sessions/${sessId}/close`, {}).catch(() => {});
-      }
-    };
-  }, []);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -1036,6 +1255,7 @@ export default function AgentChatPage() {
 
   const selectSession = useCallback((sessionId: number) => {
     setActiveSessionId(sessionId);
+    setMainView("chat");
     if (agentId) {
       navigate(`/agents/${agentId}/chat/${sessionId}`);
     }
@@ -1222,108 +1442,686 @@ export default function AgentChatPage() {
         overflow: "hidden",
       }}
     >
-      {/* ── Sessions sidebar ── */}
-      <div
-        style={{
-          width: 240,
-          borderRight: "1px solid var(--color-border)",
-          display: "flex",
-          flexDirection: "column",
-          overflow: "hidden",
-          flexShrink: 0,
-        }}
-      >
+      {/* ── Collapsed Rail (Width 48px) ── */}
+      {isSidebarCollapsed && (
         <div
           style={{
-            padding: "12px 12px 8px",
-            borderBottom: "1px solid var(--color-border)",
+            width: 48,
+            borderRight: "1px solid var(--color-border, #e5e7eb)",
             display: "flex",
+            flexDirection: "column",
             alignItems: "center",
-            gap: 8,
+            padding: "10px 0",
+            background: "#ffffff",
+            flexShrink: 0,
+            zIndex: 10,
           }}
         >
-          <Bot size={14} color="var(--color-primary)" />
-          <span style={{ fontWeight: 600, fontSize: "0.8rem", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-            {agent?.name ?? "Agent"}
-          </span>
+          {/* Top: Expand sidebar button */}
           <button
-            className="btn-icon"
-            title="Edit agent"
-            onClick={() => navigate(`/agents/${agentId}/edit`)}
+            type="button"
+            onClick={() => setIsSidebarCollapsed(false)}
+            title="Expand sidebar"
+            style={{
+              width: 34,
+              height: 34,
+              borderRadius: 8,
+              border: "none",
+              background: "transparent",
+              cursor: "pointer",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              color: "#475569",
+              marginBottom: 12,
+              transition: "background 0.15s ease, color 0.15s ease",
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.background = "#f1f5f9";
+              e.currentTarget.style.color = "#0f172a";
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.background = "transparent";
+              e.currentTarget.style.color = "#475569";
+            }}
           >
-            <Settings2 size={13} />
+            <PanelLeftOpen size={16} />
           </button>
-        </div>
 
-        <div style={{ padding: "8px 8px 4px" }}>
+          {/* New Chat icon */}
           <button
-            className="btn btn-secondary"
-            style={{ width: "100%", fontSize: "0.78rem" }}
+            type="button"
             onClick={handleNewSession}
             disabled={isCreatingSession}
+            title="New chat"
+            style={{
+              width: 34,
+              height: 34,
+              borderRadius: 8,
+              border: "none",
+              background: "transparent",
+              cursor: isCreatingSession ? "not-allowed" : "pointer",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              color: "#475569",
+              marginBottom: 6,
+              transition: "background 0.15s ease",
+            }}
+            onMouseEnter={(e) => (e.currentTarget.style.background = "#f1f5f9")}
+            onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
           >
-            {isCreatingSession ? <Loader2 size={13} className="spin" /> : <Plus size={13} />}
-            {isCreatingSession ? "Creating…" : "New conversation"}
+            {isCreatingSession ? <Loader2 size={16} className="spin" /> : <SquarePen size={16} />}
           </button>
-        </div>
 
-        <div style={{ flex: 1, overflowY: "auto", padding: "4px 4px" }}>
-          {isResearchEngineAgent && (
-            <div style={{ margin: "4px 4px 10px", padding: "8px", border: "1px solid var(--color-border)", borderRadius: 8 }}>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
-                <span style={{ fontSize: "0.74rem", fontWeight: 700, color: "var(--color-text-muted)" }}>Research Runs</span>
-                <button className="btn btn-primary" style={{ height: 28, padding: "0 10px", fontSize: "0.72rem" }} onClick={handleTriggerResearchRun} disabled={triggerResearchRun.isPending}>
-                  {triggerResearchRun.isPending ? <Loader2 size={12} className="spin" /> : <Zap size={12} />} Trigger Run
+          {/* Customizations icon */}
+          <button
+            type="button"
+            onClick={() => setMainView("customizations")}
+            title="Customizations"
+            style={{
+              width: 34,
+              height: 34,
+              borderRadius: 8,
+              border: "none",
+              background: mainView === "customizations" ? "#f1f5f9" : "transparent",
+              cursor: "pointer",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              color: mainView === "customizations" ? "#2563eb" : "#475569",
+              marginBottom: 6,
+              transition: "background 0.15s ease",
+            }}
+            onMouseEnter={(e) => (e.currentTarget.style.background = "#f1f5f9")}
+            onMouseLeave={(e) => (e.currentTarget.style.background = mainView === "customizations" ? "#f1f5f9" : "transparent")}
+          >
+            <SlidersHorizontal size={16} />
+          </button>
+
+          {/* Session LLM Logs icon */}
+          <button
+            type="button"
+            onClick={() => setMainView("logs")}
+            disabled={!activeSessionId}
+            title={activeSessionId ? "Session LLM Logs" : "Select a session to view logs"}
+            style={{
+              width: 34,
+              height: 34,
+              borderRadius: 8,
+              border: "none",
+              background: mainView === "logs" ? "#f1f5f9" : "transparent",
+              cursor: !activeSessionId ? "not-allowed" : "pointer",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              color: mainView === "logs" ? "#2563eb" : (!activeSessionId ? "#cbd5e1" : "#475569"),
+              marginBottom: 6,
+              transition: "background 0.15s ease",
+            }}
+            onMouseEnter={(e) => {
+              if (activeSessionId) e.currentTarget.style.background = "#f1f5f9";
+            }}
+            onMouseLeave={(e) => (e.currentTarget.style.background = mainView === "logs" ? "#f1f5f9" : "transparent")}
+          >
+            <Terminal size={16} />
+          </button>
+
+          {/* History icon — expands the sidebar to show chat list */}
+          <button
+            type="button"
+            onClick={() => setIsSidebarCollapsed(false)}
+            title="Chats history"
+            style={{
+              width: 34,
+              height: 34,
+              borderRadius: 8,
+              border: "none",
+              background: "transparent",
+              cursor: "pointer",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              color: "#475569",
+              marginBottom: 6,
+              transition: "background 0.15s ease",
+            }}
+            onMouseEnter={(e) => (e.currentTarget.style.background = "#f1f5f9")}
+            onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+          >
+            <History size={16} />
+          </button>
+
+          {/* Spacer */}
+          <div style={{ flex: 1 }} />
+
+          {/* Bottom: Options (⋮) */}
+          <div style={{ position: "relative" }} ref={agentMenuRef}>
+            <button
+              type="button"
+              onClick={() => setAgentMenuOpen(!agentMenuOpen)}
+              title="More options"
+              style={{
+                width: 34,
+                height: 34,
+                borderRadius: 8,
+                border: "none",
+                background: "transparent",
+                cursor: "pointer",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                color: "#64748b",
+                transition: "background 0.15s ease",
+              }}
+              onMouseEnter={(e) => (e.currentTarget.style.background = "#f1f5f9")}
+              onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+            >
+              <MoreVertical size={16} />
+            </button>
+            {agentMenuOpen && (
+              <div
+                style={{
+                  position: "absolute",
+                  left: "100%",
+                  bottom: 0,
+                  marginLeft: 6,
+                  background: "#ffffff",
+                  border: "1px solid #e2e8f0",
+                  borderRadius: 8,
+                  boxShadow: "0 4px 16px rgba(0,0,0,0.1)",
+                  zIndex: 60,
+                  minWidth: 160,
+                  padding: 4,
+                }}
+              >
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAgentMenuOpen(false);
+                    setMainView("customizations");
+                  }}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 8,
+                    width: "100%",
+                    padding: "7px 10px",
+                    border: "none",
+                    background: "transparent",
+                    color: "#1e293b",
+                    fontSize: "0.78rem",
+                    cursor: "pointer",
+                    borderRadius: 4,
+                    textAlign: "left",
+                  }}
+                  onMouseEnter={(e) => (e.currentTarget.style.background = "#f8fafc")}
+                  onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+                >
+                  <Settings2 size={13} />
+                  Agent Settings
+                </button>
+                {activeSessionId && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAgentMenuOpen(false);
+                      setMainView("logs");
+                    }}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 8,
+                      width: "100%",
+                      padding: "7px 10px",
+                      border: "none",
+                      background: "transparent",
+                      color: "#1e293b",
+                      fontSize: "0.78rem",
+                      cursor: "pointer",
+                      borderRadius: 4,
+                      textAlign: "left",
+                    }}
+                    onMouseEnter={(e) => (e.currentTarget.style.background = "#f8fafc")}
+                    onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+                  >
+                    <Terminal size={13} />
+                    Session LLM Logs
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ── Expanded Sessions Sidebar (Resizable) ── */}
+      {!isSidebarCollapsed && (
+        <div
+          style={{
+            width: sidebarWidth,
+            minWidth: 240,
+            maxWidth: 600,
+            borderRight: "1px solid var(--color-border, #e5e7eb)",
+            display: "flex",
+            flexDirection: "column",
+            overflow: "hidden",
+            flexShrink: 0,
+            background: "#ffffff",
+            position: "relative",
+            userSelect: isResizingSidebar ? "none" : "auto",
+          }}
+        >
+          {/* Header Bar */}
+          <div
+            style={{
+              padding: "14px 14px 10px",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: 8,
+            }}
+          >
+            <span
+              style={{
+                fontWeight: 600,
+                fontSize: "0.92rem",
+                color: "#0f172a",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+                letterSpacing: "-0.01em",
+              }}
+            >
+              {agent?.name ?? "Agent"}
+            </span>
+
+            <div style={{ display: "flex", alignItems: "center", gap: 2 }}>
+              {/* Collapse Icon */}
+              <button
+                type="button"
+                onClick={() => setIsSidebarCollapsed(true)}
+                title="Collapse sidebar"
+                style={{
+                  background: "none",
+                  border: "none",
+                  cursor: "pointer",
+                  padding: "4px",
+                  borderRadius: 4,
+                  color: "#64748b",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  transition: "color 0.15s ease, background 0.15s ease",
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.color = "#0f172a";
+                  e.currentTarget.style.background = "#f1f5f9";
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.color = "#64748b";
+                  e.currentTarget.style.background = "none";
+                }}
+              >
+                <PanelLeftClose size={16} />
+              </button>
+
+              {/* Options Menu (⋮) */}
+              <div style={{ position: "relative" }} ref={agentMenuRef}>
+                <button
+                  type="button"
+                  onClick={() => setAgentMenuOpen(!agentMenuOpen)}
+                  title="Agent options"
+                  style={{
+                    background: "none",
+                    border: "none",
+                    cursor: "pointer",
+                    padding: "4px",
+                    borderRadius: 4,
+                    color: "#64748b",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    transition: "color 0.15s ease, background 0.15s ease",
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.color = "#0f172a";
+                    e.currentTarget.style.background = "#f1f5f9";
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.color = "#64748b";
+                    e.currentTarget.style.background = "none";
+                  }}
+                >
+                  <MoreVertical size={16} />
+                </button>
+                {agentMenuOpen && (
+                  <div
+                    style={{
+                      position: "absolute",
+                      right: 0,
+                      top: 24,
+                      background: "#ffffff",
+                      border: "1px solid #e2e8f0",
+                      borderRadius: 8,
+                      boxShadow: "0 4px 16px rgba(0,0,0,0.1)",
+                      zIndex: 60,
+                      minWidth: 160,
+                      padding: 4,
+                    }}
+                  >
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setAgentMenuOpen(false);
+                        setMainView("customizations");
+                      }}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 8,
+                        width: "100%",
+                        padding: "7px 10px",
+                        border: "none",
+                        background: "transparent",
+                        color: "#1e293b",
+                        fontSize: "0.78rem",
+                        cursor: "pointer",
+                        borderRadius: 4,
+                        textAlign: "left",
+                      }}
+                      onMouseEnter={(e) => (e.currentTarget.style.background = "#f8fafc")}
+                      onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+                    >
+                      <Settings2 size={13} />
+                      Agent Settings
+                    </button>
+                    {activeSessionId && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setAgentMenuOpen(false);
+                          setMainView("logs");
+                        }}
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 8,
+                          width: "100%",
+                          padding: "7px 10px",
+                          border: "none",
+                          background: "transparent",
+                          color: "#1e293b",
+                          fontSize: "0.78rem",
+                          cursor: "pointer",
+                          borderRadius: 4,
+                          textAlign: "left",
+                        }}
+                        onMouseEnter={(e) => (e.currentTarget.style.background = "#f8fafc")}
+                        onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+                      >
+                        <Terminal size={13} />
+                        Session LLM Logs
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* Navigation Action items: New chat, Customizations, Session Logs */}
+          <div style={{ padding: "0 8px 8px", display: "flex", flexDirection: "column", gap: 1 }}>
+            <button
+              type="button"
+              onClick={handleNewSession}
+              disabled={isCreatingSession}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                width: "100%",
+                padding: "7px 8px",
+                border: "none",
+                background: "transparent",
+                color: "#1e293b",
+                fontSize: "0.82rem",
+                fontWeight: 500,
+                cursor: isCreatingSession ? "not-allowed" : "pointer",
+                borderRadius: 6,
+                textAlign: "left",
+                transition: "background 0.15s ease",
+              }}
+              onMouseEnter={(e) => (e.currentTarget.style.background = "#f1f5f9")}
+              onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+            >
+              {isCreatingSession ? <Loader2 size={15} className="spin" /> : <SquarePen size={15} color="#475569" />}
+              <span>New chat</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setMainView("customizations")}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                width: "100%",
+                padding: "7px 8px",
+                border: "none",
+                background: mainView === "customizations" ? "rgba(0, 0, 0, 0.05)" : "transparent",
+                color: mainView === "customizations" ? "#0f172a" : "#1e293b",
+                fontSize: "0.82rem",
+                fontWeight: mainView === "customizations" ? 600 : 500,
+                cursor: "pointer",
+                borderRadius: 6,
+                textAlign: "left",
+                transition: "background 0.15s ease",
+              }}
+              onMouseEnter={(e) => (e.currentTarget.style.background = "#f1f5f9")}
+              onMouseLeave={(e) => (e.currentTarget.style.background = mainView === "customizations" ? "rgba(0, 0, 0, 0.05)" : "transparent")}
+            >
+              <SlidersHorizontal size={15} color={mainView === "customizations" ? "#2563eb" : "#475569"} />
+              <span>Customizations</span>
+            </button>
+
+            {activeSessionId && (
+              <button
+                type="button"
+                onClick={() => setMainView("logs")}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  width: "100%",
+                  padding: "7px 8px",
+                  border: "none",
+                  background: mainView === "logs" ? "rgba(0, 0, 0, 0.05)" : "transparent",
+                  color: mainView === "logs" ? "#0f172a" : "#1e293b",
+                  fontSize: "0.82rem",
+                  fontWeight: mainView === "logs" ? 600 : 500,
+                  cursor: "pointer",
+                  borderRadius: 6,
+                  textAlign: "left",
+                  transition: "background 0.15s ease",
+                }}
+                onMouseEnter={(e) => (e.currentTarget.style.background = "#f1f5f9")}
+                onMouseLeave={(e) => (e.currentTarget.style.background = mainView === "logs" ? "rgba(0, 0, 0, 0.05)" : "transparent")}
+              >
+                <Terminal size={15} color={mainView === "logs" ? "#2563eb" : "#475569"} />
+                <span>Session Logs</span>
+              </button>
+            )}
+          </div>
+
+          {/* Search chats input */}
+          <div style={{ padding: "0 8px 10px" }}>
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+                background: "#f1f5f9",
+                borderRadius: 8,
+                padding: "6px 10px",
+              }}
+            >
+              <Search size={14} color="#94a3b8" />
+              <input
+                type="text"
+                placeholder="Search chats"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                style={{
+                  width: "100%",
+                  border: "none",
+                  outline: "none",
+                  background: "transparent",
+                  fontSize: "0.78rem",
+                  color: "#1e293b",
+                  lineHeight: 1.3,
+                }}
+              />
+              {searchQuery && (
+                <button
+                  type="button"
+                  onClick={() => setSearchQuery("")}
+                  style={{
+                    background: "none",
+                    border: "none",
+                    cursor: "pointer",
+                    padding: 0,
+                    color: "#94a3b8",
+                    display: "flex",
+                    alignItems: "center",
+                  }}
+                >
+                  <XIcon size={12} />
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Chat Sessions list */}
+          <div className="sidebar-hover-scrollbar" style={{ flex: 1, padding: "0 6px 12px" }}>
+            {isResearchEngineAgent && (
+              <div style={{ margin: "4px 2px 10px", padding: "8px", border: "1px solid var(--color-border)", borderRadius: 8 }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+                  <span style={{ fontSize: "0.74rem", fontWeight: 700, color: "var(--color-text-muted)" }}>Research Runs</span>
+                  <button className="btn btn-primary" style={{ height: 28, padding: "0 10px", fontSize: "0.72rem" }} onClick={handleTriggerResearchRun} disabled={triggerResearchRun.isPending}>
+                    {triggerResearchRun.isPending ? <Loader2 size={12} className="spin" /> : <Zap size={12} />} Trigger Run
+                  </button>
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                  {researchRunsForAgent.length === 0 ? (
+                    <div style={{ fontSize: "0.73rem", color: "var(--color-text-muted)" }}>No research runs yet.</div>
+                  ) : researchRunsForAgent.map((run) => {
+                    const linkedSessionId = Number((run.context_package as Record<string, unknown> | undefined)?.chat_session_id ?? 0) || null;
+                    return (
+                      <button
+                        key={run.id}
+                        type="button"
+                        onClick={() => linkedSessionId && selectSession(linkedSessionId)}
+                        style={{
+                          textAlign: "left",
+                          border: "1px solid var(--color-border)",
+                          background: linkedSessionId === activeSessionId ? "var(--color-surface-hover)" : "var(--color-surface)",
+                          borderRadius: 8,
+                          padding: "8px",
+                          cursor: linkedSessionId ? "pointer" : "default",
+                          width: "100%",
+                        }}
+                      >
+                        <div style={{ fontSize: "0.75rem", fontWeight: 600 }}>Run {run.id.slice(0, 8)}</div>
+                        <div style={{ fontSize: "0.68rem", color: "var(--color-text-muted)" }}>{run.status} - {run.started_at ? new Date(run.started_at).toLocaleString() : "pending"}</div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {visibleSessions.map((s) => (
+              <SessionListItem
+                key={s.id}
+                session={s}
+                isActive={activeSessionId === s.id}
+                onSelect={() => selectSession(s.id)}
+                onDelete={(e) => handleDeleteSession(e, s)}
+              />
+            ))}
+
+            {filteredSessions.length === 0 && (
+              <div style={{ padding: "24px 8px", fontSize: "0.75rem", color: "#94a3b8", textAlign: "center" }}>
+                {searchQuery ? "No matching chats found" : "No chats yet"}
+              </div>
+            )}
+
+            {filteredSessions.length > visibleSessionLimit && (
+              <div style={{ padding: "8px 4px 4px", textAlign: "center" }}>
+                <button
+                  type="button"
+                  onClick={() => setVisibleSessionLimit((prev) => prev + 15)}
+                  style={{
+                    background: "none",
+                    border: "none",
+                    cursor: "pointer",
+                    color: "#64748b",
+                    fontSize: "0.75rem",
+                    fontWeight: 500,
+                    padding: "4px 8px",
+                    borderRadius: 4,
+                  }}
+                  onMouseEnter={(e) => (e.currentTarget.style.color = "#0f172a")}
+                  onMouseLeave={(e) => (e.currentTarget.style.color = "#64748b")}
+                >
+                  Show more
                 </button>
               </div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                {researchRunsForAgent.length === 0 ? (
-                  <div style={{ fontSize: "0.73rem", color: "var(--color-text-muted)" }}>No research runs yet.</div>
-                ) : researchRunsForAgent.map((run) => {
-                  const linkedSessionId = Number((run.context_package as Record<string, unknown> | undefined)?.chat_session_id ?? 0) || null;
-                  return (
-                    <button
-                      key={run.id}
-                      type="button"
-                      onClick={() => linkedSessionId && selectSession(linkedSessionId)}
-                      style={{
-                        textAlign: "left",
-                        border: "1px solid var(--color-border)",
-                        background: linkedSessionId === activeSessionId ? "var(--color-surface-hover)" : "var(--color-surface)",
-                        borderRadius: 8,
-                        padding: "8px",
-                        cursor: linkedSessionId ? "pointer" : "default",
-                        width: "100%",
-                      }}
-                    >
-                      <div style={{ fontSize: "0.75rem", fontWeight: 600 }}>Run {run.id.slice(0, 8)}</div>
-                      <div style={{ fontSize: "0.68rem", color: "var(--color-text-muted)" }}>{run.status} - {run.started_at ? new Date(run.started_at).toLocaleString() : "pending"}</div>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-          {sessions.map((s) => (
-            <SessionListItem
-              key={s.id}
-              session={s}
-              isActive={activeSessionId === s.id}
-              onSelect={() => selectSession(s.id)}
-              onDelete={(e) => handleDeleteSession(e, s)}
-            />
-          ))}
-          {sessions.length === 0 && (
-            <div style={{ padding: "16px 8px", fontSize: "0.75rem", color: "var(--color-text-muted)", textAlign: "center" }}>
-              No conversations yet
-            </div>
-          )}
-        </div>
-      </div>
+            )}
+          </div>
 
-      {/* ── Chat area ── */}
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
-        {!activeSessionId ? (
+          {/* Draggable resize handle on right border */}
+          <div
+            onMouseDown={startSidebarResize}
+            style={{
+              position: "absolute",
+              top: 0,
+              right: -3,
+              width: 6,
+              height: "100%",
+              cursor: "col-resize",
+              zIndex: 50,
+              background: isResizingSidebar ? "var(--color-primary, #2563eb)" : "transparent",
+              transition: isResizingSidebar ? "none" : "background 0.2s ease",
+            }}
+            onMouseEnter={(e) => {
+              if (!isResizingSidebar) {
+                e.currentTarget.style.background = "rgba(37, 99, 235, 0.35)";
+              }
+            }}
+            onMouseLeave={(e) => {
+              if (!isResizingSidebar) {
+                e.currentTarget.style.background = "transparent";
+              }
+            }}
+          />
+        </div>
+      )}
+
+      {/* ── Right-side area: Customizations vs Logs vs Chat ── */}
+      {mainView === "customizations" && agentId ? (
+        <AgentCustomizationsView agentId={agentId} onClose={() => setMainView("chat")} />
+      ) : mainView === "logs" && agentId && activeSessionId ? (
+        <SessionLlmLogsView
+          agentId={agentId}
+          agentName={agent?.name}
+          sessionId={activeSessionId}
+          onClose={() => setMainView("chat")}
+        />
+      ) : (
+        <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+          {!activeSessionId ? (
           <div
             style={{
               flex: 1,
@@ -1343,12 +2141,57 @@ export default function AgentChatPage() {
           </div>
         ) : (
           <>
+            {/* Chat Canvas Top-Right Action Bar */}
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "flex-end",
+                padding: "10px 24px 0",
+                flexShrink: 0,
+              }}
+            >
+              <button
+                type="button"
+                onClick={() => setMainView("logs")}
+                title="View LLM Call Logs for this session"
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 6,
+                  padding: "5px 10px",
+                  borderRadius: 6,
+                  border: "1px solid #e2e8f0",
+                  background: "#ffffff",
+                  color: "#475569",
+                  fontSize: "0.76rem",
+                  fontWeight: 500,
+                  cursor: "pointer",
+                  boxShadow: "0 1px 2px rgba(0,0,0,0.03)",
+                  transition: "all 0.15s ease",
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.background = "#f8fafc";
+                  e.currentTarget.style.color = "#0f172a";
+                  e.currentTarget.style.borderColor = "#cbd5e1";
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = "#ffffff";
+                  e.currentTarget.style.color = "#475569";
+                  e.currentTarget.style.borderColor = "#e2e8f0";
+                }}
+              >
+                <Terminal size={13} color="#2563eb" />
+                <span>LLM Logs</span>
+              </button>
+            </div>
+
             {/* Messages */}
             <div
               style={{
                 flex: 1,
                 overflowY: "auto",
-                padding: "20px 24px",
+                padding: "24px 24px 36px",
                 display: "flex",
                 justifyContent: "center",
               }}
@@ -1356,9 +2199,10 @@ export default function AgentChatPage() {
               <div
                 style={{
                   width: "100%",
-                  maxWidth: 1100,
+                  maxWidth: 780,
                   display: "flex",
                   flexDirection: "column",
+                  gap: 20,
                 }}
               >
               {(() => {
@@ -1496,14 +2340,16 @@ export default function AgentChatPage() {
                     messages.forEach((m) => {
                       if (m.role === "tool" && m.tool_name === "mark_step" && m.tool_result) {
                         const mr = m.tool_result.result as any;
-                        const stepId = mr?.updated_step ?? (m.tool_result.args as any)?.step_id;
+                        const stepIdRaw = mr?.updated_step ?? (m.tool_result.args as any)?.step_id;
                         const status = mr?.status ?? (m.tool_result.args as any)?.status;
-                        if (stepId && status) stepStatusMap[stepId] = status;
+                        if (stepIdRaw != null && status) {
+                          stepStatusMap[Number(stepIdRaw)] = String(status);
+                        }
                       }
                     });
                     
                     const computedSteps = steps.map((s: any, idx: number) => {
-                      const id = s.id ?? idx + 1;
+                      const id = Number(s.id ?? idx + 1);
                       return {
                         id,
                         description: s.description ?? s.text ?? "",
@@ -1586,6 +2432,7 @@ export default function AgentChatPage() {
                       {inlineCompletedPlanData && (
                         <div style={{ marginTop: 10 }}>
                           <PlanTaskViewer
+                            defaultExpanded={false}
                             plan={{
                               plan_id: inlineCompletedPlanData.plan_id,
                               agent_id: "agent",
@@ -1597,20 +2444,65 @@ export default function AgentChatPage() {
                         </div>
                       )}
 
-                      {/* G6: Diff Summary Card — shown after completed non-streaming turns */}
-                      {!grp.isStreamingActive && agentId && activeSessionId && (
-                        <DiffSummaryCard
-                          agentId={agentId}
-                          sessionId={activeSessionId}
-                          stepId={(() => {
-                            // find the last mark_step tool call in this turn to scope changes
-                            const markMsg = [...(grp.items ?? [])]
-                              .reverse()
-                              .find((m) => m.role === "tool" && m.tool_name === "mark_step");
-                            return (markMsg?.tool_result?.result as any)?.updated_step ?? undefined;
-                          })()}
-                          onOpenDiff={(record) => setDiffSheetRecord(record as any)}
-                        />
+                      {/* In-Turn File/Asset Edit Badges */}
+                      {(() => {
+                        const turnEdits: TurnEditInfo[] = [];
+                        const seenNames = new Set<string>();
+
+                        turnItems.forEach((m) => {
+                          if (m.role === "tool" && m.tool_result) {
+                            const change = (m.tool_result as any).change;
+                            if (change && change.full_name && !seenNames.has(change.full_name)) {
+                              seenNames.add(change.full_name);
+                              turnEdits.push({
+                                change_id: change.change_id,
+                                full_name: change.full_name,
+                                object_type: change.object_type || "notebook",
+                                additions: change.additions,
+                                deletions: change.deletions,
+                              });
+                            } else if (
+                              (m.tool_name === "create_notebook" ||
+                                m.tool_name === "catalog_editor" ||
+                                m.tool_name === "notebook_manager") &&
+                              m.tool_result.ok
+                            ) {
+                              const res = m.tool_result.result as any;
+                              const args = m.tool_result.args as any;
+                              const fn =
+                                res?.full_name ||
+                                (args?.catalog_name && args?.schema_name && args?.notebook_name
+                                  ? `${args.catalog_name}.${args.schema_name}.${args.notebook_name}`
+                                  : null);
+                              if (fn && !seenNames.has(fn)) {
+                                seenNames.add(fn);
+                                turnEdits.push({
+                                  full_name: fn,
+                                  object_type: (res?.object_type || args?.object_type || "notebook") as any,
+                                });
+                              }
+                            }
+                          }
+                        });
+
+                        if (turnEdits.length === 0) return null;
+                        return (
+                          <div style={{ marginTop: 8 }}>
+                            <TurnEditBadge
+                              edits={turnEdits}
+                              agentId={agentId}
+                              sessionId={activeSessionId}
+                              onOpenDiff={(record) => setDiffSheetRecord(record as any)}
+                            />
+                          </div>
+                        );
+                      })()}
+
+                      {/* Copy Button at the bottom of the entire response */}
+                      {cleanFinalResponse && (
+                        <div style={{ marginTop: 8, display: "flex", alignItems: "center" }}>
+                          <CopyMessageButton text={cleanFinalResponse} />
+                        </div>
                       )}
                     </div>
                   );
@@ -1620,80 +2512,103 @@ export default function AgentChatPage() {
               </div>
             </div>
 
-            {/* Docked Active Plan Task Viewer at bottom — hides automatically when all steps are completed */}
+            {/* Unified Bottom Composer & Docked Panels */}
             {(() => {
+              // 1. Check for active uncompleted plan to dock
               const createPlanMsg = [...messages].reverse().find((m) => m.role === "tool" && m.tool_name === "create_plan");
-              if (!createPlanMsg || !createPlanMsg.tool_result) return null;
+              let dockedPlanElement: React.ReactNode = null;
 
-              const res = createPlanMsg.tool_result.result as any;
-              const args = createPlanMsg.tool_result.args as any;
-              const stepsData = args?.steps || res?.steps || [];
-              const goalData = args?.goal || res?.goal || "Execution Plan";
-              const planIdData = res?.plan_id || "plan";
+              if (createPlanMsg && createPlanMsg.tool_result) {
+                const res = createPlanMsg.tool_result.result as any;
+                const args = createPlanMsg.tool_result.args as any;
+                const stepsData = args?.steps || res?.steps || [];
+                const goalData = args?.goal || res?.goal || "Execution Plan";
+                const planIdData = res?.plan_id || "plan";
 
-              // Compute live step status map (checking persisted messages + live streaming tool steps)
-              const stepStatusMap: Record<number, string> = {};
-              messages.forEach((m) => {
-                if (m.role === "tool" && m.tool_name === "mark_step" && m.tool_result) {
-                  const r = m.tool_result.result as any;
-                  const stepId = r?.updated_step ?? (m.tool_result.args as any)?.step_id;
-                  const status = r?.status ?? (m.tool_result.args as any)?.status;
-                  if (stepId && status) stepStatusMap[stepId] = status;
+                // Compute live step status map
+                const stepStatusMap: Record<number, string> = {};
+                messages.forEach((m) => {
+                  if (m.role === "tool" && m.tool_name === "mark_step" && m.tool_result) {
+                    const r = m.tool_result.result as any;
+                    const stepIdRaw = r?.updated_step ?? (m.tool_result.args as any)?.step_id;
+                    const status = r?.status ?? (m.tool_result.args as any)?.status;
+                    if (stepIdRaw != null && status) {
+                      stepStatusMap[Number(stepIdRaw)] = String(status);
+                    }
+                  }
+                });
+                streamingSteps.forEach((st) => {
+                  if (st.type === "tool" && st.name === "mark_step" && st.result) {
+                    const r = st.result as any;
+                    const stepIdRaw = r?.updated_step ?? st.args?.step_id;
+                    const status = r?.status ?? st.args?.status;
+                    if (stepIdRaw != null && status) {
+                      stepStatusMap[Number(stepIdRaw)] = String(status);
+                    }
+                  }
+                });
+
+                const mappedSteps = stepsData.map((s: any, idx: number) => {
+                  const stepId = Number(s.id ?? idx + 1);
+                  return {
+                    id: stepId,
+                    description: s.description ?? s.text ?? "",
+                    status: stepStatusMap[stepId] || s.status || "pending",
+                    verification: s.verification ?? "Automatic check",
+                    corrections: s.corrections ?? [],
+                    attempts: s.attempts ?? 1,
+                  };
+                });
+
+                const isAllDone = mappedSteps.length > 0 && mappedSteps.every((s: any) => s.status === "done");
+
+                if (!isAllDone) {
+                  const isPlanApproved = Boolean(
+                    res?.approved_at ||
+                    streamingSteps.some((st) => st.type === "tool" && (st.name === "mark_step" || st.name === "get_next_step")) ||
+                    messages.some((m) => {
+                      if (m.role === "tool" && (m.tool_name === "mark_step" || m.tool_name === "get_next_step")) return true;
+                      if (m.role === "user" && m.content) {
+                        const lower = m.content.toLowerCase().trim();
+                        return (
+                          lower.startsWith("approved") ||
+                          lower.startsWith("approve") ||
+                          lower.startsWith("proceed") ||
+                          lower.startsWith("go ahead") ||
+                          lower.startsWith("yes") ||
+                          lower.includes("approved") ||
+                          lower.includes("execute the plan")
+                        );
+                      }
+                      return false;
+                    })
+                  );
+
+                  dockedPlanElement = (
+                    <PlanTaskViewer
+                      isDocked={true}
+                      defaultExpanded={!isPlanApproved}
+                      plan={{
+                        plan_id: planIdData,
+                        agent_id: "agent",
+                        goal: goalData,
+                        steps: mappedSteps,
+                        approved_at: isPlanApproved ? (res?.approved_at || new Date().toISOString()) : null,
+                        execution_approved_at: res?.execution_approved_at,
+                      }}
+                      onApprovePlan={() => sendMessage("Approved. Proceed to execute the plan.")}
+                      onRejectPlan={() => sendMessage("Plan rejected. Re-evaluate the requirements and propose a different approach.")}
+                      onRequestChange={(feedback) => sendMessage(`Plan changes requested: ${feedback}`)}
+                    />
+                  );
                 }
-              });
-              streamingSteps.forEach((st) => {
-                if (st.type === "tool" && st.name === "mark_step" && st.result) {
-                  const r = st.result as any;
-                  const stepId = r?.updated_step ?? st.args?.step_id;
-                  const status = r?.status ?? st.args?.status;
-                  if (stepId && status) stepStatusMap[stepId] = status;
-                }
-              });
+              }
 
-              const mappedSteps = stepsData.map((s: any, idx: number) => {
-                const stepId = s.id ?? idx + 1;
-                return {
-                  id: stepId,
-                  description: s.description ?? s.text ?? "",
-                  status: stepStatusMap[stepId] || s.status || "pending",
-                  verification: s.verification ?? "Automatic check",
-                  corrections: s.corrections ?? [],
-                  attempts: s.attempts ?? 1,
-                };
-              });
-
-              // Un-dock plan from bottom once all steps are completed
-              const isAllDone = mappedSteps.length > 0 && mappedSteps.every((s: any) => s.status === "done");
-              if (isAllDone) return null;
-
-              return (
-                <div style={{ width: "100%", maxWidth: 1100, margin: "0 auto", padding: "0 24px" }}>
-                  <PlanTaskViewer
-                    plan={{
-                      plan_id: planIdData,
-                      agent_id: "agent",
-                      goal: goalData,
-                      steps: mappedSteps,
-                      approved_at: res?.approved_at || (messages.some(m => (m.role === "tool" && m.tool_name === "mark_step") || (m.role === "user" && m.content?.toLowerCase().includes("approved"))) ? new Date().toISOString() : null),
-                      execution_approved_at: res?.execution_approved_at,
-                    }}
-                    onApprovePlan={() => sendMessage("Approved. Proceed to execute the plan.")}
-                    onRejectPlan={() => sendMessage("Plan rejected. Re-evaluate the requirements and propose a different approach.")}
-                    onRequestChange={(feedback) => sendMessage(`Plan changes requested: ${feedback}`)}
-                  />
-                </div>
-              );
-            })()}
-
-            {/* Input Composer */}
-            {(() => {
-              const activePlan = [...messages].reverse().find((m) => m.role === "tool" && m.tool_name === "create_plan");
-              const hasPlan = !!activePlan?.tool_result;
               return (
                 <div
                   style={{
                     borderTop: "none",
-                    padding: "0 24px 8px",
+                    padding: "0 24px 16px",
                     display: "flex",
                     justifyContent: "center",
                   }}
@@ -1701,173 +2616,197 @@ export default function AgentChatPage() {
                   <div
                     style={{
                       width: "100%",
-                      maxWidth: 1100,
+                      maxWidth: 780,
                       display: "flex",
                       flexDirection: "column",
                       background: "#ffffff",
                       border: "1px solid var(--color-border, #e5e7eb)",
                       borderRadius: "16px",
-                      boxShadow: "none",
-                      padding: "10px 14px",
-                      gap: 8,
+                      overflow: "hidden",
+                      boxShadow: "0 1px 3px rgba(0, 0, 0, 0.03)",
                     }}
                   >
-                    {/* Hidden file input */}
-                    <input
-                      ref={fileInputRef}
-                      type="file"
-                      multiple
-                      accept=".pdf,.docx,.xlsx,.csv,.txt,.md,.json"
-                      style={{ display: "none" }}
-                      onChange={async (e) => {
-                        const files = Array.from(e.target.files ?? []);
-                        if (!files.length || !agentId || !activeSessionId) return;
-                        setAttachedFiles(prev => [...prev, ...files]);
-                        const formData = new FormData();
-                        files.forEach(f => formData.append("files", f));
-                        const authkey = (window as any).__authkey__ ?? "";
-                        const resp = await fetch(
-                          `/api/v1/agents/${agentId}/sessions/${activeSessionId}/documents`,
-                          { method: "POST", body: formData, headers: authkey ? { authkey, Authorization: `Bearer ${authkey}` } : {} }
-                        );
-                        if (resp.ok) {
-                          const data = await resp.json();
-                          const ids = (data.uploaded ?? []).filter((u: any) => u.ok).map((u: any) => u.doc_id as number);
-                          setUploadedDocIds(prev => [...prev, ...ids]);
-                        }
-                        e.target.value = "";
-                      }}
-                    />
+                    {/* 1. Docked Plan (Top of Composer Card, slightly gray background) */}
+                    {dockedPlanElement}
 
-                    {/* Attached file chips */}
-                    {attachedFiles.length > 0 && (
-                      <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
-                        {attachedFiles.map((f, i) => (
-                          <span key={i} style={{
-                            display: "inline-flex", alignItems: "center", gap: 4,
-                            padding: "2px 8px", borderRadius: 6,
-                            background: "rgba(99,102,241,0.12)", border: "1px solid rgba(99,102,241,0.3)",
-                            fontSize: "0.75rem", color: "#6366f1",
-                          }}>
-                            📎 {f.name}
-                            <button
-                              type="button"
-                              onClick={() => setAttachedFiles(prev => prev.filter((_, j) => j !== i))}
-                              style={{ background: "none", border: "none", cursor: "pointer", padding: 0, color: "inherit", lineHeight: 1 }}
-                            ><XIcon size={11} /></button>
-                          </span>
-                        ))}
-                      </div>
+                    {/* 2. Docked Session Changes Panel (Middle/Top of Composer Card, slightly gray background) */}
+                    {agentId && activeSessionId && (
+                      <SessionChangesDock
+                        isDocked={true}
+                        agentId={agentId}
+                        sessionId={activeSessionId}
+                        refreshTrigger={messages.length}
+                        onOpenDiff={(record) => setDiffSheetRecord(record as any)}
+                      />
                     )}
 
-                    {/* Top Message Textarea */}
-                    <textarea
-                      ref={textareaRef}
-                      className="form-input"
+                    {/* 3. Input Composer (Bottom of Composer Card, pure white background) */}
+                    <div
                       style={{
-                        width: "100%",
-                        border: "none",
-                        outline: "none",
-                        boxShadow: "none",
-                        resize: "none",
-                        minHeight: 36,
-                        maxHeight: 160,
-                        fontSize: "0.88rem",
-                        lineHeight: 1.5,
-                        background: "transparent",
-                        color: "var(--color-text, #111827)",
-                        padding: "2px 0",
+                        display: "flex",
+                        flexDirection: "column",
+                        background: "#ffffff",
+                        padding: "10px 14px",
+                        gap: 8,
                       }}
-                      rows={1}
-                      placeholder="Message the agent… (Enter to send, Shift+Enter for newline)"
-                      value={input}
-                      onChange={(e) => {
-                        setInput(e.target.value);
-                        e.target.style.height = "auto";
-                        e.target.style.height = `${Math.min(e.target.scrollHeight, 160)}px`;
-                      }}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter" && !e.shiftKey) {
-                          e.preventDefault();
-                          sendMessage();
-                        }
-                      }}
-                      disabled={isStreaming}
-                    />
+                    >
+                      {/* Hidden file input */}
+                      <input
+                        ref={fileInputRef}
+                        type="file"
+                        multiple
+                        accept=".pdf,.docx,.xlsx,.csv,.txt,.md,.json,.png,.jpg,.jpeg,.webp,.gif,.svg,image/*"
+                        style={{ display: "none" }}
+                        onChange={async (e) => {
+                          const files = Array.from(e.target.files ?? []);
+                          if (!files.length || !agentId || !activeSessionId) return;
+                          setAttachedFiles(prev => [...prev, ...files]);
+                          const formData = new FormData();
+                          files.forEach(f => formData.append("files", f));
+                          const authkey = (window as any).__authkey__ ?? "";
+                          const resp = await fetch(
+                            `/api/v1/agents/${agentId}/sessions/${activeSessionId}/documents`,
+                            { method: "POST", body: formData, headers: authkey ? { authkey, Authorization: `Bearer ${authkey}` } : {} }
+                          );
+                          if (resp.ok) {
+                            const data = await resp.json();
+                            const ids = (data.uploaded ?? []).filter((u: any) => u.ok).map((u: any) => u.doc_id as number);
+                            setUploadedDocIds(prev => [...prev, ...ids]);
+                          }
+                          e.target.value = "";
+                        }}
+                      />
 
-                    {/* Bottom Row: File attachment icon (left), LLM Selection & Send icon (right) */}
-                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, paddingTop: 4, borderTop: "1px solid #f3f4f6" }}>
-                      <div style={{ display: "flex", alignItems: "center" }}>
-                        <button
-                          type="button"
-                          title="Attach a document"
-                          onClick={() => fileInputRef.current?.click()}
-                          style={{
-                            background: "none",
-                            border: "none",
-                            color: "#6b7280",
-                            cursor: "pointer",
-                            padding: 4,
-                            borderRadius: 4,
-                            display: "flex",
-                            alignItems: "center",
-                            justifyContent: "center",
-                          }}
-                        >
-                          <Paperclip size={17} />
-                        </button>
-                      </div>
-
-                      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                        <select
-                          value={selectedLlmConnectionId ?? ""}
-                          onChange={(e) => setSelectedLlmConnectionId(e.target.value ? Number(e.target.value) : null)}
-                          disabled={isStreaming || llmConnections.length === 0}
-                          title="LLM Connection"
-                          style={{
-                            border: "none",
-                            background: "transparent",
-                            fontSize: "0.74rem",
-                            color: "#6b7280",
-                            cursor: "pointer",
-                            outline: "none",
-                            fontWeight: 500,
-                          }}
-                        >
-                          {llmConnections.length === 0 && <option value="">No LLM connections</option>}
-                          {llmConnections.map((connection) => (
-                            <option key={connection.id} value={connection.id}>
-                              {connection.name}{connection.is_fallback ? " (default)" : ""}
-                            </option>
+                      {/* Attached file chips */}
+                      {attachedFiles.length > 0 && (
+                        <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+                          {attachedFiles.map((f, i) => (
+                            <span key={i} style={{
+                              display: "inline-flex", alignItems: "center", gap: 4,
+                              padding: "2px 8px", borderRadius: 6,
+                              background: "rgba(99,102,241,0.12)", border: "1px solid rgba(99,102,241,0.3)",
+                              fontSize: "0.75rem", color: "#6366f1",
+                            }}>
+                              📎 {f.name}
+                              <button
+                                type="button"
+                                onClick={() => setAttachedFiles(prev => prev.filter((_, j) => j !== i))}
+                                style={{ background: "none", border: "none", cursor: "pointer", padding: 0, color: "inherit", lineHeight: 1 }}
+                              ><XIcon size={11} /></button>
+                            </span>
                           ))}
-                        </select>
+                        </div>
+                      )}
 
-                        <button
-                          type="button"
-                          onClick={() => sendMessage()}
-                          disabled={!input.trim() || isStreaming}
-                          style={{
-                            width: 28,
-                            height: 28,
-                            borderRadius: "50%",
-                            border: "1px solid #e5e7eb",
-                            background: input.trim() && !isStreaming ? "#f3f4f6" : "#fafafa",
-                            color: input.trim() && !isStreaming ? "#374151" : "#d1d5db",
-                            display: "flex",
-                            alignItems: "center",
-                            justifyContent: "center",
-                            cursor: input.trim() && !isStreaming ? "pointer" : "not-allowed",
-                            flexShrink: 0,
-                          }}
-                        >
-                          {isStreaming ? <Loader2 size={14} className="spin" /> : <ArrowRight size={15} />}
-                        </button>
+                      {/* Top Message Textarea */}
+                      <textarea
+                        ref={textareaRef}
+                        className="form-input"
+                        style={{
+                          width: "100%",
+                          border: "none",
+                          outline: "none",
+                          boxShadow: "none",
+                          resize: "none",
+                          minHeight: 36,
+                          maxHeight: 160,
+                          fontSize: "0.88rem",
+                          lineHeight: 1.5,
+                          background: "transparent",
+                          color: "var(--color-text, #111827)",
+                          padding: "2px 0",
+                        }}
+                        rows={1}
+                        placeholder="Message the agent… (Enter to send, Shift+Enter for newline)"
+                        value={input}
+                        onChange={(e) => {
+                          setInput(e.target.value);
+                          e.target.style.height = "auto";
+                          e.target.style.height = `${Math.min(e.target.scrollHeight, 160)}px`;
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" && !e.shiftKey) {
+                            e.preventDefault();
+                            sendMessage();
+                          }
+                        }}
+                        disabled={isStreaming}
+                      />
+
+                      {/* Bottom Row: File attachment icon (left), LLM Selection & Send icon (right) */}
+                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, paddingTop: 4, borderTop: "1px solid #f3f4f6" }}>
+                        <div style={{ display: "flex", alignItems: "center" }}>
+                          <button
+                            type="button"
+                            title="Attach a document"
+                            onClick={() => fileInputRef.current?.click()}
+                            style={{
+                              background: "none",
+                              border: "none",
+                              color: "#6b7280",
+                              cursor: "pointer",
+                              padding: 4,
+                              borderRadius: 4,
+                              display: "flex",
+                              alignItems: "center",
+                              justifyContent: "center",
+                            }}
+                          >
+                            <Paperclip size={17} />
+                          </button>
+                        </div>
+
+                        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                          <select
+                            value={selectedLlmConnectionId ?? ""}
+                            onChange={(e) => setSelectedLlmConnectionId(e.target.value ? Number(e.target.value) : null)}
+                            disabled={isStreaming || llmConnections.length === 0}
+                            title="LLM Connection"
+                            style={{
+                              border: "none",
+                              background: "transparent",
+                              fontSize: "0.74rem",
+                              color: "#6b7280",
+                              cursor: "pointer",
+                              outline: "none",
+                              fontWeight: 500,
+                            }}
+                          >
+                            {llmConnections.length === 0 && <option value="">No LLM connections</option>}
+                            {llmConnections.map((connection) => (
+                              <option key={connection.id} value={connection.id}>
+                                {connection.name}{connection.is_fallback ? " (default)" : ""}
+                              </option>
+                            ))}
+                          </select>
+
+                          <button
+                            type="button"
+                            onClick={() => sendMessage()}
+                            disabled={!input.trim() || isStreaming}
+                            style={{
+                              width: 28,
+                              height: 28,
+                              borderRadius: "50%",
+                              border: "1px solid #e5e7eb",
+                              background: input.trim() && !isStreaming ? "#f3f4f6" : "#fafafa",
+                              color: input.trim() && !isStreaming ? "#374151" : "#d1d5db",
+                              display: "flex",
+                              alignItems: "center",
+                              justifyContent: "center",
+                              cursor: input.trim() && !isStreaming ? "pointer" : "not-allowed",
+                              flexShrink: 0,
+                            }}
+                          >
+                            {isStreaming ? <Loader2 size={14} className="spin" /> : <ArrowRight size={15} />}
+                          </button>
+                        </div>
                       </div>
                     </div>
                   </div>
-              </div>
-            );
-          })()}
+                </div>
+              );
+            })()}
 
             {/* Disclaimer */}
             <div
@@ -1883,6 +2822,7 @@ export default function AgentChatPage() {
           </>
         )}
       </div>
+      )}
 
       {/* G7: DiffSheet side-panel — fixed overlay outside layout */}
       <DiffSheet record={diffSheetRecord} onClose={() => setDiffSheetRecord(null)} />

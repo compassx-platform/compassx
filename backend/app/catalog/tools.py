@@ -55,6 +55,8 @@ def _is_catalog_allowed(workspace_id: str | None, catalog_name: str, db: Session
 
 
 CATALOG_OPERATIONS = [
+    "list_catalogs",
+    "list_schemas",
     "search_catalog",
     "get_asset_schema",
     "get_asset_details",
@@ -130,12 +132,16 @@ class CatalogTool(BaseTool):
                         "type": "integer",
                         "description": "ID of the external connection (used for 'sync_foreign_catalog').",
                     },
+                    "catalog_name": {
+                        "type": "string",
+                        "description": "Catalog name (used for 'list_schemas' and 'sync_foreign_catalog').",
+                    },
                     "foreign_catalog_name": {
                         "type": "string",
                         "description": "Name for the foreign catalog (used for 'sync_foreign_catalog').",
                     },
                 },
-                "additionalProperties": False,
+                "additionalProperties": True,
             },
         },
         "required": ["operation", "payload"],
@@ -152,7 +158,11 @@ class CatalogTool(BaseTool):
         from app.database import AccountSessionLocal
         account_db = AccountSessionLocal()
         try:
-            if operation == "search_catalog":
+            if operation == "list_catalogs":
+                res = self._list_catalogs(db, payload, agent, account_db)
+            elif operation == "list_schemas":
+                res = self._list_schemas(db, payload, agent, account_db)
+            elif operation == "search_catalog":
                 res = self._search_catalog(db, payload, agent, account_db)
             elif operation == "get_asset_schema":
                 res = self._get_asset_schema(account_db, payload, agent)
@@ -192,6 +202,45 @@ class CatalogTool(BaseTool):
         finally:
             account_db.close()
 
+    def _list_catalogs(self, db: Session, payload: dict[str, Any], agent: Agent, account_db: Session) -> dict[str, Any]:
+        allowed_catalogs = _get_allowed_catalogs(agent.workspace_id, account_db)
+        query = account_db.query(UnifiedCatalog)
+        if allowed_catalogs is not None:
+            query = query.filter(UnifiedCatalog.name.in_(allowed_catalogs))
+        catalogs = query.order_by(UnifiedCatalog.name).all()
+        results = []
+        for cat in catalogs:
+            schemas = [s.name for s in cat.schemas]
+            results.append({
+                "id": cat.id,
+                "catalog_name": cat.name,
+                "catalog_type": cat.catalog_type,
+                "description": cat.description,
+                "schemas": schemas,
+                "schema_count": len(schemas),
+            })
+        return {"catalogs": results, "count": len(results)}
+
+    def _list_schemas(self, db: Session, payload: dict[str, Any], agent: Agent, account_db: Session) -> dict[str, Any]:
+        catalog_name = str(payload.get("catalog_name") or "").strip()
+        if not catalog_name:
+            raise ValueError("catalog_name is required for list_schemas")
+        if not _is_catalog_allowed(agent.workspace_id, catalog_name, account_db):
+            raise ValueError(f"Access denied to catalog '{catalog_name}' in this workspace")
+        cat = account_db.query(UnifiedCatalog).filter(UnifiedCatalog.name == catalog_name).first()
+        if not cat:
+            raise ValueError(f"Catalog '{catalog_name}' not found")
+        schemas = []
+        for s in cat.schemas:
+            schemas.append({
+                "id": s.id,
+                "schema_name": s.name,
+                "description": s.description,
+                "table_count": len(s.tables),
+                "notebook_count": len(s.notebooks),
+            })
+        return {"catalog_name": catalog_name, "schemas": schemas, "count": len(schemas)}
+
     # 3.1 search_catalog
     def _search_catalog(self, db: Session, payload: dict[str, Any], agent: Agent, account_db: Session) -> dict[str, Any]:
         query_text = str(payload.get("query") or "").strip()
@@ -205,28 +254,78 @@ class CatalogTool(BaseTool):
         if limit < 1:
             limit = 1
 
-        query_vec = get_embedding(query_text)
-        if query_vec is None:
-            raise ValueError("Could not generate query embeddings. Ensure LLM embedding model is configured.")
-
         allowed_catalogs = _get_allowed_catalogs(agent.workspace_id, account_db)
         if allowed_catalogs is not None and not allowed_catalogs:
             return {"query": query_text, "results": [], "count": 0}
 
-        # Cosine similarity SQL
-        vec_literal = "[" + ",".join(str(v) for v in query_vec) + "]"
+        query_vec = get_embedding(query_text)
         from app.database import account_engine
 
-        conditions = ["embedding IS NOT NULL"]
-        bind_params: dict[str, Any] = {
-            "query_vec": vec_literal,
+        if query_vec is not None:
+            # Cosine similarity SQL
+            vec_literal = "[" + ",".join(str(v) for v in query_vec) + "]"
+            conditions = ["embedding IS NOT NULL"]
+            bind_params: dict[str, Any] = {
+                "query_vec": vec_literal,
+                "object_type_filter": object_type,
+                "limit": limit,
+            }
+
+            if object_type is not None:
+                conditions.append("object_type = :object_type_filter")
+
+            if allowed_catalogs is not None:
+                conditions.append("catalog_name IN :allowed_catalogs")
+                bind_params["allowed_catalogs"] = tuple(allowed_catalogs)
+
+            sql = f"""
+            SELECT
+                catalog_name || '.' || schema_name || '.' || object_name AS full_name,
+                object_type,
+                description,
+                is_foreign,
+                1 - (embedding <=> :query_vec ::vector) AS similarity_score
+            FROM vector_db.assets
+            WHERE {" AND ".join(conditions)}
+            ORDER BY embedding <=> :query_vec ::vector
+            LIMIT :limit
+            """
+
+            with account_engine.connect() as conn:
+                rows = conn.execute(
+                    text(sql),
+                    bind_params,
+                ).fetchall()
+
+            results = [
+                {
+                    "full_name": row.full_name,
+                    "object_type": row.object_type,
+                    "description": row.description,
+                    "is_foreign": row.is_foreign,
+                    "similarity_score": round(float(row.similarity_score), 4),
+                }
+                for row in rows
+            ]
+            return {"query": query_text, "results": results, "count": len(results)}
+
+        # Fallback to Text / Keyword search when embeddings are not configured
+        logger.info("Semantic embedding not available for %r; falling back to keyword search", query_text)
+        words = [w.strip() for w in query_text.split() if len(w.strip()) > 2]
+        kw_clauses = ["object_name ILIKE :kw OR description ILIKE :kw OR schema_name ILIKE :kw"]
+        bind_params = {
+            "kw": f"%{query_text}%",
             "object_type_filter": object_type,
             "limit": limit,
         }
+        for i, w in enumerate(words[:4]):
+            p_name = f"w_{i}"
+            bind_params[p_name] = f"%{w}%"
+            kw_clauses.append(f"object_name ILIKE :{p_name} OR description ILIKE :{p_name}")
 
+        conditions = [f"({' OR '.join(kw_clauses)})"]
         if object_type is not None:
             conditions.append("object_type = :object_type_filter")
-
         if allowed_catalogs is not None:
             conditions.append("catalog_name IN :allowed_catalogs")
             bind_params["allowed_catalogs"] = tuple(allowed_catalogs)
@@ -237,29 +336,88 @@ class CatalogTool(BaseTool):
             object_type,
             description,
             is_foreign,
-            1 - (embedding <=> :query_vec ::vector) AS similarity_score
+            1.0 AS similarity_score
         FROM vector_db.assets
         WHERE {" AND ".join(conditions)}
-        ORDER BY embedding <=> :query_vec ::vector
         LIMIT :limit
         """
 
-        with account_engine.connect() as conn:
-            rows = conn.execute(
-                text(sql),
-                bind_params,
-            ).fetchall()
+        try:
+            with account_engine.connect() as conn:
+                rows = conn.execute(
+                    text(sql),
+                    bind_params,
+                ).fetchall()
+            results = [
+                {
+                    "full_name": row.full_name,
+                    "object_type": row.object_type,
+                    "description": row.description,
+                    "is_foreign": row.is_foreign,
+                    "similarity_score": 1.0,
+                }
+                for row in rows
+            ]
+            if results:
+                return {"query": query_text, "results": results, "count": len(results)}
+        except Exception as e:
+            logger.debug("vector_db.assets keyword search fallback failed (non-fatal): %s", e)
 
-        results = [
-            {
-                "full_name": row.full_name,
-                "object_type": row.object_type,
-                "description": row.description,
-                "is_foreign": row.is_foreign,
-                "similarity_score": round(float(row.similarity_score), 4),
-            }
-            for row in rows
-        ]
+        # Fallback to UnifiedCatalog tables & notebooks directly
+        from sqlalchemy import or_
+        from app.catalog.models import UnifiedCatalogTable, UnifiedCatalogNotebook, UnifiedCatalog
+        results = []
+
+        # 1. Tables
+        if object_type in (None, "table", "all"):
+            t_filters = [
+                UnifiedCatalogTable.name.ilike(f"%{query_text}%"),
+                UnifiedCatalogTable.description.ilike(f"%{query_text}%"),
+            ]
+            for w in words[:4]:
+                t_filters.extend([
+                    UnifiedCatalogTable.name.ilike(f"%{w}%"),
+                    UnifiedCatalogTable.description.ilike(f"%{w}%"),
+                ])
+            q_tables = account_db.query(UnifiedCatalogTable).join(UnifiedCatalogTable.schema).join(UnifiedCatalog).filter(
+                or_(*t_filters)
+            )
+            if allowed_catalogs:
+                q_tables = q_tables.filter(UnifiedCatalog.name.in_(allowed_catalogs))
+            for t in q_tables.limit(limit).all():
+                results.append({
+                    "full_name": f"{t.schema.catalog.name}.{t.schema.name}.{t.name}",
+                    "object_type": "table",
+                    "description": t.description,
+                    "is_foreign": False,
+                    "similarity_score": 1.0,
+                })
+
+        # 2. Notebooks
+        if object_type in (None, "notebook", "all") and len(results) < limit:
+            nb_filters = [
+                UnifiedCatalogNotebook.name.ilike(f"%{query_text}%"),
+                UnifiedCatalogNotebook.comment.ilike(f"%{query_text}%"),
+            ]
+            for w in words[:4]:
+                nb_filters.extend([
+                    UnifiedCatalogNotebook.name.ilike(f"%{w}%"),
+                    UnifiedCatalogNotebook.comment.ilike(f"%{w}%"),
+                ])
+            q_nbs = account_db.query(UnifiedCatalogNotebook).join(UnifiedCatalogNotebook.schema).join(UnifiedCatalog).filter(
+                or_(*nb_filters)
+            )
+            if allowed_catalogs:
+                q_nbs = q_nbs.filter(UnifiedCatalog.name.in_(allowed_catalogs))
+            for nb in q_nbs.limit(limit - len(results)).all():
+                results.append({
+                    "full_name": f"{nb.schema.catalog.name}.{nb.schema.name}.{nb.name}",
+                    "object_type": "notebook",
+                    "description": nb.comment,
+                    "is_foreign": False,
+                    "similarity_score": 1.0,
+                })
+
         return {"query": query_text, "results": results, "count": len(results)}
 
     # 3.2 get_asset_schema
@@ -627,13 +785,10 @@ class CatalogTool(BaseTool):
         return res
 
 
-# Register tool dynamically to avoid circular imports
+# Register tool dynamically into tool_registry
 try:
-    from app.agents.services.agent.tools.registry import TOOL_REGISTRY, TOOL_MAP
-    _instance = CatalogTool()
-    if _instance.key not in TOOL_MAP:
-        TOOL_REGISTRY.append(_instance)
-        TOOL_MAP[_instance.key] = _instance
+    from app.agents.services.agent.tools.registry import tool_registry
+    tool_registry.register(CatalogTool())
 except Exception as e:
     logger.error("Failed to register CatalogTool dynamically: %s", e)
 

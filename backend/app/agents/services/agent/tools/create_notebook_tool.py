@@ -4,6 +4,7 @@ Implements notebook creation on the catalog storage context and registers it.
 """
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any
 
@@ -24,7 +25,7 @@ class CreateNotebookTool(BaseTool):
     name = "Create Notebook"
     description = (
         "Create and register a new Jupyter notebook (.ipynb) inside a specific catalog and schema. "
-        "The notebook will be stored in the configured storage backend for that schema/catalog."
+        "You can supply the executable Python code directly via the 'code' parameter or 'cells' list."
     )
     is_async = False
 
@@ -33,11 +34,11 @@ class CreateNotebookTool(BaseTool):
         "properties": {
             "catalog_name": {
                 "type": "string",
-                "description": "Name of the catalog.",
+                "description": "Name of the catalog (e.g. 'main' or 'workspace').",
             },
             "schema_name": {
                 "type": "string",
-                "description": "Name of the schema within the catalog.",
+                "description": "Name of the schema within the catalog (e.g. 'sandbox' or 'default').",
             },
             "notebook_name": {
                 "type": "string",
@@ -47,16 +48,34 @@ class CreateNotebookTool(BaseTool):
                 "type": "string",
                 "description": "Optional description or comment for the notebook.",
             },
+            "code": {
+                "type": "string",
+                "description": "Executable Python code to populate the primary code cell in the notebook.",
+            },
+            "cells": {
+                "type": "array",
+                "description": "Optional list of cell objects: [{cell_type: 'code'|'markdown', code: '...'}]",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "cell_type": {"type": "string", "enum": ["code", "markdown", "raw"]},
+                        "code": {"type": "string"},
+                    },
+                    "required": ["code"],
+                },
+            },
         },
         "required": ["catalog_name", "schema_name", "notebook_name"],
-        "additionalProperties": False,
+        "additionalProperties": True,
     }
 
     def execute(self, args: dict[str, Any], agent: Agent, db: Session) -> ToolResult:
-        catalog_name = str(args["catalog_name"]).strip()
-        schema_name = str(args["schema_name"]).strip()
-        notebook_name = str(args["notebook_name"]).strip()
+        catalog_name = str(args.get("catalog_name", "")).strip()
+        schema_name = str(args.get("schema_name", "")).strip()
+        notebook_name = str(args.get("notebook_name", "")).strip()
         comment = args.get("comment")
+        code = args.get("code") or args.get("notebook_content")
+        cells = args.get("cells")
 
         if not catalog_name or not schema_name or not notebook_name:
             return ToolResult(ok=False, error="catalog_name, schema_name, and notebook_name are required and cannot be empty")
@@ -64,13 +83,52 @@ class CreateNotebookTool(BaseTool):
         user_email = agent.created_by or "system"
         user_dict = {"email": user_email, "id": user_email}
 
+        # Build initial ipynb JSON payload
+        initial_content: dict[str, Any] | None = None
+        if cells and isinstance(cells, list):
+            formatted_cells = []
+            for c in cells:
+                if not isinstance(c, dict):
+                    continue
+                ctype = c.get("cell_type", "code")
+                src = c.get("code") or c.get("source") or ""
+                formatted_cells.append({
+                    "cell_type": ctype,
+                    "execution_count": None,
+                    "metadata": {},
+                    "outputs": [],
+                    "source": [src] if isinstance(src, str) else src,
+                })
+            initial_content = {
+                "nbformat": 4,
+                "nbformat_minor": 5,
+                "metadata": {"kernelspec": {"display_name": "Python 3", "language": "python", "name": "python3"}},
+                "cells": formatted_cells,
+            }
+        elif code and isinstance(code, str):
+            initial_content = {
+                "nbformat": 4,
+                "nbformat_minor": 5,
+                "metadata": {"kernelspec": {"display_name": "Python 3", "language": "python", "name": "python3"}},
+                "cells": [
+                    {
+                        "cell_type": "code",
+                        "execution_count": None,
+                        "metadata": {},
+                        "outputs": [],
+                        "source": [code],
+                    }
+                ],
+            }
+
         body = NotebookCreate(
             name=notebook_name,
             comment=comment,
-            initial_content=None,
+            initial_content=initial_content,
         )
 
         from app.database import AccountSessionLocal
+        from app.catalog.models import UnifiedCatalog
         account_db = AccountSessionLocal()
         try:
             notebook = _run_async(
@@ -83,10 +141,12 @@ class CreateNotebookTool(BaseTool):
                 )
             )
             account_db.commit()
+            full_name = f"{notebook.catalog_name}.{notebook.schema_name}.{notebook.name}"
             return ToolResult(
                 ok=True,
                 result={
                     "id": notebook.id,
+                    "full_name": full_name,
                     "catalog_name": notebook.catalog_name,
                     "schema_name": notebook.schema_name,
                     "name": notebook.name,
@@ -94,6 +154,8 @@ class CreateNotebookTool(BaseTool):
                     "storage_location": notebook.storage_location,
                     "owner": notebook.owner,
                     "comment": notebook.comment,
+                    "cells_count": len(initial_content["cells"]) if initial_content else 0,
+                    "code": code if code else (cells[0].get("code") if cells else None),
                 },
             )
         except Exception as exc:

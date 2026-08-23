@@ -88,7 +88,7 @@ function StepDefine({
             className="form-input"
             value={form.avatar}
             onChange={(e) => setForm((f) => ({ ...f, avatar: e.target.value }))}
-            placeholder="ðŸ¤– or image URL"
+            placeholder="🤖 or image URL"
           />
         </div>
         <div className="form-group">
@@ -102,16 +102,16 @@ function StepDefine({
         </div>
       </div>
       <div className="form-group">
-        <label className="form-label">System Prompt</label>
+        <label className="form-label">Instructions & Persona</label>
         <textarea
           className="form-input"
           rows={6}
           value={form.prompt}
           onChange={(e) => setForm((f) => ({ ...f, prompt: e.target.value }))}
-          placeholder="You are a helpful data assistant with access to the company's databasesâ€¦"
+          placeholder="Describe what this agent does, its domain persona, and custom instructions (e.g. 'You are a supply chain analyst focusing on inventory optimization')..."
         />
         <div style={{ fontSize: "0.72rem", color: "var(--color-text-muted)", marginTop: 4 }}>
-          Full system prompt written by admin. Shared context and agent context are prepended automatically.
+          Define the agent's persona and domain instructions. Platform operating discipline, reasoning, tool safety, and planning are built-in automatically.
         </div>
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 16 }}>
@@ -187,7 +187,7 @@ function StepDefine({
               capabilities: {
                 planning: { enabled: false, router_thresholds: "default", max_retry_attempts: 3 },
                 checkpoints: { enabled: false, gated_write_categories: [] },
-                document_upload: { enabled: true, accepted_types: ["pdf", "docx", "xlsx", "csv", "txt", "md", "json"] },
+                document_upload: { enabled: true, accepted_types: ["pdf", "docx", "xlsx", "csv", "txt", "md", "json", "png", "jpg", "jpeg", "webp", "gif", "svg"] },
               },
             }
           }
@@ -873,9 +873,9 @@ function StepContext({
           color: "var(--color-text-muted)",
         }}
       >
-        System prompt order: <strong style={{ color: "var(--color-text)" }}>Shared context</strong>
-        {" â†’ "}<strong style={{ color: "var(--color-text)" }}>Agent context (below)</strong>
-        {" â†’ "}<strong style={{ color: "var(--color-text)" }}>System prompt</strong> (Step 1)
+        Prompt assembly order: <strong style={{ color: "var(--color-text)" }}>Platform Agent OS</strong>
+        {" → "}<strong style={{ color: "var(--color-text)" }}>Instructions & Persona (Step 1)</strong>
+        {" → "}<strong style={{ color: "var(--color-text)" }}>Agent context (below)</strong>
       </div>
 
       {/* Agent context entries */}

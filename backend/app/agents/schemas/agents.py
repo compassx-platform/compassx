@@ -544,6 +544,8 @@ class ChatSessionResponse(BaseModel):
     archived: bool
     created_at: datetime
     updated_at: datetime
+    last_message: str | None = None
+    message_count: int | None = 0
 
     model_config = {"from_attributes": True}
 

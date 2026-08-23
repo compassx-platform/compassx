@@ -34,7 +34,6 @@ import AgentsPage from '@/modules/agents/pages/AgentsPage';
 import AgentToolDetailPage from '@/modules/agents/pages/AgentToolDetailPage';
 import AgentBuilderPage from '@/modules/agents/pages/AgentBuilderPage';
 import AgentChatPage from '@/modules/agents/pages/AgentChatPage';
-import WorkspaceConnectionsPage from '@/modules/agents/pages/WorkspaceConnectionsPage';
 import ConnectionsPage from '@/modules/agents/pages/ConnectionsPage';
 import CreateConnectionPage from '@/modules/agents/pages/CreateConnectionPage';
 import LLMConnectionsPage from '@/modules/agents/pages/LLMConnectionsPage';
@@ -317,10 +316,10 @@ export default function App() {
                   <Route path="agents" element={<AgentsPage />} />
                   <Route path="agents/tools/:toolKey" element={<AgentToolDetailPage />} />
                   <Route path="agents/new" element={<AgentBuilderPage />} />
-                  <Route path="agents/:agentId/edit" element={<AgentBuilderPage />} />
+                  <Route path="agents/:agentId/edit" element={<AgentChatPage initialView="customizations" />} />
+                  <Route path="agents/:agentId/customizations" element={<AgentChatPage initialView="customizations" />} />
                   <Route path="agents/:agentId/chat" element={<AgentChatPage />} />
                   <Route path="agents/:agentId/chat/:sessionId" element={<AgentChatPage />} />
-                  <Route path="agents/connections" element={<WorkspaceConnectionsPage />} />
                   <Route path="connections" element={<ConnectionsPage />} />
                   <Route path="connections/create" element={<CreateConnectionPage />} />
                   <Route path="connections/new" element={<CreateConnectionPage />} />

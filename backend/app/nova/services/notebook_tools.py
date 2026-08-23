@@ -121,8 +121,11 @@ def _resolve_notebook_path(context: dict[str, Any]) -> str | None:
 
 async def _load_notebook_record(account_db, path: str):
     try:
-        dot_parts = path.split(".")
-        if len(dot_parts) == 3 and not path.endswith(".ipynb"):
+        clean = path.replace("\\", "/").strip()
+        stripped = clean[10:] if clean.startswith("notebooks/") else clean
+
+        dot_parts = clean.split(".")
+        if len(dot_parts) == 3 and not clean.endswith(".ipynb"):
             notebook = account_db.query(UnifiedCatalogNotebook).filter(
                 UnifiedCatalogNotebook.catalog_name == dot_parts[0],
                 UnifiedCatalogNotebook.schema_name == dot_parts[1],
@@ -131,7 +134,6 @@ async def _load_notebook_record(account_db, path: str):
             if notebook:
                 return notebook
 
-        clean = path.replace("\\", "/").lstrip("/")
         slash_parts = clean.rstrip("/").split("/")
         if len(slash_parts) == 3:
             nb_name = slash_parts[2]
@@ -146,9 +148,12 @@ async def _load_notebook_record(account_db, path: str):
                 return notebook
 
         return account_db.query(UnifiedCatalogNotebook).filter(
-            (UnifiedCatalogNotebook.id == path) |
-            (UnifiedCatalogNotebook.blob_path == path) |
-            (UnifiedCatalogNotebook.name == path)
+            (UnifiedCatalogNotebook.id == clean) |
+            (UnifiedCatalogNotebook.id == stripped) |
+            (UnifiedCatalogNotebook.blob_path == clean) |
+            (UnifiedCatalogNotebook.blob_path == stripped) |
+            (UnifiedCatalogNotebook.name == clean) |
+            (UnifiedCatalogNotebook.name == stripped)
         ).first()
     except SQLAlchemyError as exc:
         logger.warning("Notebook catalog lookup failed for %s, falling back to storage: %s", path, exc)
@@ -303,46 +308,16 @@ class ReadNotebookTool(BaseNovaTool):
         max_cells = min(max(int(arguments.get("max_cells", 80)), 1), 200)
 
         # 1. Try to resolve via UnifiedCatalogNotebook database
-        # Handles three path formats:
-        #   a) dot-FQN:          solar_ecg.scada.generate_scada_synthetic
-        #   b) slash path:       solar_ecg/scada/generate_scada_synthetic.ipynb
-        #   c) exact blob_path or notebook name
         from app.database import AccountSessionLocal
-        from app.catalog.models import UnifiedCatalogNotebook, UnifiedCatalogSchema
+        from app.catalog.models import UnifiedCatalogSchema
         from app.catalog.service import _read_notebook_content
 
         account_db = AccountSessionLocal()
         db_notebook = None
         try:
-            # (a) dot-separated FQN: catalog.schema.name
-            dot_parts = path.split(".")
-            if len(dot_parts) == 3 and not path.endswith(".ipynb"):
-                db_notebook = account_db.query(UnifiedCatalogNotebook).filter(
-                    UnifiedCatalogNotebook.catalog_name == dot_parts[0],
-                    UnifiedCatalogNotebook.schema_name == dot_parts[1],
-                    UnifiedCatalogNotebook.name == dot_parts[2]
-                ).first()
-
-            # (b) slash-separated path: catalog/schema/name.ipynb
-            if not db_notebook:
-                clean = path.replace("\\", "/").lstrip("/")
-                slash_parts = clean.rstrip("/").split("/")
-                if len(slash_parts) == 3:
-                    nb_name = slash_parts[2]
-                    if nb_name.endswith(".ipynb"):
-                        nb_name = nb_name[:-6]
-                    db_notebook = account_db.query(UnifiedCatalogNotebook).filter(
-                        UnifiedCatalogNotebook.catalog_name == slash_parts[0],
-                        UnifiedCatalogNotebook.schema_name == slash_parts[1],
-                        UnifiedCatalogNotebook.name == nb_name
-                    ).first()
-
-            # (c) exact blob_path or notebook name
-            if not db_notebook:
-                db_notebook = account_db.query(UnifiedCatalogNotebook).filter(
-                    (UnifiedCatalogNotebook.blob_path == path) |
-                    (UnifiedCatalogNotebook.name == path)
-                ).first()
+            db_notebook = run_async(_load_notebook_record(account_db, path))
+            if not db_notebook and context.get("notebook_id"):
+                db_notebook = run_async(_load_notebook_record(account_db, str(context["notebook_id"])))
 
             if db_notebook:
                 schema = account_db.query(UnifiedCatalogSchema).filter(

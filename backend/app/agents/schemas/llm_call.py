@@ -19,6 +19,7 @@ class LlmCallLogListItemResponse(BaseModel):
     output_tokens: int | None = None
     finish_reason: str | None = None
     summary: str | None = None
+    response_tool_calls: list[dict[str, Any]] = []
 
     model_config = {"from_attributes": True}
 

@@ -41,7 +41,51 @@ def list_sessions(
         query = query.filter(ChatSession.workspace_id == workspace_id)
     else:
         query = query.filter(ChatSession.workspace_id == None)
-    return query.order_by(ChatSession.updated_at.desc()).all()
+    sessions = query.order_by(ChatSession.updated_at.desc()).all()
+
+    session_ids = [s.id for s in sessions]
+    if not session_ids:
+        return []
+
+    from sqlalchemy import func
+    subq = (
+        db.query(
+            ChatMessage.session_id,
+            func.max(ChatMessage.id).label("max_id"),
+            func.count(ChatMessage.id).label("msg_count"),
+        )
+        .filter(ChatMessage.session_id.in_(session_ids))
+        .group_by(ChatMessage.session_id)
+        .all()
+    )
+    max_id_map = {row.session_id: row.max_id for row in subq}
+    count_map = {row.session_id: row.msg_count for row in subq}
+
+    last_msgs: dict[int, str] = {}
+    if max_id_map:
+        msgs = db.query(ChatMessage).filter(ChatMessage.id.in_(max_id_map.values())).all()
+        for m in msgs:
+            text = m.content or ""
+            if text:
+                text = text.replace("\n", " ").strip()
+                if len(text) > 90:
+                    text = text[:87] + "..."
+            last_msgs[m.session_id] = text
+
+    result = []
+    for s in sessions:
+        res = ChatSessionResponse(
+            id=s.id,
+            agent_id=s.agent_id,
+            title=s.title,
+            archived=s.archived,
+            created_at=s.created_at,
+            updated_at=s.updated_at,
+            last_message=last_msgs.get(s.id),
+            message_count=count_map.get(s.id, 0),
+        )
+        result.append(res)
+    return result
 
 
 @router.post("/sessions", response_model=ChatSessionResponse, status_code=201)

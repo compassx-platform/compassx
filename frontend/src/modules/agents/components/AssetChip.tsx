@@ -1,4 +1,14 @@
 import React, { useState } from 'react';
+import {
+  BookOpen,
+  Table,
+  LayoutDashboard,
+  HardDrive,
+  Settings,
+  AppWindow,
+  Search,
+  FileText,
+} from 'lucide-react';
 
 // G2-G4: Inline asset chip rendered wherever the model emits an <asset> tag.
 // Clicking navigates to the canonical catalog URL.
@@ -13,29 +23,31 @@ export interface AssetChipProps {
   objectType: AssetObjectType;
   displayName?: string;       // defaults to last segment of fullName
   className?: string;
+  diff?: { additions?: number; deletions?: number };
+  onClick?: (e: React.MouseEvent) => void;
 }
 
-const TYPE_ICON: Record<string, string> = {
-  notebook:  '📓',
-  table:     '🗃️',
-  dashboard: '📊',
-  volume:    '💾',
-  job:       '⚙️',
-  app:       '📱',
-  query:     '🔍',
-  unknown:   '🔗',
-};
-
-const TYPE_COLOR: Record<string, string> = {
-  notebook:  'var(--chip-notebook, #7c3aed)',
-  table:     'var(--chip-table, #0891b2)',
-  dashboard: 'var(--chip-dashboard, #059669)',
-  volume:    'var(--chip-volume, #d97706)',
-  job:       'var(--chip-job, #dc2626)',
-  app:       'var(--chip-app, #db2777)',
-  query:     'var(--chip-query, #4f46e5)',
-  unknown:   'var(--chip-unknown, #6b7280)',
-};
+function renderAssetTypeIcon(objectType: AssetObjectType) {
+  const iconProps = { size: 12, style: { color: '#64748b', flexShrink: 0 } };
+  switch (objectType) {
+    case 'notebook':
+      return <BookOpen {...iconProps} />;
+    case 'table':
+      return <Table {...iconProps} />;
+    case 'dashboard':
+      return <LayoutDashboard {...iconProps} />;
+    case 'volume':
+      return <HardDrive {...iconProps} />;
+    case 'job':
+      return <Settings {...iconProps} />;
+    case 'app':
+      return <AppWindow {...iconProps} />;
+    case 'query':
+      return <Search {...iconProps} />;
+    default:
+      return <FileText {...iconProps} />;
+  }
+}
 
 /** G4: canonical URL resolver */
 function resolveAssetUrl(fullName: string, objectType: string): string {
@@ -56,47 +68,51 @@ export const AssetChip: React.FC<AssetChipProps> = ({
   objectType,
   displayName,
   className = '',
+  diff,
+  onClick,
 }) => {
-  const [hoverPreview, setHoverPreview] = useState<string | null>(null);
-  const [loadingPreview, setLoadingPreview] = useState(false);
-
   const label = displayName ?? fullName.split('.').pop() ?? fullName;
-  const icon  = TYPE_ICON[objectType] ?? TYPE_ICON.unknown;
-  const color = TYPE_COLOR[objectType] ?? TYPE_COLOR.unknown;
   const href  = resolveAssetUrl(fullName, objectType);
 
-  // G3 Hover: lazy fetch preview
-  const handleMouseEnter = async () => {
-    if (hoverPreview !== null || loadingPreview) return;
-    setLoadingPreview(true);
-    try {
-      const res = await fetch(`/api/v1/catalog/asset-preview?full_name=${encodeURIComponent(fullName)}&type=${objectType}`);
-      if (res.ok) {
-        const data = await res.json();
-        setHoverPreview(data.preview ?? data.description ?? fullName);
-      }
-    } catch {
-      setHoverPreview(fullName);
-    } finally {
-      setLoadingPreview(false);
+  const handleClick = (e: React.MouseEvent) => {
+    e.preventDefault();
+    if (onClick) {
+      onClick(e);
+    } else {
+      window.location.href = href;
     }
   };
 
   return (
     <span
       className={`asset-chip ${className}`}
-      title={hoverPreview ?? (loadingPreview ? 'Loading…' : fullName)}
-      onMouseEnter={handleMouseEnter}
-      style={{ '--chip-color': color } as React.CSSProperties}
+      title={fullName}
     >
       <a
         href={href}
-        onClick={e => { e.preventDefault(); window.location.href = href; }}
+        onClick={handleClick}
         className="asset-chip__link"
       >
-        <span className="asset-chip__icon">{icon}</span>
+        <span className="asset-chip__icon" style={{ display: 'inline-flex', alignItems: 'center', marginRight: 4 }}>
+          {renderAssetTypeIcon(objectType)}
+        </span>
         <span className="asset-chip__label">{label}</span>
-        <span className="asset-chip__type">{objectType}</span>
+        {diff && (diff.additions != null || diff.deletions != null) && (
+          <span
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 3,
+              fontSize: '0.72rem',
+              fontWeight: 600,
+              flexShrink: 0,
+              marginLeft: 4,
+            }}
+          >
+            {diff.additions != null && <span style={{ color: '#16a34a' }}>+{diff.additions}</span>}
+            {diff.deletions != null && <span style={{ color: '#dc2626' }}>-{diff.deletions}</span>}
+          </span>
+        )}
       </a>
 
       <style>{`
@@ -104,48 +120,37 @@ export const AssetChip: React.FC<AssetChipProps> = ({
           display: inline-flex;
           align-items: center;
           vertical-align: middle;
-          border-radius: 6px;
-          border: 1px solid var(--chip-color);
-          background: color-mix(in srgb, var(--chip-color) 12%, transparent);
+          border-radius: 4px;
+          border: 1px solid #e2e8f0;
+          background: #ffffff;
           font-size: 0.78rem;
           line-height: 1;
           overflow: hidden;
           position: relative;
-          transition: box-shadow 0.15s ease, transform 0.1s ease;
+          transition: border-color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
           cursor: pointer;
           user-select: none;
+          box-shadow: 0 1px 2px rgba(0, 0, 0, 0.02);
         }
         .asset-chip:hover {
-          box-shadow: 0 0 0 2px color-mix(in srgb, var(--chip-color) 35%, transparent);
-          transform: translateY(-1px);
+          border-color: #cbd5e1;
+          background: #f8fafc;
+          box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
         }
         .asset-chip__link {
           display: inline-flex;
           align-items: center;
-          gap: 4px;
-          padding: 3px 8px 3px 6px;
+          padding: 3px 8px;
           text-decoration: none;
-          color: var(--chip-color);
+          color: #1e293b;
           font-weight: 500;
-        }
-        .asset-chip__icon {
-          font-size: 0.85em;
         }
         .asset-chip__label {
           font-family: 'JetBrains Mono', 'Fira Code', ui-monospace, monospace;
-          max-width: 180px;
+          max-width: 260px;
           overflow: hidden;
           text-overflow: ellipsis;
           white-space: nowrap;
-        }
-        .asset-chip__type {
-          font-size: 0.68em;
-          opacity: 0.65;
-          text-transform: uppercase;
-          letter-spacing: 0.03em;
-          border-left: 1px solid var(--chip-color);
-          padding-left: 5px;
-          margin-left: 2px;
         }
       `}</style>
     </span>

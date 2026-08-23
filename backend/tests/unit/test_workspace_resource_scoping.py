@@ -164,10 +164,8 @@ def test_agent_subsystem_resource_scoping(db_session: Session):
     from app.agents.routes.chat_routes import create_session, list_sessions
     from app.agents.routes.llm_call_routes import list_llm_call_logs
     from app.agents.routes.stream_routes import list_active_streams
-    from app.agents.routes.memory_routes import get_user_memories
     from app.agents.services.stream_registry import stream_registry
     from app.agents.models.agents import LlmCallLog, Skill
-    from app.memory.store import MemoryStore
 
     account = Account(id=str(uuid4()), name="Subsystem Account", slug="sub-account")
     db_session.add(account)

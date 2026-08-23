@@ -131,12 +131,12 @@ async def chat_stream(
         if agent_id is not None:
             try:
                 import asyncio
-                # Extract connection ID safely before starting the task
-                connection_id = getattr(conn, "id", None)
+                # Snapshot messages at the exact time of call to prevent subsequent loop mutations from polluting this log
+                snapshot_messages = [dict(m) for m in messages]
                 task = asyncio.create_task(
                     save_llm_call_log(
                         connection_id=connection_id,
-                        messages=messages,
+                        messages=snapshot_messages,
                         tools=tools,
                         system_prompt=system_prompt,
                         agent_id=agent_id,
@@ -257,13 +257,29 @@ async def save_llm_call_log(
                         except Exception:
                             pass
 
-        # 3. Message history (exact raw payload sent to LLM)
+        # 3. Message history (payload sent to LLM with base64 truncated for logging)
         message_history = []
         for msg in messages:
             item = {}
             for k in ("role", "content", "tool_calls", "tool_call_id", "name"):
                 if k in msg and msg[k] is not None:
-                    item[k] = msg[k]
+                    val = msg[k]
+                    if k == "content" and isinstance(val, list):
+                        sanitized_list = []
+                        for part in val:
+                            if isinstance(part, dict) and part.get("type") == "image_url":
+                                url = part.get("image_url", {}).get("url", "")
+                                if len(url) > 100:
+                                    sanitized_list.append({
+                                        "type": "image_url",
+                                        "image_url": {"url": url[:60] + "... [base64 image truncated for log]"}
+                                    })
+                                else:
+                                    sanitized_list.append(part)
+                            else:
+                                sanitized_list.append(part)
+                        val = sanitized_list
+                    item[k] = val
             message_history.append(item)
 
         # 4. Tools available (full definitions sent to LLM)
@@ -437,8 +453,37 @@ def _convert_messages_to_anthropic(messages: list[dict]) -> list[dict]:
             converted.append(("assistant", [{"type": "text", "text": text}] if text else [{"type": "text", "text": ""}]))
 
         else:  # user
-            text = msg.get("content") or ""
-            converted.append(("user", [{"type": "text", "text": text}]))
+            raw_content = msg.get("content") or ""
+            if isinstance(raw_content, list):
+                blocks = []
+                for item in raw_content:
+                    if isinstance(item, dict):
+                        if item.get("type") == "text":
+                            blocks.append({"type": "text", "text": item.get("text", "")})
+                        elif item.get("type") == "image_url":
+                            url = item.get("image_url", {}).get("url", "")
+                            if url.startswith("data:"):
+                                try:
+                                    header, b64_data = url.split(";base64,", 1)
+                                    media_type = header.replace("data:", "") or "image/png"
+                                    blocks.append({
+                                        "type": "image",
+                                        "source": {
+                                            "type": "base64",
+                                            "media_type": media_type,
+                                            "data": b64_data,
+                                        },
+                                    })
+                                except Exception:
+                                    pass
+                        elif item.get("type") == "image":
+                            blocks.append(item)
+                    elif isinstance(item, str):
+                        blocks.append({"type": "text", "text": item})
+                converted.append(("user", blocks if blocks else [{"type": "text", "text": ""}]))
+            else:
+                text = raw_content if isinstance(raw_content, str) else str(raw_content)
+                converted.append(("user", [{"type": "text", "text": text}]))
 
         i += 1
 
@@ -989,11 +1034,38 @@ def _build_gemini_tool_content(message: dict, tool_call_names: dict[str, str], t
 
 
 def _build_gemini_text_content(message: dict, types_module) -> Any | None:
-    text = _coerce_message_text(message.get("content"))
+    content_val = message.get("content")
+    role = "model" if message.get("role") == "assistant" else "user"
+    if isinstance(content_val, list):
+        import base64 as _b64
+        parts = []
+        for item in content_val:
+            if isinstance(item, dict):
+                if item.get("type") == "text":
+                    t = item.get("text", "")
+                    if t:
+                        parts.append(types_module.Part.from_text(text=t))
+                elif item.get("type") == "image_url":
+                    url = item.get("image_url", {}).get("url", "")
+                    if url.startswith("data:"):
+                        try:
+                            header, b64_data = url.split(";base64,", 1)
+                            media_type = header.replace("data:", "") or "image/png"
+                            raw_bytes = _b64.b64decode(b64_data)
+                            parts.append(types_module.Part.from_bytes(data=raw_bytes, mime_type=media_type))
+                        except Exception as b64_err:
+                            logger.warning("Failed to decode image_url for Gemini: %s", b64_err)
+            elif isinstance(item, str):
+                parts.append(types_module.Part.from_text(text=item))
+        if not parts:
+            return None
+        return types_module.Content(role=role, parts=parts)
+
+    text = _coerce_message_text(content_val)
     if not text:
         return None
     return types_module.Content(
-        role="model" if message.get("role") == "assistant" else "user",
+        role=role,
         parts=[types_module.Part.from_text(text=text)],
     )
 

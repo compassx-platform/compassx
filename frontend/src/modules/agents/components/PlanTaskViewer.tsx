@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { ChevronDown, ChevronRight, Check, FileText, X } from 'lucide-react';
+import { ChevronDown, ChevronRight, Check, FileText, X, Loader2 } from 'lucide-react';
 
 export interface PlanStepData {
   id: number;
@@ -22,6 +22,8 @@ export interface PlanData {
 
 interface PlanTaskViewerProps {
   plan: PlanData;
+  defaultExpanded?: boolean;
+  isDocked?: boolean;
   onApprovePlan?: () => void;
   onRejectPlan?: () => void;
   onRequestChange?: (feedback: string) => void;
@@ -30,29 +32,35 @@ interface PlanTaskViewerProps {
 
 export const PlanTaskViewer: React.FC<PlanTaskViewerProps> = ({
   plan,
+  defaultExpanded = false,
+  isDocked = false,
   onApprovePlan,
   onRejectPlan,
   onRequestChange,
 }) => {
-  const [isExpanded, setIsExpanded] = useState(true);
+  const [isExpanded, setIsExpanded] = useState(defaultExpanded);
   const [feedbackText, setFeedbackText] = useState('');
+  const [localAction, setLocalAction] = useState<'approved' | 'rejected' | null>(null);
 
   const totalCount = plan.steps.length;
-  const isApproved = !!plan.approved_at;
+  const isApproved = !!plan.approved_at || localAction === 'approved';
+  const isRejected = localAction === 'rejected';
   const isAllDone = plan.steps.length > 0 && plan.steps.every((s) => s.status === 'done');
+  const isExecuting = plan.steps.some((s) => s.status === 'in_progress' || (s.status === 'done' && !isAllDone));
 
   return (
     <div
       style={{
         width: '100%',
-        borderRadius: '12px 12px 0 0',
-        border: '1px solid var(--color-border, #e5e7eb)',
-        borderBottom: 'none',
-        background: 'var(--color-surface, #fcfcfc)',
+        borderRadius: isDocked ? 0 : '12px',
+        border: isDocked ? 'none' : '1px solid var(--color-border, #e5e7eb)',
+        borderBottom: isDocked ? '1px solid var(--color-border, #e5e7eb)' : undefined,
+        background: isDocked ? '#f9fafb' : 'var(--color-surface, #fcfcfc)',
         boxShadow: 'none',
         fontSize: '0.8rem',
         color: 'var(--color-text, #1f2937)',
         fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+        overflow: 'hidden',
       }}
     >
       {/* ── Header Bar ── */}
@@ -73,14 +81,33 @@ export const PlanTaskViewer: React.FC<PlanTaskViewerProps> = ({
           <span>{totalCount} {totalCount === 1 ? 'step' : 'steps'}</span>
         </div>
 
-        {/* Right: Reject all / Accept all Buttons */}
+        {/* Right: Status / Actions */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }} onClick={(e) => e.stopPropagation()}>
-          {!isApproved ? (
+          {isRejected ? (
+            <span
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 4,
+                color: '#dc2626',
+                fontSize: '0.75rem',
+                fontWeight: 600,
+                padding: '2px 8px',
+                borderRadius: '4px',
+                background: '#fef2f2',
+              }}
+            >
+              <X size={13} /> Rejected
+            </span>
+          ) : !isApproved ? (
             <>
               {onRejectPlan && (
                 <button
                   type="button"
-                  onClick={onRejectPlan}
+                  onClick={() => {
+                    setLocalAction('rejected');
+                    onRejectPlan();
+                  }}
                   style={{
                     padding: '4px 12px',
                     borderRadius: '6px',
@@ -90,7 +117,10 @@ export const PlanTaskViewer: React.FC<PlanTaskViewerProps> = ({
                     fontSize: '0.78rem',
                     fontWeight: 500,
                     cursor: 'pointer',
+                    transition: 'all 0.15s ease',
                   }}
+                  onMouseEnter={(e) => (e.currentTarget.style.background = '#f3f4f6')}
+                  onMouseLeave={(e) => (e.currentTarget.style.background = '#ffffff')}
                 >
                   Reject
                 </button>
@@ -98,7 +128,10 @@ export const PlanTaskViewer: React.FC<PlanTaskViewerProps> = ({
               {onApprovePlan && (
                 <button
                   type="button"
-                  onClick={onApprovePlan}
+                  onClick={() => {
+                    setLocalAction('approved');
+                    onApprovePlan();
+                  }}
                   style={{
                     padding: '4px 14px',
                     borderRadius: '6px',
@@ -108,19 +141,62 @@ export const PlanTaskViewer: React.FC<PlanTaskViewerProps> = ({
                     fontSize: '0.78rem',
                     fontWeight: 600,
                     cursor: 'pointer',
+                    transition: 'all 0.15s ease',
                   }}
+                  onMouseEnter={(e) => (e.currentTarget.style.background = '#0369a1')}
+                  onMouseLeave={(e) => (e.currentTarget.style.background = '#0284c7')}
                 >
                   Accept
                 </button>
               )}
             </>
           ) : isAllDone ? (
-            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, color: '#16a34a', fontSize: '0.75rem', fontWeight: 600 }}>
+            <span
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 4,
+                color: '#16a34a',
+                fontSize: '0.75rem',
+                fontWeight: 600,
+                padding: '2px 8px',
+                borderRadius: '4px',
+                background: '#f0fdf4',
+              }}
+            >
               <Check size={14} /> Completed
             </span>
+          ) : isExecuting ? (
+            <span
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 5,
+                color: '#0284c7',
+                fontSize: '0.75rem',
+                fontWeight: 600,
+                padding: '2px 8px',
+                borderRadius: '4px',
+                background: '#f0f9ff',
+              }}
+            >
+              <Loader2 size={13} className="spin" /> Executing Plan
+            </span>
           ) : (
-            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, color: '#059669', fontSize: '0.75rem', fontWeight: 600 }}>
-              <Check size={14} /> Active Plan
+            <span
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 4,
+                color: '#059669',
+                fontSize: '0.75rem',
+                fontWeight: 600,
+                padding: '2px 8px',
+                borderRadius: '4px',
+                background: '#ecfdf5',
+              }}
+            >
+              <Check size={14} /> Approved
             </span>
           )}
         </div>
@@ -168,7 +244,7 @@ export const PlanTaskViewer: React.FC<PlanTaskViewerProps> = ({
             ))}
           </div>
 
-          {!isApproved && onRequestChange && (
+          {!isApproved && !isRejected && onRequestChange && (
             <div style={{ marginTop: 8, display: 'flex', gap: 6, alignItems: 'center' }}>
               <input
                 type="text"

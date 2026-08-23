@@ -87,6 +87,7 @@ def list_llm_call_logs(
                 output_tokens=log.output_tokens,
                 finish_reason=log.finish_reason,
                 summary=summary,
+                response_tool_calls=log.response_tool_calls or [],
             )
         )
     return result
