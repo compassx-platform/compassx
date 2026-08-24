@@ -1,5 +1,10 @@
 /* CompassX Clean Minimalist Black & Gray Documentation Theme */
 
+/* --- Document-Wide Base Scale (Calibrated for crisp, comfortable readability) --- */
+html {
+  font-size: 89% !important; /* ~14.25px: comfortable, sharp, and readable */
+}
+
 /* --- Color Variables & Layout Dimensions --- */
 :root {
   --md-primary-fg-color: #0f172a;
@@ -8,8 +13,8 @@
   --md-primary-bg-color: #ffffff;
   --md-accent-fg-color: #0f172a; /* Neutral Dark Slate / Black */
 
-  /* Sidebar Width */
-  --md-sidebar-width: 15.5rem;
+  /* Balanced Sidebar Width */
+  --md-sidebar-width: 16.5rem;
 
   /* Custom Neutral Gray Borders, Tree Lines & Radii */
   --cx-border-color: #e2e8f0;
@@ -42,40 +47,65 @@
   --cx-text-muted: #94a3b8;
 }
 
-/* --- Soft Neutral Gray Scrollbars (Static Subtle Color - No Hover Change) --- */
-* {
-  scrollbar-width: thin;
-  scrollbar-color: #e2e8f0 transparent;
+/* --- Completely Static Universal Scrollbar (Single Uniform Color Across All States) --- */
+*,
+*::before,
+*::after {
+  scrollbar-width: thin !important;
+  scrollbar-color: #cbd5e1 transparent !important;
 }
 
-::-webkit-scrollbar {
-  width: 5px;
-  height: 5px;
+::-webkit-scrollbar,
+*::-webkit-scrollbar,
+*:hover::-webkit-scrollbar {
+  width: 5px !important;
+  height: 5px !important;
 }
 
-::-webkit-scrollbar-track {
-  background: transparent;
+::-webkit-scrollbar-track,
+*::-webkit-scrollbar-track,
+*:hover::-webkit-scrollbar-track {
+  background: transparent !important;
 }
 
-::-webkit-scrollbar-thumb {
-  background: #e2e8f0; /* Ultra-light subtle gray */
-  border-radius: 3px;
+::-webkit-scrollbar-thumb,
+::-webkit-scrollbar-thumb:hover,
+::-webkit-scrollbar-thumb:active,
+*:hover::-webkit-scrollbar-thumb,
+*:hover::-webkit-scrollbar-thumb:hover,
+*:hover::-webkit-scrollbar-thumb:active,
+.md-sidebar__scrollwrap::-webkit-scrollbar-thumb,
+.md-sidebar__scrollwrap:hover::-webkit-scrollbar-thumb,
+.md-typeset pre > code::-webkit-scrollbar-thumb,
+.md-typeset pre:hover > code::-webkit-scrollbar-thumb,
+.md-typeset table::-webkit-scrollbar-thumb,
+.md-typeset table:hover::-webkit-scrollbar-thumb {
+  background: #cbd5e1 !important;
+  background-color: #cbd5e1 !important;
+  border-radius: 3px !important;
 }
 
-::-webkit-scrollbar-thumb:hover {
-  background: #e2e8f0; /* Stays identical on hover */
+/* Dark Mode Static Scrollbar */
+[data-md-color-scheme="slate"] *,
+[data-md-color-scheme="slate"] *::before,
+[data-md-color-scheme="slate"] *::after {
+  scrollbar-color: #334155 transparent !important;
 }
 
-[data-md-color-scheme="slate"] * {
-  scrollbar-color: #334155 transparent;
-}
-
-[data-md-color-scheme="slate"] ::-webkit-scrollbar-thumb {
-  background: #334155;
-}
-
-[data-md-color-scheme="slate"] ::-webkit-scrollbar-thumb:hover {
-  background: #334155; /* Stays identical on hover */
+[data-md-color-scheme="slate"] ::-webkit-scrollbar-thumb,
+[data-md-color-scheme="slate"] ::-webkit-scrollbar-thumb:hover,
+[data-md-color-scheme="slate"] ::-webkit-scrollbar-thumb:active,
+[data-md-color-scheme="slate"] *:hover::-webkit-scrollbar-thumb,
+[data-md-color-scheme="slate"] *:hover::-webkit-scrollbar-thumb:hover,
+[data-md-color-scheme="slate"] *:hover::-webkit-scrollbar-thumb:active,
+[data-md-color-scheme="slate"] .md-sidebar__scrollwrap::-webkit-scrollbar-thumb,
+[data-md-color-scheme="slate"] .md-sidebar__scrollwrap:hover::-webkit-scrollbar-thumb,
+[data-md-color-scheme="slate"] .md-typeset pre > code::-webkit-scrollbar-thumb,
+[data-md-color-scheme="slate"] .md-typeset pre:hover > code::-webkit-scrollbar-thumb,
+[data-md-color-scheme="slate"] .md-typeset table::-webkit-scrollbar-thumb,
+[data-md-color-scheme="slate"] .md-typeset table:hover::-webkit-scrollbar-thumb {
+  background: #334155 !important;
+  background-color: #334155 !important;
 }
 
 /* --- Complete Edge-to-Edge Container: Zero Top & Side Padding --- */
@@ -100,14 +130,27 @@
 .md-sidebar--primary {
   margin: 0 !important;
   padding-left: 0.5rem !important;
-  padding-right: 0.5rem !important;
+  padding-right: 1.15rem !important; /* Generous gap between expand arrows and the scrollbar */
+  padding-top: 0.25rem !important;
+}
+
+.md-sidebar--secondary {
+  margin: 0 !important;
+  padding-left: 0.75rem !important;
+  padding-right: 0.75rem !important;
   padding-top: 0.25rem !important;
 }
 
 .md-content {
   max-width: none !important;
   margin: 0 !important;
-  padding: 0 1.25rem !important;
+  padding: 0 2.5rem !important; /* Comfortable side margin/padding for main reading column */
+}
+
+@media screen and (min-width: 76.25em) {
+  .md-content {
+    padding: 0 3rem !important; /* Generous side padding on large displays */
+  }
 }
 
 .md-content__inner {
@@ -322,6 +365,7 @@
 /* Compact Neutral Gray Chevrons */
 .md-nav__icon {
   margin-left: auto;
+  margin-right: 0.35rem !important; /* Extra gap between expand arrow and scrollbar */
   order: 2;
   font-size: 0.8rem;
   color: var(--cx-text-muted);
@@ -332,12 +376,12 @@
   color: var(--cx-active-fg);
 }
 
-/* --- Nested Submenus & Subtle Gray Tree Guide Lines --- */
+/* --- Nested Submenus & Hierarchical Tree Guide Lines (0.75rem indentation) --- */
 .md-nav__item--nested > .md-nav {
   border-left: 1.5px solid var(--cx-tree-line-color) !important;
-  margin-left: 0.45rem !important;
-  padding-left: 0.25rem !important;
-  width: calc(100% - 0.55rem) !important;
+  margin-left: 0.75rem !important; /* 0.75rem indentation */
+  padding-left: 0.55rem !important; /* Clean clearance from vertical guide line */
+  width: calc(100% - 0.75rem) !important;
   box-sizing: border-box;
 }
 
@@ -471,3 +515,25 @@
   font-weight: 600 !important;
   background-color: transparent !important;
 }
+
+/* --- Clean Breadcrumbs Navigation Trail --- */
+.md-path {
+  margin-bottom: 0.85rem !important;
+  font-size: 0.76rem !important;
+  color: var(--cx-text-muted) !important;
+}
+
+.md-path__item {
+  color: var(--cx-text-muted) !important;
+}
+
+.md-path__link {
+  color: var(--cx-text-muted) !important;
+  text-decoration: none !important;
+  transition: color 0.12s ease !important;
+}
+
+.md-path__link:hover {
+  color: var(--md-default-fg-color) !important;
+}
+

@@ -4,7 +4,7 @@ Welcome to the **CompassX Platform** documentation. CompassX is an enterprise AI
 
 ---
 
-## 🚀 Quick Navigation
+## Quick Navigation
 
 <div class="grid cards" markdown>
 
