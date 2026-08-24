@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" fill="none">
+  <!-- Top-Right Quadrant Arc -->
+  <path d="M 58.1 14.9 A 36 36 0 0 1 85.1 41.9" stroke="currentColor" stroke-width="9" stroke-linecap="round"/>
+  <!-- Bottom-Right Quadrant Arc -->
+  <path d="M 85.1 58.1 A 36 36 0 0 1 58.1 85.1" stroke="currentColor" stroke-width="9" stroke-linecap="round"/>
+  <!-- Bottom-Left Quadrant Arc -->
+  <path d="M 41.9 85.1 A 36 36 0 0 1 14.9 58.1" stroke="currentColor" stroke-width="9" stroke-linecap="round"/>
+  <!-- Top-Left Quadrant Arc -->
+  <path d="M 14.9 41.9 A 36 36 0 0 1 41.9 14.9" stroke="currentColor" stroke-width="9" stroke-linecap="round"/>
+
+  <!-- Center 45° Diamond Needle -->
+  <polygon points="68,32 56.5,56.5 43.5,43.5" fill="currentColor"/>
+  <polygon points="68,32 56.5,56.5 32,68 43.5,43.5" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linejoin="round" stroke-linecap="round"/>
+  <line x1="43.5" y1="43.5" x2="56.5" y2="56.5" stroke="currentColor" stroke-width="3.2" stroke-linecap="round"/>
+</svg>

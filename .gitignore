@@ -18,6 +18,10 @@ dist/
 /data/
 /architecture/
 
+# Documentation build output
+site/
+.cache/
+
 # Environment files (keep .env.example tracked)
 .env
 .env.local

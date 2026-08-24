@@ -1,0 +1,473 @@
+/* CompassX Clean Minimalist Black & Gray Documentation Theme */
+
+/* --- Color Variables & Layout Dimensions --- */
+:root {
+  --md-primary-fg-color: #0f172a;
+  --md-primary-fg-color--light: #1e293b;
+  --md-primary-fg-color--dark: #020617;
+  --md-primary-bg-color: #ffffff;
+  --md-accent-fg-color: #0f172a; /* Neutral Dark Slate / Black */
+
+  /* Sidebar Width */
+  --md-sidebar-width: 15.5rem;
+
+  /* Custom Neutral Gray Borders, Tree Lines & Radii */
+  --cx-border-color: #e2e8f0;
+  --cx-card-bg: #ffffff;
+  --cx-card-hover-bg: #f8fafc;
+  --cx-tree-line-color: #e2e8f0; /* Neutral Subtle Gray Tree Guide Line */
+  --cx-active-bg: #f1f5f9;       /* Clean Gray Active Pill Background */
+  --cx-active-fg: #0f172a;       /* Solid Black Active Text */
+  --cx-text-muted: #64748b;
+  --cx-radius-sm: 4px;
+  --cx-radius-md: 6px;
+  --cx-radius-lg: 10px;
+}
+
+[data-md-color-scheme="slate"] {
+  --md-primary-fg-color: #0f172a;
+  --md-primary-bg-color: #0b0f19;
+  --md-default-bg-color: #0b0f19;
+  --md-default-fg-color: #f1f5f9;
+  --md-default-fg-color--light: #94a3b8;
+  --md-accent-fg-color: #f8fafc;
+
+  /* Dark mode neutral gray borders, tree lines & cards */
+  --cx-border-color: #1e293b;
+  --cx-card-bg: #111827;
+  --cx-card-hover-bg: #1e293b;
+  --cx-tree-line-color: #334155;
+  --cx-active-bg: #1e293b;
+  --cx-active-fg: #ffffff;
+  --cx-text-muted: #94a3b8;
+}
+
+/* --- Soft Neutral Gray Scrollbars (Static Subtle Color - No Hover Change) --- */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #e2e8f0 transparent;
+}
+
+::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #e2e8f0; /* Ultra-light subtle gray */
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #e2e8f0; /* Stays identical on hover */
+}
+
+[data-md-color-scheme="slate"] * {
+  scrollbar-color: #334155 transparent;
+}
+
+[data-md-color-scheme="slate"] ::-webkit-scrollbar-thumb {
+  background: #334155;
+}
+
+[data-md-color-scheme="slate"] ::-webkit-scrollbar-thumb:hover {
+  background: #334155; /* Stays identical on hover */
+}
+
+/* --- Complete Edge-to-Edge Container: Zero Top & Side Padding --- */
+.md-main {
+  margin: 0 !important;
+  padding: 0 !important;
+}
+
+.md-grid {
+  max-width: 100% !important;
+  margin: 0 !important;
+  padding: 0 !important; /* Zero side padding */
+}
+
+.md-main__inner {
+  max-width: 100% !important;
+  margin: 0 !important;
+  padding: 0 !important; /* Zero top and side padding */
+  gap: 0 !important;
+}
+
+.md-sidebar--primary {
+  margin: 0 !important;
+  padding-left: 0.5rem !important;
+  padding-right: 0.5rem !important;
+  padding-top: 0.25rem !important;
+}
+
+.md-content {
+  max-width: none !important;
+  margin: 0 !important;
+  padding: 0 1.25rem !important;
+}
+
+.md-content__inner {
+  margin-top: 0.25rem !important;
+  padding-top: 0 !important;
+}
+
+/* --- Sidebar & Navigation Tree Width Synchronization --- */
+@media screen and (min-width: 60em) {
+  .md-sidebar--primary,
+  .md-sidebar--primary .md-sidebar__scrollwrap,
+  .md-sidebar--primary .md-sidebar__inner,
+  .md-sidebar--primary .md-nav--primary {
+    width: var(--md-sidebar-width) !important;
+    max-width: var(--md-sidebar-width) !important;
+  }
+}
+
+.md-nav--primary {
+  width: 100% !important;
+}
+
+.md-nav--primary .md-nav__list {
+  width: 100% !important;
+  padding: 0 !important;
+}
+
+/* --- Ultra-Compact Navigation Items & Vertical Spacing --- */
+.md-nav__item {
+  width: 100% !important;
+  margin: 0 !important;
+  padding: 0 !important;
+}
+
+.md-nav__link {
+  width: 100% !important;
+  border-radius: var(--cx-radius-sm);
+  padding: 0.22rem 0.5rem !important; /* Comfortable balanced padding */
+  font-size: 0.82rem !important;
+  line-height: 1.35 !important;
+  font-weight: 450;
+  color: var(--md-default-fg-color);
+  transition: all 0.12s ease;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  box-sizing: border-box;
+}
+
+.md-nav__link:hover:not(.md-nav__link--active) {
+  background-color: var(--cx-card-hover-bg);
+  color: var(--md-default-fg-color);
+}
+
+/* --- Prevent Duplicate Titles: Hide top drawer title label, TOC drawer labels & nested secondary TOC in primary sidebar --- */
+@media screen and (min-width: 60em) {
+  .md-sidebar--primary .md-nav--primary > .md-nav__title,
+  .md-sidebar--primary label.md-nav__link[for*="toc"],
+  .md-sidebar--primary .md-nav--secondary {
+    display: none !important;
+  }
+}
+
+/* --- Header & Top Bar (Explicit Light Mode: Pure White / Dark Mode: Charcoal) --- */
+[data-md-color-scheme="default"] .md-header,
+:root .md-header,
+.md-header {
+  background-color: #ffffff !important;
+  color: #0f172a !important;
+  border-bottom: 1px solid #e2e8f0 !important;
+  box-shadow: none !important;
+}
+
+[data-md-color-scheme="default"] .md-header__title,
+[data-md-color-scheme="default"] .md-header__topic,
+:root .md-header__title,
+:root .md-header__topic {
+  color: #0f172a !important;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+[data-md-color-scheme="default"] .md-header__button,
+:root .md-header__button {
+  color: #64748b !important;
+}
+
+[data-md-color-scheme="default"] .md-header__button:hover,
+:root .md-header__button:hover {
+  color: #0f172a !important;
+}
+
+.md-logo img,
+.md-logo svg {
+  height: 24px !important;
+  width: 24px !important;
+  display: block;
+}
+
+[data-md-color-scheme="default"] .md-logo,
+[data-md-color-scheme="default"] .md-logo svg,
+:root .md-logo,
+:root .md-logo svg {
+  color: #0f172a !important;
+}
+
+[data-md-color-scheme="default"] .md-search__form,
+:root .md-search__form {
+  background-color: #f8fafc !important;
+  border: 1px solid #e2e8f0 !important;
+}
+
+[data-md-color-scheme="default"] .md-search__input,
+:root .md-search__input {
+  color: #0f172a !important;
+}
+
+[data-md-color-scheme="default"] .md-search__input::placeholder,
+:root .md-search__input::placeholder {
+  color: #94a3b8 !important;
+}
+
+/* Dark Mode Header */
+[data-md-color-scheme="slate"] .md-header {
+  background-color: #0b0f19 !important;
+  color: #f1f5f9 !important;
+  border-bottom: 1px solid #1e293b !important;
+  box-shadow: none !important;
+}
+
+[data-md-color-scheme="slate"] .md-header__title,
+[data-md-color-scheme="slate"] .md-header__topic {
+  color: #f1f5f9 !important;
+}
+
+[data-md-color-scheme="slate"] .md-header__button {
+  color: #94a3b8 !important;
+}
+
+[data-md-color-scheme="slate"] .md-header__button:hover {
+  color: #ffffff !important;
+}
+
+[data-md-color-scheme="slate"] .md-logo,
+[data-md-color-scheme="slate"] .md-logo svg {
+  color: #f1f5f9 !important;
+  fill: #f1f5f9 !important;
+}
+
+[data-md-color-scheme="slate"] .md-search__form {
+  background-color: #111827 !important;
+  border: 1px solid #1e293b !important;
+}
+
+[data-md-color-scheme="slate"] .md-search__input {
+  color: #f1f5f9 !important;
+}
+
+/* --- Equal & Symmetrical Section Divider Spacing --- */
+/* Gap 1: Previous section's last item -> Divider line (0.55rem) */
+.md-nav--primary > .md-nav__list > .md-nav__item--section {
+  margin-top: 0.55rem !important;
+}
+
+.md-nav--primary > .md-nav__list > .md-nav__item--section:first-of-type {
+  margin-top: 0.2rem !important;
+}
+
+/* Gap 2: Divider line -> New section title (Exact same 0.55rem) */
+.md-nav--primary > .md-nav__list > .md-nav__item--section > .md-nav__link,
+.md-nav--primary > .md-nav__list > .md-nav__item--section > label.md-nav__link {
+  text-transform: uppercase !important;
+  font-size: 0.69rem !important;
+  font-weight: 800 !important;
+  letter-spacing: 0.08em !important;
+  color: var(--md-default-fg-color) !important;
+  border-top: 1px solid var(--cx-border-color) !important;
+  padding-top: 0.55rem !important;   /* Equal to margin-top for 1:1 symmetry */
+  padding-bottom: 0.2rem !important; /* Balanced gap between title and first child */
+  padding-left: 0.35rem !important;
+  padding-right: 0.35rem !important;
+  cursor: default;
+}
+
+.md-nav--primary > .md-nav__list > .md-nav__item--section:first-of-type > .md-nav__link,
+.md-nav--primary > .md-nav__list > .md-nav__item--section:first-of-type > label.md-nav__link {
+  border-top: none !important;
+  padding-top: 0.2rem !important;
+}
+
+.md-nav--primary > .md-nav__list > .md-nav__item--section > .md-nav__link .md-nav__icon {
+  display: none !important;
+}
+
+/* Active Open Parent Category (Solid Black/Dark Slate text) */
+.md-nav__item--nested.md-nav__item--active > .md-nav__link,
+.md-nav__item--nested.md-nav__item--active > label.md-nav__link {
+  color: var(--cx-active-fg) !important;
+  font-weight: 650;
+}
+
+/* Active Selected Child Page (Clean Gray Pill Background with Solid Black Text & Comfortable Box Padding) */
+.md-nav__link--active {
+  background-color: var(--cx-active-bg) !important;
+  color: var(--cx-active-fg) !important;
+  font-weight: 650 !important;
+  border-radius: 5px !important;
+  padding: 0.32rem 0.6rem !important; /* Balanced, comfortable padding around active text */
+  margin: 0.05rem 0 !important;
+}
+
+/* Compact Neutral Gray Chevrons */
+.md-nav__icon {
+  margin-left: auto;
+  order: 2;
+  font-size: 0.8rem;
+  color: var(--cx-text-muted);
+  transition: transform 0.15s ease, color 0.15s ease;
+}
+
+.md-nav__item--active > .md-nav__link .md-nav__icon {
+  color: var(--cx-active-fg);
+}
+
+/* --- Nested Submenus & Subtle Gray Tree Guide Lines --- */
+.md-nav__item--nested > .md-nav {
+  border-left: 1.5px solid var(--cx-tree-line-color) !important;
+  margin-left: 0.45rem !important;
+  padding-left: 0.25rem !important;
+  width: calc(100% - 0.55rem) !important;
+  box-sizing: border-box;
+}
+
+/* --- Clean Card Grids (Neutral Gray Borders & Hover) --- */
+.grid.cards > ul {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 1rem;
+  margin: 1rem 0;
+  padding: 0;
+  list-style: none;
+}
+
+.grid.cards > ul > li {
+  background-color: var(--cx-card-bg);
+  border: 1px solid var(--cx-border-color);
+  border-radius: var(--cx-radius-lg);
+  padding: 1.25rem;
+  transition: all 0.15s ease;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
+}
+
+.grid.cards > ul > li:hover {
+  border-color: #94a3b8;
+  background-color: var(--cx-card-hover-bg);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+}
+
+.grid.cards > ul > li hr {
+  border: 0;
+  border-top: 1px solid var(--cx-border-color);
+  margin: 0.5rem 0 0.75rem;
+}
+
+/* --- Typography & Links (Black & Gray) --- */
+.md-typeset a {
+  color: var(--md-default-fg-color);
+  font-weight: 500;
+  text-decoration: underline;
+  text-decoration-color: var(--cx-border-color);
+  text-underline-offset: 3px;
+  transition: color 0.15s ease, text-decoration-color 0.15s ease;
+}
+
+.md-typeset a:hover {
+  color: #000000;
+  text-decoration-color: #000000;
+}
+
+[data-md-color-scheme="slate"] .md-typeset a:hover {
+  color: #ffffff;
+  text-decoration-color: #ffffff;
+}
+
+/* --- Modern Code Blocks & Admonitions --- */
+.md-typeset pre > code {
+  border-radius: var(--cx-radius-md);
+  border: 1px solid var(--cx-border-color);
+  font-size: 0.85rem;
+  line-height: 1.5;
+}
+
+.md-typeset .admonition,
+.md-typeset details {
+  border-radius: var(--cx-radius-md);
+  border-width: 1px;
+  border-style: solid;
+  box-shadow: none;
+  margin: 1rem 0;
+}
+
+.md-typeset .admonition.note,
+.md-typeset .admonition.info {
+  border-color: #cbd5e1;
+  background-color: rgba(241, 245, 249, 0.7);
+}
+
+[data-md-color-scheme="slate"] .md-typeset .admonition.note,
+[data-md-color-scheme="slate"] .md-typeset .admonition.info {
+  border-color: #334155;
+  background-color: rgba(30, 41, 59, 0.4);
+}
+
+/* Search Box */
+.md-search__inner {
+  border-radius: var(--cx-radius-md);
+}
+
+.md-search__form {
+  border-radius: var(--cx-radius-md);
+  border: 1px solid var(--cx-border-color);
+}
+
+/* --- Unnumbered Clean Right-Hand Table of Contents (On this page) --- */
+.md-nav--secondary .md-nav__title {
+  font-weight: 700 !important;
+  font-size: 0.70rem !important;
+  letter-spacing: 0.07em !important;
+  text-transform: uppercase !important;
+  color: var(--md-default-fg-color) !important;
+  margin-bottom: 0.5rem !important;
+}
+
+.md-nav--secondary .md-nav__list {
+  list-style: none !important;
+  padding: 0 !important;
+  margin: 0 !important;
+}
+
+.md-nav--secondary .md-nav__item {
+  list-style: none !important;
+  margin: 0.1rem 0 !important;
+}
+
+.md-nav--secondary .md-nav__link {
+  font-size: 0.81rem !important;
+  color: var(--cx-text-muted) !important;
+  padding: 0.18rem 0.35rem !important;
+  border-radius: var(--cx-radius-sm) !important;
+  transition: all 0.12s ease !important;
+}
+
+.md-nav--secondary .md-nav__link:hover {
+  color: var(--md-default-fg-color) !important;
+  background-color: var(--cx-card-hover-bg) !important;
+}
+
+.md-nav--secondary .md-nav__link--active {
+  color: var(--cx-active-fg) !important;
+  font-weight: 600 !important;
+  background-color: transparent !important;
+}
