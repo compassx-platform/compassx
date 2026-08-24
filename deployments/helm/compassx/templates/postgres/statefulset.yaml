@@ -1,0 +1,86 @@
+{{- if .Values.postgresql.enabled }}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "compassx.postgresFullname" . }}
+  labels:
+    {{- include "compassx.labels" . | nindent 4 }}
+    app.kubernetes.io/component: postgresql
+spec:
+  serviceName: {{ include "compassx.postgresFullname" . }}
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "compassx.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: postgresql
+  template:
+    metadata:
+      labels:
+        {{- include "compassx.labels" . | nindent 8 }}
+        app.kubernetes.io/component: postgresql
+    spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: postgresql
+          image: "{{ .Values.global.imageRegistry | default "" }}{{ if .Values.global.imageRegistry }}/{{ end }}{{ .Values.postgresql.image.repository }}:{{ .Values.postgresql.image.tag }}"
+          imagePullPolicy: {{ .Values.postgresql.image.pullPolicy }}
+          ports:
+            - name: postgresql
+              containerPort: {{ .Values.postgresql.service.targetPort }}
+              protocol: TCP
+          env:
+            - name: POSTGRES_USER
+              value: {{ .Values.postgresql.auth.username | quote }}
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "compassx.fullname" . }}-secrets
+                  key: pg-password
+            - name: POSTGRES_DB
+              value: {{ .Values.postgresql.auth.database | quote }}
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+            - name: init-sql
+              mountPath: /docker-entrypoint-initdb.d/init.sql
+              subPath: init.sql
+              readOnly: true
+          livenessProbe:
+            exec:
+              command:
+                - /bin/sh
+                - -c
+                - exec pg_isready -U {{ .Values.postgresql.auth.username }} -d {{ .Values.postgresql.auth.database }} -h 127.0.0.1 -p {{ .Values.postgresql.service.targetPort }}
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          readinessProbe:
+            exec:
+              command:
+                - /bin/sh
+                - -c
+                - exec pg_isready -U {{ .Values.postgresql.auth.username }} -d {{ .Values.postgresql.auth.database }} -h 127.0.0.1 -p {{ .Values.postgresql.service.targetPort }}
+            initialDelaySeconds: 15
+            periodSeconds: 5
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            {{- toYaml .Values.postgresql.resources | nindent 12 }}
+      volumes:
+        - name: data
+          {{- if .Values.postgresql.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "compassx.postgresFullname" . }}-data
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+        - name: init-sql
+          configMap:
+            name: {{ include "compassx.postgresFullname" . }}-init
+{{- end }}

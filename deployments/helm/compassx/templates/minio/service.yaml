@@ -1,0 +1,23 @@
+{{- if .Values.minio.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "compassx.minioFullname" . }}
+  labels:
+    {{- include "compassx.labels" . | nindent 4 }}
+    app.kubernetes.io/component: minio
+spec:
+  type: {{ .Values.minio.service.api.type }}
+  ports:
+    - port: {{ .Values.minio.service.api.port }}
+      targetPort: {{ .Values.minio.service.api.targetPort }}
+      protocol: TCP
+      name: api
+    - port: {{ .Values.minio.service.console.port }}
+      targetPort: {{ .Values.minio.service.console.targetPort }}
+      protocol: TCP
+      name: console
+  selector:
+    {{- include "compassx.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: minio
+{{- end }}

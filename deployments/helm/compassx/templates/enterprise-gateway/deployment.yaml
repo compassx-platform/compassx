@@ -1,0 +1,80 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "compassx.enterpriseGatewayFullname" . }}
+  labels:
+    {{- include "compassx.labels" . | nindent 4 }}
+    app.kubernetes.io/component: enterprise-gateway
+spec:
+  replicas: {{ .Values.enterpriseGateway.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "compassx.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: enterprise-gateway
+  template:
+    metadata:
+      labels:
+        {{- include "compassx.labels" . | nindent 8 }}
+        app.kubernetes.io/component: enterprise-gateway
+    spec:
+      serviceAccountName: {{ include "compassx.enterpriseGatewayServiceAccountName" . }}
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: enterprise-gateway
+          image: "{{ .Values.global.imageRegistry | default "" }}{{ if .Values.global.imageRegistry }}/{{ end }}{{ .Values.enterpriseGateway.image.repository }}:{{ .Values.enterpriseGateway.image.tag | default "latest" }}"
+          imagePullPolicy: {{ .Values.enterpriseGateway.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.enterpriseGateway.service.targetPort }}
+              protocol: TCP
+          env:
+            - name: EG_PORT
+              value: {{ .Values.enterpriseGateway.env.EG_PORT | quote }}
+            - name: EG_NAMESPACE
+              value: {{ .Release.Namespace | quote }}
+            - name: KERNEL_NAMESPACE
+              value: {{ .Release.Namespace | quote }}
+            - name: EG_ALLOW_ORIGIN
+              value: {{ .Values.enterpriseGateway.env.EG_ALLOW_ORIGIN | quote }}
+            - name: EG_ALLOW_PASSWORD_CHANGE
+              value: {{ .Values.enterpriseGateway.env.EG_ALLOW_PASSWORD_CHANGE | quote }}
+            - name: EG_KERNEL_LAUNCH_TIMEOUT
+              value: {{ .Values.enterpriseGateway.env.EG_KERNEL_LAUNCH_TIMEOUT | quote }}
+            - name: EG_PROCESS_PROXY_LAUNCH_TIMEOUT
+              value: {{ .Values.enterpriseGateway.env.EG_PROCESS_PROXY_LAUNCH_TIMEOUT | quote }}
+            - name: COMPASSX_RUNTIME_DRIVER
+              value: {{ .Values.enterpriseGateway.env.COMPASSX_RUNTIME_DRIVER | quote }}
+            - name: EG_REMOTE_KERNEL_MANAGER_CLASS
+              value: {{ .Values.enterpriseGateway.env.EG_REMOTE_KERNEL_MANAGER_CLASS | quote }}
+          volumeMounts:
+            - name: kernelspecs
+              mountPath: /usr/local/share/jupyter/kernels/duckdb_python/kernel.json
+              subPath: duckdb_python--kernel.json
+              readOnly: true
+            - name: kernelspecs
+              mountPath: /usr/local/share/jupyter/kernels/spark_python/kernel.json
+              subPath: spark_python--kernel.json
+              readOnly: true
+            - name: kernelspecs
+              mountPath: /usr/local/share/jupyter/kernels/ray_python/kernel.json
+              subPath: ray_python--kernel.json
+              readOnly: true
+            - name: kernelspecs
+              mountPath: /usr/local/share/jupyter/kernels/flink_python/kernel.json
+              subPath: flink_python--kernel.json
+              readOnly: true
+          livenessProbe:
+            httpGet:
+              path: /api
+              port: {{ .Values.enterpriseGateway.service.targetPort }}
+            initialDelaySeconds: 30
+            periodSeconds: 30
+          resources:
+            {{- toYaml .Values.enterpriseGateway.resources | nindent 12 }}
+      volumes:
+        - name: kernelspecs
+          configMap:
+            name: {{ include "compassx.fullname" . }}-kernelspecs

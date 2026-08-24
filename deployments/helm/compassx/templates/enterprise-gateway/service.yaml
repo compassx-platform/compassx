@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "compassx.enterpriseGatewayFullname" . }}
+  labels:
+    {{- include "compassx.labels" . | nindent 4 }}
+    app.kubernetes.io/component: enterprise-gateway
+spec:
+  type: {{ .Values.enterpriseGateway.service.type }}
+  ports:
+    - port: {{ .Values.enterpriseGateway.service.port }}
+      targetPort: {{ .Values.enterpriseGateway.service.targetPort }}
+      protocol: TCP
+      name: http
+  selector:
+    {{- include "compassx.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: enterprise-gateway

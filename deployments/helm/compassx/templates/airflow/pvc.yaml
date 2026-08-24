@@ -1,0 +1,39 @@
+{{- if .Values.airflow.enabled }}
+{{- if .Values.airflow.persistence.dags.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "compassx.airflowFullname" . }}-dags
+  labels:
+    {{- include "compassx.labels" . | nindent 4 }}
+    app.kubernetes.io/component: airflow
+spec:
+  accessModes:
+    - {{ .Values.airflow.persistence.dags.accessMode | default "ReadWriteMany" }}
+  {{- if .Values.global.storageClass }}
+  storageClassName: {{ .Values.global.storageClass | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.airflow.persistence.dags.size | default "5Gi" }}
+{{- end }}
+---
+{{- if .Values.airflow.persistence.logs.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "compassx.airflowFullname" . }}-logs
+  labels:
+    {{- include "compassx.labels" . | nindent 4 }}
+    app.kubernetes.io/component: airflow
+spec:
+  accessModes:
+    - {{ .Values.airflow.persistence.logs.accessMode | default "ReadWriteOnce" }}
+  {{- if .Values.global.storageClass }}
+  storageClassName: {{ .Values.global.storageClass | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.airflow.persistence.logs.size | default "10Gi" }}
+{{- end }}
+{{- end }}

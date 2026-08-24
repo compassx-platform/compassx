@@ -15,7 +15,7 @@ services:
       - "5433:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
-      - ./docker/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      - ./postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 5s
@@ -44,7 +44,7 @@ services:
       - "9000:9000"
       - "9001:9001"
     volumes:
-      - ./data/minio:/data
+      - ../../data/minio:/data
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
       interval: 5s
@@ -95,8 +95,8 @@ services:
     ports:
       - "8080:8080"
     volumes:
-      - ./backend/shared/airflow/dags:/opt/airflow/dags:ro
-      - ./data/airflow/logs:/opt/airflow/logs
+      - ../../backend/shared/airflow/dags:/opt/airflow/dags:ro
+      - ../../data/airflow/logs:/opt/airflow/logs
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
       interval: 15s
@@ -112,8 +112,8 @@ services:
         condition: service_completed_successfully
     environment: *airflow-env
     volumes:
-      - ./backend/shared/airflow/dags:/opt/airflow/dags:ro
-      - ./data/airflow/logs:/opt/airflow/logs
+      - ../../backend/shared/airflow/dags:/opt/airflow/dags:ro
+      - ../../data/airflow/logs:/opt/airflow/logs
 
   enterprise-gateway:
     image: ghcr.io/compassx-platform/enterprise-gateway:v0.1.0
@@ -190,7 +190,7 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
-      - ./docker/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus-data:/prometheus
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:9090/-/healthy || exit 1"]

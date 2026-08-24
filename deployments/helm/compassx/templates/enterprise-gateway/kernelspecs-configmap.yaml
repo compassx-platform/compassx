@@ -1,0 +1,85 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "compassx.fullname" . }}-kernelspecs
+  labels:
+    {{- include "compassx.labels" . | nindent 4 }}
+    app.kubernetes.io/component: enterprise-gateway
+data:
+  duckdb_python--kernel.json: |
+    {
+      "display_name": "Python (DuckDB)",
+      "language": "python",
+      "metadata": {
+        "process_proxy": {
+          "class_name": "compassx_process_proxy.CompassXProcessProxy"
+        }
+      },
+      "env": {
+        "KERNEL_RUNTIME": "duckdb"
+      },
+      "argv": [
+        "python",
+        "-c",
+        "import sys; sys.argv = ['ipykernel_launcher', '--InteractiveShellApp.exec_lines', 'import services.compassx_sql as cx', '--InteractiveShellApp.exec_lines', '%load_ext services.compassx_sql', '-f', sys.argv[-1]]; import services.fsspec_cx; print('[CX] Volume protocol (cx://) registered'); from ipykernel import kernelapp; kernelapp.main()",
+        "{connection_file}"
+      ]
+    }
+  spark_python--kernel.json: |
+    {
+      "display_name": "Python (Spark)",
+      "language": "python",
+      "metadata": {
+        "process_proxy": {
+          "class_name": "compassx_process_proxy.CompassXProcessProxy"
+        }
+      },
+      "env": {
+        "KERNEL_RUNTIME": "spark",
+        "SPARK_HOME": "/opt/spark"
+      },
+      "argv": [
+        "python",
+        "-c",
+        "import sys; sys.argv = ['ipykernel_launcher', '--InteractiveShellApp.exec_lines', 'import services.compassx_sql as cx', '--InteractiveShellApp.exec_lines', '%load_ext services.compassx_sql', '-f', sys.argv[-1]]; import services.fsspec_cx; print('[CX] Volume protocol (cx://) registered'); from ipykernel import kernelapp; kernelapp.main()",
+        "{connection_file}"
+      ]
+    }
+  ray_python--kernel.json: |
+    {
+      "display_name": "Python (Ray)",
+      "language": "python",
+      "metadata": {
+        "process_proxy": {
+          "class_name": "compassx_process_proxy.CompassXProcessProxy"
+        }
+      },
+      "env": {
+        "KERNEL_RUNTIME": "ray"
+      },
+      "argv": [
+        "python",
+        "-c",
+        "import sys; sys.argv = ['ipykernel_launcher', '--InteractiveShellApp.exec_lines', 'import services.compassx_sql as cx', '--InteractiveShellApp.exec_lines', '%load_ext services.compassx_sql', '-f', sys.argv[-1]]; import services.fsspec_cx; print('[CX] Volume protocol (cx://) registered'); from ipykernel import kernelapp; kernelapp.main()",
+        "{connection_file}"
+      ]
+    }
+  flink_python--kernel.json: |
+    {
+      "display_name": "Python (Flink)",
+      "language": "python",
+      "metadata": {
+        "process_proxy": {
+          "class_name": "compassx_process_proxy.CompassXProcessProxy"
+        }
+      },
+      "env": {
+        "KERNEL_RUNTIME": "flink"
+      },
+      "argv": [
+        "python",
+        "-c",
+        "import sys; sys.argv = ['ipykernel_launcher', '--InteractiveShellApp.exec_lines', 'import services.compassx_sql as cx', '--InteractiveShellApp.exec_lines', '%load_ext services.compassx_sql', '-f', sys.argv[-1]]; import services.fsspec_cx; print('[CX] Volume protocol (cx://) registered'); from ipykernel import kernelapp; kernelapp.main()",
+        "{connection_file}"
+      ]
+    }

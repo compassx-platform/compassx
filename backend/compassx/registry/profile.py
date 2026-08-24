@@ -100,7 +100,7 @@ def _parse_profile(name: str, data: dict[str, Any]) -> DeploymentProfile:
         services=services,
         compute_driver=compute.get("driver", "kubernetes"),
         compute_overrides=dict(compute.get("overrides") or {}),
-        compose_file=docker.get("compose_file", "docker/docker-compose.yml"),
+        compose_file=docker.get("compose_file", "deployments/docker-compose/docker-compose.yml"),
         compose_project=docker.get("project_name", "compassx"),
         docker_ensure_images=bool(docker.get("ensure_images", False)),
         k8s_namespace=k8s.get("namespace", "compassx-jobs"),

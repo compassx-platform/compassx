@@ -1,0 +1,19 @@
+{{- if .Values.prometheus.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "compassx.prometheusFullname" . }}
+  labels:
+    {{- include "compassx.labels" . | nindent 4 }}
+    app.kubernetes.io/component: prometheus
+spec:
+  type: {{ .Values.prometheus.service.type }}
+  ports:
+    - port: {{ .Values.prometheus.service.port }}
+      targetPort: {{ .Values.prometheus.service.targetPort }}
+      protocol: TCP
+      name: http
+  selector:
+    {{- include "compassx.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: prometheus
+{{- end }}

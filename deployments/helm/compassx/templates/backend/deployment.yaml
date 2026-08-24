@@ -1,0 +1,104 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "compassx.backendFullname" . }}
+  labels:
+    {{- include "compassx.labels" . | nindent 4 }}
+    app.kubernetes.io/component: backend
+spec:
+  {{- if not .Values.backend.autoscaling.enabled }}
+  replicas: {{ .Values.backend.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "compassx.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: backend
+  template:
+    metadata:
+      labels:
+        {{- include "compassx.labels" . | nindent 8 }}
+        app.kubernetes.io/component: backend
+    spec:
+      serviceAccountName: {{ include "compassx.backendServiceAccountName" . }}
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: backend
+          image: "{{ .Values.global.imageRegistry | default "" }}{{ if .Values.global.imageRegistry }}/{{ end }}{{ .Values.backend.image.repository }}:{{ .Values.backend.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.backend.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.backend.service.targetPort }}
+              protocol: TCP
+          env:
+            - name: COMPASSX_PLATFORM_PROFILE
+              value: {{ .Values.backend.env.COMPASSX_PLATFORM_PROFILE | quote }}
+            - name: COMPASSX_ENV
+              value: {{ .Values.backend.env.COMPASSX_ENV | quote }}
+            - name: COMPASSX_NAMESPACE
+              value: {{ .Release.Namespace | quote }}
+            - name: PG_HOST
+              value: {{ include "compassx.postgresHost" . | quote }}
+            - name: PG_PORT
+              value: {{ include "compassx.postgresPort" . | quote }}
+            - name: PG_USER
+              value: {{ include "compassx.postgresUser" . | quote }}
+            - name: PG_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ if .Values.postgresql.enabled }}{{ include "compassx.fullname" . }}-secrets{{ else }}{{ .Values.externalPostgresql.existingSecret }}{{ end }}
+                  key: {{ if .Values.postgresql.enabled }}pg-password{{ else }}{{ .Values.externalPostgresql.secretKeys.password | default "password" }}{{ end }}
+            - name: SYSTEM_DB_NAME
+              value: {{ .Values.backend.env.SYSTEM_DB_NAME | quote }}
+            - name: DATA_DB_NAME
+              value: {{ .Values.backend.env.DATA_DB_NAME | quote }}
+            - name: ASSET_DB_NAME
+              value: {{ .Values.backend.env.ASSET_DB_NAME | quote }}
+            - name: REDIS_URL
+              value: {{ include "compassx.redisUrl" . | quote }}
+            - name: STORAGE_BACKEND
+              value: {{ if .Values.minio.enabled }}"minio"{{ else }}{{ .Values.externalStorage.backend | quote }}{{ end }}
+            - name: STORAGE_ENDPOINT
+              value: {{ include "compassx.storageEndpoint" . | quote }}
+            - name: MINIO_ENDPOINT
+              value: {{ if .Values.minio.enabled }}{{ printf "%s:9000" (include "compassx.minioFullname" .) | quote }}{{ else }}{{ .Values.externalStorage.endpoint | quote }}{{ end }}
+            - name: STORAGE_BUCKET
+              value: {{ if .Values.minio.enabled }}"compassx"{{ else }}{{ .Values.externalStorage.bucket | quote }}{{ end }}
+            - name: STORAGE_ACCESS_KEY
+              value: {{ if .Values.minio.enabled }}{{ .Values.minio.auth.rootUser | quote }}{{ else }}{{ .Values.externalStorage.accessKey | quote }}{{ end }}
+            - name: STORAGE_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ if .Values.minio.enabled }}{{ include "compassx.fullname" . }}-secrets{{ else }}{{ .Values.externalStorage.existingSecret }}{{ end }}
+                  key: {{ if .Values.minio.enabled }}minio-root-password{{ else }}secret-key{{ end }}
+            - name: STORAGE_REGION
+              value: {{ if .Values.minio.enabled }}"us-east-1"{{ else }}{{ .Values.externalStorage.region | quote }}{{ end }}
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "compassx.fullname" . }}-secrets
+                  key: jwt-secret
+            - name: SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "compassx.fullname" . }}-secrets
+                  key: secret-key
+            - name: CATALOG_ENCRYPTION_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "compassx.fullname" . }}-secrets
+                  key: catalog-encryption-key
+            - name: SKIP_DB_INIT
+              value: {{ .Values.backend.env.SKIP_DB_INIT | quote }}
+          {{- with .Values.backend.probes.liveness }}
+          livenessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.backend.probes.readiness }}
+          readinessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          resources:
+            {{- toYaml .Values.backend.resources | nindent 12 }}

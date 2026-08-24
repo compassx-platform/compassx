@@ -1,0 +1,104 @@
+{{- if .Values.airflow.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "compassx.airflowFullname" . }}-webserver
+  labels:
+    {{- include "compassx.labels" . | nindent 4 }}
+    app.kubernetes.io/component: airflow-webserver
+spec:
+  replicas: {{ .Values.airflow.webserver.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "compassx.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: airflow-webserver
+  template:
+    metadata:
+      labels:
+        {{- include "compassx.labels" . | nindent 8 }}
+        app.kubernetes.io/component: airflow-webserver
+    spec:
+      serviceAccountName: {{ include "compassx.airflowServiceAccountName" . }}
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: webserver
+          image: "{{ .Values.global.imageRegistry | default "" }}{{ if .Values.global.imageRegistry }}/{{ end }}{{ .Values.airflow.image.repository }}:{{ .Values.airflow.image.tag }}"
+          imagePullPolicy: {{ .Values.airflow.image.pullPolicy }}
+          command:
+            - airflow
+            - webserver
+          ports:
+            - name: http
+              containerPort: {{ .Values.airflow.webserver.service.targetPort }}
+              protocol: TCP
+          env:
+            - name: AIRFLOW__CORE__EXECUTOR
+              value: "LocalExecutor"
+            - name: AIRFLOW__CORE__LOAD_EXAMPLES
+              value: "false"
+            - name: AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION
+              value: "false"
+            - name: AIRFLOW__API__AUTH_BACKENDS
+              value: "airflow.api.auth.backend.basic_auth"
+            - name: AIRFLOW__WEBSERVER__EXPOSE_CONFIG
+              value: "true"
+            - name: AIRFLOW__DATABASE__SQL_ALCHEMY_CONN
+              value: {{ printf "postgresql+psycopg2://%s:$(PG_PASSWORD)@%s:%v/airflow_meta" (include "compassx.postgresUser" .) (include "compassx.postgresHost" .) (include "compassx.postgresPort" .) | quote }}
+            - name: PG_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ if .Values.postgresql.enabled }}{{ include "compassx.fullname" . }}-secrets{{ else }}{{ .Values.externalPostgresql.existingSecret }}{{ end }}
+                  key: {{ if .Values.postgresql.enabled }}pg-password{{ else }}{{ .Values.externalPostgresql.secretKeys.password | default "password" }}{{ end }}
+            - name: COMPASSX_SYSTEM_DB_URL
+              value: {{ printf "postgresql://%s:$(PG_PASSWORD)@%s:%v/compassx_system" (include "compassx.postgresUser" .) (include "compassx.postgresHost" .) (include "compassx.postgresPort" .) | quote }}
+            - name: COMPASSX_BACKEND_URL
+              value: {{ printf "http://%s:8000" (include "compassx.backendFullname" .) | quote }}
+            - name: COMPASSX_INTERNAL_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "compassx.fullname" . }}-secrets
+                  key: internal-secret
+            - name: COMPASSX_DAG_SHARD_COUNT
+              value: "1"
+          volumeMounts:
+            {{- if .Values.airflow.persistence.dags.enabled }}
+            - name: dags
+              mountPath: /opt/airflow/dags
+            {{- end }}
+            {{- if .Values.airflow.persistence.logs.enabled }}
+            - name: logs
+              mountPath: /opt/airflow/logs
+            {{- end }}
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: {{ .Values.airflow.webserver.service.targetPort }}
+            initialDelaySeconds: 45
+            periodSeconds: 15
+            timeoutSeconds: 10
+            failureThreshold: 10
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: {{ .Values.airflow.webserver.service.targetPort }}
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 5
+          resources:
+            {{- toYaml .Values.airflow.webserver.resources | nindent 12 }}
+      volumes:
+        {{- if .Values.airflow.persistence.dags.enabled }}
+        - name: dags
+          persistentVolumeClaim:
+            claimName: {{ include "compassx.airflowFullname" . }}-dags
+        {{- end }}
+        {{- if .Values.airflow.persistence.logs.enabled }}
+        - name: logs
+          persistentVolumeClaim:
+            claimName: {{ include "compassx.airflowFullname" . }}-logs
+        {{- end }}
+{{- end }}

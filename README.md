@@ -191,6 +191,22 @@ Manage platform services without manual Docker or process commands:
 
 ---
 
+## Deployment Options & Releases
+
+All platform deployment configurations are located in the [`deployments/`](./deployments/) folder:
+
+1. **Local Development (`local-dev`)**: Run frontend & backend natively with containerized dependencies via `./compassx up`.
+2. **Full Docker Compose Stack**: Standalone container deployment located in [`deployments/docker-compose/`](./deployments/docker-compose/).
+   ```bash
+   docker compose -f deployments/docker-compose/docker-compose.yml up -d
+   ```
+3. **Kubernetes Cloud Release (Helm Chart)**: Production-grade Helm chart for AWS EKS, Azure AKS, Google GKE located in [`deployments/helm/compassx/`](./deployments/helm/compassx/).
+   ```bash
+   helm install compassx ./deployments/helm/compassx --namespace compassx
+   ```
+
+---
+
 ## Troubleshooting
 
 ### 1. Docker Daemon is Not Running
@@ -208,3 +224,4 @@ Manage platform services without manual Docker or process commands:
 ### 4. Backend Python Not Found
 - **Error:** `Could not find a backend Python interpreter.`
 - **Solution:** Ensure you created a virtualenv at `backend/.venv` or set the `BACKEND_VENV_PATH` environment variable to your virtualenv path.
+

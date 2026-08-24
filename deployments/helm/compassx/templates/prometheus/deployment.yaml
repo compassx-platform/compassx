@@ -1,0 +1,67 @@
+{{- if .Values.prometheus.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "compassx.prometheusFullname" . }}
+  labels:
+    {{- include "compassx.labels" . | nindent 4 }}
+    app.kubernetes.io/component: prometheus
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "compassx.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: prometheus
+  template:
+    metadata:
+      labels:
+        {{- include "compassx.labels" . | nindent 8 }}
+        app.kubernetes.io/component: prometheus
+    spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: prometheus
+          image: "{{ .Values.global.imageRegistry | default "" }}{{ if .Values.global.imageRegistry }}/{{ end }}{{ .Values.prometheus.image.repository }}:{{ .Values.prometheus.image.tag }}"
+          imagePullPolicy: {{ .Values.prometheus.image.pullPolicy }}
+          args:
+            - "--config.file=/etc/prometheus/prometheus.yml"
+            - "--storage.tsdb.path=/prometheus"
+            - "--storage.tsdb.retention.time=30d"
+          ports:
+            - name: http
+              containerPort: {{ .Values.prometheus.service.targetPort }}
+              protocol: TCP
+          volumeMounts:
+            - name: config
+              mountPath: /etc/prometheus
+            - name: data
+              mountPath: /prometheus
+          livenessProbe:
+            httpGet:
+              path: /-/healthy
+              port: {{ .Values.prometheus.service.targetPort }}
+            initialDelaySeconds: 30
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /-/ready
+              port: {{ .Values.prometheus.service.targetPort }}
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.prometheus.resources | nindent 12 }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "compassx.prometheusFullname" . }}-config
+        - name: data
+          {{- if .Values.prometheus.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "compassx.prometheusFullname" . }}-data
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+{{- end }}

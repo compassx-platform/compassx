@@ -225,36 +225,56 @@ jobs:
           ref: main
           fetch-depth: 0
 
-      - name: Update docker-compose.yml image tags
+      - name: Update deployment manifest image tags
         run: |
           TAG="${{ needs.detect-changes.outputs.tag }}"
-          echo "Updating docker-compose.yml image tags to: ${TAG}"
+          CLEAN_TAG="${TAG#v}"
+          echo "Updating deployment image tags to: ${TAG} (appVersion: ${CLEAN_TAG})"
 
-          # Update core service image tags
-          sed -i -E "s|(ghcr.io/${{ env.OWNER }}/backend):[a-zA-Z0-9._-]+|\1:${TAG}|g" docker-compose.yml
-          sed -i -E "s|(ghcr.io/${{ env.OWNER }}/frontend):[a-zA-Z0-9._-]+|\1:${TAG}|g" docker-compose.yml
+          # 1. Update docker-compose.yml
+          COMPOSE_FILE="deployments/docker-compose/docker-compose.yml"
+          sed -i -E "s|(ghcr.io/${{ env.OWNER }}/backend):[a-zA-Z0-9._-]+|\1:${TAG}|g" "$COMPOSE_FILE"
+          sed -i -E "s|(ghcr.io/${{ env.OWNER }}/frontend):[a-zA-Z0-9._-]+|\1:${TAG}|g" "$COMPOSE_FILE"
 
-          # Update auxiliary service tags if they were built in this release
           if [ "${{ needs.detect-changes.outputs.build_eg }}" = "true" ]; then
-            sed -i -E "s|(ghcr.io/${{ env.OWNER }}/enterprise-gateway):[a-zA-Z0-9._-]+|\1:${TAG}|g" docker-compose.yml
+            sed -i -E "s|(ghcr.io/${{ env.OWNER }}/enterprise-gateway):[a-zA-Z0-9._-]+|\1:${TAG}|g" "$COMPOSE_FILE"
           fi
           if [ "${{ needs.detect-changes.outputs.build_notebook_runner }}" = "true" ]; then
-            sed -i -E "s|(ghcr.io/${{ env.OWNER }}/airflow-notebook-runner):[a-zA-Z0-9._-]+|\1:${TAG}|g" docker-compose.yml
+            sed -i -E "s|(ghcr.io/${{ env.OWNER }}/airflow-notebook-runner):[a-zA-Z0-9._-]+|\1:${TAG}|g" "$COMPOSE_FILE"
           fi
 
-          git diff docker-compose.yml
+          # 2. Update Helm Chart.yaml and values.yaml
+          CHART_FILE="deployments/helm/compassx/Chart.yaml"
+          VALUES_FILE="deployments/helm/compassx/values.yaml"
+          if [ -f "$CHART_FILE" ]; then
+            sed -i -E "s|^version:.*|version: ${CLEAN_TAG}|g" "$CHART_FILE"
+            sed -i -E "s|^appVersion:.*|appVersion: \"${CLEAN_TAG}\"|g" "$CHART_FILE"
+          fi
+          if [ -f "$VALUES_FILE" ]; then
+            sed -i -E "s|(backend:\n.*tag: )\"?[a-zA-Z0-9._-]+\"?|\1\"${TAG}\"|g" "$VALUES_FILE"
+            sed -i -E "s|(frontend:\n.*tag: )\"?[a-zA-Z0-9._-]+\"?|\1\"${TAG}\"|g" "$VALUES_FILE"
+          fi
 
-      - name: Commit and push updated docker-compose.yml
+          git diff deployments/
+
+      - name: Commit and push updated deployment manifests
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           
-          if ! git diff --quiet docker-compose.yml; then
-            git add docker-compose.yml
-            git commit -m "chore(release): update docker-compose.yml image tags to ${{ needs.detect-changes.outputs.tag }} [skip ci]"
+          if ! git diff --quiet deployments/; then
+            git add deployments/
+            git commit -m "chore(release): update deployment manifests to ${{ needs.detect-changes.outputs.tag }} [skip ci]"
             git push origin main
           else
-            echo "docker-compose.yml already up to date."
+            echo "Deployment manifests already up to date."
+          fi
+
+      - name: Package Helm Chart
+        run: |
+          mkdir -p dist
+          if [ -d "deployments/helm/compassx" ]; then
+            helm package deployments/helm/compassx --destination dist/ || true
           fi
 
       - name: Create GitHub Release
@@ -267,4 +287,5 @@ jobs:
           draft: false
           prerelease: false
           files: |
-            docker-compose.yml
+            deployments/docker-compose/docker-compose.yml
+            dist/*.tgz

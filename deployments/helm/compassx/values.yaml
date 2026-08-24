@@ -1,0 +1,414 @@
+# Default values for CompassX Platform on Kubernetes.
+# This is a YAML-formatted file.
+# Declare variables to be passed into your templates.
+
+global:
+  imageRegistry: ""
+  imagePullSecrets: []
+  storageClass: ""
+
+nameOverride: ""
+fullnameOverride: ""
+
+# ------------------------------------------------------------------------------
+# Secrets & Encryption Keys
+# ------------------------------------------------------------------------------
+secrets:
+  # JWT Secret for user session tokens
+  jwtSecret: "change-me-in-production-use-a-long-random-secret"
+  # Secret key for encrypting connection credentials
+  secretKey: "change-me-in-production-secret-key-32b"
+  # 32-byte Fernet key for catalog encryption (python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())")
+  catalogEncryptionKey: ""
+  # Internal secret for service-to-service calls (Airflow / Backend callbacks)
+  internalSecret: "compassx-internal-secret-token"
+
+# ------------------------------------------------------------------------------
+# Backend API Service (FastAPI)
+# ------------------------------------------------------------------------------
+backend:
+  replicaCount: 1
+
+  image:
+    repository: ghcr.io/compassx-platform/backend
+    pullPolicy: IfNotPresent
+    tag: "v0.2.0"
+
+  service:
+    type: ClusterIP
+    port: 8000
+    targetPort: 8000
+
+  env:
+    COMPASSX_PLATFORM_PROFILE: "kubernetes-cloud"
+    COMPASSX_ENV: "production"
+    SYSTEM_DB_NAME: "compassx_account"
+    DATA_DB_NAME: "compassx_system"
+    ASSET_DB_NAME: "asset_manager"
+    STORAGE_BUCKET: "compassx"
+    STORAGE_REGION: "us-east-1"
+    SKIP_DB_INIT: "false"
+
+  resources:
+    limits:
+      cpu: "2000m"
+      memory: "4Gi"
+    requests:
+      cpu: "500m"
+      memory: "1Gi"
+
+  autoscaling:
+    enabled: false
+    minReplicas: 1
+    maxReplicas: 5
+    targetCPUUtilizationPercentage: 80
+
+  serviceAccount:
+    create: true
+    name: ""
+    annotations: {}
+
+  probes:
+    liveness:
+      httpGet:
+        path: /healthcheck
+        port: 8000
+      initialDelaySeconds: 30
+      periodSeconds: 15
+      timeoutSeconds: 5
+      failureThreshold: 6
+    readiness:
+      httpGet:
+        path: /healthcheck
+        port: 8000
+      initialDelaySeconds: 15
+      periodSeconds: 10
+      timeoutSeconds: 5
+      failureThreshold: 3
+
+# ------------------------------------------------------------------------------
+# Frontend UI (React + Vite + Nginx)
+# ------------------------------------------------------------------------------
+frontend:
+  replicaCount: 1
+
+  image:
+    repository: ghcr.io/compassx-platform/frontend
+    pullPolicy: IfNotPresent
+    tag: "v0.2.0"
+
+  service:
+    type: ClusterIP
+    port: 80
+    targetPort: 80
+
+  resources:
+    limits:
+      cpu: "500m"
+      memory: "512Mi"
+    requests:
+      cpu: "100m"
+      memory: "128Mi"
+
+  probes:
+    liveness:
+      httpGet:
+        path: /
+        port: 80
+      initialDelaySeconds: 10
+      periodSeconds: 15
+    readiness:
+      httpGet:
+        path: /
+        port: 80
+      initialDelaySeconds: 5
+      periodSeconds: 10
+
+# ------------------------------------------------------------------------------
+# Enterprise Gateway (Jupyter EG)
+# ------------------------------------------------------------------------------
+enterpriseGateway:
+  replicaCount: 1
+
+  image:
+    repository: ghcr.io/compassx-platform/enterprise-gateway
+    pullPolicy: IfNotPresent
+    tag: "v0.1.0"
+
+  service:
+    type: ClusterIP
+    port: 8888
+    targetPort: 8888
+
+  env:
+    EG_PORT: "8888"
+    EG_ALLOW_ORIGIN: "*"
+    EG_ALLOW_PASSWORD_CHANGE: "false"
+    EG_KERNEL_LAUNCH_TIMEOUT: "60"
+    EG_PROCESS_PROXY_LAUNCH_TIMEOUT: "60"
+    COMPASSX_RUNTIME_DRIVER: "kubernetes"
+    EG_REMOTE_KERNEL_MANAGER_CLASS: "enterprise_gateway.services.kernels.remotemanager.RemoteKernelManager"
+
+  resources:
+    limits:
+      cpu: "1000m"
+      memory: "2Gi"
+    requests:
+      cpu: "250m"
+      memory: "512Mi"
+
+  serviceAccount:
+    create: true
+    name: ""
+
+  rbac:
+    create: true
+
+# ------------------------------------------------------------------------------
+# Apache Airflow
+# ------------------------------------------------------------------------------
+airflow:
+  enabled: true
+
+  image:
+    repository: apache/airflow
+    pullPolicy: IfNotPresent
+    tag: "2.9.3-python3.11"
+
+  adminUser:
+    username: "admin"
+    password: "adminpassword"
+    firstName: "Compass"
+    lastName: "X"
+    email: "admin@compassx.local"
+
+  webserver:
+    replicaCount: 1
+    service:
+      type: ClusterIP
+      port: 8080
+      targetPort: 8080
+    resources:
+      limits:
+        cpu: "1000m"
+        memory: "2Gi"
+      requests:
+        cpu: "250m"
+        memory: "512Mi"
+
+  scheduler:
+    replicaCount: 1
+    resources:
+      limits:
+        cpu: "1000m"
+        memory: "2Gi"
+      requests:
+        cpu: "250m"
+        memory: "512Mi"
+
+  persistence:
+    dags:
+      enabled: true
+      size: 5Gi
+      accessMode: ReadWriteMany
+    logs:
+      enabled: true
+      size: 10Gi
+      accessMode: ReadWriteOnce
+
+  serviceAccount:
+    create: true
+    name: ""
+
+# ------------------------------------------------------------------------------
+# PostgreSQL (with pgvector extension)
+# ------------------------------------------------------------------------------
+postgresql:
+  enabled: true
+
+  image:
+    repository: pgvector/pgvector
+    pullPolicy: IfNotPresent
+    tag: "pg15"
+
+  auth:
+    username: "postgres"
+    password: "postgrespassword"
+    database: "postgres"
+
+  service:
+    type: ClusterIP
+    port: 5432
+    targetPort: 5432
+
+  persistence:
+    enabled: true
+    size: 20Gi
+    accessMode: ReadWriteOnce
+
+  resources:
+    limits:
+      cpu: "2000m"
+      memory: "4Gi"
+    requests:
+      cpu: "500m"
+      memory: "1Gi"
+
+# External PostgreSQL configuration (used when postgresql.enabled = false)
+externalPostgresql:
+  host: ""
+  port: 5432
+  username: "postgres"
+  password: ""
+  existingSecret: ""
+  secretKeys:
+    password: "password"
+
+# ------------------------------------------------------------------------------
+# Redis
+# ------------------------------------------------------------------------------
+redis:
+  enabled: true
+
+  image:
+    repository: redis
+    pullPolicy: IfNotPresent
+    tag: "7-alpine"
+
+  service:
+    type: ClusterIP
+    port: 6379
+    targetPort: 6379
+
+  persistence:
+    enabled: true
+    size: 5Gi
+    accessMode: ReadWriteOnce
+
+  resources:
+    limits:
+      cpu: "500m"
+      memory: "1Gi"
+    requests:
+      cpu: "100m"
+      memory: "128Mi"
+
+# External Redis configuration (used when redis.enabled = false)
+externalRedis:
+  host: ""
+  port: 6379
+  password: ""
+  url: ""
+  existingSecret: ""
+
+# ------------------------------------------------------------------------------
+# MinIO / Object Storage
+# ------------------------------------------------------------------------------
+minio:
+  enabled: true
+
+  image:
+    repository: minio/minio
+    pullPolicy: IfNotPresent
+    tag: "RELEASE.2025-02-28T09-55-16Z"
+
+  auth:
+    rootUser: "minioadmin"
+    rootPassword: "minioadminpassword"
+
+  service:
+    api:
+      type: ClusterIP
+      port: 9000
+      targetPort: 9000
+    console:
+      type: ClusterIP
+      port: 9001
+      targetPort: 9001
+
+  persistence:
+    enabled: true
+    size: 50Gi
+    accessMode: ReadWriteOnce
+
+  defaultBuckets:
+    - compassx
+    - compassx-dags
+    - compassx-outputs
+    - compassx-notebooks
+
+  resources:
+    limits:
+      cpu: "1000m"
+      memory: "2Gi"
+    requests:
+      cpu: "250m"
+      memory: "512Mi"
+
+# External Storage configuration (used when minio.enabled = false)
+externalStorage:
+  backend: "s3"  # minio | s3 | azure
+  endpoint: ""   # leave empty for standard AWS S3
+  bucket: "compassx"
+  accessKey: ""
+  secretKey: ""
+  region: "us-east-1"
+  existingSecret: ""
+
+# ------------------------------------------------------------------------------
+# Prometheus Monitoring
+# ------------------------------------------------------------------------------
+prometheus:
+  enabled: true
+
+  image:
+    repository: prom/prometheus
+    pullPolicy: IfNotPresent
+    tag: "v2.53.0"
+
+  service:
+    type: ClusterIP
+    port: 9090
+    targetPort: 9090
+
+  scrapeInterval: 15s
+
+  persistence:
+    enabled: true
+    size: 10Gi
+    accessMode: ReadWriteOnce
+
+  resources:
+    limits:
+      cpu: "500m"
+      memory: "1Gi"
+    requests:
+      cpu: "100m"
+      memory: "256Mi"
+
+# ------------------------------------------------------------------------------
+# Ingress Routing
+# ------------------------------------------------------------------------------
+ingress:
+  enabled: true
+  className: "nginx"
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: "256m"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "300"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "300"
+    nginx.ingress.kubernetes.io/websocket-services: "compassx-enterprise-gateway,compassx-backend"
+  hosts:
+    - host: compassx.local
+      paths:
+        - path: /api
+          pathType: Prefix
+          service: backend
+          port: 8000
+        - path: /
+          pathType: Prefix
+          service: frontend
+          port: 80
+  tls: []
+  #  - secretName: compassx-tls
+  #    hosts:
+  #      - compassx.local
