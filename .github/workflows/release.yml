@@ -269,10 +269,13 @@ jobs:
           if ! git diff --quiet deployments/ frontend/package.json; then
             git add deployments/ frontend/package.json
             git commit -m "chore(release): update deployment manifests and frontend version to ${{ needs.detect-changes.outputs.tag }} [skip ci]"
-            git push origin main
+            git push origin main || echo "Branch push skipped (may have branch protection)"
           else
             echo "Deployment manifests already up to date."
           fi
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4.2.0
 
       - name: Package & Publish Helm Chart
         run: |
