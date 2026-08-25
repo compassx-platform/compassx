@@ -46,38 +46,24 @@ kubectl get pods -n compassx
 
 ---
 
-## ☁️ Enterprise Cloud Deployment (Managed Datastores)
+## ☁️ Multi-Cloud Deployment Presets
 
-For production workloads, use cloud-native managed databases and object stores.
+Ready-to-use value presets and dedicated step-by-step guides are located in [`deployments/`](https://github.com/compassx-platform/compassx/tree/main/deployments):
 
-### 1. Store Credentials in Kubernetes Secrets
+### 1. Amazon Web Services (AWS EKS)
+* **Guide**: [`deployments/aws/README.md`](https://github.com/compassx-platform/compassx/tree/main/deployments/aws)
+* **In-Cluster (`gp3`)**: `helm install compassx ./deployments/helm/compassx -f ./deployments/aws/values-incluster.yaml -n compassx`
+* **Managed (RDS + S3 + ElastiCache)**: `helm install compassx ./deployments/helm/compassx -f ./deployments/aws/values-managed.yaml -n compassx`
 
-```bash
-# PostgreSQL Credentials
-kubectl create secret generic compassx-rds-credentials \
-  --namespace compassx \
-  --from-literal=password='YOUR_DATABASE_PASSWORD'
+### 2. Microsoft Azure (Azure AKS)
+* **Guide**: [`deployments/azure/README.md`](https://github.com/compassx-platform/compassx/tree/main/deployments/azure)
+* **In-Cluster (`managed-csi`)**: `helm install compassx ./deployments/helm/compassx -f ./deployments/azure/values-incluster.yaml -n compassx`
+* **Managed (Flexible Server + Blob + Redis)**: `helm install compassx ./deployments/helm/compassx -f ./deployments/azure/values-managed.yaml -n compassx`
 
-# S3 Storage Credentials
-kubectl create secret generic compassx-s3-credentials \
-  --namespace compassx \
-  --from-literal=secret-key='YOUR_AWS_SECRET_KEY'
-```
-
-### 2. Deploy using `values-cloud.yaml`
-
-```bash
-helm install compassx ./deployments/helm/compassx \
-  --namespace compassx \
-  -f ./deployments/helm/compassx/values-cloud.yaml \
-  --set externalPostgresql.host="your-rds-endpoint.rds.amazonaws.com" \
-  --set externalPostgresql.password="YOUR_DATABASE_PASSWORD" \
-  --set externalRedis.host="your-redis-endpoint.cache.amazonaws.com" \
-  --set externalStorage.bucket="your-s3-bucket-name" \
-  --set externalStorage.accessKey="YOUR_AWS_ACCESS_KEY_ID" \
-  --set externalStorage.secretKey="YOUR_AWS_SECRET_KEY" \
-  --set ingress.hosts[0].host="app.compassx.yourcompany.com"
-```
+### 3. Google Cloud Platform (Google GKE)
+* **Guide**: [`deployments/gcp/README.md`](https://github.com/compassx-platform/compassx/tree/main/deployments/gcp)
+* **In-Cluster (`standard-rwo`)**: `helm install compassx ./deployments/helm/compassx -f ./deployments/gcp/values-incluster.yaml -n compassx`
+* **Managed (Cloud SQL + GCS + Memorystore)**: `helm install compassx ./deployments/helm/compassx -f ./deployments/gcp/values-managed.yaml -n compassx`
 
 ---
 

@@ -1,0 +1,150 @@
+# ==============================================================================
+# CompassX: Azure Production (AKS + Flexible Server + Blob Storage + Redis)
+# ==============================================================================
+# Production deployment on Microsoft Azure using managed cloud services:
+#   - Azure Kubernetes Service (AKS) for Compute / Frontend / Enterprise Gateway
+#   - Azure Database for PostgreSQL Flexible Server (with pgvector)
+#   - Azure Cache for Redis
+#   - Azure Blob Storage (or Azure Data Lake Storage Gen2)
+#
+# Deployment command:
+#   helm install compassx ./deployments/helm/compassx \
+#     --namespace compassx \
+#     --create-namespace \
+#     -f ./deployments/azure/values-managed.yaml \
+#     --set externalPostgresql.host="compassx-db.postgres.database.azure.com" \
+#     --set externalPostgresql.password="YOUR_AZURE_PG_PASSWORD" \
+#     --set externalRedis.host="compassx-cache.redis.cache.windows.net" \
+#     --set externalStorage.bucket="compassx-datalake-container" \
+#     --set externalStorage.accessKey="compassxstorageacct" \
+#     --set externalStorage.secretKey="YOUR_AZURE_STORAGE_KEY" \
+#     --set ingress.hosts[0].host="app.compassx.yourcompany.com"
+# ==============================================================================
+
+global:
+  storageClass: "managed-csi"
+
+backend:
+  replicaCount: 2
+  env:
+    COMPASSX_PLATFORM_PROFILE: "kubernetes-cloud"
+    COMPASSX_ENV: "production"
+    STORAGE_BACKEND: "azure"
+    AZURE_STORAGE_ACCOUNT_NAME: "compassxstorageacct"
+    STORAGE_BUCKET: "compassx-datalake-container"
+  resources:
+    requests:
+      cpu: "1000m"
+      memory: "2Gi"
+    limits:
+      cpu: "4000m"
+      memory: "8Gi"
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 8
+    targetCPUUtilizationPercentage: 75
+
+frontend:
+  replicaCount: 2
+  resources:
+    requests:
+      cpu: "100m"
+      memory: "128Mi"
+    limits:
+      cpu: "500m"
+      memory: "512Mi"
+
+enterpriseGateway:
+  replicaCount: 2
+  resources:
+    requests:
+      cpu: "500m"
+      memory: "1Gi"
+    limits:
+      cpu: "2000m"
+      memory: "4Gi"
+
+# ------------------------------------------------------------------------------
+# PostgreSQL: Disabled in-cluster; connected to Azure Database Flexible Server
+# ------------------------------------------------------------------------------
+postgresql:
+  enabled: false
+
+externalPostgresql:
+  host: "compassx-db.postgres.database.azure.com"
+  port: 5432
+  username: "compassxadmin"
+  password: "" # Set via --set externalPostgresql.password or existingSecret
+  existingSecret: ""
+  secretKeys:
+    password: "password"
+
+# ------------------------------------------------------------------------------
+# Redis: Disabled in-cluster; connected to Azure Cache for Redis
+# ------------------------------------------------------------------------------
+redis:
+  enabled: false
+
+externalRedis:
+  host: "compassx-cache.redis.cache.windows.net"
+  port: 6380
+  password: "" # Set via --set externalRedis.password
+  url: "rediss://:YOUR_REDIS_PASSWORD@compassx-cache.redis.cache.windows.net:6380/0"
+  existingSecret: ""
+
+# ------------------------------------------------------------------------------
+# Storage: Disabled in-cluster MinIO; connected to Azure Blob Storage
+# ------------------------------------------------------------------------------
+minio:
+  enabled: false
+
+externalStorage:
+  backend: "azure"
+  endpoint: "https://compassxstorageacct.blob.core.windows.net"
+  bucket: "compassx-datalake-container"
+  accessKey: "compassxstorageacct"
+  secretKey: "" # Set via --set externalStorage.secretKey or existingSecret
+  region: "eastus"
+  existingSecret: ""
+
+# ------------------------------------------------------------------------------
+# Apache Airflow (Workflow Orchestrator)
+# ------------------------------------------------------------------------------
+airflow:
+  enabled: true
+  persistence:
+    dags:
+      enabled: true
+      storageClass: "azurefile-csi"
+      accessMode: "ReadWriteMany"
+      size: 5Gi
+    logs:
+      enabled: true
+      storageClass: "azurefile-csi"
+      accessMode: "ReadWriteMany"
+      size: 5Gi
+
+# ------------------------------------------------------------------------------
+# Ingress (ingress-nginx or Azure Application Gateway Ingress AGIC)
+# ------------------------------------------------------------------------------
+ingress:
+  enabled: true
+  className: "nginx" # Or "azure-application-gateway"
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: "512m"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "300"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "300"
+  hosts:
+    - host: "app.compassx.yourcompany.com"
+      paths:
+        - path: /api
+          pathType: Prefix
+          service: backend
+          port: 8000
+        - path: /
+          pathType: Prefix
+          service: frontend
+          port: 80
+  tls: []
+

@@ -140,6 +140,24 @@ PostgreSQL host & port helpers
 {{- end }}
 {{- end }}
 
+{{- define "compassx.postgresSecretName" -}}
+{{- if .Values.externalPostgresql.existingSecret }}
+{{- .Values.externalPostgresql.existingSecret }}
+{{- else }}
+{{- printf "%s-secrets" (include "compassx.fullname" .) }}
+{{- end }}
+{{- end }}
+
+{{- define "compassx.postgresSecretKey" -}}
+{{- if .Values.postgresql.enabled }}
+{{- "pg-password" }}
+{{- else if .Values.externalPostgresql.existingSecret }}
+{{- default "password" .Values.externalPostgresql.secretKeys.password }}
+{{- else }}
+{{- "pg-password" }}
+{{- end }}
+{{- end }}
+
 {{/*
 Redis host & port helpers
 */}}
@@ -177,5 +195,23 @@ MinIO / Storage endpoint helpers
 {{- printf "http://%s:9000" (include "compassx.minioFullname" .) }}
 {{- else }}
 {{- .Values.externalStorage.endpoint }}
+{{- end }}
+{{- end }}
+
+{{- define "compassx.storageSecretName" -}}
+{{- if .Values.externalStorage.existingSecret }}
+{{- .Values.externalStorage.existingSecret }}
+{{- else }}
+{{- printf "%s-secrets" (include "compassx.fullname" .) }}
+{{- end }}
+{{- end }}
+
+{{- define "compassx.storageSecretKey" -}}
+{{- if .Values.minio.enabled }}
+{{- "minio-root-password" }}
+{{- else if .Values.externalStorage.existingSecret }}
+{{- default "secret-key" .Values.externalStorage.secretKeys.secretKey }}
+{{- else }}
+{{- "storage-secret-key" }}
 {{- end }}
 {{- end }}

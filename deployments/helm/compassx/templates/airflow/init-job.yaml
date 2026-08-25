@@ -27,12 +27,12 @@ spec:
         - name: airflow-init
           image: "{{ .Values.global.imageRegistry | default "" }}{{ if .Values.global.imageRegistry }}/{{ end }}{{ .Values.airflow.image.repository }}:{{ .Values.airflow.image.tag }}"
           imagePullPolicy: {{ .Values.airflow.image.pullPolicy }}
-          entrypoint:
-            - /bin/bash
           command:
+            - /bin/bash
             - -c
             - |
-              airflow db migrate && \
+              echo "Initializing Airflow database..."
+              airflow db migrate || echo "Warning: Airflow db migration will retry on start"
               airflow users create \
                 --username {{ .Values.airflow.adminUser.username }} \
                 --password {{ .Values.airflow.adminUser.password }} \
@@ -46,10 +46,10 @@ spec:
             - name: AIRFLOW__CORE__LOAD_EXAMPLES
               value: "false"
             - name: AIRFLOW__DATABASE__SQL_ALCHEMY_CONN
-              value: {{ printf "postgresql+psycopg2://%s:$(PG_PASSWORD)@%s:%v/airflow_meta" (include "compassx.postgresUser" .) (include "compassx.postgresHost" .) (include "compassx.postgresPort" .) | quote }}
+              value: {{ printf "postgresql+psycopg2://%s:$(PG_PASSWORD)@%s:%v/airflow_meta?sslmode=require" (include "compassx.postgresUser" .) (include "compassx.postgresHost" .) (include "compassx.postgresPort" .) | quote }}
             - name: PG_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: {{ if .Values.postgresql.enabled }}{{ include "compassx.fullname" . }}-secrets{{ else }}{{ .Values.externalPostgresql.existingSecret }}{{ end }}
-                  key: {{ if .Values.postgresql.enabled }}pg-password{{ else }}{{ .Values.externalPostgresql.secretKeys.password | default "password" }}{{ end }}
+                  name: {{ include "compassx.postgresSecretName" . }}
+                  key: {{ include "compassx.postgresSecretKey" . }}
 {{- end }}

@@ -1,0 +1,135 @@
+# ==============================================================================
+# CompassX: AWS Production (EKS + RDS Aurora PostgreSQL + ElastiCache + S3)
+# ==============================================================================
+# Production deployment on AWS using managed enterprise services:
+#   - AWS EKS for Backend / Frontend / Enterprise Gateway
+#   - AWS RDS / Aurora PostgreSQL (with pgvector extension)
+#   - AWS ElastiCache for Redis
+#   - AWS S3 for datalake / storage
+#   - AWS Application Load Balancer (ALB) via AWS Load Balancer Controller
+#
+# Deployment command:
+#   helm install compassx ./deployments/helm/compassx \
+#     --namespace compassx \
+#     --create-namespace \
+#     -f ./deployments/aws/values-managed.yaml \
+#     --set externalPostgresql.host="compassx-db.c0123456789.us-east-1.rds.amazonaws.com" \
+#     --set externalPostgresql.password="YOUR_RDS_PASSWORD" \
+#     --set externalRedis.host="compassx-cache.abc123.clustercfg.use1.cache.amazonaws.com" \
+#     --set externalStorage.bucket="your-company-compassx-datalake" \
+#     --set externalStorage.accessKey="YOUR_AWS_ACCESS_KEY_ID" \
+#     --set externalStorage.secretKey="YOUR_AWS_SECRET_KEY" \
+#     --set ingress.hosts[0].host="app.compassx.yourcompany.com"
+# ==============================================================================
+
+global:
+  storageClass: "gp3"
+
+backend:
+  replicaCount: 2
+  env:
+    COMPASSX_PLATFORM_PROFILE: "kubernetes-cloud"
+    COMPASSX_ENV: "production"
+    STORAGE_BACKEND: "s3"
+    STORAGE_BUCKET: "your-company-compassx-datalake"
+    STORAGE_REGION: "us-east-1"
+  resources:
+    requests:
+      cpu: "1000m"
+      memory: "2Gi"
+    limits:
+      cpu: "4000m"
+      memory: "8Gi"
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 8
+    targetCPUUtilizationPercentage: 75
+
+frontend:
+  replicaCount: 2
+  resources:
+    requests:
+      cpu: "100m"
+      memory: "128Mi"
+    limits:
+      cpu: "500m"
+      memory: "512Mi"
+
+enterpriseGateway:
+  replicaCount: 2
+  resources:
+    requests:
+      cpu: "500m"
+      memory: "1Gi"
+    limits:
+      cpu: "2000m"
+      memory: "4Gi"
+
+# ------------------------------------------------------------------------------
+# PostgreSQL: Disabled in-cluster; connected to AWS RDS / Aurora
+# ------------------------------------------------------------------------------
+postgresql:
+  enabled: false
+
+externalPostgresql:
+  host: "compassx-db.c0123456789.us-east-1.rds.amazonaws.com"
+  port: 5432
+  username: "compassxadmin"
+  password: "" # Set via --set externalPostgresql.password or existingSecret
+  existingSecret: ""
+  secretKeys:
+    password: "password"
+
+# ------------------------------------------------------------------------------
+# Redis: Disabled in-cluster; connected to AWS ElastiCache
+# ------------------------------------------------------------------------------
+redis:
+  enabled: false
+
+externalRedis:
+  host: "compassx-cache.abc123.clustercfg.use1.cache.amazonaws.com"
+  port: 6379
+  url: "redis://compassx-cache.abc123.clustercfg.use1.cache.amazonaws.com:6379/0"
+  existingSecret: ""
+
+# ------------------------------------------------------------------------------
+# Storage: Disabled in-cluster MinIO; connected to AWS S3
+# ------------------------------------------------------------------------------
+minio:
+  enabled: false
+
+externalStorage:
+  backend: "s3"
+  endpoint: "" # Standard AWS S3 (leave empty for AWS default endpoints)
+  bucket: "your-company-compassx-datalake"
+  accessKey: "" # Set via --set externalStorage.accessKey or IAM role
+  secretKey: "" # Set via --set externalStorage.secretKey or IAM role
+  region: "us-east-1"
+  existingSecret: ""
+
+# ------------------------------------------------------------------------------
+# Ingress (AWS ALB or ingress-nginx)
+# ------------------------------------------------------------------------------
+ingress:
+  enabled: true
+  className: "alb" # Use "alb" for AWS ALB or "nginx" for Ingress NGINX
+  annotations:
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}, {"HTTPS": 443}]'
+  hosts:
+    - host: "app.compassx.yourcompany.com"
+      paths:
+        - path: /api
+          pathType: Prefix
+          service: backend
+          port: 8000
+        - path: /
+          pathType: Prefix
+          service: frontend
+          port: 80
+  tls:
+    - secretName: compassx-tls-cert
+      hosts:
+        - app.compassx.yourcompany.com

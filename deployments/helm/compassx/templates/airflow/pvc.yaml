@@ -10,7 +10,9 @@ metadata:
 spec:
   accessModes:
     - {{ .Values.airflow.persistence.dags.accessMode | default "ReadWriteMany" }}
-  {{- if .Values.global.storageClass }}
+  {{- if .Values.airflow.persistence.dags.storageClass }}
+  storageClassName: {{ .Values.airflow.persistence.dags.storageClass | quote }}
+  {{- else if .Values.global.storageClass }}
   storageClassName: {{ .Values.global.storageClass | quote }}
   {{- end }}
   resources:
@@ -28,8 +30,10 @@ metadata:
     app.kubernetes.io/component: airflow
 spec:
   accessModes:
-    - {{ .Values.airflow.persistence.logs.accessMode | default "ReadWriteOnce" }}
-  {{- if .Values.global.storageClass }}
+    - {{ .Values.airflow.persistence.logs.accessMode | default "ReadWriteMany" }}
+  {{- if .Values.airflow.persistence.logs.storageClass }}
+  storageClassName: {{ .Values.airflow.persistence.logs.storageClass | quote }}
+  {{- else if .Values.global.storageClass }}
   storageClassName: {{ .Values.global.storageClass | quote }}
   {{- end }}
   resources:

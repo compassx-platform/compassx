@@ -18,6 +18,9 @@ spec:
         {{- include "compassx.labels" . | nindent 8 }}
         app.kubernetes.io/component: airflow-scheduler
     spec:
+      securityContext:
+        fsGroup: 50000
+        runAsUser: 50000
       serviceAccountName: {{ include "compassx.airflowServiceAccountName" . }}
       {{- with .Values.global.imagePullSecrets }}
       imagePullSecrets:
@@ -38,14 +41,14 @@ spec:
             - name: AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION
               value: "false"
             - name: AIRFLOW__DATABASE__SQL_ALCHEMY_CONN
-              value: {{ printf "postgresql+psycopg2://%s:$(PG_PASSWORD)@%s:%v/airflow_meta" (include "compassx.postgresUser" .) (include "compassx.postgresHost" .) (include "compassx.postgresPort" .) | quote }}
+              value: {{ printf "postgresql+psycopg2://%s:$(PG_PASSWORD)@%s:%v/airflow_meta?sslmode=require" (include "compassx.postgresUser" .) (include "compassx.postgresHost" .) (include "compassx.postgresPort" .) | quote }}
             - name: PG_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: {{ if .Values.postgresql.enabled }}{{ include "compassx.fullname" . }}-secrets{{ else }}{{ .Values.externalPostgresql.existingSecret }}{{ end }}
-                  key: {{ if .Values.postgresql.enabled }}pg-password{{ else }}{{ .Values.externalPostgresql.secretKeys.password | default "password" }}{{ end }}
+                  name: {{ include "compassx.postgresSecretName" . }}
+                  key: {{ include "compassx.postgresSecretKey" . }}
             - name: COMPASSX_SYSTEM_DB_URL
-              value: {{ printf "postgresql://%s:$(PG_PASSWORD)@%s:%v/compassx_system" (include "compassx.postgresUser" .) (include "compassx.postgresHost" .) (include "compassx.postgresPort" .) | quote }}
+              value: {{ printf "postgresql://%s:$(PG_PASSWORD)@%s:%v/compassx_system?sslmode=require" (include "compassx.postgresUser" .) (include "compassx.postgresHost" .) (include "compassx.postgresPort" .) | quote }}
             - name: COMPASSX_BACKEND_URL
               value: {{ printf "http://%s:8000" (include "compassx.backendFullname" .) | quote }}
             - name: COMPASSX_INTERNAL_SECRET

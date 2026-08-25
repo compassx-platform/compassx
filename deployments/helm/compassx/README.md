@@ -68,35 +68,21 @@ helm status compassx -n compassx
 
 ---
 
-## ☁️ Production Cloud Deployment (Bring-Your-Own Managed Services)
+## ☁️ Multi-Cloud Deployment Presets
 
-For enterprise cloud environments, it is recommended to use cloud-managed data stores (AWS RDS / Aurora, ElastiCache, S3, Azure Database for PostgreSQL, Azure Blob Storage).
+Ready-to-use cloud presets and step-by-step guides are provided in the [`deployments/`](../) directory:
 
-### 1. Prepare Secrets
-Create a secret with your database and object storage credentials:
-```bash
-kubectl create secret generic compassx-rds-credentials \
-  --namespace compassx \
-  --from-literal=password='YOUR_RDS_POSTGRES_PASSWORD'
+* **[Amazon Web Services (AWS EKS)](../aws/README.md)**:
+  * In-Cluster (`gp3` EBS CSI): [`deployments/aws/values-incluster.yaml`](../aws/values-incluster.yaml)
+  * Managed Cloud (RDS Aurora + ElastiCache + S3 + ALB): [`deployments/aws/values-managed.yaml`](../aws/values-managed.yaml)
 
-kubectl create secret generic compassx-s3-credentials \
-  --namespace compassx \
-  --from-literal=secret-key='YOUR_AWS_SECRET_ACCESS_KEY'
-```
+* **[Microsoft Azure (Azure AKS)](../azure/README.md)**:
+  * In-Cluster (`managed-csi` Disk): [`deployments/azure/values-incluster.yaml`](../azure/values-incluster.yaml)
+  * Managed Cloud (Flexible Server + Cache for Redis + Blob Storage): [`deployments/azure/values-managed.yaml`](../azure/values-managed.yaml)
 
-### 2. Deploy with `values-cloud.yaml`
-```bash
-helm install compassx ./deployments/helm/compassx \
-  --namespace compassx \
-  -f ./deployments/helm/compassx/values-cloud.yaml \
-  --set externalPostgresql.host="your-rds-endpoint.rds.amazonaws.com" \
-  --set externalPostgresql.password="YOUR_RDS_PASSWORD" \
-  --set externalRedis.host="your-elasticache-endpoint.cache.amazonaws.com" \
-  --set externalStorage.bucket="your-production-bucket" \
-  --set externalStorage.accessKey="YOUR_AWS_ACCESS_KEY_ID" \
-  --set externalStorage.secretKey="YOUR_AWS_SECRET_KEY" \
-  --set ingress.hosts[0].host="app.compassx.yourdomain.com"
-```
+* **[Google Cloud Platform (Google GKE)](../gcp/README.md)**:
+  * In-Cluster (`standard-rwo` Disk): [`deployments/gcp/values-incluster.yaml`](../gcp/values-incluster.yaml)
+  * Managed Cloud (Cloud SQL + Memorystore + Cloud Storage): [`deployments/gcp/values-managed.yaml`](../gcp/values-managed.yaml)
 
 ---
 
