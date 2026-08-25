@@ -251,8 +251,15 @@ jobs:
             sed -i -E "s|^appVersion:.*|appVersion: \"${CLEAN_TAG}\"|g" "$CHART_FILE"
           fi
           if [ -f "$VALUES_FILE" ]; then
-            sed -i -E "s|(backend:\n.*tag: )\"?[a-zA-Z0-9._-]+\"?|\1\"${TAG}\"|g" "$VALUES_FILE"
-            sed -i -E "s|(frontend:\n.*tag: )\"?[a-zA-Z0-9._-]+\"?|\1\"${TAG}\"|g" "$VALUES_FILE"
+            python3 -c "
+import re
+with open('$VALUES_FILE', 'r') as f:
+    content = f.read()
+content = re.sub(r'(backend:\s*\n(?:\s+.*\n)*?\s+tag:\s*)\"[^\"]+\"', r'\1\"${TAG}\"', content)
+content = re.sub(r'(frontend:\s*\n(?:\s+.*\n)*?\s+tag:\s*)\"[^\"]+\"', r'\1\"${TAG}\"', content)
+with open('$VALUES_FILE', 'w') as f:
+    f.write(content)
+"
           fi
 
           git diff deployments/
@@ -270,11 +277,17 @@ jobs:
             echo "Deployment manifests already up to date."
           fi
 
-      - name: Package Helm Chart
+      - name: Package & Publish Helm Chart
         run: |
           mkdir -p dist
+          TAG="${{ needs.detect-changes.outputs.tag }}"
+          CLEAN_TAG="${TAG#v}"
           if [ -d "deployments/helm/compassx" ]; then
-            helm package deployments/helm/compassx --destination dist/ || true
+            helm package deployments/helm/compassx --version "${CLEAN_TAG}" --app-version "${TAG}" --destination dist/
+            
+            # Log in to GHCR Helm Registry & Push OCI chart
+            echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ${{ env.REGISTRY }} --username ${{ github.actor }} --password-stdin
+            helm push dist/compassx-${CLEAN_TAG}.tgz oci://${{ env.REGISTRY }}/${{ env.OWNER }}/charts || true
           fi
 
       - name: Create GitHub Release
@@ -288,4 +301,5 @@ jobs:
           prerelease: false
           files: |
             deployments/docker-compose/docker-compose.yml
+            deployments/azure/values-managed.yaml
             dist/*.tgz
