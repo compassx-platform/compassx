@@ -251,15 +251,7 @@ jobs:
             sed -i -E "s|^appVersion:.*|appVersion: \"${CLEAN_TAG}\"|g" "$CHART_FILE"
           fi
           if [ -f "$VALUES_FILE" ]; then
-            python3 -c "
-import re
-with open('$VALUES_FILE', 'r') as f:
-    content = f.read()
-content = re.sub(r'(backend:\s*\n(?:\s+.*\n)*?\s+tag:\s*)\"[^\"]+\"', r'\1\"${TAG}\"', content)
-content = re.sub(r'(frontend:\s*\n(?:\s+.*\n)*?\s+tag:\s*)\"[^\"]+\"', r'\1\"${TAG}\"', content)
-with open('$VALUES_FILE', 'w') as f:
-    f.write(content)
-"
+            python3 -c "import re; f=open('$VALUES_FILE', 'r+'); c=f.read(); f.seek(0); f.write(re.sub(r'tag:\s*\"v[^\"]+\"', f'tag: \"${TAG}\"', c)); f.truncate()"
           fi
 
           git diff deployments/
