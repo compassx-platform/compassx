@@ -10,7 +10,7 @@ WORKDIR /ms-home
 COPY requirements-airflow-notebook.txt .
 RUN pip install --no-cache-dir -r requirements-airflow-notebook.txt
 
-COPY notebooks ./notebooks
+RUN mkdir -p /ms-home/notebooks
 COPY services/storage /opt/compassx/services/storage
 COPY services/compassx_sql /opt/compassx/services/compassx_sql
 COPY scripts/upload_notebook_output.py /opt/compassx/upload_notebook_output.py
