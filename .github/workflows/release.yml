@@ -254,16 +254,21 @@ jobs:
             python3 -c "import re; f=open('$VALUES_FILE', 'r+'); c=f.read(); f.seek(0); f.write(re.sub(r'tag:\s*\"v[^\"]+\"', f'tag: \"${TAG}\"', c)); f.truncate()"
           fi
 
-          git diff deployments/
+          # 3. Update frontend package.json version
+          if [ -f "frontend/package.json" ]; then
+            sed -i -E "s|\"version\": \"[0-9.]+\"|\"version\": \"${CLEAN_TAG}\"|g" "frontend/package.json"
+          fi
+
+          git diff deployments/ frontend/package.json
 
       - name: Commit and push updated deployment manifests
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           
-          if ! git diff --quiet deployments/; then
-            git add deployments/
-            git commit -m "chore(release): update deployment manifests to ${{ needs.detect-changes.outputs.tag }} [skip ci]"
+          if ! git diff --quiet deployments/ frontend/package.json; then
+            git add deployments/ frontend/package.json
+            git commit -m "chore(release): update deployment manifests and frontend version to ${{ needs.detect-changes.outputs.tag }} [skip ci]"
             git push origin main
           else
             echo "Deployment manifests already up to date."

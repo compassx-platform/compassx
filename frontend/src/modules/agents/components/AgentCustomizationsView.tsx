@@ -172,7 +172,7 @@ export const AgentCustomizationsView: React.FC<AgentCustomizationsViewProps> = (
     try {
       await createContextMutation.mutateAsync({
         agentId,
-        payload: { key: newContextKey.trim(), value: newContextValue.trim() },
+        payload: { text: newContextValue.trim(), tags: [newContextKey.trim()] },
       });
       setNewContextKey("");
       setNewContextValue("");
@@ -188,8 +188,8 @@ export const AgentCustomizationsView: React.FC<AgentCustomizationsViewProps> = (
     try {
       await updateContextMutation.mutateAsync({
         agentId,
-        contextId: editingContextEntry.id,
-        payload: { key: editingContextEntry.key, value: editingContextEntry.value },
+        entryId: editingContextEntry.id,
+        payload: { text: editingContextEntry.text, tags: editingContextEntry.tags },
       });
       setEditingContextEntry(null);
       toast.success("Context entry updated");
@@ -200,7 +200,7 @@ export const AgentCustomizationsView: React.FC<AgentCustomizationsViewProps> = (
 
   const handleDeleteContext = async (contextId: number) => {
     try {
-      await deleteContextMutation.mutateAsync({ agentId, contextId });
+      await deleteContextMutation.mutateAsync({ agentId, entryId: contextId });
       toast.success("Context entry deleted");
     } catch {
       toast.error("Failed to delete context");
@@ -536,7 +536,7 @@ export const AgentCustomizationsView: React.FC<AgentCustomizationsViewProps> = (
                           <input type="checkbox" checked={enabled} onChange={() => toggleGit(g.id)} />
                           <div>
                             <div style={{ fontWeight: 600, fontSize: "0.82rem", color: enabled ? "#1d4ed8" : "#1e293b" }}>{g.name}</div>
-                            <div style={{ fontSize: "0.72rem", color: "#64748b" }}>Provider: {g.provider} · Branch: {g.default_branch}</div>
+                            <div style={{ fontSize: "0.72rem", color: "#64748b" }}>Provider: {g.provider} · Project: {g.default_project || 'default'}</div>
                           </div>
                         </label>
                       );
@@ -682,8 +682,8 @@ export const AgentCustomizationsView: React.FC<AgentCustomizationsViewProps> = (
                       }}
                     >
                       <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontWeight: 600, fontSize: "0.8rem", color: "#1e293b", fontFamily: "monospace" }}>{c.key}</div>
-                        <div style={{ fontSize: "0.75rem", color: "#64748b", marginTop: 4, whiteSpace: "pre-wrap" }}>{c.value}</div>
+                        <div style={{ fontWeight: 600, fontSize: "0.8rem", color: "#1e293b", fontFamily: "monospace" }}>{c.tags?.[0] || 'context'}</div>
+                        <div style={{ fontSize: "0.75rem", color: "#64748b", marginTop: 4, whiteSpace: "pre-wrap" }}>{c.text}</div>
                       </div>
                       <div style={{ display: "flex", gap: 4 }}>
                         <button
