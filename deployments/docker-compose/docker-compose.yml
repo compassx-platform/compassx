@@ -52,7 +52,7 @@ services:
       retries: 12
 
   jobs-runner-image:
-    image: ghcr.io/compassx-platform/airflow-notebook-runner:v0.1.0
+    image: ghcr.io/compassx-platform/airflow-notebook-runner:v0.3.0
     command: ["python", "-c", "print('CompassX notebook runner image ready')"]
     restart: "no"
 
@@ -116,7 +116,7 @@ services:
       - ../../data/airflow/logs:/opt/airflow/logs
 
   enterprise-gateway:
-    image: ghcr.io/compassx-platform/enterprise-gateway:v0.1.0
+    image: ghcr.io/compassx-platform/enterprise-gateway:v0.3.0
     user: root
     ports:
       - "8888:8888"
@@ -133,7 +133,7 @@ services:
       start_period: 30s
 
   backend:
-    image: ghcr.io/compassx-platform/backend:v0.2.0
+    image: ghcr.io/compassx-platform/backend:v0.3.0
     depends_on:
       postgres:
         condition: service_healthy
@@ -170,7 +170,7 @@ services:
       start_period: 30s
 
   frontend:
-    image: ghcr.io/compassx-platform/frontend:v0.2.0
+    image: ghcr.io/compassx-platform/frontend:v0.3.0
     depends_on:
       backend:
         condition: service_started
