@@ -18,6 +18,41 @@ function getColumnTitle(col: string, cfg: any): string {
   return col;
 }
 
+function getContrastColor(colorStr?: string): string {
+  if (!colorStr) return '#334155';
+  const str = colorStr.trim().toLowerCase();
+  if (str === 'transparent' || str === 'inherit' || str === 'initial') return '#334155';
+  if (str === 'white' || str === '#fff' || str === '#ffffff') return '#334155';
+  if (str === 'black' || str === '#000' || str === '#000000') return '#ffffff';
+
+  const rgbMatch = str.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
+  if (rgbMatch) {
+    const r = parseInt(rgbMatch[1], 10);
+    const g = parseInt(rgbMatch[2], 10);
+    const b = parseInt(rgbMatch[3], 10);
+    const yiq = (r * 299 + g * 587 + b * 114) / 1000;
+    return yiq >= 135 ? '#334155' : '#ffffff';
+  }
+
+  const cleanHex = str.replace('#', '').trim();
+  let r = 241, g = 245, b = 249;
+  if (cleanHex.length === 3 || cleanHex.length === 4) {
+    r = parseInt(cleanHex[0] + cleanHex[0], 16);
+    g = parseInt(cleanHex[1] + cleanHex[1], 16);
+    b = parseInt(cleanHex[2] + cleanHex[2], 16);
+  } else if (cleanHex.length >= 6) {
+    r = parseInt(cleanHex.substring(0, 2), 16);
+    g = parseInt(cleanHex.substring(2, 4), 16);
+    b = parseInt(cleanHex.substring(4, 6), 16);
+  } else {
+    return '#334155';
+  }
+
+  if (isNaN(r) || isNaN(g) || isNaN(b)) return '#334155';
+  const yiq = (r * 299 + g * 587 + b * 114) / 1000;
+  return yiq >= 135 ? '#334155' : '#ffffff';
+}
+
 export default function TableWidget({ widget }: Props) {
   const { filterState, paramState } = useDashboardStore();
   const cfg = widget.chartConfig;
@@ -90,6 +125,14 @@ export default function TableWidget({ widget }: Props) {
   const showRowNumbers = cfg?.showRowNumbers ?? false;
   const wrapText = cfg?.wrapText ?? false;
 
+  const titleRowBg = cfg?.titleRowBg ?? cfg?.headerBg ?? cfg?.headerBackgroundColor;
+  const headerBg = titleRowBg || '#f1f5f9';
+  const autoTextColor = getContrastColor(titleRowBg);
+  const headerTextColor = cfg?.titleRowColor ?? cfg?.headerColor ?? autoTextColor;
+  const isDarkHeader = autoTextColor === '#ffffff';
+  const headerBorderBottom = isDarkHeader ? '2px solid rgba(255, 255, 255, 0.25)' : '2px solid #cbd5e1';
+  const rowNumberHeaderColor = isDarkHeader ? 'rgba(255, 255, 255, 0.75)' : '#64748b';
+
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden', background: '#ffffff' }}>
       {/* Search Bar */}
@@ -119,10 +162,18 @@ export default function TableWidget({ widget }: Props) {
       {/* Table Surface */}
       <div style={{ flex: 1, overflow: 'auto', minHeight: 0 }}>
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.76rem', color: '#1e293b' }}>
-          <thead style={{ position: 'sticky', top: 0, background: '#f1f5f9', zIndex: 2 }}>
+          <thead style={{ position: 'sticky', top: 0, background: headerBg, zIndex: 2 }}>
             <tr>
               {showRowNumbers && (
-                <th style={{ padding: '6px 8px', width: 36, textAlign: 'center', fontWeight: 600, borderBottom: '2px solid #cbd5e1', color: '#64748b' }}>
+                <th style={{
+                  padding: '6px 8px',
+                  width: 36,
+                  textAlign: 'center',
+                  fontWeight: 600,
+                  borderBottom: headerBorderBottom,
+                  color: rowNumberHeaderColor,
+                  background: headerBg,
+                }}>
                   #
                 </th>
               )}
@@ -131,8 +182,9 @@ export default function TableWidget({ widget }: Props) {
                   padding: '6px 10px',
                   textAlign: 'left',
                   fontWeight: 600,
-                  borderBottom: '2px solid #cbd5e1',
-                  color: '#334155',
+                  borderBottom: headerBorderBottom,
+                  color: headerTextColor,
+                  background: headerBg,
                   whiteSpace: 'nowrap',
                 }}>
                   {getColumnTitle(col, cfg)}

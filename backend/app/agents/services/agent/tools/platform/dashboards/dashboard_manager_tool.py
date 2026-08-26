@@ -46,7 +46,7 @@ class DashboardManagerTool(BaseTool):
                     "update_dashboard uses {dashboard_id, name, pages: ['Page 1', 'Page 2'], settings}; "
                     "add_dataset uses {dashboard_id, name, sql, params}; "
                     "update_dataset uses {dashboard_id, dataset_id, sql}; "
-                    "add_widget uses {dashboard_id, page_id, widget_type: 'chart', title, chart_config: {chartType, datasetId, xField, yFields}, grid_item}; "
+                    "add_widget uses {dashboard_id, page_id, widget_type: 'chart', title, chart_config: {chartType, datasetId, xField, yFields, title_row_bg}, grid_item}; "
                     "update_widget uses {dashboard_id, widget_id, title, chart_config}; "
                     "run_query uses {sql, max_rows, warehouse_id}; "
                     "publish_dashboard uses {dashboard_id}."

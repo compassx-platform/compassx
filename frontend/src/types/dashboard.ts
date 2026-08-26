@@ -154,6 +154,11 @@ export interface ChartConfig {
   showSearch?: boolean;
   wrapText?: boolean;
   showRowNumbers?: boolean;
+  titleRowBg?: string;
+  titleRowColor?: string;
+  headerBg?: string;
+  headerColor?: string;
+  headerBackgroundColor?: string;
   // layout sub-type
   layout?: 'stack' | '100stack' | 'group';
 }

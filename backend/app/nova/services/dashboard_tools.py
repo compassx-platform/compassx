@@ -82,6 +82,14 @@ SNAKE_TO_CAMEL_CHART_CONFIG_MAP = {
     "lon_field": "lonField",
     "geo_field": "geoField",
     "geo_level": "geoLevel",
+    "title_row_bg": "titleRowBg",
+    "title_row_color": "titleRowColor",
+    "title_row_background_color": "titleRowBg",
+    "title_row_text_color": "titleRowColor",
+    "header_bg": "titleRowBg",
+    "header_color": "titleRowColor",
+    "header_background_color": "titleRowBg",
+    "header_text_color": "titleRowColor",
 }
 
 
@@ -207,7 +215,9 @@ WIDGET_SPECS_CATALOG: dict[str, dict[str, Any]] = {
             "pageSize": "integer (default 10 or 25)",
             "showSearch": "boolean (default True)",
             "wrapText": "boolean",
-            "showRowNumbers": "boolean"
+            "showRowNumbers": "boolean",
+            "titleRowBg": "string (hex/CSS color for table header/title row background, e.g. '#1e293b' or '#f1f5f9')",
+            "titleRowColor": "string (hex/CSS color for table header/title row text, e.g. '#ffffff')",
         },
         "example": {
             "widget_type": "chart",
@@ -216,7 +226,8 @@ WIDGET_SPECS_CATALOG: dict[str, dict[str, Any]] = {
                 "chartType": "table",
                 "datasetId": "DATASET_UUID",
                 "pageSize": 25,
-                "showSearch": True
+                "showSearch": True,
+                "titleRowBg": "#f1f5f9"
             }
         }
     },

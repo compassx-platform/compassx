@@ -4,7 +4,11 @@ from unittest.mock import patch
 from app.agents.services.agent.tools.platform.dashboards.dashboard_manager_tool import (
     DashboardManagerTool,
 )
-from app.nova.services.dashboard_tools import CreateDashboardTool, _reconcile_widgets_with_pages
+from app.nova.services.dashboard_tools import (
+    CreateDashboardTool,
+    _normalize_chart_config,
+    _reconcile_widgets_with_pages,
+)
 
 
 def test_dashboard_manager_hides_context_from_agent_schema():
@@ -98,3 +102,17 @@ def test_dashboard_manager_passes_payload_warehouse_id_to_trusted_context():
             "warehouse_id": "warehouse-id",
         },
     )
+
+
+def test_chart_config_normalizes_title_row_background():
+    normalized = _normalize_chart_config({
+        "chart_type": "table",
+        "dataset_id": "123",
+        "title_row_bg": "#1e293b",
+        "header_color": "#ffffff",
+    })
+
+    assert normalized["chartType"] == "table"
+    assert normalized["datasetId"] == "123"
+    assert normalized["titleRowBg"] == "#1e293b"
+    assert normalized["titleRowColor"] == "#ffffff"
