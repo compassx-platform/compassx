@@ -49,25 +49,48 @@ def _process_one_job(db: Session) -> bool:
     if job is None:
         return False
 
+    job_id = job.id
+    asset_id = job.asset_id
     job.status = "in_progress"
     job.updated_at = datetime.now(timezone.utc)
     db.commit()
 
-    asset: CatalogSearchAsset | None = db.get(CatalogSearchAsset, job.asset_id)
+    asset: CatalogSearchAsset | None = db.get(CatalogSearchAsset, asset_id)
     if asset is None:
         # Asset was deleted — clean up the orphaned job
+        job = db.get(CatalogSearchEmbeddingJob, job_id)
+        if job is None:
+            db.rollback()
+            return True
         db.delete(job)
         db.commit()
         return True
 
+    embedding_text = asset.embedding_text
+    asset_log_fields = (
+        asset.object_type,
+        asset.catalog_name,
+        asset.schema_name,
+        asset.object_name,
+        asset.id,
+    )
+    # Do not occupy a pooled connection while waiting for the embedding API.
+    db.commit()
+
     try:
-        vector = get_embedding(asset.embedding_text)
+        vector = get_embedding(embedding_text)
 
         if vector is None:
             # API key missing or transient failure
             raise RuntimeError(
                 "get_embedding returned None — check your LLM connection and embedding model setup"
             )
+
+        asset = db.get(CatalogSearchAsset, asset_id)
+        job = db.get(CatalogSearchEmbeddingJob, job_id)
+        if asset is None or job is None:
+            db.rollback()
+            return True
 
         asset.embedding = vector
         asset.updated_at = datetime.now(timezone.utc)
@@ -76,18 +99,14 @@ def _process_one_job(db: Session) -> bool:
         db.commit()
         logger.info(
             "Embedded %s %s.%s.%s (asset_id=%s)",
-            asset.object_type,
-            asset.catalog_name,
-            asset.schema_name,
-            asset.object_name,
-            asset.id,
+            *asset_log_fields,
         )
 
     except Exception as exc:
         db.rollback()
 
         # Re-fetch after rollback
-        job = db.get(CatalogSearchEmbeddingJob, job.id)
+        job = db.get(CatalogSearchEmbeddingJob, job_id)
         if job is None:
             return True
 
