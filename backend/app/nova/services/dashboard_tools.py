@@ -480,7 +480,7 @@ class GetDashboardTool(BaseNovaTool):
 class CreateDashboardTool(BaseNovaTool):
     key = "create_dashboard"
     description = (
-        "Create a new blank dashboard with the given name. "
+        "Create a new blank dashboard in the required catalog_name and schema_name. "
         "A first empty page is created automatically. "
         "Returns the full dashboard object including its id, which you need for subsequent operations."
     )
@@ -497,8 +497,16 @@ class CreateDashboardTool(BaseNovaTool):
                 "default": "individual",
                 "description": "Permission mode for the dashboard.",
             },
+            "catalog_name": {
+                "type": "string",
+                "description": "Catalog in the current workspace where the dashboard will be registered.",
+            },
+            "schema_name": {
+                "type": "string",
+                "description": "Existing schema in the selected catalog where the dashboard will be registered.",
+            },
         },
-        "required": ["name"],
+        "required": ["name", "catalog_name", "schema_name"],
     }
 
     def execute(self, arguments: dict[str, Any], context: dict[str, Any]) -> NovaToolResult:
@@ -511,6 +519,14 @@ class CreateDashboardTool(BaseNovaTool):
         permission_mode = str(arguments.get("permission_mode") or "individual")
         if permission_mode not in {"individual", "shared"}:
             permission_mode = "individual"
+
+        catalog_name = str(arguments.get("catalog_name") or "").strip()
+        schema_name = str(arguments.get("schema_name") or "").strip()
+        if not catalog_name or not schema_name:
+            return NovaToolResult(
+                ok=False,
+                error="catalog_name and schema_name are required to create a dashboard",
+            )
 
         actor = context.get("user") or context.get("principal_id") or "agent"
         workspace_id = _workspace_id_from_context(context)
@@ -540,10 +556,15 @@ class CreateDashboardTool(BaseNovaTool):
             db.add(d)
             db.flush()
 
-            try:
-                _register_in_catalog(db, workspace_id, dash_id, name, actor)
-            except Exception as catalog_exc:
-                logger.warning("Failed to register dashboard in catalog: %s", catalog_exc)
+            _register_in_catalog(
+                db,
+                workspace_id,
+                catalog_name,
+                schema_name,
+                dash_id,
+                name,
+                actor,
+            )
 
             db.commit()
             db.refresh(d)
@@ -565,50 +586,44 @@ class CreateDashboardTool(BaseNovaTool):
             db.close()
 
 
-def _register_in_catalog(db, workspace_id: str | None, dashboard_id: str, name: str, actor: str | None) -> None:
-    """Register a dashboard in the default catalog — mirrors dashboard_routes._register_dashboard_in_default_catalog."""
+def _register_in_catalog(
+    db,
+    workspace_id: str | None,
+    catalog_name: str,
+    schema_name: str,
+    dashboard_id: str,
+    name: str,
+    actor: str | None,
+) -> None:
+    """Register a dashboard in an explicitly selected, workspace-accessible schema."""
     from app.catalog.models import (
         UnifiedCatalog, UnifiedCatalogSchema, UnifiedCatalogDashboard, CatalogWorkspaceBinding,
     )
 
-    catalog = None
+    catalog_query = db.query(UnifiedCatalog).filter(UnifiedCatalog.name == catalog_name)
     if workspace_id:
-        binding = (
-            db.query(CatalogWorkspaceBinding)
-            .filter(CatalogWorkspaceBinding.workspace_id == workspace_id)
-            .order_by(CatalogWorkspaceBinding.is_default.desc())
-            .first()
+        catalog_query = catalog_query.outerjoin(CatalogWorkspaceBinding).filter(
+            (UnifiedCatalog.all_workspaces == True)
+            | (CatalogWorkspaceBinding.workspace_id == workspace_id)
         )
-        if binding:
-            catalog = db.query(UnifiedCatalog).filter(UnifiedCatalog.id == binding.catalog_id).first()
-
+    catalog = catalog_query.first()
     if not catalog:
-        default_binding = (
-            db.query(CatalogWorkspaceBinding)
-            .filter(CatalogWorkspaceBinding.is_default == True)
-            .first()
+        raise ValueError(
+            f"Catalog '{catalog_name}' was not found or is not accessible in the current workspace"
         )
-        if default_binding:
-            catalog = db.query(UnifiedCatalog).filter(UnifiedCatalog.id == default_binding.catalog_id).first()
 
-    if not catalog:
-        catalog = db.query(UnifiedCatalog).filter(UnifiedCatalog.all_workspaces == True).first()
-
-    if not catalog:
-        catalog = db.query(UnifiedCatalog).order_by(UnifiedCatalog.created_at.asc()).first()
-
-    if not catalog:
-        return
-
-    schema = db.query(UnifiedCatalogSchema).filter(UnifiedCatalogSchema.catalog_id == catalog.id).first()
+    schema = (
+        db.query(UnifiedCatalogSchema)
+        .filter(
+            UnifiedCatalogSchema.catalog_id == catalog.id,
+            UnifiedCatalogSchema.name == schema_name,
+        )
+        .first()
+    )
     if not schema:
-        schema = UnifiedCatalogSchema(
-            catalog_id=catalog.id,
-            name="default",
-            created_by=actor or "system",
+        raise ValueError(
+            f"Schema '{catalog_name}.{schema_name}' was not found in the current workspace"
         )
-        db.add(schema)
-        db.flush()
 
     existing_cd = (
         db.query(UnifiedCatalogDashboard)
@@ -637,6 +652,28 @@ def _register_in_catalog(db, workspace_id: str | None, dashboard_id: str, name: 
 
 # ── Update Dashboard ───────────────────────────────────────────────────────────
 
+def _reconcile_widgets_with_pages(
+    pages: list[dict[str, Any]],
+    current_widgets: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Keep every widget attached to a page after the page list is replaced."""
+    widgets = copy.deepcopy(current_widgets)
+    valid_page_ids = {page["id"] for page in pages}
+    fallback_page_id = pages[0]["id"]
+
+    for widget in widgets:
+        if widget.get("pageId") not in valid_page_ids:
+            widget["pageId"] = fallback_page_id
+
+    for page in pages:
+        page["layout"] = [
+            copy.deepcopy(widget["gridItem"])
+            for widget in widgets
+            if widget.get("pageId") == page["id"] and isinstance(widget.get("gridItem"), dict)
+        ]
+
+    return widgets
+
 class UpdateDashboardTool(BaseNovaTool):
     key = "update_dashboard"
     description = (
@@ -657,6 +694,14 @@ class UpdateDashboardTool(BaseNovaTool):
                 "type": "object",
                 "description": "Partial dashboard settings to merge (e.g. theme, locale).",
                 "additionalProperties": True,
+            },
+            "pages": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": (
+                    "Complete ordered page-name list. Existing page IDs are preserved by name; "
+                    "widgets from removed pages are moved to the first resulting page."
+                ),
             },
         },
         "required": ["dashboard_id"],
@@ -713,8 +758,11 @@ class UpdateDashboardTool(BaseNovaTool):
                             "layout": existing_layout,
                         })
                 if new_pages:
+                    widgets = _reconcile_widgets_with_pages(new_pages, d.widgets or [])
                     d.pages = new_pages
+                    d.widgets = widgets
                     flag_modified(d, "pages")
+                    flag_modified(d, "widgets")
 
 
             db.commit()

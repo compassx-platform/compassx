@@ -42,7 +42,7 @@ class DashboardManagerTool(BaseTool):
                     "describe_widget uses {chart_type: 'counter'|'bar'|'line'|'table'|'pie'|'combo'|'waterfall'|'pivot'}; "
                     "list_dashboards uses {include_draft, name_filter}; "
                     "get_dashboard uses {dashboard_id}; "
-                    "create_dashboard uses {name, permission_mode}; "
+                    "create_dashboard uses {name, catalog_name, schema_name, permission_mode}; "
                     "update_dashboard uses {dashboard_id, name, pages: ['Page 1', 'Page 2'], settings}; "
                     "add_dataset uses {dashboard_id, name, sql, params}; "
                     "update_dataset uses {dashboard_id, dataset_id, sql}; "
@@ -50,14 +50,6 @@ class DashboardManagerTool(BaseTool):
                     "update_widget uses {dashboard_id, widget_id, title, chart_config}; "
                     "run_query uses {sql, max_rows, warehouse_id}; "
                     "publish_dashboard uses {dashboard_id}."
-                ),
-                "additionalProperties": True,
-            },
-            "context": {
-                "type": "object",
-                "description": (
-                    "Optional runtime context, such as workspace_id, warehouse_id, or user. "
-                    "Passed through to operations that need workspace or warehouse resolution."
                 ),
                 "additionalProperties": True,
             },
@@ -70,20 +62,20 @@ class DashboardManagerTool(BaseTool):
     def execute(self, args: dict[str, Any], agent: Agent, db: Session) -> ToolResult:
         operation = str(args.get("operation") or "")
         payload = args.get("payload") or {}
-        context = args.get("context") or {}
 
         if not isinstance(payload, dict):
             return ToolResult(ok=False, error="payload must be an object")
-        if not isinstance(context, dict):
-            return ToolResult(ok=False, error="context must be an object")
 
-        # Inject agent identity into context for audit / created_by tracking
-        if not context.get("user") and hasattr(agent, "created_by"):
-            context = {**context, "user": agent.created_by}
-
-        # Inject agent workspace_id into context to ensure catalog & workspace binding
-        if not context.get("workspace_id") and getattr(agent, "workspace_id", None):
-            context = {**context, "workspace_id": str(agent.workspace_id)}
+        # Security context is backend-owned; never trust model-supplied workspace or user values.
+        workspace_id = getattr(agent, "workspace_id", None)
+        if not workspace_id:
+            return ToolResult(ok=False, error="Dashboard operations require a workspace-scoped agent")
+        context = {
+            "workspace_id": str(workspace_id),
+            "user": getattr(agent, "created_by", None) or "agent",
+        }
+        if payload.get("warehouse_id"):
+            context["warehouse_id"] = payload["warehouse_id"]
 
 
         try:
