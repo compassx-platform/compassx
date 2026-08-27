@@ -32,7 +32,11 @@ compute:
   overrides: {}
 
 docker:
-  compose_file: docker-compose.yml
+  # local-dev builds enterprise-gateway/airflow-notebook-runner locally
+  # (see docker/compassx/launchers/docker_compose.py ensure_images) so this
+  # profile uses an override that points those two services at the local
+  # images instead of GHCR's amd64-only builds. See docker-compose.local-dev.yml.
+  compose_file: docker-compose.local-dev.yml
   project_name: compassx
   ensure_images: true
 

@@ -1,0 +1,30 @@
+# CompassX Platform — local-dev override
+#
+# docker-compose.yml pulls the auxiliary images (enterprise-gateway,
+# airflow-notebook-runner) from GHCR as linux/amd64-only builds (see
+# .github/workflows/release.yml), so `docker compose up` fails on
+# arm64 hosts (Apple Silicon) with "no matching manifest for
+# linux/arm64/v8". The `compassx up --profile local-dev` CLI already
+# builds native local images for these two services via
+# DockerComposeLauncher.ensure_images() (backend/compassx/launchers/docker_compose.py)
+# — this file points the compose services at those local images
+# instead of the GHCR ones so local-dev works on any host architecture.
+#
+# Used automatically by the local-dev profile (see
+# backend/compassx/profiles/local-dev.yaml: docker.compose_file).
+
+include:
+  - docker-compose.yml
+
+services:
+  jobs-runner-image:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.airflow-notebook
+    image: compassx-airflow-notebook-runner:latest
+
+  enterprise-gateway:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.eg
+    image: compassx-enterprise-gateway:latest
