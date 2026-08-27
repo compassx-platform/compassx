@@ -8,6 +8,7 @@ import { useRef, useEffect, useMemo, useState } from 'react';
 import { Loader2 } from 'lucide-react';
 import { useDashboardStore } from '@/modules/dashboards/stores/dashboardStore';
 import { useDatasetQuery } from '@/modules/dashboards/hooks/useDashboard';
+import { aggregateValues } from '@/modules/dashboards/utils/dataTransforms';
 import type { AxisConfig, Widget, ChartConfig } from '@/types/dashboard';
 
 // Lazy-load Plotly to keep initial bundle lighter
@@ -17,65 +18,6 @@ async function getPlotly() {
     Plotly = (await import('plotly.js')).default as any;
   }
   return Plotly!;
-}
-
-function aggregateValues(vals: number[], type: string): number {
-  if (vals.length === 0) return 0;
-  const numVals = vals.filter((v) => typeof v === 'number' && !isNaN(v));
-  if (numVals.length === 0) return 0;
-
-  switch (type.toUpperCase()) {
-    case 'SUM':
-      return numVals.reduce((acc, v) => acc + v, 0);
-
-    case 'AVG':
-      return numVals.reduce((acc, v) => acc + v, 0) / numVals.length;
-
-    case 'MIN':
-      return Math.min(...numVals);
-
-    case 'MAX':
-      return Math.max(...numVals);
-
-    case 'COUNT':
-      return numVals.length;
-
-    case 'COUNT DISTINCT':
-      return new Set(numVals).size;
-
-    case 'MEDIAN': {
-      const sorted = [...numVals].sort((a, b) => a - b);
-      const mid = Math.floor(sorted.length / 2);
-      return sorted.length % 2 !== 0 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
-    }
-
-    case 'FIRST':
-      return numVals[0];
-
-    case 'LAST':
-      return numVals[numVals.length - 1];
-
-    case 'VAR': {
-      const mean = numVals.reduce((acc, v) => acc + v, 0) / numVals.length;
-      return numVals.reduce((acc, v) => acc + Math.pow(v - mean, 2), 0) / (numVals.length > 1 ? numVals.length - 1 : 1);
-    }
-
-    case 'STD': {
-      const mean = numVals.reduce((acc, v) => acc + v, 0) / numVals.length;
-      const variance = numVals.reduce((acc, v) => acc + Math.pow(v - mean, 2), 0) / (numVals.length > 1 ? numVals.length - 1 : 1);
-      return Math.sqrt(variance);
-    }
-
-    case 'PERCENTILE': {
-      const sorted = [...numVals].sort((a, b) => a - b);
-      const p = 0.9;
-      const idx = Math.floor(p * (sorted.length - 1));
-      return sorted[idx];
-    }
-
-    default:
-      return numVals.reduce((acc, v) => acc + v, 0);
-  }
 }
 
 function applyDataTransforms(rows: Record<string, unknown>[], cfg: ChartConfig): Record<string, unknown>[] {
@@ -613,7 +555,7 @@ interface CustomTooltipState {
 export default function PlotlyWidget({ widget }: Props) {
   const plotRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
-  const { filterState, paramState, setFilterValue } = useDashboardStore();
+  const { activeDashboard, filterState, paramState, setFilterValue } = useDashboardStore();
   const [tooltipState, setTooltipState] = useState<CustomTooltipState | null>(null);
   const [selectedSwitcherField, setSelectedSwitcherField] = useState<string | null>(null);
 
@@ -641,6 +583,8 @@ export default function PlotlyWidget({ widget }: Props) {
     } as ChartConfig;
   }, [widget.chartConfig]);
 
+  const dataset = activeDashboard?.datasets.find((d) => d.id === cfg?.datasetId);
+
   const activeSwitcherField = (cfg?.enableSeriesSwitcher && (cfg?.yFields ?? []).length > 1)
     ? (selectedSwitcherField && cfg?.yFields?.includes(selectedSwitcherField) ? selectedSwitcherField : cfg?.yFields?.[0])
     : null;
@@ -666,7 +610,8 @@ export default function PlotlyWidget({ widget }: Props) {
     cfg?.datasetId,
     resolvedParams as any,
     filterState as any,
-    !!cfg?.datasetId
+    !!cfg?.datasetId,
+    dataset?.sql
   );
 
   useEffect(() => {

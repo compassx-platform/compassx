@@ -14,14 +14,16 @@ interface Props {
 }
 
 export default function PivotWidget({ widget }: Props) {
-  const { filterState, paramState } = useDashboardStore();
+  const { activeDashboard, filterState, paramState } = useDashboardStore();
   const cfg = widget.chartConfig;
+  const dataset = activeDashboard?.datasets.find((d) => d.id === cfg?.datasetId);
 
   const { data: queryResult, isLoading } = useDatasetQuery(
     cfg?.datasetId,
     paramState as any,
     filterState as any,
-    !!cfg?.datasetId
+    !!cfg?.datasetId,
+    dataset?.sql
   );
 
   const { rowField, colField, valField } = useMemo(() => ({

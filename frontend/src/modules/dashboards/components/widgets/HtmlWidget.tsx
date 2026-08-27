@@ -127,15 +127,20 @@ function buildSrcDoc(html: string, initialDatasets: Record<string, unknown>) {
 export default function HtmlWidget({ widget }: Props) {
   const { filterState, paramState, activeDashboard } = useDashboardStore();
   const cfg = widget.htmlConfig;
-  const { data: queryResult, isLoading } = useDatasetQuery(cfg?.datasetId, paramState as any, filterState as any, !!cfg?.datasetId);
+  const dataset = activeDashboard?.datasets.find((d) => d.id === cfg?.datasetId);
+  const { data: queryResult, isLoading } = useDatasetQuery(
+    cfg?.datasetId,
+    paramState as any,
+    filterState as any,
+    !!cfg?.datasetId,
+    dataset?.sql
+  );
 
   const iframeRef = useRef<HTMLIFrameElement>(null);
 
   const rawHtml = normalizeHtml(widget.content);
   const columns = queryResult?.columns ?? [];
   const rows = queryResult?.rows ?? [];
-
-  const dataset = activeDashboard?.datasets.find((d) => d.id === cfg?.datasetId);
   const datasetName = dataset?.name;
 
   const html = useMemo(() => {

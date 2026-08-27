@@ -54,8 +54,9 @@ function getContrastColor(colorStr?: string): string {
 }
 
 export default function TableWidget({ widget }: Props) {
-  const { filterState, paramState } = useDashboardStore();
+  const { activeDashboard, filterState, paramState } = useDashboardStore();
   const cfg = widget.chartConfig;
+  const dataset = activeDashboard?.datasets.find((d) => d.id === cfg?.datasetId);
   const [searchTerm, setSearchTerm] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
 
@@ -63,7 +64,8 @@ export default function TableWidget({ widget }: Props) {
     cfg?.datasetId,
     paramState as any,
     filterState as any,
-    !!cfg?.datasetId
+    !!cfg?.datasetId,
+    dataset?.sql
   );
 
   const rawCols = queryResult?.columns ?? [];
@@ -133,6 +135,13 @@ export default function TableWidget({ widget }: Props) {
   const headerBorderBottom = isDarkHeader ? '2px solid rgba(255, 255, 255, 0.25)' : '2px solid #cbd5e1';
   const rowNumberHeaderColor = isDarkHeader ? 'rgba(255, 255, 255, 0.75)' : '#64748b';
 
+  const headerFontSize =
+    cfg?.headerFontSize === 'small' ? '0.70rem' : cfg?.headerFontSize === 'large' ? '0.84rem' : '0.76rem';
+  const headerFontWeight =
+    cfg?.headerFontWeight === 'normal' ? 400 : cfg?.headerFontWeight === 'medium' ? 500 : 600;
+  const headerTextTransform = cfg?.headerTextTransform ?? 'none';
+  const headerAlignment = cfg?.headerAlignment ?? 'left';
+
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden', background: '#ffffff' }}>
       {/* Search Bar */}
@@ -169,7 +178,8 @@ export default function TableWidget({ widget }: Props) {
                   padding: '6px 8px',
                   width: 36,
                   textAlign: 'center',
-                  fontWeight: 600,
+                  fontWeight: headerFontWeight,
+                  fontSize: headerFontSize,
                   borderBottom: headerBorderBottom,
                   color: rowNumberHeaderColor,
                   background: headerBg,
@@ -180,8 +190,10 @@ export default function TableWidget({ widget }: Props) {
               {visibleCols.map((col) => (
                 <th key={col} style={{
                   padding: '6px 10px',
-                  textAlign: 'left',
-                  fontWeight: 600,
+                  textAlign: headerAlignment,
+                  fontWeight: headerFontWeight,
+                  fontSize: headerFontSize,
+                  textTransform: headerTextTransform,
                   borderBottom: headerBorderBottom,
                   color: headerTextColor,
                   background: headerBg,

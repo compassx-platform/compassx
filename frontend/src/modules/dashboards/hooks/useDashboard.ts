@@ -60,6 +60,8 @@ export function useSaveDashboard() {
     },
     onSuccess: (d) => {
       qc.setQueryData(KEYS.detail(d.id), d);
+      qc.invalidateQueries({ queryKey: ['dataset-query'] });
+      qc.invalidateQueries({ queryKey: ['dataset-schema'] });
     },
   });
 }
@@ -76,6 +78,7 @@ export function usePublishDashboard() {
     onSuccess: (d) => {
       qc.setQueryData(KEYS.detail(d.id), d);
       qc.invalidateQueries({ queryKey: KEYS.list });
+      qc.invalidateQueries({ queryKey: ['dataset-query'] });
     },
   });
 }
@@ -91,6 +94,7 @@ export function useDiscardDraft() {
     },
     onSuccess: (d) => {
       qc.setQueryData(KEYS.detail(d.id), d);
+      qc.invalidateQueries({ queryKey: ['dataset-query'] });
     },
   });
 }
@@ -166,7 +170,7 @@ export function useDatasetQuery(
       const { data } = await api.post(`/dashboards/datasets/${datasetId}/query`, { params, filters, sql });
       return normalizeDatasetQueryResult(data);
     },
-    staleTime: 30_000,
+    staleTime: 0,
   });
 }
 
