@@ -1,0 +1,96 @@
+# ==============================================================================
+# CompassX: AWS EKS (Self-Contained In-Cluster Stack)
+# ==============================================================================
+# Deploys a self-contained CompassX stack inside an AWS EKS cluster.
+# Uses AWS EBS CSI driver (gp3) for persistent volumes.
+#
+# Deployment command:
+#   helm install compassx ./deployments/helm/compassx \
+#     --namespace compassx \
+#     --create-namespace \
+#     -f ./deployments/aws/values-incluster.yaml \
+#     --set ingress.hosts[0].host="compassx.yourcompany.com"
+# ==============================================================================
+
+global:
+  storageClass: "gp3" # AWS EBS CSI StorageClass
+
+backend:
+  replicaCount: 2
+  resources:
+    requests:
+      cpu: "500m"
+      memory: "1Gi"
+    limits:
+      cpu: "2000m"
+      memory: "4Gi"
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 6
+    targetCPUUtilizationPercentage: 80
+
+frontend:
+  replicaCount: 2
+  resources:
+    requests:
+      cpu: "100m"
+      memory: "128Mi"
+    limits:
+      cpu: "500m"
+      memory: "512Mi"
+
+enterpriseGateway:
+  replicaCount: 1
+  resources:
+    requests:
+      cpu: "250m"
+      memory: "512Mi"
+    limits:
+      cpu: "1000m"
+      memory: "2Gi"
+
+postgresql:
+  enabled: true
+  auth:
+    username: "postgres"
+    password: "ChangeMeInProdPostgresPassword123!"
+    database: "postgres"
+  persistence:
+    enabled: true
+    size: 50Gi
+
+redis:
+  enabled: true
+  persistence:
+    enabled: true
+    size: 10Gi
+
+minio:
+  enabled: true
+  auth:
+    rootUser: "minioadmin"
+    rootPassword: "ChangeMeInProdMinioPassword123!"
+  persistence:
+    enabled: true
+    size: 100Gi
+
+ingress:
+  enabled: true
+  className: "nginx" # Or "alb" with AWS Load Balancer Controller
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: "256m"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "300"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "300"
+  hosts:
+    - host: "compassx.yourcompany.com"
+      paths:
+        - path: /api
+          pathType: Prefix
+          service: backend
+          port: 8000
+        - path: /
+          pathType: Prefix
+          service: frontend
+          port: 80
+  tls: []

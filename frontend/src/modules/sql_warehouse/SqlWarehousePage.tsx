@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useParams, useNavigate, Link, useSearchParams, Navigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Database, Loader2, Play, Plus, Power, Square, TerminalSquare, Code2, Server, History, CheckCircle2, ChevronRight, Activity, Clock, Search, ServerCog, Folder, ChevronDown, Star, Sparkles, Download, Maximize2, BarChart2, Settings, MoreVertical, FileText, RefreshCw, XCircle, Zap, X, GitBranch, Edit2, Trash2, Check, Bookmark, BookOpen } from 'lucide-react';
+import { Database, Loader2, Play, Plus, Power, Square, TerminalSquare, Code2, Server, History, CheckCircle2, ChevronRight, Activity, Clock, Search, ServerCog, Folder, ChevronDown, Star, Sparkles, Download, Maximize2, BarChart2, Settings, MoreVertical, FileText, RefreshCw, XCircle, Zap, X, GitBranch, Edit2, Trash2, Check, Bookmark, BookOpen, List } from 'lucide-react';
 import Plot from 'react-plotly.js';
 import type { Data } from 'plotly.js';
 import api from '@/lib/api';

@@ -1,0 +1,30 @@
+{{- if .Values.prometheus.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "compassx.prometheusFullname" . }}-config
+  labels:
+    {{- include "compassx.labels" . | nindent 4 }}
+    app.kubernetes.io/component: prometheus
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: {{ .Values.prometheus.scrapeInterval | default "15s" }}
+
+    scrape_configs:
+      - job_name: prometheus
+        static_configs:
+          - targets: ["localhost:9090"]
+
+      - job_name: backend
+        metrics_path: /api/v1/monitoring/export
+        static_configs:
+          - targets: ["{{ include "compassx.backendFullname" . }}:8000"]
+
+      {{- if .Values.minio.enabled }}
+      - job_name: minio
+        metrics_path: /minio/v2/metrics/cluster
+        static_configs:
+          - targets: ["{{ include "compassx.minioFullname" . }}:9000"]
+      {{- end }}
+{{- end }}

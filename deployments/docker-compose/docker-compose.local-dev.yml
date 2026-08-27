@@ -19,12 +19,12 @@ include:
 services:
   jobs-runner-image:
     build:
-      context: ./backend
+      context: ../../backend
       dockerfile: Dockerfile.airflow-notebook
     image: compassx-airflow-notebook-runner:latest
 
   enterprise-gateway:
     build:
-      context: ./backend
+      context: ../../backend
       dockerfile: Dockerfile.eg
     image: compassx-enterprise-gateway:latest

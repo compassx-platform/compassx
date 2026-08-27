@@ -827,6 +827,22 @@ export default function AppShell() {
                     <LogOut size={15} />
                     <span style={{ flex: 1 }}>Log Out</span>
                   </button>
+
+                  <div
+                    style={{
+                      borderTop: '1px solid var(--color-border)',
+                      margin: '6px 0 0',
+                      padding: '8px 12px 2px',
+                      textAlign: 'center',
+                      fontSize: '0.73rem',
+                      fontWeight: 500,
+                      color: 'var(--color-text-muted)',
+                      letterSpacing: '0.02em',
+                      userSelect: 'none',
+                    }}
+                  >
+                    CompassX v{typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '0.3.0'}
+                  </div>
                 </div>
               )}
             </div>

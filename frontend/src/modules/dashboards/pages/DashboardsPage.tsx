@@ -175,7 +175,7 @@ export default function DashboardsPage() {
     try {
       const dashboard = await cloneMutation.mutateAsync(id);
       toast.success(`Cloned "${name}"`);
-      openDashboardInCatalog(dashboard as any);
+      openDashboard(dashboard as any);
     } catch {
       toast.error('Failed to clone dashboard');
     }
@@ -449,7 +449,7 @@ export default function DashboardsPage() {
         columns={columns}
         rows={filtered}
         rowKey={(dashboard) => dashboard.id}
-        onRowClick={(dashboard) => openDashboardInCatalog(dashboard)}
+        onRowClick={(dashboard) => openDashboard(dashboard)}
         emptyText="No dashboards yet."
         isLoading={isLoading}
       />

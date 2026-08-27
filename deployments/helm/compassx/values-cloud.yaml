@@ -1,0 +1,76 @@
+# Production Cloud values preset for CompassX Platform.
+# Configured for AWS EKS / Azure AKS / GCP GKE with external managed datastores.
+
+global:
+  storageClass: "gp3"  # or "managed-csi", "premium-rwo", etc.
+
+backend:
+  replicaCount: 2
+  resources:
+    limits:
+      cpu: "4000m"
+      memory: "8Gi"
+    requests:
+      cpu: "1000m"
+      memory: "2Gi"
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 8
+    targetCPUUtilizationPercentage: 75
+
+frontend:
+  replicaCount: 2
+
+enterpriseGateway:
+  replicaCount: 2
+
+# In-cluster stateful stores can be disabled when using cloud-managed DBs
+postgresql:
+  enabled: false
+
+externalPostgresql:
+  host: "compassx-db.c0123456789.us-east-1.rds.amazonaws.com"
+  port: 5432
+  username: "compassx_admin"
+  existingSecret: "compassx-rds-credentials"
+
+redis:
+  enabled: false
+
+externalRedis:
+  host: "compassx-cache.abc123.clustercfg.use1.cache.amazonaws.com"
+  port: 6379
+  url: "redis://compassx-cache.abc123.clustercfg.use1.cache.amazonaws.com:6379/0"
+
+minio:
+  enabled: false
+
+externalStorage:
+  backend: "s3"
+  bucket: "production-compassx-datalake"
+  region: "us-east-1"
+  existingSecret: "compassx-s3-credentials"
+
+ingress:
+  enabled: true
+  className: "alb"  # or "nginx", "azure-application-gateway"
+  annotations:
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}, {"HTTPS": 443}]'
+  hosts:
+    - host: app.compassx.io
+      paths:
+        - path: /api
+          pathType: Prefix
+          service: backend
+          port: 8000
+        - path: /
+          pathType: Prefix
+          service: frontend
+          port: 80
+  tls:
+    - secretName: compassx-prod-cert
+      hosts:
+        - app.compassx.io

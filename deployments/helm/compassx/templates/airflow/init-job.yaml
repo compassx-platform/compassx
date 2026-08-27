@@ -1,0 +1,55 @@
+{{- if .Values.airflow.enabled }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "compassx.airflowFullname" . }}-init
+  labels:
+    {{- include "compassx.labels" . | nindent 4 }}
+    app.kubernetes.io/component: airflow-init
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-delete-policy": before-hook-creation
+spec:
+  backoffLimit: 3
+  template:
+    metadata:
+      labels:
+        {{- include "compassx.labels" . | nindent 8 }}
+        app.kubernetes.io/component: airflow-init
+    spec:
+      restartPolicy: OnFailure
+      serviceAccountName: {{ include "compassx.airflowServiceAccountName" . }}
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: airflow-init
+          image: "{{ .Values.global.imageRegistry | default "" }}{{ if .Values.global.imageRegistry }}/{{ end }}{{ .Values.airflow.image.repository }}:{{ .Values.airflow.image.tag }}"
+          imagePullPolicy: {{ .Values.airflow.image.pullPolicy }}
+          command:
+            - /bin/bash
+            - -c
+            - |
+              echo "Initializing Airflow database..."
+              airflow db migrate || echo "Warning: Airflow db migration will retry on start"
+              airflow users create \
+                --username {{ .Values.airflow.adminUser.username }} \
+                --password {{ .Values.airflow.adminUser.password }} \
+                --firstname {{ .Values.airflow.adminUser.firstName }} \
+                --lastname {{ .Values.airflow.adminUser.lastName }} \
+                --role Admin \
+                --email {{ .Values.airflow.adminUser.email }} || true
+          env:
+            - name: AIRFLOW__CORE__EXECUTOR
+              value: "LocalExecutor"
+            - name: AIRFLOW__CORE__LOAD_EXAMPLES
+              value: "false"
+            - name: AIRFLOW__DATABASE__SQL_ALCHEMY_CONN
+              value: {{ printf "postgresql+psycopg2://%s:$(PG_PASSWORD)@%s:%v/airflow_meta?sslmode=require" (include "compassx.postgresUser" .) (include "compassx.postgresHost" .) (include "compassx.postgresPort" .) | quote }}
+            - name: PG_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "compassx.postgresSecretName" . }}
+                  key: {{ include "compassx.postgresSecretKey" . }}
+{{- end }}

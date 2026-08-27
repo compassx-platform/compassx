@@ -1,0 +1,133 @@
+# ==============================================================================
+# CompassX: GCP Production (GKE + Cloud SQL PostgreSQL + Memorystore + GCS)
+# ==============================================================================
+# Production deployment on Google Cloud Platform using managed cloud services:
+#   - Google Kubernetes Engine (GKE) for Compute / Frontend / Enterprise Gateway
+#   - Google Cloud SQL for PostgreSQL (with pgvector)
+#   - Google Cloud Memorystore for Redis
+#   - Google Cloud Storage (GCS via S3-compatible XML API or standard GCS)
+#
+# Deployment command:
+#   helm install compassx ./deployments/helm/compassx \
+#     --namespace compassx \
+#     --create-namespace \
+#     -f ./deployments/gcp/values-managed.yaml \
+#     --set externalPostgresql.host="10.x.x.x" \
+#     --set externalPostgresql.password="YOUR_CLOUD_SQL_PASSWORD" \
+#     --set externalRedis.host="10.x.x.x" \
+#     --set externalStorage.bucket="your-gcs-datalake-bucket" \
+#     --set externalStorage.accessKey="YOUR_GCS_HMAC_ACCESS_KEY" \
+#     --set externalStorage.secretKey="YOUR_GCS_HMAC_SECRET_KEY" \
+#     --set ingress.hosts[0].host="app.compassx.yourcompany.com"
+# ==============================================================================
+
+global:
+  storageClass: "standard-rwo"
+
+backend:
+  replicaCount: 2
+  env:
+    COMPASSX_PLATFORM_PROFILE: "kubernetes-cloud"
+    COMPASSX_ENV: "production"
+    STORAGE_BACKEND: "s3"
+    STORAGE_ENDPOINT: "https://storage.googleapis.com"
+    STORAGE_BUCKET: "your-gcs-datalake-bucket"
+    STORAGE_REGION: "auto"
+  resources:
+    requests:
+      cpu: "1000m"
+      memory: "2Gi"
+    limits:
+      cpu: "4000m"
+      memory: "8Gi"
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 8
+    targetCPUUtilizationPercentage: 75
+
+frontend:
+  replicaCount: 2
+  resources:
+    requests:
+      cpu: "100m"
+      memory: "128Mi"
+    limits:
+      cpu: "500m"
+      memory: "512Mi"
+
+enterpriseGateway:
+  replicaCount: 2
+  resources:
+    requests:
+      cpu: "500m"
+      memory: "1Gi"
+    limits:
+      cpu: "2000m"
+      memory: "4Gi"
+
+# ------------------------------------------------------------------------------
+# PostgreSQL: Disabled in-cluster; connected to Google Cloud SQL
+# ------------------------------------------------------------------------------
+postgresql:
+  enabled: false
+
+externalPostgresql:
+  host: "10.0.0.5" # Cloud SQL Private IP
+  port: 5432
+  username: "postgres"
+  password: "" # Set via --set externalPostgresql.password or existingSecret
+  existingSecret: ""
+  secretKeys:
+    password: "password"
+
+# ------------------------------------------------------------------------------
+# Redis: Disabled in-cluster; connected to Google Cloud Memorystore
+# ------------------------------------------------------------------------------
+redis:
+  enabled: false
+
+externalRedis:
+  host: "10.0.0.6" # Memorystore Private IP
+  port: 6379
+  url: "redis://10.0.0.6:6379/0"
+  existingSecret: ""
+
+# ------------------------------------------------------------------------------
+# Storage: Disabled in-cluster MinIO; connected to Google Cloud Storage (GCS)
+# ------------------------------------------------------------------------------
+minio:
+  enabled: false
+
+externalStorage:
+  backend: "s3" # GCS supports S3-compatible interoperability API
+  endpoint: "https://storage.googleapis.com"
+  bucket: "your-gcs-datalake-bucket"
+  accessKey: "" # HMAC Access Key from GCS Settings > Interoperability
+  secretKey: "" # HMAC Secret Key
+  region: "auto"
+  existingSecret: ""
+
+# ------------------------------------------------------------------------------
+# Ingress (GKE Ingress or Ingress NGINX)
+# ------------------------------------------------------------------------------
+ingress:
+  enabled: true
+  className: "gce" # Use "gce" for GKE Managed Ingress or "nginx" for Ingress NGINX
+  annotations:
+    kubernetes.io/ingress.class: "gce"
+  hosts:
+    - host: "app.compassx.yourcompany.com"
+      paths:
+        - path: /api/*
+          pathType: ImplementationSpecific
+          service: backend
+          port: 8000
+        - path: /*
+          pathType: ImplementationSpecific
+          service: frontend
+          port: 80
+  tls:
+    - secretName: compassx-managed-cert
+      hosts:
+        - app.compassx.yourcompany.com

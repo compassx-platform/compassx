@@ -1,0 +1,27 @@
+{{- if .Values.postgresql.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "compassx.postgresFullname" . }}-init
+  labels:
+    {{- include "compassx.labels" . | nindent 4 }}
+    app.kubernetes.io/component: postgresql
+data:
+  init.sql: |
+    -- CompassX databases (created once on first postgres initialization).
+    CREATE DATABASE compassx_account;
+    CREATE DATABASE compassx_system;
+    CREATE DATABASE asset_manager;
+    CREATE DATABASE airflow_meta;
+    CREATE DATABASE test;
+
+    \c compassx_account;
+    CREATE EXTENSION IF NOT EXISTS vector;
+    CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+    CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
+    \c compassx_system;
+    CREATE EXTENSION IF NOT EXISTS vector;
+    CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+    CREATE EXTENSION IF NOT EXISTS pgcrypto;
+{{- end }}

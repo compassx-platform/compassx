@@ -3,6 +3,7 @@ import react from "@vitejs/plugin-react";
 import { defineConfig, type Plugin } from "vite";
 import federation from '@originjs/vite-plugin-federation';
 import { nodePolyfills } from 'vite-plugin-node-polyfills';
+import pkg from "./package.json";
 
 /**
  * Patches the federation expose chunk post-build:
@@ -61,6 +62,9 @@ function patchExposeChunkReact(): Plugin {
 }
 
 export default defineConfig({
+  define: {
+    __APP_VERSION__: JSON.stringify(process.env.VITE_APP_VERSION || pkg.version || "0.3.0"),
+  },
   plugins: [
     nodePolyfills({ include: ['buffer', 'stream', 'util'] }),
     react(),

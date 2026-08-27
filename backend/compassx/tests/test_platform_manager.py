@@ -17,7 +17,7 @@ def make_profile(modes: dict[str, str], order: list[str], required: list[str]):
         },
         compute_driver="docker",
         compute_overrides={},
-        compose_file="docker/docker-compose.yml",
+        compose_file="deployments/docker-compose/docker-compose.yml",
         compose_project="compassx",
         docker_ensure_images=False,
         k8s_namespace="compassx-jobs",

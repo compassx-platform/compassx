@@ -955,7 +955,7 @@ export default function DataCatalog() {
         type: 'db' as const,
       }));
 
-    const combined = [...extList];
+    const combined: Array<{ id: string; name: string; type: 'external' | 'db' }> = [...extList];
     for (const dbConn of dbList) {
       if (!combined.some((item) => item.id === dbConn.id || item.name === dbConn.name)) {
         combined.push(dbConn);

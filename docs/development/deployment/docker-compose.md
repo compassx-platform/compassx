@@ -1,15 +1,51 @@
 # Docker Compose Deployment
 
-CompassX uses Docker Compose profiles to support different runtime environments: local development, testing, and full-stack local deployment.
+CompassX deployment manifests and configurations are located in `deployments/docker-compose/`.
+
+You can manage Docker Compose directly with Docker or through the unified `compassx` platform CLI.
+
+---
+
+## Running with the `compassx` CLI (Recommended)
+
+```bash
+# Start infrastructure in local-dev mode (native backend + frontend, Docker infra)
+./compassx up                     # Windows: .\compassx.cmd up
+
+# Start entire full stack in Docker containers
+./compassx up --profile docker    # Windows: .\compassx.cmd up --profile docker
+
+# Check platform status and diagnostics
+./compassx status
+./compassx health
+
+# Stop stack
+./compassx down
+```
+
+---
+
+## Running with Docker Compose Directly
+
+From the repository root:
+
+```bash
+# Start the full containerized stack
+docker compose -f deployments/docker-compose/docker-compose.yml up -d
+
+# Or navigate to the folder
+cd deployments/docker-compose
+docker compose up -d
+```
 
 ---
 
 ## Available Profiles
 
-| Profile | Command | Included Services |
+| Profile | CLI Command | Included Services |
 | :--- | :--- | :--- |
-| **`local-dev`** | `docker compose --profile local-dev up -d` | PostgreSQL, Redis, MinIO, Airflow, Enterprise Gateway, Prometheus. |
-| **`full`** | `docker compose --profile full up -d` | All infrastructure services + Backend and Frontend containers. |
+| **`local-dev`** | `./compassx up --profile local-dev` | Host-native Frontend & Backend + Docker PostgreSQL, Redis, MinIO, Airflow, Enterprise Gateway, Prometheus. |
+| **`docker`** | `./compassx up --profile docker` | All infrastructure + Backend and Frontend containers. |
 
 ---
 
@@ -17,6 +53,8 @@ CompassX uses Docker Compose profiles to support different runtime environments:
 
 | Service | Internal Port | Host Port | Protocol | Description |
 | :--- | :--- | :--- | :--- | :--- |
+| **Frontend UI** | `80` | `5173` | HTTP | Web UI |
+| **Backend API** | `8000` | `8000` | HTTP | FastAPI REST API & WebSockets |
 | **PostgreSQL** | `5432` | `5433` | TCP | Relational DB + pgvector |
 | **Redis** | `6379` | `6379` | TCP | In-memory cache & broker |
 | **MinIO API** | `9000` | `9000` | HTTP | S3 Storage API |
@@ -33,18 +71,18 @@ CompassX uses Docker Compose profiles to support different runtime environments:
 
 ```bash
 # View running containers
-docker compose ps
+docker compose -f deployments/docker-compose/docker-compose.yml ps
 
 # Tail logs for a specific service (e.g. postgres)
-docker compose logs -f postgres
+docker compose -f deployments/docker-compose/docker-compose.yml logs -f postgres
 ```
 
 ### Stopping Services & Cleaning Volumes
 
 ```bash
 # Stop running containers
-docker compose down
+docker compose -f deployments/docker-compose/docker-compose.yml down
 
 # Stop and wipe persistent volume data (clean state reset)
-docker compose down -v
+docker compose -f deployments/docker-compose/docker-compose.yml down -v
 ```
