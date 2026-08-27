@@ -213,6 +213,7 @@ export interface Widget {
 export interface FilterWidgetConfig {
   scope: FilterScope;
   filterType: FilterWidgetType;
+  placement?: 'bar' | 'canvas' | 'both';
   field?: string;
   datasetIds: string[];
   paramKeyword?: string;

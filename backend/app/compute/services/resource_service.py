@@ -267,7 +267,7 @@ class ComputeResourceService:
 
         job_id = resource.id
         pod_name = None
-        phase = "Stopped" if resource.desired_status == "stopped" else None
+        phase = "Stopped" if resource.desired_status == "stopped" else "Pending"
         started_at = None
         finished_at = None
         message = None
@@ -275,13 +275,14 @@ class ComputeResourceService:
         exists, replicas = self.manager.get_deployment_status(resource.deployment_name)
         if not exists:
             if resource.desired_status == "running":
-                message = self._mark_missing_runtime_stopped(resource)
+                phase = "Pending"
+                message = "Compute deployment is initializing or pending startup."
             else:
                 resource.pod_name = None
-            phase = "Stopped"
+                phase = "Stopped"
         elif replicas == 0:
             resource.pod_name = None
-            phase = "Stopped"
+            phase = "Stopped" if resource.desired_status == "stopped" else "Pending"
         else:
             try:
                 status = self.manager.get_job_status(
@@ -338,10 +339,10 @@ class ComputeResourceService:
             RuntimePhase.FAILED: "Failed",
             RuntimePhase.SUSPENDED: "Stopped",
             RuntimePhase.DELETED: "Stopped",
-            RuntimePhase.MISSING: "Stopped",
+            RuntimePhase.MISSING: "Pending" if resource.desired_status == "running" else "Stopped",
             RuntimePhase.UNKNOWN: "Unknown",
         }
-        phase = "Stopped"
+        phase = "Stopped" if resource.desired_status == "stopped" else "Pending"
         started_at = None
         finished_at = None
         message = None
@@ -352,11 +353,8 @@ class ComputeResourceService:
             started_at = info.started_at
             finished_at = info.finished_at
             message = info.message or None
-            if (
-                info.phase == RuntimePhase.MISSING
-                and (resource.desired_status != "stopped" or resource.pod_name)
-            ):
-                message = self._mark_missing_runtime_stopped(resource)
+            if info.phase == RuntimePhase.MISSING and resource.desired_status == "running":
+                message = "Compute runtime is initializing or pending startup."
         except DriverUnavailableError as exc:
             if resource.desired_status == "stopped":
                 phase = "Stopped"
@@ -364,9 +362,11 @@ class ComputeResourceService:
                 phase = "Unknown"
                 message = f"Compute driver unavailable: {exc}"
         except RuntimeNotFoundError:
-            phase = "Stopped"
-            if resource.desired_status != "stopped" or resource.pod_name:
-                message = self._mark_missing_runtime_stopped(resource)
+            if resource.desired_status == "running":
+                phase = "Pending"
+                message = "Compute runtime is initializing or pending startup."
+            else:
+                phase = "Stopped"
 
         # pod_name kept for API compatibility; platform layer never exposes it.
         return ComputeResourceStatus(
@@ -521,28 +521,60 @@ class ComputeResourceService:
         logger.info("Stopped deployment for resource: %s", resource_id)
 
     def reconcile_runtime_states(self) -> int:
-        """Reconcile running database records with actual infrastructure state."""
+        """Reconcile running database records with actual infrastructure state.
+
+        Any compute resource with desired_status == 'running' whose backing
+        pod/container is stopped, missing, or scaled to zero will be automatically
+        started/re-provisioned to match the desired state.
+        """
+        from compassx.models import RuntimePhase
+
         resources = self.db.query(ComputeResource).filter(
             ComputeResource.desired_status == "running"
         ).all()
         reconciled = 0
         for resource in resources:
             try:
+                should_start = False
                 if self._use_platform():
-                    status = self._platform_status(resource)
+                    try:
+                        self._normalize_platform_runtime_driver(resource.id)
+                        info = _run_async(self.runtime_manager.get_status(resource.id))
+                        if info.phase not in (
+                            RuntimePhase.RUNNING,
+                            RuntimePhase.PENDING,
+                            RuntimePhase.CREATING,
+                        ):
+                            should_start = True
+                    except Exception:
+                        should_start = True
                 else:
-                    status = self.get_resource_with_status(
+                    exists, replicas = self.manager.get_deployment_status(resource.deployment_name)
+                    if not exists or replicas == 0:
+                        should_start = True
+                    else:
+                        pod = self.manager.get_pod_for_resource(resource.id)
+                        if pod is None or (pod.status and pod.status.phase not in ("Running", "Pending")):
+                            should_start = True
+
+                if should_start:
+                    logger.info(
+                        "Compute startup reconciliation: auto-starting compute resource %s (%s)",
+                        resource.id,
+                        resource.name,
+                    )
+                    self.start_resource(
                         resource.id,
                         resource.user_id,
                         resource.workspace_id,
                     )
-                if status.desired_status == "stopped":
                     reconciled += 1
             except Exception:
                 self.db.rollback()
-                logger.exception("Failed to reconcile compute runtime %s", resource.id)
+                logger.exception("Failed to reconcile/auto-start compute runtime %s", resource.id)
+
         logger.info(
-            "Compute startup reconciliation checked %d running resource(s); marked %d stopped",
+            "Compute startup reconciliation checked %d running resource(s); auto-started %d",
             len(resources),
             reconciled,
         )

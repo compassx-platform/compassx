@@ -71,7 +71,9 @@ export default function DashboardCanvas() {
   const minWidgetH = activeDashboard?.settings?.minWidgetHeight ?? 1;
 
   const page = activeDashboard?.pages.find((p) => p.id === activePageId);
-  const widgets = (activeDashboard?.widgets ?? []).filter((w) => w.pageId === activePageId);
+  const widgets = (activeDashboard?.widgets ?? []).filter(
+    (w) => w.pageId === activePageId && (w.widgetType !== 'filter' || w.filterConfig?.placement !== 'bar')
+  );
 
   const layout = widgets.map((w) => ({
     i: w.id,

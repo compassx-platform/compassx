@@ -52,9 +52,9 @@ export const PlanTaskViewer: React.FC<PlanTaskViewerProps> = ({
     <div
       style={{
         width: '100%',
-        borderRadius: isDocked ? 0 : '12px',
+        borderRadius: isDocked ? 0 : '8px',
         border: isDocked ? 'none' : '1px solid var(--color-border, #e5e7eb)',
-        borderBottom: isDocked ? '1px solid var(--color-border, #e5e7eb)' : undefined,
+        borderBottom: '1px solid var(--color-border, #e5e7eb)',
         background: isDocked ? '#f9fafb' : 'var(--color-surface, #fcfcfc)',
         boxShadow: 'none',
         fontSize: '0.8rem',

@@ -9,6 +9,7 @@ import { Loader2 } from 'lucide-react';
 import { useDashboardStore } from '@/modules/dashboards/stores/dashboardStore';
 import { useDatasetQuery } from '@/modules/dashboards/hooks/useDashboard';
 import { aggregateValues } from '@/modules/dashboards/utils/dataTransforms';
+import { filterRows } from '@/modules/dashboards/utils/filterUtils';
 import type { AxisConfig, Widget, ChartConfig } from '@/types/dashboard';
 
 // Lazy-load Plotly to keep initial bundle lighter
@@ -620,7 +621,8 @@ export default function PlotlyWidget({ widget }: Props) {
 
     getPlotly().then((P) => {
       if (cancelled || !plotRef.current) return;
-      const transformedRows = applyDataTransforms(queryResult.rows, effectiveCfg);
+      const filtered = filterRows(queryResult.rows, activeDashboard?.widgets, filterState, effectiveCfg.datasetId);
+      const transformedRows = applyDataTransforms(filtered, effectiveCfg);
       const processedRows = applySorting(transformedRows, effectiveCfg);
       const rawTraces = buildTraces(processedRows, effectiveCfg);
       const traces = rawTraces.map((t) => ({ ...t, hoverinfo: 'none', hovertemplate: '' }));
@@ -629,7 +631,7 @@ export default function PlotlyWidget({ widget }: Props) {
         responsive: true,
         displaylogo: false,
         displayModeBar: false,
-        scrollZoom: true,
+        scrollZoom: false,
       }).then(() => {
         if (!cancelled && plotRef.current) {
           P.Plots.resize(plotRef.current);

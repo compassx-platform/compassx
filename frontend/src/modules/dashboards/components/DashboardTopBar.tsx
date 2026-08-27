@@ -193,6 +193,14 @@ export default function DashboardTopBar({ onOpenSettings, onAddChart, onAddFilte
               </div>
             )}
           </div>
+          <button
+            className="btn btn-secondary"
+            style={{ fontSize: '0.78rem', padding: '4px 12px' }}
+            onClick={onAddFilter}
+          >
+            <Filter size={13} style={{ marginRight: 4 }} />
+            Add filter
+          </button>
           {activeDashboard.isDraft && (
             <button
               className="btn btn-secondary"

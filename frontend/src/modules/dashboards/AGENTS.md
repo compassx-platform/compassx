@@ -51,12 +51,27 @@ This document outlines the core architectural principles, UI philosophy, and dat
 - All aggregations are computed dynamically across dataset rows via `frontend/src/modules/dashboards/utils/dataTransforms.ts` (`aggregateValues`).
 - Aggregation functions (`SUM`, `AVG`, `COUNT`, `COUNT DISTINCT`, `MIN`, `MAX`, `MEDIAN`, `FIRST`, `LAST`, `VAR`, `STD`, `PERCENTILE`) must handle both numeric fields and non-numeric string/ID fields without failing.
 
+## 7. Dashboard Filter Standards
+- **Page-Level Filter Bar**: Located directly below the `PageTabBar`. Renders all page-level filters in a single horizontal row.
+- **Canvas Filter Widgets**: Filters can also be placed on the canvas grid as draggable/resizable widgets.
+- **Filter Configuration Section (`FilterConfigSection.tsx`)**:
+  - Filter Types: `Single Value`, `Multi Select`, `Date Picker`, `Date Range`, `Text Search` using compact segmented controls.
+  - Placement: `Top Bar Only`, `Canvas Widget Only`, `Top Bar & Canvas`.
+  - Column / Field Selection: Follows minimalist UI (unselected = clean `+` button; selected = compact `FieldPill` with popover).
+  - Default Value: Dynamically tailored to the selected filter type with distinct values from `useFieldValues`.
+- **Live Filtering**: All widgets filter their query rows dynamically via `filterRows` in `filterUtils.ts` without extra backend roundtrips.
+
 ---
 
-## 7. Real-Time Query Execution & Cache Invalidation
+## 8. Real-Time Query Execution & Cache Invalidation
 - **SQL Dependency in Query Key**: All widget components must pass `dataset?.sql` to `useDatasetQuery(datasetId, params, filters, enabled, dataset?.sql)` so any SQL change in the dataset immediately updates the React Query key and runs the updated query.
 - **Zero Stale Time**: `staleTime` is set to `0` in `useDatasetQuery` to prevent stale memory cache when switching tabs or editing.
 - **Save Invalidation**: Saving, editing, or deleting datasets in `DataPanel.tsx` or `useSaveDashboard` must invalidate `['dataset-query']` and `['dataset-schema']` caches.
+
+---
+
+## 9. Chart Interactions & Scrolling
+- **Disable Scroll-to-Zoom**: Plotly charts must always have `scrollZoom: false` configured so user mouse-scrolling scrolls the dashboard page naturally instead of inadvertently zooming charts when the cursor is hovering over them. Range/box selection zoom remains enabled.
 
 ---
 

@@ -14,6 +14,7 @@ import DashboardSidePanel from './DashboardSidePanel';
 import SectionRow from './config/common/SectionRow';
 import Select from './config/common/Select';
 import HtmlConfigSection from './config/sections/HtmlConfigSection';
+import FilterConfigSection from './config/sections/FilterConfigSection';
 import { getVisualizationConfigComponent } from './config/vizConfigRegistry';
 
 const CHART_TYPES: { type: ChartType; label: string }[] = [
@@ -94,6 +95,18 @@ export default function ChartConfigPanel({ onClose }: Props) {
         <HtmlConfigSection
           widget={widget}
           datasetOptions={datasetOptions}
+          updateWidget={updateWidget}
+          onClose={onClose}
+        />
+      </DashboardSidePanel>
+    );
+  }
+
+  if (widget.widgetType === 'filter') {
+    return (
+      <DashboardSidePanel>
+        <FilterConfigSection
+          widget={widget}
           updateWidget={updateWidget}
           onClose={onClose}
         />

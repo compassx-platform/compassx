@@ -301,20 +301,27 @@ export default function DashboardEditorPage({ dashboardId: dashboardIdProp, embe
   function handleAddFilter() {
     if (!activePageId || !activeDashboard) return;
     const id = randomUUID();
+    const defaultDataset = activeDashboard.datasets[0];
+    const defaultField = defaultDataset?.schema[0]?.name;
     const widget: Widget = {
       id,
       pageId: activePageId,
       widgetType: 'filter',
       title: 'Filter',
-      gridItem: { i: id, x: 0, y: 0, w: 3, h: 3, minW: 2, minH: 2 },
+      gridItem: { i: id, x: 0, y: 0, w: 3, h: 2, minW: 2, minH: 1 },
       filterConfig: {
         scope: 'page',
         filterType: 'single_value',
-        datasetIds: activeDashboard.datasets[0] ? [activeDashboard.datasets[0].id] : [],
+        placement: 'both',
+        field: defaultField,
+        datasetIds: defaultDataset ? [defaultDataset.id] : [],
         allowAll: true,
       },
     };
     addWidget(widget);
+    useDashboardStore.getState().setSelectedWidget(id);
+    setActiveTab('page');
+    toast.info('Filter added');
   }
 
   function handleAddHtmlWidget() {

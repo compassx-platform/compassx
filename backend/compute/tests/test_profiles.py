@@ -68,7 +68,7 @@ class TestGetAvailableProfiles:
     def test_returns_all_four_profiles(self):
         profiles = get_available_profiles("local")
         ids = {p.id for p in profiles}
-        assert ids == {"local", "cloud-s", "cloud-l", "gpu"}
+        assert ids == {"local", "cloud-xs", "cloud-s", "cloud-l", "gpu"}
 
     def test_unknown_profile_raises(self):
         with pytest.raises(ProfileNotAvailableError):

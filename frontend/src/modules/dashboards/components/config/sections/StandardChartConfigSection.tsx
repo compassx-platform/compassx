@@ -20,6 +20,7 @@ export default function StandardChartConfigSection({
 }: VisualizationConfigProps) {
   const [openAxisSettings, setOpenAxisSettings] = useState<'xAxis' | 'yAxis' | 'y2Axis' | null>(null);
   const [openSeriesPopover, setOpenSeriesPopover] = useState<string | null>(null);
+  const [showXFieldSelect, setShowXFieldSelect] = useState(false);
   const [showYFieldSelect, setShowYFieldSelect] = useState(false);
   const [showY2FieldSelect, setShowY2FieldSelect] = useState(false);
   const [showTooltipSelect, setShowTooltipSelect] = useState(false);

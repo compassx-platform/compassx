@@ -7,6 +7,7 @@
 import { useEffect, useMemo, useRef } from 'react';
 import { useDashboardStore } from '@/modules/dashboards/stores/dashboardStore';
 import { useDatasetQuery } from '@/modules/dashboards/hooks/useDashboard';
+import { filterRows } from '@/modules/dashboards/utils/filterUtils';
 import type { Widget } from '@/types/dashboard';
 
 interface Props {
@@ -140,7 +141,10 @@ export default function HtmlWidget({ widget }: Props) {
 
   const rawHtml = normalizeHtml(widget.content);
   const columns = queryResult?.columns ?? [];
-  const rows = queryResult?.rows ?? [];
+  const rows = useMemo(() => {
+    const rawRows = queryResult?.rows ?? [];
+    return filterRows(rawRows, activeDashboard?.widgets, filterState, cfg?.datasetId);
+  }, [queryResult?.rows, activeDashboard?.widgets, filterState, cfg?.datasetId]);
   const datasetName = dataset?.name;
 
   const html = useMemo(() => {

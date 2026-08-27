@@ -48,8 +48,14 @@ _STATUS_TO_PHASE = {
 class DockerDriver(ResourceDriver):
     name = "docker"
 
-    def __init__(self, network: str | None = None, client=None) -> None:
-        """network: docker network to attach runtimes to (e.g. compassx_default)."""
+    def __init__(
+        self,
+        network: str | None = None,
+        project_name: str | None = None,
+        client=None,
+    ) -> None:
+        """network: docker network to attach runtimes to (e.g. compassx_default).
+        project_name: docker compose project name for grouping in Docker Desktop."""
         try:
             import docker  # noqa: PLC0415 - optional dependency
             from docker.errors import DockerException
@@ -68,6 +74,7 @@ class DockerDriver(ResourceDriver):
                     f"Docker daemon not reachable: {exc}"
                 ) from exc
         self._network = network
+        self._project_name = project_name
 
     # ── helpers ──────────────────────────────────────────────────────────
 
@@ -143,6 +150,8 @@ class DockerDriver(ResourceDriver):
             RUNTIME_TYPE_LABEL: spec.runtime_type,
             MANAGED_BY_LABEL: MANAGED_BY_VALUE,
         }
+        if self._project_name:
+            labels["com.docker.compose.project"] = self._project_name
         environment = dict(spec.env)
         ports = {
             f"{p.container_port}/{p.protocol.lower()}": p.host_port

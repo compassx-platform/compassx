@@ -53,7 +53,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { getAuthKey } from "@/lib/auth";
 import api from "@/lib/api";
 import { PlanTaskViewer } from "@/modules/agents/components/PlanTaskViewer";
-import { AssetChip, parseAssetTags } from "@/modules/agents/components/AssetChip";
+import { AssetChip, parseAssetTags, transformAssetTagsToMarkdown, AssetObjectType } from "@/modules/agents/components/AssetChip";
 import { DiffSummaryCard, ChangeRecord } from "@/modules/agents/components/DiffSummaryCard";
 import { DiffSheet } from "@/modules/agents/components/DiffSheet";
 import { SessionChangesDock } from "@/modules/agents/components/SessionChangesDock";
@@ -61,6 +61,42 @@ import { TurnEditBadge, TurnEditInfo } from "@/modules/agents/components/TurnEdi
 import { AgentCustomizationsView } from "@/modules/agents/components/AgentCustomizationsView";
 import { SessionLlmLogsView } from "@/modules/agents/components/SessionLlmLogsView";
 import { Paperclip, X as XIcon } from "lucide-react";
+
+// ── Markdown custom components for inline asset chips ─────────────────────────
+
+const markdownComponents = {
+  a: ({ href, children, ...props }: any) => {
+    if (href && (href.startsWith("asset://") || href.startsWith("asset:"))) {
+      try {
+        const raw = href.replace(/^asset:\/\/?/, "");
+        const [encodedFullName, search] = raw.split("?");
+        const fullName = decodeURIComponent(encodedFullName);
+        const params = new URLSearchParams(search || "");
+        const objectType = (params.get("type") || "unknown") as AssetObjectType;
+        const displayName =
+          typeof children === "string"
+            ? children
+            : Array.isArray(children) && typeof children[0] === "string"
+            ? children[0]
+            : fullName.split(".").pop() || fullName;
+        return (
+          <AssetChip
+            fullName={fullName}
+            objectType={objectType}
+            displayName={displayName}
+          />
+        );
+      } catch {
+        return <a href={href} {...props}>{children}</a>;
+      }
+    }
+    return (
+      <a href={href} target="_blank" rel="noopener noreferrer" {...props}>
+        {children}
+      </a>
+    );
+  },
+};
 
 // ── Vega-Lite chart renderer ──────────────────────────────────────────────────
 
@@ -189,17 +225,19 @@ function ToolCard({
     return <HandoffCard toolResult={toolResult} />;
   }
 
-  const args = toolResult?.args as Record<string, unknown> | undefined;
+  const args = (toolResult?.args ?? (toolResult as any)?.arguments) as Record<string, unknown> | undefined;
   const ok = toolResult?.ok !== false;
+  const error = toolResult?.error;
+  const result = toolResult && "result" in toolResult ? toolResult.result : (args !== undefined ? undefined : toolResult);
   const [open, setOpen] = useState(false);
 
-  // Format arguments summary (e.g. query/file/asset)
+  // Format arguments summary (e.g. query/file/asset/step_id)
   const argSummary = args
-    ? (args.query ?? args.filename ?? args.path ?? args.name ?? args.asset_id ?? args.prompt ?? "")
+    ? (args.query ?? args.filename ?? args.path ?? args.name ?? args.asset_id ?? args.prompt ?? args.step_id ?? args.command ?? "")
     : "";
 
   return (
-    <div style={{ margin: "3px 0 3px 0", color: "#6b7280", fontSize: "0.82rem" }}>
+    <div style={{ margin: "3px 0 3px 0", color: "#6b7280", fontSize: "0.82rem", minWidth: 0, maxWidth: "100%" }}>
       <div
         style={{
           display: "inline-flex",
@@ -207,43 +245,93 @@ function ToolCard({
           gap: 6,
           cursor: "pointer",
           userSelect: "none",
+          maxWidth: "100%",
         }}
         onClick={() => setOpen((o) => !o)}
       >
-        <span style={{ display: "inline-flex", alignItems: "center" }}>
+        <span style={{ display: "inline-flex", alignItems: "center", flexShrink: 0 }}>
           {open ? <ChevronDown size={12} color="#6b7280" /> : <ChevronRight size={12} color="#6b7280" />}
         </span>
-        <span>
+        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
           {toolName} {argSummary ? <span style={{ opacity: 0.85 }}>({String(argSummary)})</span> : null}
         </span>
       </div>
       {open && (
-        <div style={{ marginTop: 6, paddingLeft: 18, fontSize: "0.75rem", fontFamily: "monospace", color: "#4b5563" }}>
-          <div style={{ borderTop: "1px solid #e5e7eb", paddingTop: 6, marginTop: 4 }}>
-            {args && Object.keys(args).length > 0 && (
-              <div style={{ marginBottom: 6 }}>
+        <div style={{ marginTop: 6, paddingLeft: 18, fontSize: "0.75rem", fontFamily: "monospace", color: "#4b5563", minWidth: 0, maxWidth: "100%" }}>
+          <div style={{ borderTop: "1px solid #e5e7eb", paddingTop: 6, marginTop: 4, minWidth: 0, maxWidth: "100%" }}>
+            {args && Object.keys(args).length > 0 ? (
+              <div style={{ marginBottom: 6, minWidth: 0, maxWidth: "100%" }}>
                 <div style={{ fontWeight: 600, fontSize: "0.7rem", color: "#9ca3af", textTransform: "uppercase", marginBottom: 2 }}>Input</div>
-                <pre style={{ margin: 0, overflowX: "auto", background: "rgba(0,0,0,0.03)", padding: "4px 8px", borderRadius: 4 }}>
+                <pre
+                  style={{
+                    margin: 0,
+                    maxHeight: 320,
+                    width: "100%",
+                    maxWidth: "100%",
+                    boxSizing: "border-box",
+                    overflowY: "auto",
+                    overflowX: "auto",
+                    background: "rgba(0,0,0,0.03)",
+                    padding: "6px 8px",
+                    borderRadius: 4,
+                    scrollbarWidth: "thin",
+                    whiteSpace: "pre",
+                  }}
+                >
                   {JSON.stringify(args, null, 2)}
                 </pre>
               </div>
-            )}
-            {toolResult?.result != null && (
-              <div style={{ marginTop: args && Object.keys(args).length > 0 ? 6 : 0 }}>
+            ) : null}
+            {result != null ? (
+              <div style={{ marginTop: args && Object.keys(args).length > 0 ? 6 : 0, minWidth: 0, maxWidth: "100%" }}>
                 <div style={{ borderTop: args && Object.keys(args).length > 0 ? "1px dashed #e5e7eb" : "none", paddingTop: args && Object.keys(args).length > 0 ? 6 : 0, marginBottom: 2, fontWeight: 600, fontSize: "0.7rem", color: "#9ca3af", textTransform: "uppercase" }}>Result</div>
-                <pre style={{ margin: 0, overflowX: "auto", background: "rgba(0,0,0,0.03)", padding: "4px 8px", borderRadius: 4 }}>
-                  {JSON.stringify(toolResult.result, null, 2)}
-                </pre>
-              </div>
-            )}
-            {toolResult?.error ? (
-              <div style={{ marginTop: 6 }}>
-                <div style={{ fontWeight: 600, fontSize: "0.7rem", color: "#ef4444", textTransform: "uppercase", marginBottom: 2 }}>Error</div>
-                <pre style={{ margin: 0, overflowX: "auto", background: "rgba(239,68,68,0.08)", color: "#dc2626", padding: "4px 8px", borderRadius: 4 }}>
-                  {String(toolResult.error)}
+                <pre
+                  style={{
+                    margin: 0,
+                    maxHeight: 480,
+                    width: "100%",
+                    maxWidth: "100%",
+                    boxSizing: "border-box",
+                    overflowY: "auto",
+                    overflowX: "auto",
+                    background: "rgba(0,0,0,0.03)",
+                    padding: "6px 8px",
+                    borderRadius: 4,
+                    scrollbarWidth: "thin",
+                    whiteSpace: "pre",
+                  }}
+                >
+                  {typeof result === "string" ? result : JSON.stringify(result, null, 2)}
                 </pre>
               </div>
             ) : null}
+            {error ? (
+              <div style={{ marginTop: 6, minWidth: 0, maxWidth: "100%" }}>
+                <div style={{ fontWeight: 600, fontSize: "0.7rem", color: "#ef4444", textTransform: "uppercase", marginBottom: 2 }}>Error</div>
+                <pre
+                  style={{
+                    margin: 0,
+                    maxHeight: 320,
+                    width: "100%",
+                    maxWidth: "100%",
+                    boxSizing: "border-box",
+                    overflowY: "auto",
+                    overflowX: "auto",
+                    background: "rgba(239,68,68,0.08)",
+                    color: "#dc2626",
+                    padding: "6px 8px",
+                    borderRadius: 4,
+                    scrollbarWidth: "thin",
+                    whiteSpace: "pre",
+                  }}
+                >
+                  {String(error)}
+                </pre>
+              </div>
+            ) : null}
+            {!args && result == null && !error && (
+              <div style={{ fontStyle: "italic", opacity: 0.6, padding: "2px 0" }}>Executing tool...</div>
+            )}
           </div>
         </div>
       )}
@@ -303,6 +391,18 @@ function parseThoughtContent(rawContent: string | null): ParsedContent {
   return { thought: null, response: text };
 }
 
+// ── Thinking Wave Animation Component ────────────────────────────────────────
+
+export function ThinkingWaveDots() {
+  return (
+    <span className="thinking-wave-dots" aria-label="Thinking in progress">
+      <span className="thinking-dot" />
+      <span className="thinking-dot" />
+      <span className="thinking-dot" />
+    </span>
+  );
+}
+
 function ThoughtAccordion({ thought, isStreaming = false }: { thought: string; isStreaming?: boolean }) {
   const [open, setOpen] = useState(false);
 
@@ -312,7 +412,13 @@ function ThoughtAccordion({ thought, isStreaming = false }: { thought: string; i
     .map((item) => item.trim().replace(/^[-*•]\s*/, ""))
     .filter((item) => item.length > 0);
 
-  const headerText = isStreaming ? "Thinking..." : "Thinking";
+  const headerContent = isStreaming ? (
+    <span style={{ display: "inline-flex", alignItems: "center" }}>
+      Thinking<ThinkingWaveDots />
+    </span>
+  ) : (
+    "Thinking"
+  );
 
   return (
     <div
@@ -342,7 +448,7 @@ function ThoughtAccordion({ thought, isStreaming = false }: { thought: string; i
         <span style={{ display: "inline-flex", alignItems: "center" }}>
           {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
         </span>
-        <span>{headerText}</span>
+        <span>{headerContent}</span>
       </button>
 
       {open && (
@@ -386,7 +492,13 @@ function ConsolidatedThoughtBlock({
 }) {
   const [open, setOpen] = useState(false);
 
-  const headerText = isStreaming ? "Thinking..." : "Thinking";
+  const headerContent = isStreaming ? (
+    <span style={{ display: "inline-flex", alignItems: "center" }}>
+      Thinking<ThinkingWaveDots />
+    </span>
+  ) : (
+    "Thinking"
+  );
 
   return (
     <div style={{ margin: "0 0 12px 0", fontSize: "0.85rem", position: "relative" }}>
@@ -421,7 +533,7 @@ function ConsolidatedThoughtBlock({
         >
           {open ? <ChevronDown size={14} color="#6b7280" /> : <ChevronRight size={14} color="#6b7280" />}
         </span>
-        <span>{headerText}</span>
+        <span>{headerContent}</span>
       </button>
 
       {open && (
@@ -448,11 +560,11 @@ function ConsolidatedThoughtBlock({
             }}
           />
 
-          <div style={{ display: "flex", flexDirection: "column", gap: 10, position: "relative", zIndex: 1 }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 10, position: "relative", zIndex: 1, minWidth: 0, maxWidth: "100%" }}>
             {steps.map((step, idx) => {
               if (step.type === "thought") {
                 return (
-                  <div key={`step-${idx}`} style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
+                  <div key={`step-${idx}`} style={{ display: "flex", alignItems: "flex-start", gap: 10, minWidth: 0, maxWidth: "100%" }}>
                     <span
                       style={{
                         width: 6,
@@ -464,14 +576,14 @@ function ConsolidatedThoughtBlock({
                         flexShrink: 0,
                       }}
                     />
-                    <div style={{ flex: 1 }}>
+                    <div style={{ flex: 1, minWidth: 0, maxWidth: "100%", overflow: "hidden" }}>
                       <ReactMarkdown remarkPlugins={[remarkGfm]}>{step.text}</ReactMarkdown>
                     </div>
                   </div>
                 );
               } else {
                 return (
-                  <div key={`step-${idx}`} style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
+                  <div key={`step-${idx}`} style={{ display: "flex", alignItems: "flex-start", gap: 10, minWidth: 0, maxWidth: "100%" }}>
                     <span
                       style={{
                         width: 6,
@@ -483,7 +595,7 @@ function ConsolidatedThoughtBlock({
                         flexShrink: 0,
                       }}
                     />
-                    <div style={{ flex: 1 }}>
+                    <div style={{ flex: 1, minWidth: 0, maxWidth: "100%" }}>
                       <ToolCard toolName={step.name} toolResult={step.result} />
                     </div>
                   </div>
@@ -491,7 +603,7 @@ function ConsolidatedThoughtBlock({
               }
             })}
             {activeTool && (
-              <div key="active-tool" style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
+              <div key="active-tool" style={{ display: "flex", alignItems: "flex-start", gap: 10, minWidth: 0, maxWidth: "100%" }}>
                 <span
                   style={{
                     width: 6,
@@ -503,7 +615,7 @@ function ConsolidatedThoughtBlock({
                     flexShrink: 0,
                   }}
                 />
-                <div style={{ flex: 1 }}>
+                <div style={{ flex: 1, minWidth: 0, maxWidth: "100%" }}>
                   <ToolCard toolName={activeTool} toolResult={{ args: activeToolArgs }} />
                 </div>
               </div>
@@ -689,17 +801,18 @@ function MessageBubble({
                           style={{
                             display: "inline-flex",
                             alignItems: "center",
-                            gap: 4,
+                            gap: 5,
                             padding: "2px 8px",
-                            borderRadius: 6,
-                            background: "rgba(99,102,241,0.15)",
-                            border: "1px solid rgba(99,102,241,0.3)",
+                            borderRadius: 4,
+                            background: "#f1f5f9",
+                            border: "1px solid #e2e8f0",
                             fontSize: "0.75rem",
-                            color: "#4f46e5",
-                            fontWeight: 600,
+                            color: "#475569",
+                            fontWeight: 500,
                           }}
                         >
-                          📎 {filename}
+                          <Paperclip size={11} style={{ color: "#64748b", flexShrink: 0 }} />
+                          <span>{filename}</span>
                         </span>
                       ))}
                     </div>
@@ -714,8 +827,13 @@ function MessageBubble({
               {vegaSpec ? (
                 <ChartBlock spec={vegaSpec} />
               ) : response ? (
-                <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>
-                  {response}
+                <ReactMarkdown
+                  remarkPlugins={[remarkGfm]}
+                  rehypePlugins={[rehypeHighlight]}
+                  components={markdownComponents}
+                  urlTransform={(url) => url}
+                >
+                  {transformAssetTagsToMarkdown(response)}
                 </ReactMarkdown>
               ) : !thought ? (
                 <span style={{ opacity: 0.6, fontStyle: "italic" }}>*(No response content)*</span>
@@ -784,7 +902,14 @@ function StreamingMessage({
           {thought && <ThoughtAccordion thought={thought} isStreaming={true} />}
 
           {response && (
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>{response}</ReactMarkdown>
+            <ReactMarkdown
+              remarkPlugins={[remarkGfm]}
+              rehypePlugins={[rehypeHighlight]}
+              components={markdownComponents}
+              urlTransform={(url) => url}
+            >
+              {transformAssetTagsToMarkdown(response)}
+            </ReactMarkdown>
           )}
 
           {activeTool ? (
@@ -810,14 +935,24 @@ function StreamingMessage({
                 )}
               </div>
               {argsOpen && activeToolArgs && (
-                <pre style={{ margin: "6px 0 0", fontSize: "0.72rem", overflowX: "auto", color: "var(--color-text-muted)" }}>
+                <pre
+                  style={{
+                    margin: "6px 0 0",
+                    maxHeight: 180,
+                    overflowY: "auto",
+                    overflowX: "auto",
+                    fontSize: "0.72rem",
+                    color: "var(--color-text-muted)",
+                    scrollbarWidth: "thin",
+                  }}
+                >
                   {JSON.stringify(activeToolArgs, null, 2)}
                 </pre>
               )}
             </div>
           ) : !text ? (
-            <span style={{ display: "inline-flex", gap: 4, color: "var(--color-text-muted)" }}>
-              <Loader2 size={12} className="spin" /> Thinking…
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 2, color: "var(--color-text-muted)" }}>
+              Thinking<ThinkingWaveDots />
             </span>
           ) : null}
         </div>
@@ -1085,6 +1220,7 @@ export default function AgentChatPage({ initialView }: AgentChatPageProps = {}) 
   const {
     streamingText,
     isStreaming,
+    streamingSessionId,
     activeToolName,
     activeToolArgs,
     streamingSteps,
@@ -1099,9 +1235,11 @@ export default function AgentChatPage({ initialView }: AgentChatPageProps = {}) 
     resetStream,
   } = useChatStore();
 
+  const isCurrentSessionStreaming = isStreaming && (streamingSessionId == null || streamingSessionId === activeSessionId);
+
   const [input, setInput] = useState("");
   const [selectedLlmConnectionId, setSelectedLlmConnectionId] = useState<number | null>(null);
-  const [optimisticUserMsg, setOptimisticUserMsg] = useState<string | null>(null);
+  const [optimisticUserMsg, setOptimisticUserMsg] = useState<{ sessionId: number; content: string } | null>(null);
   const [isCreatingSession, setIsCreatingSession] = useState(false);
   // Sidebar state (resizable)
   const [sidebarWidth, setSidebarWidth] = useState(() => {
@@ -1186,6 +1324,95 @@ export default function AgentChatPage({ initialView }: AgentChatPageProps = {}) 
   const [attachedFiles, setAttachedFiles] = useState<File[]>([]);
   const [uploadedDocIds, setUploadedDocIds] = useState<number[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleUploadFiles = useCallback(async (incomingFiles: File[]) => {
+    if (!incomingFiles.length || !agentId || !activeSessionId) return;
+
+    // Deduplicate incoming files by name and size against current attached files
+    const currentFiles = attachedFilesRef.current;
+    const existingKeys = new Set(currentFiles.map(f => `${f.name}_${f.size}`));
+    const filesToUpload: File[] = [];
+
+    for (const f of incomingFiles) {
+      const key = `${f.name}_${f.size}`;
+      if (!existingKeys.has(key)) {
+        existingKeys.add(key);
+        filesToUpload.push(f);
+      }
+    }
+
+    if (filesToUpload.length === 0) return;
+
+    // Update state purely and immutably
+    setAttachedFiles(prev => {
+      const keys = new Set(prev.map(f => `${f.name}_${f.size}`));
+      const toAdd = filesToUpload.filter(f => !keys.has(`${f.name}_${f.size}`));
+      return toAdd.length > 0 ? [...prev, ...toAdd] : prev;
+    });
+
+    const formData = new FormData();
+    filesToUpload.forEach(f => formData.append("files", f));
+    const authkey = (window as any).__authkey__ ?? "";
+    try {
+      const resp = await fetch(
+        `/api/v1/agents/${agentId}/sessions/${activeSessionId}/documents`,
+        { method: "POST", body: formData, headers: authkey ? { authkey, Authorization: `Bearer ${authkey}` } : {} }
+      );
+      if (resp.ok) {
+        const data = await resp.json();
+        const ids = (data.uploaded ?? []).filter((u: any) => u.ok).map((u: any) => u.doc_id as number);
+        setUploadedDocIds(prev => [...prev, ...ids]);
+      }
+    } catch (err) {
+      console.error("Failed to upload attached files:", err);
+    }
+  }, [agentId, activeSessionId]);
+
+  const handlePaste = useCallback((e: React.ClipboardEvent) => {
+    const clipboardData = e.clipboardData;
+    if (!clipboardData) return;
+
+    const files: File[] = [];
+    const seen = new Set<string>();
+
+    // Priority 1: clipboardData.files (files copied in Finder / Explorer or dragged/pasted)
+    if (clipboardData.files && clipboardData.files.length > 0) {
+      for (let i = 0; i < clipboardData.files.length; i++) {
+        const f = clipboardData.files[i];
+        if (f && !seen.has(`${f.name}_${f.size}`)) {
+          seen.add(`${f.name}_${f.size}`);
+          files.push(f);
+        }
+      }
+    }
+
+    // Priority 2: clipboardData.items (clipboard screenshots, bitmap items on Mac/Windows)
+    if (files.length === 0 && clipboardData.items && clipboardData.items.length > 0) {
+      for (let i = 0; i < clipboardData.items.length; i++) {
+        const item = clipboardData.items[i];
+        if (item && item.kind === "file") {
+          const f = item.getAsFile();
+          if (f) {
+            let processed = f;
+            if (!f.name || f.name === "image.png") {
+              const ext = f.type.split("/")[1] || "png";
+              processed = new File([f], `screenshot_${Date.now()}.${ext}`, { type: f.type });
+            }
+            if (!seen.has(`${processed.name}_${processed.size}`)) {
+              seen.add(`${processed.name}_${processed.size}`);
+              files.push(processed);
+            }
+          }
+        }
+      }
+    }
+
+    if (files.length > 0) {
+      e.preventDefault();
+      e.stopPropagation();
+      handleUploadFiles(files);
+    }
+  }, [handleUploadFiles]);
   // Diff sheet state (Part G)
   const [diffSheetRecord, setDiffSheetRecord] = useState<ChangeRecord | null>(null);
   // Known asset names for this session (for D14 deny-by-default resolution)
@@ -1198,6 +1425,40 @@ export default function AgentChatPage({ initialView }: AgentChatPageProps = {}) 
   const isUserScrolledUpRef = useRef(false);
   const initialScrollDoneRef = useRef<number | null>(null);
   const [showScrollBottomBtn, setShowScrollBottomBtn] = useState(false);
+
+  // ── Per-Session Composer Draft Store ─────────────────────────────────────────
+  const sessionDraftsRef = useRef<Map<number, { text: string; attachedFiles: File[] }>>(new Map());
+  const prevSessionIdRef = useRef<number | null>(activeSessionId);
+  const inputRef = useRef(input);
+  inputRef.current = input;
+  const attachedFilesRef = useRef(attachedFiles);
+  attachedFilesRef.current = attachedFiles;
+
+  useEffect(() => {
+    const prevId = prevSessionIdRef.current;
+    if (prevId === activeSessionId) return;
+
+    // Save current draft for previous session before switching
+    if (prevId != null) {
+      sessionDraftsRef.current.set(prevId, {
+        text: inputRef.current,
+        attachedFiles: attachedFilesRef.current,
+      });
+    }
+
+    // Load draft for newly activated session
+    const nextDraft = activeSessionId != null
+      ? sessionDraftsRef.current.get(activeSessionId) ?? { text: "", attachedFiles: [] }
+      : { text: "", attachedFiles: [] };
+
+    setInput(nextDraft.text);
+    setAttachedFiles(nextDraft.attachedFiles);
+    prevSessionIdRef.current = activeSessionId;
+
+    if (textareaRef.current) {
+      textareaRef.current.style.height = "auto";
+    }
+  }, [activeSessionId]);
 
   const scrollToLatestUserMessage = useCallback((behavior: ScrollBehavior = "smooth") => {
     const container = messagesContainerRef.current;
@@ -1245,7 +1506,7 @@ export default function AgentChatPage({ initialView }: AgentChatPageProps = {}) 
 
   // When an optimistic user message is set (user sends a message), scroll so the user message is at the top of the page
   useEffect(() => {
-    if (optimisticUserMsg) {
+    if (optimisticUserMsg && optimisticUserMsg.sessionId === activeSessionId) {
       isUserScrolledUpRef.current = false;
       const raf = requestAnimationFrame(() => {
         scrollToLatestUserMessage("smooth");
@@ -1258,14 +1519,14 @@ export default function AgentChatPage({ initialView }: AgentChatPageProps = {}) 
         clearTimeout(timer);
       };
     }
-  }, [optimisticUserMsg, scrollToLatestUserMessage]);
+  }, [optimisticUserMsg, activeSessionId, scrollToLatestUserMessage]);
 
   // While streaming, only follow if the response extends below the visible bottom of the viewport
   useEffect(() => {
-    if (!isUserScrolledUpRef.current && isStreaming && streamingText) {
+    if (!isUserScrolledUpRef.current && isCurrentSessionStreaming && streamingText) {
       messagesEndRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
     }
-  }, [streamingText, isStreaming]);
+  }, [streamingText, isCurrentSessionStreaming]);
 
   // When opening an agent page, switching sessions, or when messages load for a session, scroll to bottom by default
   useEffect(() => {
@@ -1373,6 +1634,7 @@ export default function AgentChatPage({ initialView }: AgentChatPageProps = {}) 
         agentId: agentId!,
         sessionId: session.id,
       });
+      sessionDraftsRef.current.delete(session.id);
       if (activeSessionId === session.id) setActiveSessionId(null);
     } catch {
       toast.error("Failed to delete session");
@@ -1383,6 +1645,10 @@ export default function AgentChatPage({ initialView }: AgentChatPageProps = {}) 
     if (!agentId || triggerResearchRun.isPending) return;
     try {
       const result = await triggerResearchRun.mutateAsync({ agentId });
+      sessionDraftsRef.current.set(result.session_id, {
+        text: result.initial_prompt,
+        attachedFiles: [],
+      });
       selectSession(result.session_id);
       setInput(result.initial_prompt);
       qc.invalidateQueries({ queryKey: ["agents", agentId, "sessions"] });
@@ -1402,6 +1668,9 @@ export default function AgentChatPage({ initialView }: AgentChatPageProps = {}) 
       content = `${attPrefix}\n${content}`;
     }
     if (typeof textOverride !== "string") {
+      if (activeSessionId != null) {
+        sessionDraftsRef.current.delete(activeSessionId);
+      }
       setInput("");
       setAttachedFiles([]);
       setUploadedDocIds([]);
@@ -1409,10 +1678,13 @@ export default function AgentChatPage({ initialView }: AgentChatPageProps = {}) 
         textareaRef.current.style.height = "auto";
       }
     }
+    const sendingSessionId = activeSessionId;
     isUserScrolledUpRef.current = false;
-    setOptimisticUserMsg(content);
+    if (sendingSessionId) {
+      setOptimisticUserMsg({ sessionId: sendingSessionId, content });
+    }
     resetStream();
-    setStreaming(true);
+    setStreaming(true, sendingSessionId);
 
     requestAnimationFrame(() => {
       scrollToLatestUserMessage("smooth");
@@ -1421,7 +1693,7 @@ export default function AgentChatPage({ initialView }: AgentChatPageProps = {}) 
     const baseUrl = (import.meta.env.VITE_API_BASE_URL || "/api/v1").replace(/\/$/, "");
     const match = window.location.pathname.match(/^\/w\/([^/]+)/);
     const workspaceSlug = match ? match[1] : null;
-    const url = `${baseUrl}/agents/${agentId}/sessions/${activeSessionId}/stream${workspaceSlug ? `?workspace=${workspaceSlug}` : ""}`;
+    const url = `${baseUrl}/agents/${agentId}/sessions/${sendingSessionId}/stream${workspaceSlug ? `?workspace=${workspaceSlug}` : ""}`;
 
     abortRef.current = new AbortController();
     try {
@@ -1486,10 +1758,12 @@ export default function AgentChatPage({ initialView }: AgentChatPageProps = {}) 
               setActiveTool(ev.tool_name ?? "tool", ev.args);
             }
             if (ev.type === "tool_end") {
+              const currentActiveArgs = useChatStore.getState().activeToolArgs;
+              const toolArgs = ev.args ?? currentActiveArgs ?? {};
               addStreamingTimelineItem({
                 type: "tool",
                 name: ev.tool_name ?? "tool",
-                args: ev.args,
+                args: toolArgs,
                 result: ev.result,
                 error: ev.error,
                 ok: ev.ok,
@@ -1503,13 +1777,15 @@ export default function AgentChatPage({ initialView }: AgentChatPageProps = {}) 
               setStreaming(false);
               setActiveTool(null);
               qc.invalidateQueries({
-                queryKey: ["agents", agentId, "sessions", activeSessionId, "messages"],
+                queryKey: ["agents", agentId, "sessions", sendingSessionId, "messages"],
               });
             }
             if (ev.type === "done") {
               qc.invalidateQueries({
-                queryKey: ["agents", agentId, "sessions", activeSessionId, "messages"],
-              }).then(() => setOptimisticUserMsg(null));
+                queryKey: ["agents", agentId, "sessions", sendingSessionId, "messages"],
+              }).then(() => {
+                setOptimisticUserMsg((prev) => (prev?.sessionId === sendingSessionId ? null : prev));
+              });
               qc.invalidateQueries({
                 queryKey: ["agents", agentId, "sessions"],
               });
@@ -1526,7 +1802,7 @@ export default function AgentChatPage({ initialView }: AgentChatPageProps = {}) 
     } finally {
       setStreaming(false);
       setActiveTool(null);
-      setOptimisticUserMsg(null);
+      setOptimisticUserMsg((prev) => (prev?.sessionId === sendingSessionId ? null : prev));
     }
   }, [input, activeSessionId, agentId, selectedLlmConnectionId, isStreaming, attachedFiles, scrollToLatestUserMessage]);
 
@@ -2347,16 +2623,38 @@ export default function AgentChatPage({ initialView }: AgentChatPageProps = {}) 
                   groups.push(currentAssistantTurn);
                 }
 
-                // If streaming, attach to current open assistant turn or create a new turn
-                if (isStreaming || optimisticUserMsg) {
-                  if (optimisticUserMsg) {
+                const hasOptimisticForCurrentSession = !!(
+                  optimisticUserMsg &&
+                  activeSessionId &&
+                  optimisticUserMsg.sessionId === activeSessionId
+                );
+
+                // Check if the user message is already present in DB messages
+                const lastUserMsgInDb = [...messages].reverse().find((m) => m.role === "user");
+                const lastUserMsgIdxInDb = lastUserMsgInDb ? messages.lastIndexOf(lastUserMsgInDb) : -1;
+                const hasAssistantMsgAfterLastUser =
+                  lastUserMsgIdxInDb !== -1 &&
+                  messages.slice(lastUserMsgIdxInDb + 1).some((m) => m.role === "assistant");
+
+                const isOptimisticAlreadyInMessages =
+                  hasOptimisticForCurrentSession &&
+                  lastUserMsgInDb != null &&
+                  lastUserMsgInDb.content === optimisticUserMsg.content &&
+                  !hasAssistantMsgAfterLastUser;
+
+                const shouldRenderOptimisticUserMsg =
+                  hasOptimisticForCurrentSession && !isOptimisticAlreadyInMessages;
+
+                // If streaming for this session, attach to current open assistant turn or create a new turn
+                if (isCurrentSessionStreaming || shouldRenderOptimisticUserMsg) {
+                  if (shouldRenderOptimisticUserMsg && optimisticUserMsg) {
                     groups.push({
                       type: "user",
                       id: "optimistic-user",
-                      userMsg: { id: -1, role: "user", content: optimisticUserMsg } as any,
+                      userMsg: { id: -1, role: "user", content: optimisticUserMsg.content } as any,
                     });
                   }
-                  if (isStreaming) {
+                  if (isCurrentSessionStreaming) {
                     const lastGroup = groups[groups.length - 1];
                     if (lastGroup && lastGroup.type === "assistant_turn") {
                       lastGroup.isStreamingActive = true;
@@ -2426,7 +2724,20 @@ export default function AgentChatPage({ initialView }: AgentChatPageProps = {}) 
                   if (grp.isStreamingActive) {
                     // Push live streaming steps in exact chronological order (thoughts + tools)
                     streamingSteps.forEach((st) => {
-                      timelineSteps.push(st as any);
+                      if (st.type === "tool") {
+                        timelineSteps.push({
+                          type: "tool",
+                          name: st.name ?? "tool",
+                          result: {
+                            args: st.args,
+                            result: st.result,
+                            error: st.error,
+                            ok: st.ok,
+                          },
+                        });
+                      } else {
+                        timelineSteps.push(st as any);
+                      }
                     });
 
                     const { thought, response } = parseThoughtContent(streamingText);
@@ -2504,45 +2815,22 @@ export default function AgentChatPage({ initialView }: AgentChatPageProps = {}) 
                         />
                       )}
 
-                      {/* Final response — parse <asset> tags into chips, rest to ReactMarkdown */}
-                      {cleanFinalResponse && (() => {
-                        const segments = parseAssetTags(cleanFinalResponse, knownAssetNames);
-                        // If no asset tags found, render as plain markdown
-                        if (segments.length === 1 && typeof segments[0] === 'string') {
-                          return (
-                            <div
-                              className="assistant-response-content"
-                              style={{ marginTop: timelineSteps.length > 0 ? 12 : 0, fontSize: "0.9rem", lineHeight: 1.65, color: "var(--color-text, #1f2937)" }}
-                            >
-                              <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>
-                                {cleanFinalResponse}
-                              </ReactMarkdown>
-                            </div>
-                          );
-                        }
-                        // Mixed content: render each segment
-                        return (
-                          <div
-                            className="assistant-response-content"
-                            style={{ marginTop: timelineSteps.length > 0 ? 12 : 0, fontSize: "0.9rem", lineHeight: 1.65, color: "var(--color-text, #1f2937)" }}
+                      {/* Final response — render inline asset chips via transformAssetTagsToMarkdown and markdownComponents */}
+                      {cleanFinalResponse && (
+                        <div
+                          className="assistant-response-content"
+                          style={{ marginTop: timelineSteps.length > 0 ? 12 : 0, fontSize: "0.9rem", lineHeight: 1.65, color: "var(--color-text, #1f2937)" }}
+                        >
+                          <ReactMarkdown
+                            remarkPlugins={[remarkGfm]}
+                            rehypePlugins={[rehypeHighlight]}
+                            components={markdownComponents}
+                            urlTransform={(url) => url}
                           >
-                            {segments.map((seg, i) =>
-                              typeof seg === 'string' ? (
-                                <ReactMarkdown key={i} remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>
-                                  {seg}
-                                </ReactMarkdown>
-                              ) : (
-                                <AssetChip
-                                  key={i}
-                                  fullName={seg.chip.fullName}
-                                  objectType={seg.chip.objectType}
-                                  displayName={seg.chip.displayName}
-                                />
-                              )
-                            )}
-                          </div>
-                        );
-                      })()}
+                            {transformAssetTagsToMarkdown(cleanFinalResponse, knownAssetNames)}
+                          </ReactMarkdown>
+                        </div>
+                      )}
 
                       {/* Inline Completed Plan Card in turn history */}
                       {inlineCompletedPlanData && (
@@ -2800,6 +3088,12 @@ export default function AgentChatPage({ initialView }: AgentChatPageProps = {}) 
 
                     {/* 3. Input Composer (Bottom of Composer Card, pure white background) */}
                     <div
+                      onDragOver={(e) => e.preventDefault()}
+                      onDrop={(e) => {
+                        e.preventDefault();
+                        const files = Array.from(e.dataTransfer.files ?? []);
+                        if (files.length > 0) handleUploadFiles(files);
+                      }}
                       style={{
                         display: "flex",
                         flexDirection: "column",
@@ -2815,21 +3109,10 @@ export default function AgentChatPage({ initialView }: AgentChatPageProps = {}) 
                         multiple
                         accept=".pdf,.docx,.xlsx,.csv,.txt,.md,.json,.png,.jpg,.jpeg,.webp,.gif,.svg,image/*"
                         style={{ display: "none" }}
-                        onChange={async (e) => {
+                        onChange={(e) => {
                           const files = Array.from(e.target.files ?? []);
-                          if (!files.length || !agentId || !activeSessionId) return;
-                          setAttachedFiles(prev => [...prev, ...files]);
-                          const formData = new FormData();
-                          files.forEach(f => formData.append("files", f));
-                          const authkey = (window as any).__authkey__ ?? "";
-                          const resp = await fetch(
-                            `/api/v1/agents/${agentId}/sessions/${activeSessionId}/documents`,
-                            { method: "POST", body: formData, headers: authkey ? { authkey, Authorization: `Bearer ${authkey}` } : {} }
-                          );
-                          if (resp.ok) {
-                            const data = await resp.json();
-                            const ids = (data.uploaded ?? []).filter((u: any) => u.ok).map((u: any) => u.doc_id as number);
-                            setUploadedDocIds(prev => [...prev, ...ids]);
+                          if (files.length > 0) {
+                            handleUploadFiles(files);
                           }
                           e.target.value = "";
                         }}
@@ -2837,20 +3120,45 @@ export default function AgentChatPage({ initialView }: AgentChatPageProps = {}) 
 
                       {/* Attached file chips */}
                       {attachedFiles.length > 0 && (
-                        <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+                        <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
                           {attachedFiles.map((f, i) => (
-                            <span key={i} style={{
-                              display: "inline-flex", alignItems: "center", gap: 4,
-                              padding: "2px 8px", borderRadius: 6,
-                              background: "rgba(99,102,241,0.12)", border: "1px solid rgba(99,102,241,0.3)",
-                              fontSize: "0.75rem", color: "#6366f1",
-                            }}>
-                              📎 {f.name}
+                            <span
+                              key={i}
+                              style={{
+                                display: "inline-flex",
+                                alignItems: "center",
+                                gap: 5,
+                                padding: "2px 8px",
+                                borderRadius: 4,
+                                background: "#f1f5f9",
+                                border: "1px solid #e2e8f0",
+                                fontSize: "0.75rem",
+                                color: "#475569",
+                                fontWeight: 500,
+                              }}
+                            >
+                              <Paperclip size={11} style={{ color: "#64748b", flexShrink: 0 }} />
+                              <span style={{ maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                {f.name}
+                              </span>
                               <button
                                 type="button"
                                 onClick={() => setAttachedFiles(prev => prev.filter((_, j) => j !== i))}
-                                style={{ background: "none", border: "none", cursor: "pointer", padding: 0, color: "inherit", lineHeight: 1 }}
-                              ><XIcon size={11} /></button>
+                                style={{
+                                  background: "none",
+                                  border: "none",
+                                  cursor: "pointer",
+                                  padding: 0,
+                                  color: "#94a3b8",
+                                  display: "inline-flex",
+                                  alignItems: "center",
+                                  marginLeft: 2,
+                                  lineHeight: 1,
+                                }}
+                                title="Remove file"
+                              >
+                                <XIcon size={12} />
+                              </button>
                             </span>
                           ))}
                         </div>
@@ -2877,6 +3185,7 @@ export default function AgentChatPage({ initialView }: AgentChatPageProps = {}) 
                         rows={1}
                         placeholder="Message the agent… (Enter to send, Shift+Enter for newline)"
                         value={input}
+                        onPaste={handlePaste}
                         onChange={(e) => {
                           setInput(e.target.value);
                           e.target.style.height = "auto";
@@ -2888,7 +3197,7 @@ export default function AgentChatPage({ initialView }: AgentChatPageProps = {}) 
                             sendMessage();
                           }
                         }}
-                        disabled={isStreaming}
+                        disabled={isCurrentSessionStreaming}
                       />
 
                       {/* Bottom Row: File attachment icon (left), LLM Selection & Send icon (right) */}
@@ -2918,7 +3227,7 @@ export default function AgentChatPage({ initialView }: AgentChatPageProps = {}) 
                           <select
                             value={selectedLlmConnectionId ?? ""}
                             onChange={(e) => setSelectedLlmConnectionId(e.target.value ? Number(e.target.value) : null)}
-                            disabled={isStreaming || llmConnections.length === 0}
+                            disabled={isCurrentSessionStreaming || llmConnections.length === 0}
                             title="LLM Connection"
                             style={{
                               border: "none",
@@ -2941,22 +3250,22 @@ export default function AgentChatPage({ initialView }: AgentChatPageProps = {}) 
                           <button
                             type="button"
                             onClick={() => sendMessage()}
-                            disabled={!input.trim() || isStreaming}
+                            disabled={!input.trim() || isCurrentSessionStreaming}
                             style={{
                               width: 28,
                               height: 28,
                               borderRadius: "50%",
                               border: "1px solid #e5e7eb",
-                              background: input.trim() && !isStreaming ? "#f3f4f6" : "#fafafa",
-                              color: input.trim() && !isStreaming ? "#374151" : "#d1d5db",
+                              background: input.trim() && !isCurrentSessionStreaming ? "#f3f4f6" : "#fafafa",
+                              color: input.trim() && !isCurrentSessionStreaming ? "#374151" : "#d1d5db",
                               display: "flex",
                               alignItems: "center",
                               justifyContent: "center",
-                              cursor: input.trim() && !isStreaming ? "pointer" : "not-allowed",
+                              cursor: input.trim() && !isCurrentSessionStreaming ? "pointer" : "not-allowed",
                               flexShrink: 0,
                             }}
                           >
-                            {isStreaming ? <Loader2 size={14} className="spin" /> : <ArrowRight size={15} />}
+                            {isCurrentSessionStreaming ? <Loader2 size={14} className="spin" /> : <ArrowRight size={15} />}
                           </button>
                         </div>
                       </div>

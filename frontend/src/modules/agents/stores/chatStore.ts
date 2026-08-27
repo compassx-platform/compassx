@@ -22,6 +22,7 @@ export type StreamingTimelineItem =
 interface ChatStore {
   streamingText: string;
   isStreaming: boolean;
+  streamingSessionId: number | null;
   activeToolName: string | null;
   activeToolArgs: Record<string, unknown> | null;
   streamingSteps: StreamingTimelineItem[];
@@ -30,7 +31,7 @@ interface ChatStore {
   streamingAgentColor: string | null;
   streamingInvocationDepth: number;
   appendStreamingText: (delta: string) => void;
-  setStreaming: (v: boolean) => void;
+  setStreaming: (v: boolean, sessionId?: number | null) => void;
   setActiveTool: (name: string | null, args?: Record<string, unknown> | null) => void;
   addStreamingTimelineItem: (item: StreamingTimelineItem) => void;
   setStreamingAgent: (name: string | null, color: string | null, depth: number) => void;
@@ -40,6 +41,7 @@ interface ChatStore {
 export const useChatStore = create<ChatStore>()((set) => ({
   streamingText: "",
   isStreaming: false,
+  streamingSessionId: null,
   activeToolName: null,
   activeToolArgs: null,
   streamingSteps: [],
@@ -48,7 +50,8 @@ export const useChatStore = create<ChatStore>()((set) => ({
   streamingInvocationDepth: 0,
   appendStreamingText: (delta) =>
     set((s) => ({ streamingText: s.streamingText + delta })),
-  setStreaming: (v) => set({ isStreaming: v }),
+  setStreaming: (v, sessionId = null) =>
+    set((s) => ({ isStreaming: v, streamingSessionId: v ? (sessionId ?? s.streamingSessionId) : null })),
   setActiveTool: (name, args = null) =>
     set({ activeToolName: name, activeToolArgs: name ? (args ?? null) : null }),
   addStreamingTimelineItem: (item) =>
@@ -59,6 +62,7 @@ export const useChatStore = create<ChatStore>()((set) => ({
     set({
       streamingText: "",
       isStreaming: false,
+      streamingSessionId: null,
       activeToolName: null,
       activeToolArgs: null,
       streamingSteps: [],

@@ -9,6 +9,7 @@ import { TrendingUp, TrendingDown } from 'lucide-react';
 import { useDashboardStore } from '@/modules/dashboards/stores/dashboardStore';
 import { useDatasetQuery } from '@/modules/dashboards/hooks/useDashboard';
 import { aggregateValues } from '@/modules/dashboards/utils/dataTransforms';
+import { filterRows } from '@/modules/dashboards/utils/filterUtils';
 import type { Widget, NumberFormat } from '@/types/dashboard';
 
 function formatValue(val: number, format?: NumberFormat): string {
@@ -99,7 +100,8 @@ export default function CounterWidget({ widget }: Props) {
     if (!queryResult || !cfg?.yFields?.[0]) {
       return { mainValue: null, compareValue: null, delta: null, deltaPercent: null, trend: null };
     }
-    const rows = queryResult.rows;
+    const rawRows = queryResult.rows;
+    const rows = filterRows(rawRows, activeDashboard?.widgets, filterState, cfg?.datasetId);
     if (!rows || rows.length === 0) {
       return { mainValue: null, compareValue: null, delta: null, deltaPercent: null, trend: null };
     }
@@ -126,7 +128,7 @@ export default function CounterWidget({ widget }: Props) {
     const t = d !== null ? (d >= 0 ? 'up' : 'down') : null;
 
     return { mainValue: main, compareValue: compare, delta: d, deltaPercent: dp, trend: t };
-  }, [queryResult, cfg]);
+  }, [queryResult, cfg, activeDashboard?.widgets, filterState]);
 
   if (isLoading) {
     return (

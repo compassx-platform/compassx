@@ -5,6 +5,7 @@
 import { useState, useMemo } from 'react';
 import { useDashboardStore } from '@/modules/dashboards/stores/dashboardStore';
 import { useDatasetQuery } from '@/modules/dashboards/hooks/useDashboard';
+import { filterRows } from '@/modules/dashboards/utils/filterUtils';
 import type { Widget } from '@/types/dashboard';
 import { Search, ChevronLeft, ChevronRight } from 'lucide-react';
 
@@ -76,7 +77,8 @@ export default function TableWidget({ widget }: Props) {
 
   const sortedRows = useMemo(() => {
     if (!queryResult?.rows) return [];
-    const rows = [...queryResult.rows];
+    const baseRows = filterRows(queryResult.rows, activeDashboard?.widgets, filterState, cfg?.datasetId);
+    const rows = [...baseRows];
     const sortField = cfg?.xAxis?.sortByField;
     const sortOrder = cfg?.xAxis?.sortByOrder ?? 'asc';
 
@@ -96,7 +98,7 @@ export default function TableWidget({ widget }: Props) {
       const comp = String(valA).localeCompare(String(valB), undefined, { numeric: true, sensitivity: 'base' });
       return sortOrder === 'desc' ? -comp : comp;
     });
-  }, [queryResult?.rows, cfg?.xAxis?.sortByField, cfg?.xAxis?.sortByOrder]);
+  }, [queryResult?.rows, cfg?.xAxis?.sortByField, cfg?.xAxis?.sortByOrder, activeDashboard?.widgets, filterState, cfg?.datasetId]);
 
   const filteredRows = useMemo(() => {
     if (!searchTerm.trim()) return sortedRows;
