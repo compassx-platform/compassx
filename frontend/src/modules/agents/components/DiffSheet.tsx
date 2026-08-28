@@ -1,13 +1,18 @@
 import React, { useEffect, useRef } from 'react';
 import { ChangeRecord } from './DiffSummaryCard';
 import { AssetChip } from './AssetChip';
+import NotebookPage from '@/modules/notebooks/pages/NotebookPage';
+import api from '@/lib/api';
 
 // G7: Side-sheet hosting the diff inside the asset type's native editor surface.
 // Opens as an in-place panel overlay — no page navigation.
 
 interface DiffSheetProps {
   record: ChangeRecord | null;
+  agentId?: number | null;
+  sessionId?: number | null;
   onClose: () => void;
+  onStatusChange?: (changeId: string, newStatus: 'accepted' | 'rejected') => void;
 }
 
 // G7: diff_renderer registry — maps object_type to a renderer component
@@ -155,8 +160,22 @@ function getDiffRenderer(objectType: string): DiffRenderer {
   return DIFF_RENDERER_REGISTRY[objectType] ?? PlainTextDiff;
 }
 
-export const DiffSheet: React.FC<DiffSheetProps> = ({ record, onClose }) => {
+export const DiffSheet: React.FC<DiffSheetProps> = ({
+  record,
+  agentId,
+  sessionId,
+  onClose,
+  onStatusChange,
+}) => {
   const sheetRef = useRef<HTMLDivElement>(null);
+  const [status, setStatus] = React.useState<string>(record?.status || 'pending_review');
+  const [actioning, setActioning] = React.useState(false);
+
+  React.useEffect(() => {
+    if (record?.status) {
+      setStatus(record.status);
+    }
+  }, [record]);
 
   // Close on Escape
   useEffect(() => {
@@ -176,9 +195,35 @@ export const DiffSheet: React.FC<DiffSheetProps> = ({ record, onClose }) => {
     return () => { document.body.style.overflow = ''; };
   }, [record]);
 
+  const handleAction = async (action: 'accept' | 'reject') => {
+    if (!record || !agentId || !sessionId) return;
+    setActioning(true);
+    try {
+      const res = await api.post(
+        `/agents/${agentId}/sessions/${sessionId}/changes/${record.change_id}/${action}`
+      );
+      if (res.status === 200) {
+        const nextStatus = action === 'accept' ? 'accepted' : 'rejected';
+        setStatus(nextStatus);
+        onStatusChange?.(record.change_id, nextStatus);
+      }
+    } catch (err) {
+      console.error(`Failed to ${action} change:`, err);
+    } finally {
+      setActioning(false);
+    }
+  };
+
   if (!record) return null;
 
+  const isNotebook =
+    record.object_type === 'notebook' ||
+    record.full_name.endsWith('.ipynb') ||
+    record.full_name.includes('.ipynb') ||
+    record.full_name.startsWith('workspace.notebooks.');
+
   const Renderer = getDiffRenderer(record.object_type);
+  const isPending = status === 'pending_review';
 
   return (
     <>
@@ -187,42 +232,142 @@ export const DiffSheet: React.FC<DiffSheetProps> = ({ record, onClose }) => {
 
       {/* Sheet panel */}
       <div
-        className="diff-sheet"
+        className={`diff-sheet ${isNotebook ? 'diff-sheet--notebook' : ''}`}
         ref={sheetRef}
         role="dialog"
         aria-modal="true"
         aria-label={`Diff: ${record.full_name}`}
         tabIndex={-1}
+        style={{
+          width: isNotebook ? 'min(1150px, 90vw)' : 'min(680px, 100vw)',
+          background: isNotebook ? '#ffffff' : '#0f1117',
+        }}
       >
         {/* Header */}
-        <div className="diff-sheet__header">
+        <div
+          className="diff-sheet__header"
+          style={{
+            background: isNotebook ? '#f8fafc' : 'rgba(255,255,255,0.03)',
+            borderBottom: isNotebook ? '1px solid #e2e8f0' : '1px solid rgba(255,255,255,0.1)',
+            color: isNotebook ? '#0f172a' : '#ffffff',
+          }}
+        >
           <div className="diff-sheet__header-left">
             <AssetChip
               fullName={record.full_name}
               objectType={record.object_type}
             />
-            <span className="diff-sheet__stat-badge">
+            <span
+              className="diff-sheet__stat-badge"
+              style={{
+                borderColor: isNotebook ? '#e2e8f0' : 'rgba(255,255,255,0.12)',
+                color: isNotebook ? '#334155' : undefined,
+              }}
+            >
               <span className="diff-stat--add">+{record.additions}</span>
               &nbsp;
               <span className="diff-stat--del">-{record.deletions}</span>
             </span>
-            <span className={`diff-sheet__status diff-sheet__status--${record.status}`}>
-              {record.status.replace('_', ' ')}
+            <span
+              className={`diff-sheet__status diff-sheet__status--${status}`}
+              style={{
+                borderColor: isNotebook && status === 'pending_review' ? '#cbd5e1' : undefined,
+                color: isNotebook && status === 'pending_review' ? '#64748b' : undefined,
+              }}
+            >
+              {status.replace('_', ' ')}
             </span>
           </div>
-          <button className="diff-sheet__close" onClick={onClose} aria-label="Close diff sheet">✕</button>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            {isPending && agentId && sessionId && (
+              <div style={{ display: 'flex', gap: 6 }}>
+                <button
+                  type="button"
+                  disabled={actioning}
+                  onClick={() => handleAction('accept')}
+                  className="diff-btn diff-btn--accept"
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 4,
+                    padding: '4px 10px',
+                    borderRadius: 5,
+                    border: '1px solid #bbf7d0',
+                    background: '#f0fdf4',
+                    color: '#16a34a',
+                    fontWeight: 600,
+                    cursor: actioning ? 'not-allowed' : 'pointer',
+                  }}
+                  title="Approve this change permanently"
+                >
+                  ✓ Approve
+                </button>
+
+                <button
+                  type="button"
+                  disabled={actioning}
+                  onClick={() => handleAction('reject')}
+                  className="diff-btn diff-btn--reject"
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 4,
+                    padding: '4px 10px',
+                    borderRadius: 5,
+                    border: '1px solid #fecaca',
+                    background: '#fef2f2',
+                    color: '#dc2626',
+                    fontWeight: 600,
+                    cursor: actioning ? 'not-allowed' : 'pointer',
+                  }}
+                  title="Reject and revert this file"
+                >
+                  ✕ Reject
+                </button>
+              </div>
+            )}
+            <button
+              className="diff-sheet__close"
+              onClick={onClose}
+              aria-label="Close diff sheet"
+              style={{
+                color: isNotebook ? '#64748b' : 'rgba(255,255,255,0.5)',
+              }}
+            >
+              ✕
+            </button>
+          </div>
         </div>
 
         {/* Diff body */}
-        <div className="diff-sheet__body">
-          {record.before_content === null && record.after_content !== null
-            ? <div className="diff-sheet__new-badge">🆕 New file</div>
-            : null}
-          <Renderer
-            before={record.before_content ?? null}
-            after={record.after_content ?? null}
-            fullName={record.full_name}
-          />
+        <div
+          className="diff-sheet__body"
+          style={{
+            padding: isNotebook ? 0 : 16,
+            background: isNotebook ? '#ffffff' : undefined,
+            overflow: 'hidden',
+            display: 'flex',
+            flexDirection: 'column',
+            height: '100%',
+          }}
+        >
+          {isNotebook ? (
+            <div style={{ flex: 1, height: '100%', overflow: 'hidden' }}>
+              <NotebookPage notebookPath={record.full_name} embedded={true} />
+            </div>
+          ) : (
+            <div style={{ flex: 1, overflow: 'auto', padding: 16 }}>
+              {record.before_content === null && record.after_content !== null ? (
+                <div className="diff-sheet__new-badge">🆕 New file</div>
+              ) : null}
+              <Renderer
+                before={record.before_content ?? null}
+                after={record.after_content ?? null}
+                fullName={record.full_name}
+              />
+            </div>
+          )}
         </div>
       </div>
 

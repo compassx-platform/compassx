@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { Play, RotateCcw, Square, Trash2, Plus, Hash, CalendarClock, MoreVertical } from 'lucide-react';
+import { Play, RotateCcw, Square, Trash2, Plus, Hash, CalendarClock, MoreVertical, Check, X } from 'lucide-react';
 import { useScopedNavigate } from '@/lib/appNavigation';
 import api from '@/lib/api';
 import { useNotebookStore } from '../../store/notebookStore';
@@ -17,8 +17,12 @@ export default function NotebookToolbar({ notebookPath, onDelete }: { notebookPa
   const toggleLineNumbers = useNotebookStore((s) => s.toggleLineNumbers);
   const showLineNumbers = useNotebookStore((s) => s.showLineNumbers);
   const isDirty = useNotebookStore((s) => s.isDirty);
+  const acceptAllAgentEdits = useNotebookStore((s) => s.acceptAllAgentEdits);
+  const rejectAllAgentEdits = useNotebookStore((s) => s.rejectAllAgentEdits);
   const { executeCell } = useExecuteCell();
   const navigate = useScopedNavigate();
+
+  const pendingCells = cells.filter((c) => c.cellStatus === 'pending' || !!c.pendingAgentEdit);
 
   const [showRestartDialog, setShowRestartDialog] = useState(false);
   const [showSchedule, setShowSchedule] = useState(false);
@@ -109,6 +113,54 @@ export default function NotebookToolbar({ notebookPath, onDelete }: { notebookPa
           >
             <Hash size={14} />
           </button>
+
+          {pendingCells.length > 0 && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginLeft: 8, paddingLeft: 8, borderLeft: '1px solid var(--color-border, #e5e7eb)' }}>
+              <button
+                type="button"
+                onClick={() => acceptAllAgentEdits()}
+                className="notebook-toolbar-btn"
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 4,
+                  background: '#f0fdf4',
+                  border: '1px solid #bbf7d0',
+                  color: '#16a34a',
+                  fontWeight: 600,
+                  fontSize: '0.75rem',
+                  padding: '3px 8px',
+                  borderRadius: 4,
+                }}
+                title="Approve and apply all proposed cell edits"
+              >
+                <Check size={12} />
+                <span>Approve all ({pendingCells.length})</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => rejectAllAgentEdits()}
+                className="notebook-toolbar-btn"
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 4,
+                  background: '#fef2f2',
+                  border: '1px solid #fecaca',
+                  color: '#dc2626',
+                  fontWeight: 600,
+                  fontSize: '0.75rem',
+                  padding: '3px 8px',
+                  borderRadius: 4,
+                }}
+                title="Reject and revert all proposed cell edits"
+              >
+                <X size={12} />
+                <span>Reject all ({pendingCells.length})</span>
+              </button>
+            </div>
+          )}
         </div>
         <div className="notebook-toolbar-right">
           {isDirty && <span className="notebook-dirty-indicator" title="Unsaved changes">●</span>}

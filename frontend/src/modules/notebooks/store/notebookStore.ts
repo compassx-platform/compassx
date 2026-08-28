@@ -155,6 +155,8 @@ interface NotebookStore {
   }) => string | null;
   acceptAgentCellEdit: (id: string) => void;
   rejectAgentCellEdit: (id: string) => void;
+  acceptAllAgentEdits: () => void;
+  rejectAllAgentEdits: () => void;
   confirmSideEffects: (id: string) => void;
 }
 
@@ -461,6 +463,44 @@ const notebookStoreCreator: StateCreator<NotebookStore> = (set, get) => ({
         focusedCellId: id,
         isDirty: true,
       };
+    }),
+  acceptAllAgentEdits: () =>
+    set((s) => ({
+      cells: s.cells.map((cell) => {
+        if (!cell.pendingAgentEdit && cell.cellStatus !== 'pending') return cell;
+        const proposed = cell.pendingAgentEdit?.proposedSource ?? cell.source;
+        const type = cell.pendingAgentEdit?.cellType ?? cell.type;
+        return {
+          ...cell,
+          type,
+          source: proposed,
+          committedSource: proposed,
+          pendingSource: undefined,
+          cellStatus: 'clean',
+          pendingAgentEdit: undefined,
+          hasConfirmedSideEffects: undefined,
+        };
+      }),
+      isDirty: true,
+    })),
+  rejectAllAgentEdits: () =>
+    set((s) => {
+      const cells = s.cells
+        .filter((cell) => !(cell.pendingAgentEdit?.createdCell && s.cells.length > 1))
+        .map((cell) => {
+          if (!cell.pendingAgentEdit && cell.cellStatus !== 'pending') return cell;
+          const original = cell.pendingAgentEdit?.originalSource ?? cell.committedSource ?? cell.source;
+          return {
+            ...cell,
+            source: original,
+            committedSource: original,
+            pendingSource: undefined,
+            cellStatus: 'clean',
+            pendingAgentEdit: undefined,
+            hasConfirmedSideEffects: undefined,
+          };
+        });
+      return { cells, isDirty: true };
     }),
   confirmSideEffects: (id) =>
     set((s) => ({

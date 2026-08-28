@@ -18,9 +18,17 @@ from app.schemas.agents import (
     ChatMessageResponse,
     ChatSessionCreate,
     ChatSessionResponse,
+    ContextUsageResponse,
     SendMessageRequest,
 )
-from app.agents.services.agent.orchestrator import orchestrate_stream
+from app.agents.services.agent.orchestrator import _resolve_llm_connection, orchestrate_stream
+from app.agents.services.agent.compactor import (
+    DEFAULT_HIGH_WATERMARK_RATIO,
+    DEFAULT_LOW_WATERMARK_K,
+    estimate_messages_tokens,
+    group_messages_into_turns,
+    resolve_model_context_window,
+)
 from app.agents.services.stream_registry import stream_registry
 
 logger = logging.getLogger(__name__)
@@ -72,6 +80,30 @@ def list_sessions(
                     text = text[:87] + "..."
             last_msgs[m.session_id] = text
 
+    has_changes_map: dict[int, bool] = {}
+    changes_count_map: dict[int, int] = {}
+    try:
+        from app.agents.models.agents import ChangeRecord
+        change_rows = (
+            db.query(
+                ChangeRecord.session_id,
+                func.count(ChangeRecord.change_id).label("change_count"),
+            )
+            .filter(ChangeRecord.session_id.in_([str(sid) for sid in session_ids]))
+            .group_by(ChangeRecord.session_id)
+            .all()
+        )
+        for row in change_rows:
+            try:
+                sid = int(row.session_id)
+                cnt = int(row.change_count)
+                has_changes_map[sid] = cnt > 0
+                changes_count_map[sid] = cnt
+            except Exception:
+                pass
+    except Exception:
+        pass
+
     result = []
     for s in sessions:
         res = ChatSessionResponse(
@@ -83,6 +115,8 @@ def list_sessions(
             updated_at=s.updated_at,
             last_message=last_msgs.get(s.id),
             message_count=count_map.get(s.id, 0),
+            has_changes=has_changes_map.get(s.id, False),
+            files_changed_count=changes_count_map.get(s.id, 0),
         )
         result.append(res)
     return result
@@ -131,6 +165,53 @@ def list_messages(
         .filter(ChatMessage.session_id == session_id)
         .order_by(ChatMessage.created_at.asc())
         .all()
+    )
+
+
+@router.get("/sessions/{session_id}/context", response_model=ContextUsageResponse)
+def get_session_context(
+    request: Request,
+    agent_id: int,
+    session_id: int,
+    db: Session = Depends(get_db),
+):
+    workspace_id = getattr(request.state, "workspace", None) and request.state.workspace.workspace_id
+    agent = _get_agent_or_404(db, agent_id, workspace_id)
+    session = _get_session_or_404(db, agent_id, session_id, workspace_id)
+    llm_conn = _resolve_llm_connection(db, agent)
+
+    context_window = resolve_model_context_window(llm_conn)
+    model_name = getattr(llm_conn, "model_name", None) or "Default"
+
+    all_messages = (
+        db.query(ChatMessage)
+        .filter(ChatMessage.session_id == session_id)
+        .order_by(ChatMessage.created_at.asc())
+        .all()
+    )
+    turns = group_messages_into_turns(all_messages)
+
+    candidate_msgs = []
+    if session.summary:
+        candidate_msgs.append({"role": "system", "content": session.summary})
+    for t in turns:
+        candidate_msgs.extend(t.to_llm_messages())
+
+    total_tokens = estimate_messages_tokens(candidate_msgs)
+    high_watermark = int(context_window * DEFAULT_HIGH_WATERMARK_RATIO)
+    usage_percent = round((total_tokens / max(context_window, 1)) * 100, 1)
+
+    return ContextUsageResponse(
+        total_tokens=total_tokens,
+        context_window=context_window,
+        high_watermark=high_watermark,
+        usage_percent=min(usage_percent, 100.0),
+        total_turns=len(turns),
+        retained_turns=min(len(turns), DEFAULT_LOW_WATERMARK_K),
+        has_summary=bool(session.summary and session.summary.strip()),
+        summary=session.summary,
+        summary_updated_at=session.summary_updated_at,
+        model_name=model_name,
     )
 
 

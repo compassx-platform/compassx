@@ -1,6 +1,7 @@
 import React from 'react';
 import { AssetChip, AssetObjectType } from './AssetChip';
 import { ChangeRecord } from './DiffSummaryCard';
+import api from '@/lib/api';
 
 export interface TurnEditInfo {
   change_id?: string;
@@ -8,6 +9,7 @@ export interface TurnEditInfo {
   object_type: AssetObjectType;
   additions?: number;
   deletions?: number;
+  status?: 'pending_review' | 'accepted' | 'rejected';
 }
 
 interface TurnEditBadgeProps {
@@ -15,6 +17,7 @@ interface TurnEditBadgeProps {
   agentId?: number | null;
   sessionId?: number | null;
   onOpenDiff?: (record: ChangeRecord) => void;
+  onStatusChange?: (changeId: string, newStatus: 'accepted' | 'rejected') => void;
 }
 
 export const TurnEditBadge: React.FC<TurnEditBadgeProps> = ({
@@ -27,11 +30,11 @@ export const TurnEditBadge: React.FC<TurnEditBadgeProps> = ({
 
   const handleOpen = (edit: TurnEditInfo) => {
     if (edit.change_id && agentId && sessionId) {
-      fetch(`/api/v1/agents/${agentId}/sessions/${sessionId}/changes/${edit.change_id}`)
-        .then((r) => r.json())
-        .then((rec) => {
-          if (rec && !rec.error) {
-            onOpenDiff?.(rec);
+      api
+        .get(`/agents/${agentId}/sessions/${sessionId}/changes/${edit.change_id}`)
+        .then((res) => {
+          if (res.data && !res.data.error) {
+            onOpenDiff?.(res.data);
           }
         })
         .catch((err) => console.error('Failed to load change details:', err));
@@ -42,7 +45,7 @@ export const TurnEditBadge: React.FC<TurnEditBadgeProps> = ({
         object_type: edit.object_type,
         additions: edit.additions || 0,
         deletions: edit.deletions || 0,
-        status: 'pending_review',
+        status: edit.status || 'pending_review',
       });
     }
   };

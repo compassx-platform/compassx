@@ -45,11 +45,19 @@ from app.agents.services.agent.request_router import RequestRouter
 from app.agents.services.agent.write_gating_middleware import WriteGatingMiddleware, WriteGatingViolation
 from app.agents.services.agent.plan_service import PlanService
 from app.agents.services.agent.known_assets_registry import registry as _asset_registry, register_from_tool_result
+from app.agents.services.agent.tools.registry import get_tool_definitions
+
+from app.agents.services.agent.compactor import (
+    DEFAULT_HIGH_WATERMARK_RATIO,
+    DEFAULT_LOW_WATERMARK_K,
+    ConversationTurn,
+    compact_session_history,
+    group_messages_into_turns,
+    partition_turns_for_compaction,
+    preflight_watermark_check,
+)
 
 logger = logging.getLogger(__name__)
-
-# Maximum messages to include in context window (sliding window)
-_MAX_HISTORY_MESSAGES = 40
 
 
 # ── Subagent result dataclass ─────────────────────────────────────────────────
@@ -78,6 +86,13 @@ def _load_agent(db: Session, agent_id: int) -> Agent | None:
         .filter(Agent.id == agent_id)
         .first()
     )
+
+
+def _get_safe_event_loop() -> asyncio.AbstractEventLoop:
+    try:
+        return asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.get_event_loop_policy().get_event_loop()
 
 
 def _build_extra_tools(
@@ -201,7 +216,7 @@ def _resolve_llm_connection(
     from app.database import AccountSessionLocal
     sys_db = AccountSessionLocal()
     try:
-        if override_llm_connection_id is not None:
+        if isinstance(override_llm_connection_id, (int, str)):
             conn = (
                 sys_db.query(LLMConnection)
                 .filter(LLMConnection.id == override_llm_connection_id)
@@ -209,12 +224,13 @@ def _resolve_llm_connection(
             )
             if conn:
                 sys_db.expunge(conn)
-            return conn
+                return conn
 
-        if agent.llm_connection_id is not None:
+        agent_conn_id = getattr(agent, "llm_connection_id", None)
+        if isinstance(agent_conn_id, (int, str)):
             conn = (
                 sys_db.query(LLMConnection)
-                .filter(LLMConnection.id == agent.llm_connection_id)
+                .filter(LLMConnection.id == agent_conn_id)
                 .first()
             )
             if conn:
@@ -234,7 +250,12 @@ def _resolve_llm_connection(
         conn = sys_db.query(LLMConnection).order_by(LLMConnection.id.asc()).first()
         if conn:
             sys_db.expunge(conn)
-        return conn
+            return conn
+
+        # Fallback to direct agent.llm_connection attribute if present
+        direct_conn = getattr(agent, "llm_connection", None)
+        if direct_conn:
+            return direct_conn
     finally:
         sys_db.close()
 
@@ -319,6 +340,58 @@ async def orchestrate_stream(
         yield {"type": "error", "message": "No LLM connection configured"}
         return
 
+    # ── Manual Compaction Command Trigger (Spec D9) ───────────────────────────
+    is_manual_compact = user_content.strip().lower() in ("/compact", "/compact now", "/compact_history")
+    if is_manual_compact:
+        assistant_msg_id = None
+        if not sandbox:
+            user_msg = ChatMessage(
+                session_id=session_id,
+                role=MessageRole.user,
+                content=user_content,
+                agent_name=None,
+                invocation_depth=0,
+            )
+            db.add(user_msg)
+            db.commit()
+
+        new_summary, retained_turns = await compact_session_history(
+            session=session,
+            db=db,
+            conn=llm_connection,
+            keep_last_k=DEFAULT_LOW_WATERMARK_K,
+            agent_id=agent.id,
+            workspace_id=workspace_id,
+        )
+
+        confirmation_text = (
+            "🧹 **Conversation Context Compacted**\n\n"
+            f"Retained the latest {len(retained_turns)} turns in full detail and distilled earlier turns into the session summary.\n\n"
+            f"{new_summary or '*(No earlier turns to summarize)*'}"
+        )
+        yield _tag_event({"type": "text", "delta": confirmation_text}, agent, 0)
+
+        if not sandbox:
+            asst_msg = ChatMessage(
+                session_id=session_id,
+                role=MessageRole.assistant,
+                content=confirmation_text,
+                agent_name=agent.name,
+                agent_color=agent.color,
+                invocation_depth=0,
+            )
+            db.add(asst_msg)
+            db.commit()
+            assistant_msg_id = asst_msg.id
+
+        yield {
+            "type": "done",
+            "usage": {},
+            "session_id": session_id,
+            "message_id": assistant_msg_id,
+        }
+        return
+
     # ── Build system prompt (3-Tier Layered Architecture) ─────────────────────
     runtime_context = _resolve_runtime_context(context)
     prompt_res = build_agent_system_prompt(
@@ -329,22 +402,6 @@ async def orchestrate_stream(
     )
     system_prompt = prompt_res.system_prompt
     has_attachment_tool_fetch = prompt_res.has_attachment_tool_fetch
-
-    # ── Load conversation history ─────────────────────────────────────────────
-    history_rows = (
-        db.query(ChatMessage)
-        .filter(ChatMessage.session_id == session_id)
-        .order_by(ChatMessage.created_at.desc())
-        .limit(_MAX_HISTORY_MESSAGES)
-        .all()
-    )
-    history_rows.reverse()
-
-    messages = []
-    for row in history_rows:
-        if row.role == MessageRole.tool:
-            continue
-        messages.append({"role": row.role, "content": row.content or "", "id": row.id})
 
     # ── Persist user message ──────────────────────────────────────────────────
     user_msg_id = None
@@ -400,8 +457,6 @@ async def orchestrate_stream(
         user_message_payload = [{"type": "text", "text": user_content}] + image_parts
     else:
         user_message_payload = user_content
-
-    messages.append({"role": "user", "content": user_message_payload, "id": user_msg_id})
 
     # ── Resolve Agent Manifest (Spec v2 Part C) ──────────────────────────────
     manifest_data = getattr(agent, "manifest", None) or {}
@@ -494,7 +549,7 @@ async def orchestrate_stream(
     tools = get_tool_definitions(enabled_tool_keys)
 
     # ── Per-request stateful tools (e.g. InvokeAgentTool) ────────────────────
-    loop = asyncio.get_event_loop()
+    loop = _get_safe_event_loop()
     extra_tools = _build_extra_tools(
         agent=agent,
         enabled_tool_keys=enabled_tool_keys,
@@ -505,19 +560,13 @@ async def orchestrate_stream(
         user_id=user_id,
         workspace_id=workspace_id,
     )
-    # Remove any sentinel definitions already added by get_tool_definitions,
-    # then add the live instances (which carry runtime context).
-    # This prevents "Tool names must be unique" errors from the LLM API.
     extra_keys = set(extra_tools.keys())
     tools = [t for t in tools if t["function"]["name"] not in extra_keys]
     for et in extra_tools.values():
         tools.append(et.to_openai_definition())
 
-
     # ── Auto-Prefetch Attachments (Server-Side) ─────────────────────────────
-    # For any tool_fetch attachments or uploaded session documents, execute
-    # fetch_attachment server-side RIGHT NOW and inject the full content as a
-    # synthetic assistant+tool message pair BEFORE the first LLM call.
+    prefetched_messages: list[dict[str, Any]] = []
     if has_attachment_tool_fetch:
         from app.nova.services.attachment_service import get_context_payload, fetch_attachment_content
         from app.models.agents import NovaAttachment, RagDocument
@@ -541,10 +590,7 @@ async def orchestrate_stream(
                 logger.warning("Auto-prefetch failed for attachment %s: %s", _file_id_str, _exc)
                 continue
 
-            # Synthetic tool_call id
             _call_id = f"prefetch_{_file_id_str[:8]}"
-
-            # Truncate if needed to stay within LLM context limits (~80k chars ≈ ~20k tokens)
             _MAX_PREFETCH_CHARS = 80_000
             if len(_full_content) > _MAX_PREFETCH_CHARS:
                 _full_content = (
@@ -553,8 +599,7 @@ async def orchestrate_stream(
                     f"Use fetch_attachment(file_id='{_file_id_str}', page=N) to read specific pages ...]"
                 )
 
-            # Insert as: assistant message with a tool_call, then tool result
-            messages.insert(-1, {
+            prefetched_messages.append({
                 "role": "assistant",
                 "content": None,
                 "tool_calls": [{
@@ -566,7 +611,7 @@ async def orchestrate_stream(
                     },
                 }],
             })
-            messages.insert(-1, {
+            prefetched_messages.append({
                 "role": "tool",
                 "tool_call_id": _call_id,
                 "name": "fetch_attachment",
@@ -607,7 +652,7 @@ async def orchestrate_stream(
                     f"Use fetch_attachment(file_id='{_doc_id_str}', page=N) to read specific pages ...]"
                 )
 
-            messages.insert(-1, {
+            prefetched_messages.append({
                 "role": "assistant",
                 "content": None,
                 "tool_calls": [{
@@ -619,7 +664,7 @@ async def orchestrate_stream(
                     },
                 }],
             })
-            messages.insert(-1, {
+            prefetched_messages.append({
                 "role": "tool",
                 "tool_call_id": _call_id,
                 "name": "fetch_attachment",
@@ -629,6 +674,35 @@ async def orchestrate_stream(
                 "Auto-prefetched rag document %s (%s) — %d chars injected into context",
                 _doc_id_str, _filename, len(_full_content),
             )
+
+    # ── Watermark Compaction Pre-Flight Check (Spec D1, D2, D8, D10) ──────────
+    active_summary, retained_turns, did_compact = await preflight_watermark_check(
+        session=session,
+        db=db,
+        conn=llm_connection,
+        system_prompt=system_prompt,
+        prefetched_messages=prefetched_messages,
+        current_user_content=user_content,
+        keep_last_k=DEFAULT_LOW_WATERMARK_K,
+        high_watermark_ratio=DEFAULT_HIGH_WATERMARK_RATIO,
+        agent_id=agent.id,
+        workspace_id=workspace_id,
+    )
+
+    if active_summary and active_summary.strip():
+        system_prompt += (
+            f"\n\n---\n\n## SUMMARY OF EARLIER CONVERSATION HISTORY (Turns prior to active window)\n"
+            f"{active_summary.strip()}\n"
+            f"---\n"
+        )
+
+    # Assemble messages payload with retained full raw turns + attachments + current user msg
+    messages: list[dict[str, Any]] = []
+    for t in retained_turns:
+        messages.extend(t.to_llm_messages())
+
+    messages.extend(prefetched_messages)
+    messages.append({"role": "user", "content": user_message_payload, "id": user_msg_id})
 
     # ── LLM call loop (handles multi-step tool use) ───────────────────────────
     full_response_text = ""
@@ -767,13 +841,67 @@ async def orchestrate_stream(
                         res_data = result_payload.get("data") if isinstance(result_payload.get("data"), dict) else {}
                         step_res = args.get("result") if isinstance(args.get("result"), dict) else (result_payload.get("result") if isinstance(result_payload.get("result"), dict) else {})
 
+                        tool_name_lower = tc.get("name", "").lower()
+                        nb_op = (args.get("operation") or pld.get("operation") or result_payload.get("operation") or "").lower()
+
+                        READ_ONLY_OPERATIONS = {
+                            "read_notebook",
+                            "get_cell",
+                            "inspect_notebook",
+                            "get_notebook_outline",
+                            "search_notebook",
+                            "get_outputs",
+                            "get_variable",
+                            "list_variables",
+                            "get_notebook_schema",
+                            "list_notebooks",
+                            "find_notebooks",
+                            "run_cell",
+                            "run_all_cells",
+                            "execute_cell",
+                            "approve_cell_edit",
+                            "reject_cell_edit",
+                        }
+
+                        READ_ONLY_TOOLS = {
+                            "read_file",
+                            "view_file",
+                            "list_dir",
+                            "grep_search",
+                            "find_by_name",
+                            "search_web",
+                            "read_url_content",
+                            "get_column_stats",
+                            "db_explorer",
+                        }
+
+                        is_read_only = (
+                            tool_name_lower in READ_ONLY_TOOLS or
+                            (tool_name_lower == "notebook_manager" and (nb_op in READ_ONLY_OPERATIONS or not nb_op)) or
+                            nb_op in READ_ONLY_OPERATIONS
+                        )
+
+                        if is_read_only:
+                            is_nb_tool = False
+                        else:
+                            is_nb_tool = (
+                                "notebook" in tool_name_lower or
+                                nb_op in ("edit_cell", "propose_cell_edit", "apply_notebook_edit", "add_multiple_cells", "add_cells", "create_cell", "insert_cell", "delete_cell", "create_notebook") or
+                                (isinstance(step_res, dict) and step_res.get("notebook_content"))
+                            )
+
+                        if not is_read_only:
+                            ot = result_payload.get("object_type") or args.get("object_type") or pld.get("object_type") or ("notebook" if is_nb_tool else "table")
+
                         fn = (
                             result_payload.get("full_name") or
+                            result_payload.get("resource_id") or
                             args.get("full_name") or
                             ctx.get("path") or
                             ctx.get("notebook_path") or
                             pld.get("notebook_path") or
                             pld.get("full_name") or
+                            pld.get("path") or
                             args.get("path") or
                             (step_res.get("full_name") if isinstance(step_res, dict) else None) or
                             (step_res.get("notebook_path") if isinstance(step_res, dict) else None)
@@ -792,18 +920,46 @@ async def orchestrate_stream(
                             if cat and sch and nm:
                                 fn = f"{cat}.{sch}.{nm}"
 
+                        # Fallback for notebook operations
+                        if not fn and is_nb_tool:
+                            try:
+                                from app.agents.models.agents import ChangeRecord
+                                prev_rec = db.query(ChangeRecord).filter(
+                                    ChangeRecord.session_id == session_id,
+                                    ChangeRecord.object_type == "notebook",
+                                ).order_by(ChangeRecord.captured_at.desc()).first()
+                                if prev_rec and prev_rec.full_name:
+                                    fn = prev_rec.full_name
+                            except Exception:
+                                pass
+                            if not fn:
+                                goal_slug = re.sub(r'[^a-zA-Z0-9_]', '_', (active_plan.goal if active_plan else "notebook")[:30].strip()).strip('_').lower()
+                                fn = f"workspace.notebooks.{goal_slug or 'analysis_notebook'}"
+
                         # Fallback asset name if code/notebook was produced in a step
                         if not fn and isinstance(step_res, dict) and (step_res.get("notebook_content") or step_res.get("code") or step_res.get("query")):
                             goal_slug = re.sub(r'[^a-zA-Z0-9_]', '_', (active_plan.goal if active_plan else "asset")[:30].strip()).strip('_').lower()
                             fn = f"workspace.notebooks.{goal_slug or 'notebook_output'}"
 
-                        ot = result_payload.get("object_type") or args.get("object_type") or ("notebook" if ("notebook" in tc.get("name", "").lower() or (isinstance(step_res, dict) and step_res.get("notebook_content"))) else "table")
-                        before = result_payload.get("before_content") or args.get("before_content")
+                        before = (
+                            result_payload.get("before_content") or
+                            args.get("before_content") or
+                            pld.get("before_content") or
+                            pld.get("original_code") or
+                            res_data.get("original_code") or
+                            res_data.get("before_content")
+                        )
 
                         after = (
                             result_payload.get("after_content") or
                             result_payload.get("content") or
                             result_payload.get("code") or
+                            pld.get("code") or
+                            pld.get("source") or
+                            pld.get("content") or
+                            res_data.get("code") or
+                            res_data.get("source") or
+                            res_data.get("content") or
                             (step_res.get("notebook_content") if isinstance(step_res, dict) else None) or
                             (step_res.get("code") if isinstance(step_res, dict) else None) or
                             (step_res.get("query") if isinstance(step_res, dict) else None) or
@@ -815,12 +971,14 @@ async def orchestrate_stream(
                             cells = pld.get("cells") or res_data.get("cells")
                             if isinstance(cells, list):
                                 c_texts = [c.get("code") or c.get("source") for c in cells if isinstance(c, dict) and (c.get("code") or c.get("source"))]
-                                if c_texts: after = "\n\n".join(c_texts)
-                            elif "comment" in args:
-                                after = f"# Notebook/Asset created\n# Comment: {args['comment']}"
+                                if c_texts:
+                                    after = "\n\n".join(c_texts)
+                            elif "comment" in args or "comment" in pld:
+                                c_text = args.get("comment") or pld.get("comment")
+                                after = f"# Notebook/Asset created\n# Comment: {c_text}"
 
                         captured_change_info = None
-                        if fn and after and isinstance(fn, str) and isinstance(after, str):
+                        if not is_read_only and fn and after and isinstance(fn, str) and isinstance(after, str):
                             curr_step = None
                             if active_plan:
                                 for st in active_plan.steps:
@@ -1006,7 +1164,7 @@ async def orchestrate_subagent_stream(
 
     tools = get_tool_definitions(enabled_tool_keys)
 
-    loop = asyncio.get_event_loop()
+    loop = _get_safe_event_loop()
     extra_tools = _build_extra_tools(
         agent=subagent,
         enabled_tool_keys=enabled_tool_keys,

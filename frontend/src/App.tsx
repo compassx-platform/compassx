@@ -315,7 +315,9 @@ export default function App() {
                   <Route path="sql-warehouse/:tab/:warehouseId/:subtab" element={<SqlWarehousePage />} />
                   <Route path="agents" element={<AgentsPage />} />
                   <Route path="agents/tools/:toolKey" element={<AgentToolDetailPage />} />
-                  <Route path="agents/new" element={<AgentBuilderPage />} />
+                  <Route path="agents/:agentId" element={<AgentChatPage />} />
+                  <Route path="agents/:agentId/sessions" element={<AgentChatPage />} />
+                  <Route path="agents/:agentId/sessions/:sessionId" element={<AgentChatPage />} />
                   <Route path="agents/:agentId/edit" element={<AgentChatPage initialView="customizations" />} />
                   <Route path="agents/:agentId/customizations" element={<AgentChatPage initialView="customizations" />} />
                   <Route path="agents/:agentId/chat" element={<AgentChatPage />} />

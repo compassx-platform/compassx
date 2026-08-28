@@ -21,6 +21,7 @@ from app.agents.services.agent.known_assets_registry import registry as known_as
 from app.agents.services.agent.change_capture_service import (
     accept_change,
     reject_change,
+    bulk_review_changes,
     get_changes_for_session,
     get_change_record,
 )
@@ -165,3 +166,20 @@ def reject_change_endpoint(
     if not result.get("ok"):
         raise HTTPException(400, result.get("error", "Reject failed"))
     return result
+
+
+@router.post("/changes/bulk-review")
+def bulk_review_endpoint(
+    request: Request,
+    agent_id: int,
+    session_id: int,
+    body: dict,  # {"action": "accept_all" | "reject_all"}
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    """Bulk accept or reject all pending changes for a session."""
+    _get_session_or_404(db, agent_id, session_id)
+    action = body.get("action", "accept_all")
+    if action not in ("accept_all", "reject_all"):
+        raise HTTPException(400, "action must be 'accept_all' or 'reject_all'")
+    return bulk_review_changes(db, session_id, action)

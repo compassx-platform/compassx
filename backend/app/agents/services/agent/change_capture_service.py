@@ -64,6 +64,19 @@ def capture_change(
     norm_before = _normalize_text(before) if before is not None else None
     norm_after = _normalize_text(after)
 
+    if norm_before is None:
+        try:
+            prev_rec = (
+                db.query(ChangeRecord)
+                .filter(ChangeRecord.session_id == session_id, ChangeRecord.full_name == full_name)
+                .order_by(ChangeRecord.captured_at.desc())
+                .first()
+            )
+            if prev_rec and prev_rec.after_content is not None:
+                norm_before = _normalize_text(prev_rec.after_content)
+        except Exception as _prev_err:
+            logger.debug("Failed to query previous change record: %s", _prev_err)
+
     additions, deletions = _compute_diff_counts(norm_before, norm_after)
     record = ChangeRecord(
         change_id=str(uuid.uuid4()),
@@ -89,8 +102,95 @@ def capture_change(
     return record
 
 
+def _revert_asset_content(full_name: str, object_type: str, before_content: str | None) -> bool:
+    """Reverts the underlying asset or file on storage / disk to before_content."""
+    try:
+        # 1. Notebook asset in UnifiedCatalog or file storage
+        if object_type == "notebook" or full_name.endswith(".ipynb") or "notebook" in full_name.lower():
+            try:
+                from app.database import AccountSessionLocal
+                from app.catalog.models import UnifiedCatalogNotebook, UnifiedCatalogSchema
+                from app.catalog.service import _write_notebook_content
+                import json
+                import asyncio
+
+                dot_parts = full_name.split(".")
+                if len(dot_parts) == 3 and not full_name.endswith(".ipynb"):
+                    with AccountSessionLocal() as account_db:
+                        nb = account_db.query(UnifiedCatalogNotebook).filter(
+                            UnifiedCatalogNotebook.catalog_name == dot_parts[0],
+                            UnifiedCatalogNotebook.schema_name == dot_parts[1],
+                            UnifiedCatalogNotebook.name == dot_parts[2],
+                        ).first()
+                        if nb and nb.blob_path:
+                            schema = account_db.query(UnifiedCatalogSchema).filter(
+                                UnifiedCatalogSchema.catalog_name == dot_parts[0],
+                                UnifiedCatalogSchema.name == dot_parts[1],
+                            ).first()
+                            if schema:
+                                if before_content:
+                                    try:
+                                        nb_data = json.loads(before_content)
+                                    except Exception:
+                                        nb_data = {
+                                            "nbformat": 4,
+                                            "nbformat_minor": 5,
+                                            "metadata": {},
+                                            "cells": [{"cell_type": "code", "source": before_content, "metadata": {}, "outputs": [], "execution_count": None}],
+                                        }
+                                else:
+                                    nb_data = {"nbformat": 4, "nbformat_minor": 5, "metadata": {}, "cells": []}
+
+                                try:
+                                    loop = asyncio.get_event_loop()
+                                    if loop.is_running():
+                                        import concurrent.futures
+                                        with concurrent.futures.ThreadPoolExecutor() as pool:
+                                            pool.submit(asyncio.run, _write_notebook_content(account_db, schema, nb.blob_path, nb_data)).result()
+                                    else:
+                                        loop.run_until_complete(_write_notebook_content(account_db, schema, nb.blob_path, nb_data))
+                                except Exception:
+                                    asyncio.run(_write_notebook_content(account_db, schema, nb.blob_path, nb_data))
+                                return True
+            except Exception as _nb_err:
+                logger.debug("Catalog notebook revert attempt: %s", _nb_err)
+
+        # 2. Local file on disk or workspace
+        from pathlib import Path
+        import os
+        import tempfile
+
+        path_obj = Path(full_name)
+        if path_obj.is_absolute() or path_obj.exists():
+            if before_content is not None:
+                path_obj.parent.mkdir(parents=True, exist_ok=True)
+                path_obj.write_text(before_content, encoding="utf-8")
+            else:
+                if path_obj.is_file():
+                    path_obj.unlink(missing_ok=True)
+            return True
+
+        # Check in agent workspace / clone directories
+        workspace_root = Path(os.environ.get("AGENT_WORKSPACE_ROOT", str(Path(tempfile.gettempdir()) / "agent_workspaces")))
+        if workspace_root.exists():
+            clean_rel = full_name.lstrip("/\\")
+            matched_files = list(workspace_root.glob(f"**/{clean_rel}"))
+            for mf in matched_files:
+                if before_content is not None:
+                    mf.write_text(before_content, encoding="utf-8")
+                else:
+                    if mf.is_file():
+                        mf.unlink(missing_ok=True)
+                return True
+
+    except Exception as exc:
+        logger.warning("Failed to revert underlying asset content for %s: %s", full_name, exc)
+        return False
+    return False
+
+
 def accept_change(db: Session, change_id: str) -> dict[str, Any]:
-    """Accept a pending change — sets status to 'accepted', no further write."""
+    """Accept a pending change — confirms status as 'accepted'."""
     try:
         from app.agents.models.agents import ChangeRecord
     except ImportError:
@@ -110,7 +210,8 @@ def reject_change(
     session_id: int,
 ) -> dict[str, Any]:
     """
-    Reject a change — log a new linked ChangeRecord representing the revert (D20).
+    Reject a change — physically reverts the underlying file/asset on disk/storage,
+    marks original record as 'rejected', and logs a linked revert ChangeRecord (D20).
     """
     try:
         from app.agents.models.agents import ChangeRecord
@@ -121,12 +222,8 @@ def reject_change(
     if not record:
         return {"error": f"Change {change_id} not found", "ok": False}
 
-    if record.before_content is None:
-        return {
-            "error": "Cannot auto-revert a create operation (before_content is null). "
-                     "Delete the asset manually if needed.",
-            "ok": False,
-        }
+    # Physically revert the file/asset content
+    _revert_asset_content(record.full_name, record.object_type, record.before_content)
 
     # Capture the revert as a new change record
     additions, deletions = _compute_diff_counts(record.after_content, record.before_content)
@@ -139,7 +236,7 @@ def reject_change(
         after_content=record.before_content,
         additions=additions,
         deletions=deletions,
-        status="accepted",  # revert itself is auto-accepted
+        status="rejected",  # Revert record marks the state as rejected
         step_id=record.step_id,
         plan_id=record.plan_id,
         reverted_by_change_id=change_id,
@@ -158,8 +255,42 @@ def reject_change(
         "full_name": record.full_name,
         "status": "rejected",
         "revert_status": "accepted",
-        "note": "Revert recorded with before-content.",
+        "note": "Revert applied and recorded with before-content.",
         "ok": True,
+    }
+
+
+def bulk_review_changes(
+    db: Session,
+    session_id: int,
+    action: str,  # "accept_all" | "reject_all"
+) -> dict[str, Any]:
+    """Approve or reject all pending changes for a session."""
+    try:
+        from app.agents.models.agents import ChangeRecord
+    except ImportError:
+        return {"error": "ChangeRecord model not available", "ok": False}
+
+    pending_records = (
+        db.query(ChangeRecord)
+        .filter(ChangeRecord.session_id == session_id, ChangeRecord.status == "pending_review")
+        .all()
+    )
+
+    results = []
+    for r in pending_records:
+        if action == "accept_all":
+            res = accept_change(db, r.change_id)
+        else:
+            res = reject_change(db, r.change_id, session_id)
+        results.append(res)
+
+    return {
+        "ok": True,
+        "action": action,
+        "session_id": session_id,
+        "count": len(results),
+        "results": results,
     }
 
 

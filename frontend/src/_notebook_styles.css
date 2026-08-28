@@ -1977,6 +1977,21 @@ div:hover > .notebook-drag-handle:hover { opacity: 1; color: #6b7280; cursor: gr
   background-color: rgba(239, 68, 68, 0.15) !important; /* red 15% */
   color: #9ca3af !important; /* muted text color for deleted lines */
 }
+.cm-diff-removed-container {
+  background-color: rgba(239, 68, 68, 0.12);
+  user-select: none;
+  pointer-events: none;
+  font-family: inherit;
+  font-size: inherit;
+  line-height: inherit;
+}
+.cm-diff-removed-line {
+  color: #dc2626;
+  padding: 0 4px;
+  white-space: pre-wrap;
+  text-decoration: line-through;
+  opacity: 0.85;
+}
 
 /* Editor Container & Overlay actions */
 .notebook-editor-container {

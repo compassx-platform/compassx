@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import Notebook from '@/modules/notebooks/components/Notebook';
+import type { Cell } from '@/modules/notebooks/store/notebookStore';
 import { useNotebookStore } from '@/modules/notebooks/store/notebookStore';
 import { serialize, deserialize } from '@/modules/notebooks/lib/nbformat';
 import api from '@/lib/api';
@@ -9,11 +10,19 @@ const AUTO_SAVE_MS = 5_000;
 
 interface Props {
   notebookPath?: string;
+  beforeContent?: string | null;
+  afterContent?: string | null;
   embedded?: boolean;
   onDelete?: () => void;
 }
 
-export default function NotebookPage({ notebookPath: notebookPathProp, embedded = false, onDelete }: Props) {
+export default function NotebookPage({
+  notebookPath: notebookPathProp,
+  beforeContent,
+  afterContent,
+  embedded = false,
+  onDelete,
+}: Props) {
   const [searchParams] = useSearchParams();
   const notebookPath = notebookPathProp ?? searchParams.get('path') ?? 'notebooks/untitled.ipynb';
   const [isLoading, setIsLoading] = useState(true);
@@ -38,8 +47,66 @@ export default function NotebookPage({ notebookPath: notebookPathProp, embedded 
     useNotebookStore.setState({ notebookComputeLoaded: false });
   }, [notebookPath, setNotebookPath, setCells]);
 
-  // Load existing notebook from backend
+  // Load existing notebook from backend or diff props
   useEffect(() => {
+    if (afterContent !== undefined || beforeContent !== undefined) {
+      if (!afterContent && !beforeContent) {
+        setIsLoading(false);
+        return;
+      }
+      try {
+        let afterCells: Cell[] = [];
+        if (afterContent) {
+          const afterData = typeof afterContent === 'string' ? JSON.parse(afterContent) : afterContent;
+          afterCells = deserialize(afterData);
+        }
+        let beforeCells: Cell[] = [];
+        if (beforeContent) {
+          const beforeData = typeof beforeContent === 'string' ? JSON.parse(beforeContent) : beforeContent;
+          beforeCells = deserialize(beforeData);
+        }
+
+        if (afterCells.length === 0 && beforeCells.length > 0) {
+          setCells(beforeCells);
+          setIsLoading(false);
+          return;
+        }
+
+        const diffedCells: Cell[] = afterCells.map((afterCell, idx) => {
+          const beforeCell = beforeCells[idx];
+          const hasChanged =
+            !beforeCell || beforeCell.source !== afterCell.source || beforeCell.type !== afterCell.type;
+          if (hasChanged) {
+            return {
+              ...afterCell,
+              committedSource: beforeCell?.source ?? '',
+              pendingSource: afterCell.source,
+              cellStatus: 'pending',
+              pendingAgentEdit: {
+                action: beforeCell ? 'replace_cell' : 'insert_below',
+                originalSource: beforeCell?.source ?? '',
+                proposedSource: afterCell.source,
+                cellType: afterCell.type,
+                explanation: 'Proposed agent modification',
+                createdCell: !beforeCell,
+              },
+            };
+          }
+          return {
+            ...afterCell,
+            cellStatus: 'clean',
+            committedSource: afterCell.source,
+          };
+        });
+
+        setCells(diffedCells);
+        setIsLoading(false);
+        return;
+      } catch (e) {
+        console.error('Failed to parse notebook before/after diff:', e);
+      }
+    }
+
     let isCancelled = false;
     api
       .get(`/notebook/files/${notebookPath}`)
@@ -76,7 +143,7 @@ export default function NotebookPage({ notebookPath: notebookPathProp, embedded 
     return () => {
       isCancelled = true;
     };
-  }, [notebookPath, setCells, setNotebookId]);
+  }, [notebookPath, beforeContent, afterContent, setCells, setNotebookId]);
 
   const saveNotebook = useCallback(async () => {
     const nb = serialize(cells);

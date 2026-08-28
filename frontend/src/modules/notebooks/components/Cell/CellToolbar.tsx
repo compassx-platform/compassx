@@ -1,4 +1,4 @@
-import { ChevronUp, ChevronDown, Trash2, Play, Minimize2, Maximize2 } from 'lucide-react';
+import { ChevronUp, ChevronDown, Trash2, Play, Minimize2, Maximize2, Check, X } from 'lucide-react';
 import { useNotebookStore, type CellType } from '../../store/notebookStore';
 
 interface Props {
