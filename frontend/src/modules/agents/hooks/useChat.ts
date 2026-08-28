@@ -70,6 +70,21 @@ export function useSessionContext(
   });
 }
 
+export function useSessionPlans(
+  agentId: number | null,
+  sessionId: number | null
+) {
+  return useQuery({
+    queryKey: ["agents", agentId, "sessions", sessionId, "plans"],
+    queryFn: async () => {
+      const { data } = await api.get<any[]>(`/agents/${agentId}/sessions/${sessionId}/plans`);
+      return data ?? [];
+    },
+    enabled: agentId != null && sessionId != null,
+    staleTime: 5_000,
+  });
+}
+
 export function useCreateSession() {
   const qc = useQueryClient();
   return useMutation({

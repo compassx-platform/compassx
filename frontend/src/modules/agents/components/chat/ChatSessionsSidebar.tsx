@@ -14,8 +14,10 @@ import {
   Zap,
   Loader2,
   History,
+  Database,
 } from 'lucide-react';
 import type { ChatSession } from '@/modules/agents/hooks/useChat';
+import { CatalogExplorerTree } from '@/modules/data/components/CatalogExplorerTree';
 
 export function formatRelativeTime(dateStr: string): string {
   try {
@@ -245,6 +247,9 @@ interface ChatSessionsSidebarProps {
   researchRunsForAgent?: any[];
   onTriggerResearchRun?: () => void;
   isTriggerResearchPending?: boolean;
+  sidebarMode?: 'chats' | 'catalog';
+  onSidebarModeChange?: (mode: 'chats' | 'catalog') => void;
+  onInsertTable?: (identifier: string) => void;
 }
 
 export function ChatSessionsSidebar({
@@ -264,7 +269,20 @@ export function ChatSessionsSidebar({
   researchRunsForAgent = [],
   onTriggerResearchRun,
   isTriggerResearchPending = false,
+  sidebarMode: propSidebarMode,
+  onSidebarModeChange,
+  onInsertTable,
 }: ChatSessionsSidebarProps) {
+  const [internalSidebarMode, setInternalSidebarMode] = useState<'chats' | 'catalog'>('chats');
+  const currentSidebarMode = propSidebarMode ?? internalSidebarMode;
+  const setSidebarMode = (mode: 'chats' | 'catalog') => {
+    if (onSidebarModeChange) {
+      onSidebarModeChange(mode);
+    } else {
+      setInternalSidebarMode(mode);
+    }
+  };
+
   const [searchQuery, setSearchQuery] = useState('');
   const [visibleSessionLimit, setVisibleSessionLimit] = useState(25);
   const [isResizingSidebar, setIsResizingSidebar] = useState(false);
@@ -323,6 +341,23 @@ export function ChatSessionsSidebar({
     [sidebarWidth, onSidebarWidthChange]
   );
 
+  const [hoverPopoverOpen, setHoverPopoverOpen] = useState(false);
+  const popoverTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  const handleRailChatsMouseEnter = () => {
+    if (popoverTimeoutRef.current) {
+      clearTimeout(popoverTimeoutRef.current);
+      popoverTimeoutRef.current = null;
+    }
+    setHoverPopoverOpen(true);
+  };
+
+  const handleRailChatsMouseLeave = () => {
+    popoverTimeoutRef.current = setTimeout(() => {
+      setHoverPopoverOpen(false);
+    }, 200);
+  };
+
   // ── Collapsed Vertical Icon Rail (Matching Image 2) ────────────────────────
   if (!isSidebarOpen) {
     return (
@@ -338,6 +373,7 @@ export function ChatSessionsSidebar({
           flexShrink: 0,
           padding: '12px 0 16px',
           zIndex: 10,
+          position: 'relative',
         }}
       >
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 14, width: '100%' }}>
@@ -433,17 +469,237 @@ export function ChatSessionsSidebar({
             <Terminal size={16} />
           </button>
 
-          {/* 5. History */}
+          {/* 5. Chat history with Hover Popover */}
+          <div
+            style={{ position: 'relative' }}
+            onMouseEnter={handleRailChatsMouseEnter}
+            onMouseLeave={handleRailChatsMouseLeave}
+          >
+            <button
+              type="button"
+              onClick={() => {
+                if (!isSidebarOpen) onToggleSidebar();
+                setSidebarMode('chats');
+              }}
+              title="Chat History"
+              style={{
+                background: currentSidebarMode === 'chats' ? '#f1f5f9' : 'none',
+                border: 'none',
+                cursor: 'pointer',
+                padding: '6px',
+                color: currentSidebarMode === 'chats' ? '#0f172a' : '#475569',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                borderRadius: 6,
+                transition: 'all 0.15s ease',
+              }}
+              onMouseEnter={(e) => (e.currentTarget.style.color = '#0f172a')}
+              onMouseLeave={(e) => (e.currentTarget.style.color = currentSidebarMode === 'chats' ? '#0f172a' : '#475569')}
+            >
+              <MessageSquare size={16} />
+            </button>
+
+            {/* Quick Switch Popover on Hover */}
+            {hoverPopoverOpen && (
+              <div
+                style={{
+                  position: 'absolute',
+                  left: 36,
+                  top: -8,
+                  width: 290,
+                  maxHeight: 380,
+                  background: '#ffffff',
+                  border: '1px solid #e2e8f0',
+                  borderRadius: 10,
+                  boxShadow: '0 10px 28px rgba(0, 0, 0, 0.14)',
+                  zIndex: 9999,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  overflow: 'hidden',
+                  animation: 'fadeIn 0.15s ease',
+                }}
+                onMouseEnter={handleRailChatsMouseEnter}
+                onMouseLeave={handleRailChatsMouseLeave}
+              >
+                {/* Popover Header */}
+                <div
+                  style={{
+                    padding: '10px 12px 8px',
+                    borderBottom: '1px solid #f1f5f9',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    background: '#f8fafc',
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <MessageSquare size={13} color="#2563eb" />
+                    <span style={{ fontSize: '0.8rem', fontWeight: 600, color: '#0f172a' }}>
+                      Recent Chats
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setHoverPopoverOpen(false);
+                      onNewSession();
+                    }}
+                    title="Start new chat"
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 4,
+                      fontSize: '0.72rem',
+                      fontWeight: 500,
+                      color: '#2563eb',
+                      background: 'none',
+                      border: 'none',
+                      cursor: 'pointer',
+                      padding: '2px 6px',
+                      borderRadius: 4,
+                    }}
+                    onMouseEnter={(e) => (e.currentTarget.style.background = '#eff6ff')}
+                    onMouseLeave={(e) => (e.currentTarget.style.background = 'none')}
+                  >
+                    <SquarePen size={12} />
+                    <span>New</span>
+                  </button>
+                </div>
+
+                {/* Popover Sessions List */}
+                <div
+                  className="sidebar-hover-scrollbar"
+                  style={{
+                    flex: 1,
+                    overflowY: 'auto',
+                    padding: '6px 8px',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 2,
+                    maxHeight: 280,
+                  }}
+                >
+                  {sessions.length === 0 ? (
+                    <div style={{ padding: '16px 8px', fontSize: '0.75rem', color: '#94a3b8', textAlign: 'center' }}>
+                      No chats yet
+                    </div>
+                  ) : (
+                    sessions.slice(0, 10).map((s) => {
+                      const isItemActive = activeSessionId === s.id;
+                      const title = s.title?.trim() || `Session #${s.id}`;
+                      const timeStr = formatRelativeTime(s.updated_at || s.created_at);
+                      return (
+                        <div
+                          key={s.id}
+                          onClick={() => {
+                            setHoverPopoverOpen(false);
+                            onSelectSession(s.id);
+                          }}
+                          style={{
+                            padding: '6px 8px',
+                            borderRadius: 6,
+                            cursor: 'pointer',
+                            background: isItemActive ? '#f1f5f9' : 'transparent',
+                            transition: 'background 0.12s ease',
+                            display: 'flex',
+                            flexDirection: 'column',
+                            gap: 2,
+                          }}
+                          onMouseEnter={(e) => {
+                            if (!isItemActive) e.currentTarget.style.background = '#f8fafc';
+                          }}
+                          onMouseLeave={(e) => {
+                            if (!isItemActive) e.currentTarget.style.background = 'transparent';
+                          }}
+                        >
+                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6 }}>
+                            <span
+                              style={{
+                                fontSize: '0.78rem',
+                                fontWeight: isItemActive ? 600 : 500,
+                                color: isItemActive ? '#0f172a' : '#334155',
+                                overflow: 'hidden',
+                                textOverflow: 'ellipsis',
+                                whiteSpace: 'nowrap',
+                              }}
+                            >
+                              {title}
+                            </span>
+                            <span style={{ fontSize: '0.68rem', color: '#94a3b8', flexShrink: 0 }}>
+                              {timeStr}
+                            </span>
+                          </div>
+                          {s.last_message && (
+                            <span
+                              style={{
+                                fontSize: '0.7rem',
+                                color: '#64748b',
+                                overflow: 'hidden',
+                                textOverflow: 'ellipsis',
+                                whiteSpace: 'nowrap',
+                              }}
+                            >
+                              {s.last_message}
+                            </span>
+                          )}
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+
+                {/* Popover Footer */}
+                <div
+                  style={{
+                    padding: '6px 10px',
+                    borderTop: '1px solid #f1f5f9',
+                    background: '#f8fafc',
+                    display: 'flex',
+                    justifyContent: 'center',
+                  }}
+                >
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setHoverPopoverOpen(false);
+                      if (!isSidebarOpen) onToggleSidebar();
+                      setSidebarMode('chats');
+                    }}
+                    style={{
+                      background: 'none',
+                      border: 'none',
+                      cursor: 'pointer',
+                      fontSize: '0.72rem',
+                      fontWeight: 500,
+                      color: '#64748b',
+                      padding: '3px 8px',
+                      borderRadius: 4,
+                    }}
+                    onMouseEnter={(e) => (e.currentTarget.style.color = '#0f172a')}
+                    onMouseLeave={(e) => (e.currentTarget.style.color = '#64748b')}
+                  >
+                    Open full sidebar &rarr;
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* 6. Data Catalog */}
           <button
             type="button"
-            onClick={onToggleSidebar}
-            title="Chat History"
+            onClick={() => {
+              if (!isSidebarOpen) onToggleSidebar();
+              setSidebarMode('catalog');
+            }}
+            title="Data Catalog"
             style={{
-              background: 'none',
+              background: currentSidebarMode === 'catalog' ? '#f1f5f9' : 'none',
               border: 'none',
               cursor: 'pointer',
               padding: '6px',
-              color: '#475569',
+              color: currentSidebarMode === 'catalog' ? '#0f172a' : '#475569',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
@@ -451,9 +707,9 @@ export function ChatSessionsSidebar({
               transition: 'all 0.15s ease',
             }}
             onMouseEnter={(e) => (e.currentTarget.style.color = '#0f172a')}
-            onMouseLeave={(e) => (e.currentTarget.style.color = '#475569')}
+            onMouseLeave={(e) => (e.currentTarget.style.color = currentSidebarMode === 'catalog' ? '#0f172a' : '#475569')}
           >
-            <History size={16} />
+            <Database size={16} />
           </button>
         </div>
 
@@ -627,270 +883,342 @@ export function ChatSessionsSidebar({
         </div>
       </div>
 
-      {/* Action Items List: New chat, Customizations, Session Logs */}
-      <div style={{ padding: '0 10px 8px', display: 'flex', flexDirection: 'column', gap: 1 }}>
-        <button
-          type="button"
-          onClick={onNewSession}
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 10,
-            width: '100%',
-            padding: '7px 8px',
-            border: 'none',
-            background: 'transparent',
-            color: '#1e293b',
-            fontSize: '0.84rem',
-            fontWeight: 500,
-            cursor: 'pointer',
-            borderRadius: 6,
-            textAlign: 'left',
-            transition: 'background 0.15s ease',
-          }}
-          onMouseEnter={(e) => (e.currentTarget.style.background = '#f1f5f9')}
-          onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
-        >
-          <SquarePen size={15} color="#475569" />
-          <span>New chat</span>
-        </button>
-
-        <button
-          type="button"
-          onClick={() => onSetMainView(mainView === 'customizations' ? 'chat' : 'customizations')}
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 10,
-            width: '100%',
-            padding: '7px 8px',
-            border: 'none',
-            background: mainView === 'customizations' ? '#f1f5f9' : 'transparent',
-            color: mainView === 'customizations' ? '#0f172a' : '#1e293b',
-            fontSize: '0.84rem',
-            fontWeight: mainView === 'customizations' ? 600 : 500,
-            cursor: 'pointer',
-            borderRadius: 6,
-            textAlign: 'left',
-            transition: 'background 0.15s ease',
-          }}
-          onMouseEnter={(e) => (e.currentTarget.style.background = '#f1f5f9')}
-          onMouseLeave={(e) =>
-            (e.currentTarget.style.background =
-              mainView === 'customizations' ? '#f1f5f9' : 'transparent')
-          }
-        >
-          <SlidersHorizontal
-            size={15}
-            color={mainView === 'customizations' ? '#0f172a' : '#475569'}
-          />
-          <span>Customizations</span>
-        </button>
-
-        <button
-          type="button"
-          onClick={() => onSetMainView(mainView === 'logs' ? 'chat' : 'logs')}
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 10,
-            width: '100%',
-            padding: '7px 8px',
-            border: 'none',
-            background: mainView === 'logs' ? '#f1f5f9' : 'transparent',
-            color: mainView === 'logs' ? '#0f172a' : '#1e293b',
-            fontSize: '0.84rem',
-            fontWeight: mainView === 'logs' ? 600 : 500,
-            cursor: 'pointer',
-            borderRadius: 6,
-            textAlign: 'left',
-            transition: 'background 0.15s ease',
-          }}
-          onMouseEnter={(e) => (e.currentTarget.style.background = '#f1f5f9')}
-          onMouseLeave={(e) =>
-            (e.currentTarget.style.background =
-              mainView === 'logs' ? '#f1f5f9' : 'transparent')
-          }
-        >
-          <Terminal size={15} color={mainView === 'logs' ? '#0f172a' : '#475569'} />
-          <span>Session Logs</span>
-        </button>
-      </div>
-
-      {/* Search chats */}
+      {/* Mode Switcher: Chats vs Catalog */}
       <div style={{ padding: '0 10px 10px' }}>
         <div
           style={{
             display: 'flex',
-            alignItems: 'center',
-            gap: 6,
-            background: '#f1f5f9',
-            borderRadius: 8,
-            padding: '6px 10px',
+            background: 'var(--color-background-subtle, #f1f5f9)',
+            border: '1px solid var(--color-border, #e2e8f0)',
+            borderRadius: 6,
+            padding: 2,
+            gap: 2,
           }}
         >
-          <Search size={14} color="#94a3b8" />
-          <input
-            type="text"
-            placeholder="Search chats"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
+          <button
+            type="button"
+            onClick={() => setSidebarMode('chats')}
             style={{
-              width: '100%',
+              flex: 1,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 6,
+              padding: '5px 8px',
+              fontSize: '0.75rem',
+              fontWeight: currentSidebarMode === 'chats' ? 600 : 500,
+              color: currentSidebarMode === 'chats' ? 'var(--color-text, #0f172a)' : 'var(--color-text-muted, #64748b)',
+              background: currentSidebarMode === 'chats' ? 'var(--color-surface, #ffffff)' : 'transparent',
+              borderRadius: 5,
               border: 'none',
-              outline: 'none',
-              background: 'transparent',
-              fontSize: '0.78rem',
-              color: '#1e293b',
-              lineHeight: 1.3,
+              cursor: 'pointer',
+              boxShadow: currentSidebarMode === 'chats' ? '0 1px 2px rgba(0,0,0,0.06)' : 'none',
+              transition: 'all 0.15s ease',
             }}
-          />
-          {searchQuery && (
-            <button
-              type="button"
-              onClick={() => setSearchQuery('')}
-              style={{
-                background: 'none',
-                border: 'none',
-                cursor: 'pointer',
-                padding: 0,
-                color: '#94a3b8',
-                display: 'flex',
-                alignItems: 'center',
-              }}
-            >
-              <XIcon size={12} />
-            </button>
-          )}
+            title="View Agent Chat Sessions"
+          >
+            <MessageSquare size={13} />
+            <span>Chats</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setSidebarMode('catalog')}
+            style={{
+              flex: 1,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 6,
+              padding: '5px 8px',
+              fontSize: '0.75rem',
+              fontWeight: currentSidebarMode === 'catalog' ? 600 : 500,
+              color: currentSidebarMode === 'catalog' ? 'var(--color-text, #0f172a)' : 'var(--color-text-muted, #64748b)',
+              background: currentSidebarMode === 'catalog' ? 'var(--color-surface, #ffffff)' : 'transparent',
+              borderRadius: 5,
+              border: 'none',
+              cursor: 'pointer',
+              boxShadow: currentSidebarMode === 'catalog' ? '0 1px 2px rgba(0,0,0,0.06)' : 'none',
+              transition: 'all 0.15s ease',
+            }}
+            title="Explore Data Catalog schemas and tables (click to insert into prompt)"
+          >
+            <Database size={13} />
+            <span>Catalog</span>
+          </button>
         </div>
       </div>
 
-      {/* Session list */}
-      <div className="sidebar-hover-scrollbar" style={{ flex: 1, padding: '0 6px 12px' }}>
-        {isResearchEngineAgent && (
-          <div
-            style={{
-              margin: '4px 2px 10px',
-              padding: '8px',
-              border: '1px solid var(--color-border)',
-              borderRadius: 8,
-            }}
-          >
+      {currentSidebarMode === 'chats' ? (
+        <>
+          {/* Action Items List: New chat, Customizations, Session Logs */}
+          <div style={{ padding: '0 10px 8px', display: 'flex', flexDirection: 'column', gap: 1 }}>
+            <button
+              type="button"
+              onClick={onNewSession}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 10,
+                width: '100%',
+                padding: '7px 8px',
+                border: 'none',
+                background: 'transparent',
+                color: '#1e293b',
+                fontSize: '0.84rem',
+                fontWeight: 500,
+                cursor: 'pointer',
+                borderRadius: 6,
+                textAlign: 'left',
+                transition: 'background 0.15s ease',
+              }}
+              onMouseEnter={(e) => (e.currentTarget.style.background = '#f1f5f9')}
+              onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+            >
+              <SquarePen size={15} color="#475569" />
+              <span>New chat</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => onSetMainView(mainView === 'customizations' ? 'chat' : 'customizations')}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 10,
+                width: '100%',
+                padding: '7px 8px',
+                border: 'none',
+                background: mainView === 'customizations' ? '#f1f5f9' : 'transparent',
+                color: mainView === 'customizations' ? '#0f172a' : '#1e293b',
+                fontSize: '0.84rem',
+                fontWeight: mainView === 'customizations' ? 600 : 500,
+                cursor: 'pointer',
+                borderRadius: 6,
+                textAlign: 'left',
+                transition: 'background 0.15s ease',
+              }}
+              onMouseEnter={(e) => (e.currentTarget.style.background = '#f1f5f9')}
+              onMouseLeave={(e) =>
+                (e.currentTarget.style.background =
+                  mainView === 'customizations' ? '#f1f5f9' : 'transparent')
+              }
+            >
+              <SlidersHorizontal
+                size={15}
+                color={mainView === 'customizations' ? '#0f172a' : '#475569'}
+              />
+              <span>Customizations</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => onSetMainView(mainView === 'logs' ? 'chat' : 'logs')}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 10,
+                width: '100%',
+                padding: '7px 8px',
+                border: 'none',
+                background: mainView === 'logs' ? '#f1f5f9' : 'transparent',
+                color: mainView === 'logs' ? '#0f172a' : '#1e293b',
+                fontSize: '0.84rem',
+                fontWeight: mainView === 'logs' ? 600 : 500,
+                cursor: 'pointer',
+                borderRadius: 6,
+                textAlign: 'left',
+                transition: 'background 0.15s ease',
+              }}
+              onMouseEnter={(e) => (e.currentTarget.style.background = '#f1f5f9')}
+              onMouseLeave={(e) =>
+                (e.currentTarget.style.background =
+                  mainView === 'logs' ? '#f1f5f9' : 'transparent')
+              }
+            >
+              <Terminal size={15} color={mainView === 'logs' ? '#0f172a' : '#475569'} />
+              <span>Session Logs</span>
+            </button>
+          </div>
+          {/* Search chats */}
+          <div style={{ padding: '0 10px 10px' }}>
             <div
               style={{
                 display: 'flex',
                 alignItems: 'center',
-                justifyContent: 'space-between',
-                marginBottom: 8,
+                gap: 6,
+                background: '#f1f5f9',
+                borderRadius: 8,
+                padding: '6px 10px',
               }}
             >
-              <span style={{ fontSize: '0.74rem', fontWeight: 700, color: 'var(--color-text-muted)' }}>
-                Research Runs
-              </span>
-              <button
-                className="btn btn-primary"
-                style={{ height: 28, padding: '0 10px', fontSize: '0.72rem' }}
-                onClick={onTriggerResearchRun}
-                disabled={isTriggerResearchPending}
-              >
-                {isTriggerResearchPending ? (
-                  <Loader2 size={12} className="spin" />
-                ) : (
-                  <Zap size={12} />
-                )}{' '}
-                Trigger Run
-              </button>
-            </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-              {researchRunsForAgent.length === 0 ? (
-                <div style={{ fontSize: '0.73rem', color: 'var(--color-text-muted)' }}>
-                  No research runs yet.
-                </div>
-              ) : (
-                researchRunsForAgent.map((run) => {
-                  const linkedSessionId =
-                    Number(
-                      (run.context_package as Record<string, unknown> | undefined)?.chat_session_id ?? 0
-                    ) || null;
-                  return (
-                    <button
-                      key={run.id}
-                      type="button"
-                      onClick={() => linkedSessionId && onSelectSession(linkedSessionId)}
-                      style={{
-                        textAlign: 'left',
-                        border: '1px solid var(--color-border)',
-                        background:
-                          linkedSessionId === activeSessionId
-                            ? 'var(--color-surface-hover)'
-                            : 'var(--color-surface)',
-                        borderRadius: 8,
-                        padding: '8px',
-                        cursor: linkedSessionId ? 'pointer' : 'default',
-                        width: '100%',
-                      }}
-                    >
-                      <div style={{ fontSize: '0.75rem', fontWeight: 600 }}>
-                        Run {run.id.slice(0, 8)}
-                      </div>
-                      <div style={{ fontSize: '0.68rem', color: 'var(--color-text-muted)' }}>
-                        {run.status} -{' '}
-                        {run.started_at ? new Date(run.started_at).toLocaleString() : 'pending'}
-                      </div>
-                    </button>
-                  );
-                })
+              <Search size={14} color="#94a3b8" />
+              <input
+                type="text"
+                placeholder="Search chats"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                style={{
+                  width: '100%',
+                  border: 'none',
+                  outline: 'none',
+                  background: 'transparent',
+                  fontSize: '0.78rem',
+                  color: '#1e293b',
+                  lineHeight: 1.3,
+                }}
+              />
+              {searchQuery && (
+                <button
+                  type="button"
+                  onClick={() => setSearchQuery('')}
+                  style={{
+                    background: 'none',
+                    border: 'none',
+                    cursor: 'pointer',
+                    padding: 0,
+                    color: '#94a3b8',
+                    display: 'flex',
+                    alignItems: 'center',
+                  }}
+                >
+                  <XIcon size={12} />
+                </button>
               )}
             </div>
           </div>
-        )}
 
-        {visibleSessions.map((s) => (
-          <SessionListItem
-            key={s.id}
-            session={s}
-            isActive={activeSessionId === s.id}
-            onSelect={() => onSelectSession(s.id)}
-            onDelete={(e) => onDeleteSession(e, s)}
-          />
-        ))}
+          {/* Session list */}
+          <div className="sidebar-hover-scrollbar" style={{ flex: 1, padding: '0 6px 12px' }}>
+            {isResearchEngineAgent && (
+              <div
+                style={{
+                  margin: '4px 2px 10px',
+                  padding: '8px',
+                  border: '1px solid var(--color-border)',
+                  borderRadius: 8,
+                }}
+              >
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    marginBottom: 8,
+                  }}
+                >
+                  <span style={{ fontSize: '0.74rem', fontWeight: 700, color: 'var(--color-text-muted)' }}>
+                    Research Runs
+                  </span>
+                  <button
+                    className="btn btn-primary"
+                    style={{ height: 28, padding: '0 10px', fontSize: '0.72rem' }}
+                    onClick={onTriggerResearchRun}
+                    disabled={isTriggerResearchPending}
+                  >
+                    {isTriggerResearchPending ? (
+                      <Loader2 size={12} className="spin" />
+                    ) : (
+                      <Zap size={12} />
+                    )}{' '}
+                    Trigger Run
+                  </button>
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  {researchRunsForAgent.length === 0 ? (
+                    <div style={{ fontSize: '0.73rem', color: 'var(--color-text-muted)' }}>
+                      No research runs yet.
+                    </div>
+                  ) : (
+                    researchRunsForAgent.map((run) => {
+                      const linkedSessionId =
+                        Number(
+                          (run.context_package as Record<string, unknown> | undefined)?.chat_session_id ?? 0
+                        ) || null;
+                      return (
+                        <button
+                          key={run.id}
+                          type="button"
+                          onClick={() => linkedSessionId && onSelectSession(linkedSessionId)}
+                          style={{
+                            textAlign: 'left',
+                            border: '1px solid var(--color-border)',
+                            background:
+                              linkedSessionId === activeSessionId
+                                ? 'var(--color-surface-hover)'
+                                : 'var(--color-surface)',
+                            borderRadius: 8,
+                            padding: '8px',
+                            cursor: linkedSessionId ? 'pointer' : 'default',
+                            width: '100%',
+                          }}
+                        >
+                          <div style={{ fontSize: '0.75rem', fontWeight: 600 }}>
+                            Run {run.id.slice(0, 8)}
+                          </div>
+                          <div style={{ fontSize: '0.68rem', color: 'var(--color-text-muted)' }}>
+                            {run.status} -{' '}
+                            {run.started_at ? new Date(run.started_at).toLocaleString() : 'pending'}
+                          </div>
+                        </button>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+            )}
 
-        {filteredSessions.length === 0 && (
-          <div
-            style={{
-              padding: '24px 8px',
-              fontSize: '0.75rem',
-              color: '#94a3b8',
-              textAlign: 'center',
-            }}
-          >
-            {searchQuery ? 'No matching chats found' : 'No chats yet'}
+            {visibleSessions.map((s) => (
+              <SessionListItem
+                key={s.id}
+                session={s}
+                isActive={activeSessionId === s.id}
+                onSelect={() => onSelectSession(s.id)}
+                onDelete={(e) => onDeleteSession(e, s)}
+              />
+            ))}
+
+            {filteredSessions.length === 0 && (
+              <div
+                style={{
+                  padding: '24px 8px',
+                  fontSize: '0.75rem',
+                  color: '#94a3b8',
+                  textAlign: 'center',
+                }}
+              >
+                {searchQuery ? 'No matching chats found' : 'No chats yet'}
+              </div>
+            )}
+
+            {filteredSessions.length > visibleSessionLimit && (
+              <div style={{ padding: '8px 4px 4px', textAlign: 'center' }}>
+                <button
+                  type="button"
+                  onClick={() => setVisibleSessionLimit((prev) => prev + 15)}
+                  style={{
+                    background: 'none',
+                    border: 'none',
+                    cursor: 'pointer',
+                    color: '#64748b',
+                    fontSize: '0.75rem',
+                    fontWeight: 500,
+                    padding: '4px 8px',
+                    borderRadius: 4,
+                  }}
+                  onMouseEnter={(e) => (e.currentTarget.style.color = '#0f172a')}
+                  onMouseLeave={(e) => (e.currentTarget.style.color = '#64748b')}
+                >
+                  Show more
+                </button>
+              </div>
+            )}
           </div>
-        )}
-
-        {filteredSessions.length > visibleSessionLimit && (
-          <div style={{ padding: '8px 4px 4px', textAlign: 'center' }}>
-            <button
-              type="button"
-              onClick={() => setVisibleSessionLimit((prev) => prev + 15)}
-              style={{
-                background: 'none',
-                border: 'none',
-                cursor: 'pointer',
-                color: '#64748b',
-                fontSize: '0.75rem',
-                fontWeight: 500,
-                padding: '4px 8px',
-                borderRadius: 4,
-              }}
-              onMouseEnter={(e) => (e.currentTarget.style.color = '#0f172a')}
-              onMouseLeave={(e) => (e.currentTarget.style.color = '#64748b')}
-            >
-              Show more
-            </button>
-          </div>
-        )}
-      </div>
+        </>
+      ) : (
+        <div style={{ flex: 1, minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+          <CatalogExplorerTree mode="exploration" onInsert={onInsertTable} />
+        </div>
+      )}
 
       {/* Draggable resize splitter on right border */}
       <div

@@ -9,6 +9,7 @@ import { Bot, Plus, Terminal, PanelLeftOpen, ChevronDown } from 'lucide-react';
 import {
   useChatSessions,
   useChatMessages,
+  useSessionPlans,
   useCreateSession,
   useDeleteSession,
   type ChatSession,
@@ -93,6 +94,7 @@ export default function AgentChatPage({ initialView }: AgentChatPageProps = {}) 
   }, [initialView]);
 
   const { data: messages = [] } = useChatMessages(agentId, effectiveSessionId);
+  const { data: storedPlans = [] } = useSessionPlans(agentId, effectiveSessionId);
   const isResearchEngineAgent = (agent?.tools ?? []).some((tool) =>
     ['fetch_research_proposal_history'].includes(tool.tool_name)
   );
@@ -579,6 +581,15 @@ export default function AgentChatPage({ initialView }: AgentChatPageProps = {}) 
               qc.invalidateQueries({
                 queryKey: ['agents', agentId, 'sessions', targetSessionId, 'changes'],
               });
+              qc.invalidateQueries({
+                queryKey: ['agents', agentId, 'sessions', targetSessionId, 'plans'],
+              });
+            }
+
+            if (ev.tool_name === 'create_plan' || ev.tool_name === 'mark_step' || ev.tool_name === 'approve_plan') {
+              qc.invalidateQueries({
+                queryKey: ['agents', agentId, 'sessions', targetSessionId, 'plans'],
+              });
             }
 
             if (ev.type === 'handoff') {
@@ -628,13 +639,64 @@ export default function AgentChatPage({ initialView }: AgentChatPageProps = {}) 
       qc.invalidateQueries({ queryKey: ['agents', agentId, 'sessions', targetSessionId, 'messages'] });
       qc.invalidateQueries({ queryKey: ['agents', agentId, 'sessions', targetSessionId, 'changes'] });
       qc.invalidateQueries({ queryKey: ['agents', agentId, 'sessions', targetSessionId, 'context'] });
+      qc.invalidateQueries({ queryKey: ['agents', agentId, 'sessions', targetSessionId, 'plans'] });
       qc.invalidateQueries({ queryKey: ['agents', agentId, 'sessions'] });
     }
   };
 
   // Compute docked plan element if active
   const dockedPlanElement = useMemo(() => {
-    const createPlanMsg = [...messages].reverse().find((m) => m.role === 'tool' && m.tool_name === 'create_plan');
+    // 1. Prefer stored authoritative plan from PlanService if available
+    const activeStoredPlan = storedPlans.find((p) => {
+      const hasIncomplete = p.steps?.some((s: any) => s.status === 'pending' || s.status === 'in_progress');
+      return !p.approved_at || hasIncomplete;
+    }) || storedPlans[0];
+
+    if (activeStoredPlan && Array.isArray(activeStoredPlan.steps) && activeStoredPlan.steps.length > 0) {
+      const isAllDone = activeStoredPlan.steps.every((s: any) => s.status === 'done');
+      if (isAllDone) return null;
+
+      const isPlanApproved = Boolean(activeStoredPlan.approved_at);
+
+      return (
+        <PlanTaskViewer
+          isDocked={true}
+          defaultExpanded={!isPlanApproved}
+          plan={{
+            plan_id: activeStoredPlan.plan_id,
+            agent_id: activeStoredPlan.agent_id || 'agent',
+            goal: activeStoredPlan.goal || 'Execution Plan',
+            steps: activeStoredPlan.steps.map((s: any, idx: number) => ({
+              id: Number(s.id ?? idx + 1),
+              description: s.description ?? s.text ?? '',
+              status: s.status || 'pending',
+              verification: s.verification ?? 'Automatic check',
+              corrections: s.corrections ?? [],
+              attempts: s.attempts ?? 1,
+            })),
+            approved_at: activeStoredPlan.approved_at,
+            execution_approved_at: activeStoredPlan.execution_approved_at,
+          }}
+          onApprovePlan={() => sendMessage('Approved. Proceed to execute the plan.')}
+          onRejectPlan={() =>
+            sendMessage('Plan rejected. Re-evaluate the requirements and propose a different approach.')
+          }
+          onRequestChange={(feedback) => sendMessage(`Plan changes requested: ${feedback}`)}
+        />
+      );
+    }
+
+    // 2. Fallback: Parse from latest create_plan in message stream
+    let latestCreatePlanIdx = -1;
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].role === 'tool' && messages[i].tool_name === 'create_plan') {
+        latestCreatePlanIdx = i;
+        break;
+      }
+    }
+    if (latestCreatePlanIdx === -1) return null;
+
+    const createPlanMsg = messages[latestCreatePlanIdx];
     if (!createPlanMsg || !createPlanMsg.tool_result) return null;
 
     const res = createPlanMsg.tool_result.result as any;
@@ -643,13 +705,17 @@ export default function AgentChatPage({ initialView }: AgentChatPageProps = {}) 
     const goalData = args?.goal || res?.goal || 'Execution Plan';
     const planIdData = res?.plan_id || 'plan';
 
+    // Only collect mark_step updates that occurred AFTER this specific create_plan
+    const messagesAfterPlan = messages.slice(latestCreatePlanIdx + 1);
     const stepStatusMap: Record<number, string> = {};
-    messages.forEach((m) => {
+
+    messagesAfterPlan.forEach((m) => {
       if (m.role === 'tool' && m.tool_name === 'mark_step' && m.tool_result) {
         const r = m.tool_result.result as any;
         const stepIdRaw = r?.updated_step ?? (m.tool_result.args as any)?.step_id;
         const status = r?.status ?? (m.tool_result.args as any)?.status;
-        if (stepIdRaw != null && status) {
+        const planId = r?.plan_id ?? (m.tool_result.args as any)?.plan_id;
+        if ((!planId || planId === planIdData) && stepIdRaw != null && status) {
           stepStatusMap[Number(stepIdRaw)] = String(status);
         }
       }
@@ -672,7 +738,7 @@ export default function AgentChatPage({ initialView }: AgentChatPageProps = {}) 
 
     const isPlanApproved = Boolean(
       res?.approved_at ||
-        messages.some(
+        messagesAfterPlan.some(
           (m) =>
             m.role === 'tool' && (m.tool_name === 'mark_step' || m.tool_name === 'get_next_step')
         )
@@ -697,7 +763,12 @@ export default function AgentChatPage({ initialView }: AgentChatPageProps = {}) 
         onRequestChange={(feedback) => sendMessage(`Plan changes requested: ${feedback}`)}
       />
     );
-  }, [messages]);
+  }, [storedPlans, messages]);
+
+  const handleInsertTable = useCallback((identifier: string) => {
+    setInput((prev) => (prev ? `${prev.trim()} \`${identifier}\` ` : `\`${identifier}\` `));
+    toast.success(`Inserted ${identifier} into prompt`);
+  }, [toast]);
 
   return (
     <div style={{ display: 'flex', height: '100%', width: '100%', overflow: 'hidden' }}>
@@ -719,6 +790,7 @@ export default function AgentChatPage({ initialView }: AgentChatPageProps = {}) 
         researchRunsForAgent={researchRunsForAgent}
         onTriggerResearchRun={handleTriggerResearchRun}
         isTriggerResearchPending={triggerResearchRun.isPending}
+        onInsertTable={handleInsertTable}
       />
 
       {/* 2. Main Center / Right View */}

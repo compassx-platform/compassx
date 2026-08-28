@@ -12,6 +12,7 @@ import {
   Copy,
   Check,
   Columns,
+  X,
 } from 'lucide-react';
 import api from '@/lib/api';
 
@@ -95,25 +96,50 @@ export const CatalogExplorerTree: React.FC<CatalogExplorerTreeProps> = ({
   return (
     <div className={`catalog-explorer-tree ${className}`} style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>
       {/* Search Bar */}
-      <div style={{ padding: '8px 12px', borderBottom: '1px solid var(--color-border)' }}>
-        <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
-          <Search size={13} style={{ position: 'absolute', left: 8, color: 'var(--color-text-muted)', pointerEvents: 'none' }} />
+      <div style={{ padding: '0 10px 10px' }}>
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 6,
+            background: '#f1f5f9',
+            borderRadius: 8,
+            padding: '6px 10px',
+          }}
+        >
+          <Search size={14} color="#94a3b8" />
           <input
             type="text"
-            value={filter}
-            onChange={e => setFilter(e.target.value)}
             placeholder="Filter catalog assets..."
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
             style={{
               width: '100%',
-              padding: '4px 8px 4px 28px',
-              fontSize: 11,
-              borderRadius: 4,
-              border: '1px solid var(--color-border)',
-              background: 'var(--color-surface)',
-              color: 'inherit',
+              border: 'none',
               outline: 'none',
+              background: 'transparent',
+              fontSize: '0.78rem',
+              color: '#1e293b',
+              lineHeight: 1.3,
             }}
           />
+          {filter && (
+            <button
+              type="button"
+              onClick={() => setFilter('')}
+              style={{
+                background: 'none',
+                border: 'none',
+                cursor: 'pointer',
+                padding: 0,
+                color: '#94a3b8',
+                display: 'flex',
+                alignItems: 'center',
+              }}
+            >
+              <X size={12} />
+            </button>
+          )}
         </div>
       </div>
 

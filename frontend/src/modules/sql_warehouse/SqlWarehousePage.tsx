@@ -1107,70 +1107,208 @@ export default function SqlWarehousePage() {
         {activeTab === 'editor' && (
           <div className="swh-editor-layout">
             {/* Left Sidebar */}
-            <div className="swh-editor-sidebar">
-              <div className="swh-sidebar-header">
-                <h2>SQL Editor</h2>
-                <div className="swh-sidebar-header-actions">
+            <div className="swh-editor-sidebar" style={{ background: '#ffffff', borderRight: '1px solid #e2e8f0' }}>
+              <div
+                style={{
+                  padding: '14px 14px 10px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                }}
+              >
+                <span
+                  style={{
+                    fontSize: '1rem',
+                    fontWeight: 600,
+                    color: '#0f172a',
+                    letterSpacing: '-0.01em',
+                  }}
+                >
+                  SQL Editor
+                </span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
                   <button 
                     onClick={() => {
                       if (sidebarMode === 'drafts') draftsQuery.refetch();
                       else qc.invalidateQueries({ queryKey: ['explorer-catalogs'] });
                     }} 
                     title={sidebarMode === 'drafts' ? "Refresh drafts" : "Refresh catalog tree"} 
-                    style={{ background: 'none', border: 'none', padding: 2, cursor: 'pointer', color: 'var(--color-text-muted)', display: 'flex', alignItems: 'center' }}
+                    style={{
+                      background: 'none',
+                      border: 'none',
+                      padding: '4px',
+                      cursor: 'pointer',
+                      color: '#64748b',
+                      display: 'flex',
+                      alignItems: 'center',
+                      borderRadius: 4,
+                      transition: 'color 0.15s ease, background 0.15s ease',
+                    }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.color = '#0f172a';
+                      e.currentTarget.style.background = '#f1f5f9';
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.color = '#64748b';
+                      e.currentTarget.style.background = 'none';
+                    }}
                   >
-                    <RefreshCw size={13} className={draftsQuery.isFetching ? 'spin' : ''} />
+                    <RefreshCw size={14} className={draftsQuery.isFetching ? 'spin' : ''} />
                   </button>
                 </div>
               </div>
 
               {/* Clean Segmented Mode Switcher: Drafts vs Catalog */}
-              <div className="swh-sidebar-mode-switch">
-                <button
-                  type="button"
-                  className={`swh-sidebar-mode-btn ${sidebarMode === 'drafts' ? 'is-active' : ''}`}
-                  onClick={() => setSidebarMode('drafts')}
-                  title="View your personal draft queries"
+              <div style={{ padding: '10px 10px 10px' }}>
+                <div
+                  style={{
+                    display: 'flex',
+                    background: 'var(--color-background-subtle, #f1f5f9)',
+                    border: '1px solid var(--color-border, #e2e8f0)',
+                    borderRadius: 6,
+                    padding: 2,
+                    gap: 2,
+                  }}
                 >
-                  <Folder size={12} className="swh-mode-icon" />
-                  <span>Drafts</span>
-                </button>
-                <button
-                  type="button"
-                  className={`swh-sidebar-mode-btn ${sidebarMode === 'catalog' ? 'is-active' : ''}`}
-                  onClick={() => setSidebarMode('catalog')}
-                  title="Explore Data Catalog schemas and tables (click to insert into SQL)"
-                >
-                  <Database size={12} className="swh-mode-icon" />
-                  <span>Catalog</span>
-                </button>
+                  <button
+                    type="button"
+                    onClick={() => setSidebarMode('drafts')}
+                    style={{
+                      flex: 1,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: 6,
+                      padding: '5px 8px',
+                      fontSize: '0.75rem',
+                      fontWeight: sidebarMode === 'drafts' ? 600 : 500,
+                      color: sidebarMode === 'drafts' ? 'var(--color-text, #0f172a)' : 'var(--color-text-muted, #64748b)',
+                      background: sidebarMode === 'drafts' ? 'var(--color-surface, #ffffff)' : 'transparent',
+                      borderRadius: 5,
+                      border: 'none',
+                      cursor: 'pointer',
+                      boxShadow: sidebarMode === 'drafts' ? '0 1px 2px rgba(0,0,0,0.06)' : 'none',
+                      transition: 'all 0.15s ease',
+                    }}
+                    title="View your personal draft queries"
+                  >
+                    <Folder size={13} />
+                    <span>Drafts</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSidebarMode('catalog')}
+                    style={{
+                      flex: 1,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: 6,
+                      padding: '5px 8px',
+                      fontSize: '0.75rem',
+                      fontWeight: sidebarMode === 'catalog' ? 600 : 500,
+                      color: sidebarMode === 'catalog' ? 'var(--color-text, #0f172a)' : 'var(--color-text-muted, #64748b)',
+                      background: sidebarMode === 'catalog' ? 'var(--color-surface, #ffffff)' : 'transparent',
+                      borderRadius: 5,
+                      border: 'none',
+                      cursor: 'pointer',
+                      boxShadow: sidebarMode === 'catalog' ? '0 1px 2px rgba(0,0,0,0.06)' : 'none',
+                      transition: 'all 0.15s ease',
+                    }}
+                    title="Explore Data Catalog schemas and tables (click to insert into SQL)"
+                  >
+                    <Database size={13} />
+                    <span>Catalog</span>
+                  </button>
+                </div>
               </div>
 
               {sidebarMode === 'drafts' && (
                 <>
-                  <div className="swh-sidebar-search">
-                    <Search size={12} className="text-muted" />
-                    <input 
-                      placeholder="Type to search" 
-                      value={sidebarSearch}
-                      onChange={e => setSidebarSearch(e.target.value)}
-                    />
+                  {/* Search queries (Matching chat history search style) */}
+                  <div style={{ padding: '0 10px 10px' }}>
+                    <div
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 6,
+                        background: '#f1f5f9',
+                        borderRadius: 8,
+                        padding: '6px 10px',
+                      }}
+                    >
+                      <Search size={14} color="#94a3b8" />
+                      <input
+                        type="text"
+                        placeholder="Search queries"
+                        value={sidebarSearch}
+                        onChange={(e) => setSidebarSearch(e.target.value)}
+                        style={{
+                          width: '100%',
+                          border: 'none',
+                          outline: 'none',
+                          background: 'transparent',
+                          fontSize: '0.78rem',
+                          color: '#1e293b',
+                          lineHeight: 1.3,
+                        }}
+                      />
+                      {sidebarSearch && (
+                        <button
+                          type="button"
+                          onClick={() => setSidebarSearch('')}
+                          style={{
+                            background: 'none',
+                            border: 'none',
+                            cursor: 'pointer',
+                            padding: 0,
+                            color: '#94a3b8',
+                            display: 'flex',
+                            alignItems: 'center',
+                          }}
+                        >
+                          <X size={12} />
+                        </button>
+                      )}
+                    </div>
                   </div>
-                  <div className="swh-sidebar-tree-list">
+                  <div className="sidebar-hover-scrollbar" style={{ flex: 1, padding: '0 6px 12px', overflowY: 'auto' }}>
                     <div 
-                      className="swh-sidebar-folder"
                       onClick={() => setDraftsExpanded(!draftsExpanded)}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 6,
+                        padding: '6px 8px',
+                        fontSize: '0.74rem',
+                        fontWeight: 600,
+                        color: '#64748b',
+                        borderRadius: 6,
+                        cursor: 'pointer',
+                        userSelect: 'none',
+                        marginBottom: 4,
+                      }}
+                      onMouseEnter={(e) => {
+                        e.currentTarget.style.color = '#0f172a';
+                        e.currentTarget.style.background = '#f8fafc';
+                      }}
+                      onMouseLeave={(e) => {
+                        e.currentTarget.style.color = '#64748b';
+                        e.currentTarget.style.background = 'transparent';
+                      }}
                     >
                       {draftsExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-                      <Folder size={13} className="text-muted" />
+                      <Folder size={13} />
                       <span>Drafts</span>
+                      <span style={{ fontSize: '0.68rem', color: '#94a3b8', marginLeft: 'auto', fontWeight: 500 }}>
+                        {drafts.length}
+                      </span>
                     </div>
                     {draftsExpanded && (
-                      <div style={{ display: 'flex', flexDirection: 'column' }}>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
                         {drafts.map(item => (
                           <div 
                             key={item.id} 
-                            className={`swh-sidebar-file-item ${activeQueryTabId === item.id ? 'is-active' : ''}`}
                             onClick={(e) => {
                               if (editingTabId === item.id) {
                                 e.stopPropagation();
@@ -1178,16 +1316,39 @@ export default function SqlWarehousePage() {
                               }
                               handleSelectDraft(item);
                             }}
-                            style={{ position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'space-between', paddingRight: 4 }}
+                            style={{
+                              position: 'relative',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'space-between',
+                              padding: '7px 10px 7px 48px',
+                              borderRadius: 8,
+                              cursor: 'pointer',
+                              background: activeQueryTabId === item.id ? '#f1f5f9' : 'transparent',
+                              transition: 'background 0.15s ease',
+                              marginBottom: 2,
+                            }}
+                            onMouseEnter={(e) => {
+                              if (activeQueryTabId !== item.id) e.currentTarget.style.background = '#f8fafc';
+                            }}
+                            onMouseLeave={(e) => {
+                              if (activeQueryTabId !== item.id) e.currentTarget.style.background = 'transparent';
+                            }}
                           >
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 6, flex: 1, minWidth: 0 }}>
-                              <FileText size={12} style={{ flexShrink: 0 }} />
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1, minWidth: 0 }}>
+                              <FileText
+                                size={14}
+                                style={{
+                                  flexShrink: 0,
+                                  color: activeQueryTabId === item.id ? '#2563eb' : '#64748b',
+                                }}
+                              />
                               {editingTabId === item.id ? (
                                 <InlineRenameInput
                                   initialValue={item.name}
                                   onSave={(newName) => handleSaveRename(item.id, newName)}
                                   onCancel={() => setEditingTabId(null)}
-                                  style={{ width: '100%', fontSize: 11 }}
+                                  style={{ width: '100%', fontSize: '0.81rem' }}
                                 />
                               ) : (
                                 <span
@@ -1195,7 +1356,14 @@ export default function SqlWarehousePage() {
                                     e.stopPropagation();
                                     setEditingTabId(item.id);
                                   }}
-                                  style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                                  style={{
+                                    fontSize: '0.81rem',
+                                    fontWeight: activeQueryTabId === item.id ? 600 : 500,
+                                    color: activeQueryTabId === item.id ? '#0f172a' : '#1e293b',
+                                    overflow: 'hidden',
+                                    textOverflow: 'ellipsis',
+                                    whiteSpace: 'nowrap',
+                                  }}
                                   title={item.name}
                                 >
                                   {item.name}
@@ -1206,7 +1374,6 @@ export default function SqlWarehousePage() {
                             {editingTabId !== item.id && (
                               <div style={{ position: 'relative', flexShrink: 0 }}>
                                 <button
-                                  className="swh-draft-more-btn"
                                   onClick={(e) => {
                                     e.stopPropagation();
                                     setOpenDraftMenuId(openDraftMenuId === item.id ? null : item.id);
@@ -1215,32 +1382,39 @@ export default function SqlWarehousePage() {
                                   style={{
                                     background: 'none',
                                     border: 'none',
-                                    padding: '2px 3px',
+                                    padding: '3px 4px',
                                     cursor: 'pointer',
-                                    color: 'var(--color-text-muted)',
+                                    color: '#94a3b8',
                                     display: 'flex',
                                     alignItems: 'center',
-                                    borderRadius: 3,
+                                    borderRadius: 4,
+                                  }}
+                                  onMouseEnter={(e) => {
+                                    e.currentTarget.style.color = '#0f172a';
+                                    e.currentTarget.style.background = '#f1f5f9';
+                                  }}
+                                  onMouseLeave={(e) => {
+                                    e.currentTarget.style.color = '#94a3b8';
+                                    e.currentTarget.style.background = 'none';
                                   }}
                                 >
-                                  <MoreVertical size={12} />
+                                  <MoreVertical size={13} />
                                 </button>
 
                                 {openDraftMenuId === item.id && (
                                   <div
-                                    className="swh-draft-menu-dropdown"
                                     onClick={(e) => e.stopPropagation()}
                                     style={{
                                       position: 'absolute',
                                       right: 0,
-                                      top: '100%',
+                                      top: 22,
                                       zIndex: 100,
-                                      background: 'var(--color-surface)',
-                                      border: '1px solid var(--color-border)',
-                                      borderRadius: 6,
-                                      boxShadow: '0 4px 14px rgba(0,0,0,0.18)',
-                                      padding: '4px 0',
-                                      minWidth: 110,
+                                      background: '#ffffff',
+                                      border: '1px solid #e2e8f0',
+                                      borderRadius: 8,
+                                      boxShadow: '0 4px 16px rgba(0,0,0,0.08)',
+                                      padding: 4,
+                                      minWidth: 120,
                                     }}
                                   >
                                     <button
@@ -1259,18 +1433,19 @@ export default function SqlWarehousePage() {
                                         display: 'flex',
                                         alignItems: 'center',
                                         gap: 6,
-                                        padding: '6px 10px',
+                                        padding: '6px 8px',
                                         background: 'none',
                                         border: 'none',
-                                        fontSize: 11,
-                                        color: 'var(--color-text)',
+                                        fontSize: '0.75rem',
+                                        color: '#1e293b',
                                         cursor: 'pointer',
                                         textAlign: 'left',
+                                        borderRadius: 6,
                                       }}
-                                      onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--color-background-subtle)')}
+                                      onMouseEnter={(e) => (e.currentTarget.style.background = '#f1f5f9')}
                                       onMouseLeave={(e) => (e.currentTarget.style.background = 'none')}
                                     >
-                                      <Edit2 size={11} />
+                                      <Edit2 size={12} />
                                       <span>Rename</span>
                                     </button>
                                     <button
@@ -1284,18 +1459,19 @@ export default function SqlWarehousePage() {
                                         display: 'flex',
                                         alignItems: 'center',
                                         gap: 6,
-                                        padding: '6px 10px',
+                                        padding: '6px 8px',
                                         background: 'none',
                                         border: 'none',
-                                        fontSize: 11,
-                                        color: '#ef4444',
+                                        fontSize: '0.75rem',
+                                        color: '#dc2626',
                                         cursor: 'pointer',
                                         textAlign: 'left',
+                                        borderRadius: 6,
                                       }}
-                                      onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--color-background-subtle)')}
+                                      onMouseEnter={(e) => (e.currentTarget.style.background = '#fee2e2')}
                                       onMouseLeave={(e) => (e.currentTarget.style.background = 'none')}
                                     >
-                                      <Trash2 size={11} />
+                                      <Trash2 size={12} />
                                       <span>Delete</span>
                                     </button>
                                   </div>
@@ -1305,7 +1481,9 @@ export default function SqlWarehousePage() {
                           </div>
                         ))}
                         {drafts.length === 0 && (
-                          <div className="text-center text-muted py-2" style={{ fontSize: 11 }}>No drafts found</div>
+                          <div style={{ padding: '24px 8px', fontSize: '0.75rem', color: '#94a3b8', textAlign: 'center' }}>
+                            {sidebarSearch ? 'No matching drafts found' : 'No drafts found'}
+                          </div>
                         )}
                       </div>
                     )}

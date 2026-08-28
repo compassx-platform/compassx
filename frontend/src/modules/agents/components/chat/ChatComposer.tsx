@@ -70,11 +70,12 @@ export const ChatComposer: React.FC<ChatComposerProps> = ({
   return (
     <div
       style={{
-        padding: '0 24px 8px',
-        maxWidth: 780,
-        margin: '0 auto',
+        padding: '0 24px 12px',
         width: '100%',
+        display: 'flex',
+        justifyContent: 'center',
         flexShrink: 0,
+        boxSizing: 'border-box',
       }}
     >
       <div

@@ -241,48 +241,69 @@ export const ChatMessageList: React.FC<ChatMessageListProps> = React.memo(({
 
           // Check if this turn completed an active execution plan
           let inlineCompletedPlanData: any = null;
-          const createPlanMsg = [...messages].reverse().find((m) => m.role === 'tool' && m.tool_name === 'create_plan');
-          if (createPlanMsg && createPlanMsg.tool_result) {
-            const r = createPlanMsg.tool_result.result as any;
-            const a = createPlanMsg.tool_result.args as any;
-            const steps = a?.steps || r?.steps || [];
+          const turnHasFinalMarkStep = turnItems.some(
+            (m) => m.role === 'tool' && m.tool_name === 'mark_step'
+          );
 
-            const stepStatusMap: Record<number, string> = {};
-            messages.forEach((m) => {
-              if (m.role === 'tool' && m.tool_name === 'mark_step' && m.tool_result) {
-                const mr = m.tool_result.result as any;
-                const stepIdRaw = mr?.updated_step ?? (m.tool_result.args as any)?.step_id;
-                const status = mr?.status ?? (m.tool_result.args as any)?.status;
-                if (stepIdRaw != null && status) {
-                  stepStatusMap[Number(stepIdRaw)] = String(status);
+          if (turnHasFinalMarkStep) {
+            const firstTurnItem = turnItems[0];
+            const msgIdx = messages.indexOf(firstTurnItem);
+            const priorMessages = msgIdx >= 0 ? messages.slice(0, msgIdx + turnItems.length) : messages;
+
+            let planIdx = -1;
+            for (let i = priorMessages.length - 1; i >= 0; i--) {
+              if (priorMessages[i].role === 'tool' && priorMessages[i].tool_name === 'create_plan') {
+                planIdx = i;
+                break;
+              }
+            }
+
+            if (planIdx >= 0) {
+              const createPlanMsg = priorMessages[planIdx];
+              if (createPlanMsg && createPlanMsg.tool_result) {
+                const r = createPlanMsg.tool_result.result as any;
+                const a = createPlanMsg.tool_result.args as any;
+                const steps = a?.steps || r?.steps || [];
+                const planIdData = r?.plan_id || 'plan';
+
+                const messagesForPlan = priorMessages.slice(planIdx + 1);
+                const stepStatusMap: Record<number, string> = {};
+
+                messagesForPlan.forEach((m) => {
+                  if (m.role === 'tool' && m.tool_name === 'mark_step' && m.tool_result) {
+                    const mr = m.tool_result.result as any;
+                    const stepIdRaw = mr?.updated_step ?? (m.tool_result.args as any)?.step_id;
+                    const status = mr?.status ?? (m.tool_result.args as any)?.status;
+                    const planId = mr?.plan_id ?? (m.tool_result.args as any)?.plan_id;
+                    if ((!planId || planId === planIdData) && stepIdRaw != null && status) {
+                      stepStatusMap[Number(stepIdRaw)] = String(status);
+                    }
+                  }
+                });
+
+                const computedSteps = steps.map((s: any, sIdx: number) => {
+                  const id = Number(s.id ?? sIdx + 1);
+                  return {
+                    id,
+                    description: s.description ?? s.text ?? '',
+                    status: stepStatusMap[id] || s.status || 'pending',
+                    verification: s.verification ?? 'Automatic check',
+                    corrections: s.corrections ?? [],
+                    attempts: s.attempts ?? 1,
+                  };
+                });
+
+                const isAllDone = computedSteps.length > 0 && computedSteps.every((s: any) => s.status === 'done');
+
+                if (isAllDone) {
+                  inlineCompletedPlanData = {
+                    plan_id: planIdData,
+                    goal: a?.goal || r?.goal || 'Execution Plan',
+                    steps: computedSteps,
+                    approved_at: r?.approved_at || new Date().toISOString(),
+                  };
                 }
               }
-            });
-
-            const computedSteps = steps.map((s: any, sIdx: number) => {
-              const id = Number(s.id ?? sIdx + 1);
-              return {
-                id,
-                description: s.description ?? s.text ?? '',
-                status: stepStatusMap[id] || s.status || 'pending',
-                verification: s.verification ?? 'Automatic check',
-                corrections: s.corrections ?? [],
-                attempts: s.attempts ?? 1,
-              };
-            });
-
-            const isAllDone = computedSteps.length > 0 && computedSteps.every((s: any) => s.status === 'done');
-            const turnHasFinalMarkStep = turnItems.some(
-              (m) => m.role === 'tool' && m.tool_name === 'mark_step'
-            );
-
-            if (isAllDone && turnHasFinalMarkStep) {
-              inlineCompletedPlanData = {
-                plan_id: r?.plan_id || 'plan',
-                goal: a?.goal || r?.goal || 'Execution Plan',
-                steps: computedSteps,
-                approved_at: r?.approved_at || new Date().toISOString(),
-              };
             }
           }
 

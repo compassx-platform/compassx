@@ -535,15 +535,13 @@ async def orchestrate_stream(
             f"\nFirst step to execute: {step_desc}\n"
         )
         system_prompt += plan_directive
-    # Spec v2 Part C3 / D11: If planning is enabled or an active plan exists or user is building assets, ensure plan & build tools exist
-    if active_plan or manifest.capabilities.planning.enabled or any(kw in user_content.lower() for kw in ["approve", "plan", "step", "proceed", "build", "notebook", "dashboard", "pipeline", "table"]):
-        for plan_tool_name in ["create_plan", "get_plan", "get_next_step", "mark_step", "append_correction", "escalate_to_plan"]:
-            if plan_tool_name not in enabled_tool_keys:
-                enabled_tool_keys.append(plan_tool_name)
-        # Ensure core build tools are available when executing build plans
-        for build_tool_name in ["create_notebook", "notebook_manager", "python_code", "sql_query", "asset_manager"]:
-            if build_tool_name not in enabled_tool_keys:
-                enabled_tool_keys.append(build_tool_name)
+    # Always ensure planning & building tools are available for all session turns
+    for plan_tool_name in ["create_plan", "get_plan", "get_next_step", "mark_step", "append_correction", "escalate_to_plan"]:
+        if plan_tool_name not in enabled_tool_keys:
+            enabled_tool_keys.append(plan_tool_name)
+    for build_tool_name in ["create_notebook", "notebook_manager", "python_code", "sql_query", "asset_manager"]:
+        if build_tool_name not in enabled_tool_keys:
+            enabled_tool_keys.append(build_tool_name)
 
     from app.agents.services.agent.tools.registry import get_tool_definitions
     tools = get_tool_definitions(enabled_tool_keys)

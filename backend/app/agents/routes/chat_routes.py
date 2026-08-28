@@ -215,6 +215,38 @@ def get_session_context(
     )
 
 
+@router.get("/sessions/{session_id}/plans")
+def list_session_plans(
+    request: Request,
+    agent_id: int,
+    session_id: int,
+    db: Session = Depends(get_db),
+):
+    """Return all stored plans for this session directly from PlanService."""
+    workspace_id = getattr(request.state, "workspace", None) and request.state.workspace.workspace_id
+    _get_session_or_404(db, agent_id, session_id, workspace_id)
+    from app.agents.services.agent.plan_service import PlanService
+    ps = PlanService()
+    plans = ps.get_plans_for_session(session_id)
+    return [p.model_dump() for p in plans]
+
+
+@router.get("/sessions/{session_id}/plans/latest")
+def get_latest_session_plan(
+    request: Request,
+    agent_id: int,
+    session_id: int,
+    db: Session = Depends(get_db),
+):
+    """Return the most recent plan for this session directly from PlanService."""
+    workspace_id = getattr(request.state, "workspace", None) and request.state.workspace.workspace_id
+    _get_session_or_404(db, agent_id, session_id, workspace_id)
+    from app.agents.services.agent.plan_service import PlanService
+    ps = PlanService()
+    plan = ps.get_latest_plan_for_session(session_id)
+    return plan.model_dump() if plan else None
+
+
 @router.post("/sessions/{session_id}/stream")
 async def stream_chat(
     request: Request,
