@@ -30,7 +30,7 @@ class DashboardManagerTool(BaseTool):
                 "enum": DASHBOARD_MANAGER_OPERATIONS,
                 "description": (
                     "The Dashboard Manager operation to execute. "
-                    "Typical workflow: list_dashboards → create_dashboard → update_dashboard (pages) → "
+                    "Typical workflow: list_dashboards → create_dashboard → update_dashboard (optional page structure) → "
                     "run_query (validate SQL) → add_dataset → describe_widget (inspect widget schema) → "
                     "add_widget → update_widget → publish_dashboard."
                 ),

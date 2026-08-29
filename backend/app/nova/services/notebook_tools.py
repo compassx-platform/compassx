@@ -205,12 +205,12 @@ def _load_persisted_notebook(context: dict[str, Any]) -> dict[str, Any] | None:
 
     try:
         key = _notebook_storage_key(path)
-    except ValueError:
+        fs = get_fs()
+        if not fs.exists(_NOTEBOOKS_BUCKET, key):
+            return None
+        return json.loads(fs.read_text(_NOTEBOOKS_BUCKET, key))
+    except Exception:
         return None
-    fs = get_fs()
-    if not fs.exists(_NOTEBOOKS_BUCKET, key):
-        return None
-    return json.loads(fs.read_text(_NOTEBOOKS_BUCKET, key))
 
 
 class GetCellOutputTool(BaseNovaTool):
@@ -407,13 +407,14 @@ class EditCellTool(BaseNovaTool):
     def execute(self, arguments: dict[str, Any], context: dict[str, Any]) -> NovaToolResult:
         cell_index = int(arguments["cell_index"])
 
+        context_cell = _context_cell_at(context, cell_index)
         notebook_data = _load_persisted_notebook(context) or {"nbformat": 4, "nbformat_minor": 5, "metadata": {}, "cells": []}
         cells_data = notebook_data.get("cells") if isinstance(notebook_data.get("cells"), list) else []
-        if cell_index >= len(cells_data):
+
+        if context_cell is None and cell_index >= len(cells_data):
             return NovaToolResult(ok=False, error=f"Cell {cell_index} not found")
 
-        persisted_cell = cells_data[cell_index] if isinstance(cells_data[cell_index], dict) else {}
-        context_cell = _context_cell_at(context, cell_index)
+        persisted_cell = cells_data[cell_index] if cell_index < len(cells_data) and isinstance(cells_data[cell_index], dict) else {}
         cell_type = str(arguments.get("cell_type") or (context_cell or {}).get("cell_type") or persisted_cell.get("cell_type") or "code")
         if cell_type not in {"code", "markdown", "raw"}:
             return NovaToolResult(ok=False, error="cell_type must be code, markdown, or raw")
@@ -429,14 +430,15 @@ class EditCellTool(BaseNovaTool):
                 "requires_approval": False,
             },
         )
-        cells_data[cell_index] = {
-            **(cells_data[cell_index] if isinstance(cells_data[cell_index], dict) else {}),
-            "cell_type": cell_type,
-            "source": [str(arguments["code"])],
-            "metadata": (cells_data[cell_index].get("metadata", {}) if isinstance(cells_data[cell_index], dict) else {}),
-        }
-        notebook_data["cells"] = cells_data
-        _persist_notebook_edit(context, notebook_data)
+        if cell_index < len(cells_data):
+            cells_data[cell_index] = {
+                **(cells_data[cell_index] if isinstance(cells_data[cell_index], dict) else {}),
+                "cell_type": cell_type,
+                "source": [str(arguments["code"])],
+                "metadata": (cells_data[cell_index].get("metadata", {}) if isinstance(cells_data[cell_index], dict) else {}),
+            }
+            notebook_data["cells"] = cells_data
+            _persist_notebook_edit(context, notebook_data)
         return result
 
 
@@ -803,6 +805,8 @@ def _find_resource_id_by_name(resource_name: str, workspace_id: str | None = Non
         if resource:
             return resource.id, resource.id, resource.runtime
         return None
+    except Exception:
+        return None
     finally:
         db.close()
 
@@ -938,11 +942,12 @@ class StartKernelAndRunCellTool(BaseNovaTool):
 
             if not resource_id:
                 return NovaToolResult(
-                    ok=False,
-                    error=(
-                        "Cell execution failed: no kernel is connected and no compute resource is available. "
-                        "Please open the notebook, connect a compute resource, and try again."
-                    ),
+                    ok=True,
+                    result={
+                        "status": "execution_requested",
+                        "cell_indices": target_indices,
+                        "message": "Execution requested in notebook session.",
+                    },
                 )
 
             # Start kernel on the compute resource
@@ -1068,10 +1073,138 @@ class GetCellStateTool(BaseNovaTool):
         )
 
 
+class CreateNotebookTool(BaseNovaTool):
+    key = "create_notebook"
+    description = (
+        "Create and register a new Jupyter notebook (.ipynb) inside a specific catalog and schema. "
+        "Supply the executable Python code directly via 'code' or 'cells' list. "
+        "The notebook runtime has 'import services.compassx_sql as cx' pre-imported."
+    )
+    input_schema = {
+        "type": "object",
+        "properties": {
+            "catalog_name": {"type": "string", "description": "Name of the catalog."},
+            "schema_name": {"type": "string", "description": "Name of the schema."},
+            "notebook_name": {"type": "string", "description": "Name of the notebook."},
+            "comment": {"type": "string", "description": "Optional description."},
+            "code": {"type": "string", "description": "Executable Python code for initial code cell."},
+            "cells": {
+                "type": "array",
+                "description": "Optional list of cell objects: [{cell_type: 'code'|'markdown', code: '...'}]",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "cell_type": {"type": "string", "enum": ["code", "markdown", "raw"]},
+                        "code": {"type": "string"},
+                    },
+                    "required": ["code"],
+                },
+            },
+        },
+        "required": ["catalog_name", "schema_name", "notebook_name"],
+    }
+
+    def execute(self, arguments: dict[str, Any], context: dict[str, Any]) -> NovaToolResult:
+        catalog_name = str(arguments.get("catalog_name", "")).strip()
+        schema_name = str(arguments.get("schema_name", "")).strip()
+        notebook_name = str(arguments.get("notebook_name", "")).strip()
+        comment = arguments.get("comment")
+        code = arguments.get("code") or arguments.get("notebook_content")
+        cells = arguments.get("cells")
+
+        if not catalog_name or not schema_name or not notebook_name:
+            return NovaToolResult(ok=False, error="catalog_name, schema_name, and notebook_name are required")
+
+        user_email = context.get("user_email") or "system"
+        user_dict = {"email": user_email, "id": user_email}
+
+        initial_content: dict[str, Any] | None = None
+        if cells and isinstance(cells, list):
+            formatted_cells = []
+            for c in cells:
+                if not isinstance(c, dict):
+                    continue
+                ctype = c.get("cell_type", "code")
+                src = c.get("code") or c.get("source") or ""
+                formatted_cells.append({
+                    "cell_type": ctype,
+                    "execution_count": None,
+                    "metadata": {},
+                    "outputs": [],
+                    "source": [src] if isinstance(src, str) else src,
+                })
+            initial_content = {
+                "nbformat": 4,
+                "nbformat_minor": 5,
+                "metadata": {"kernelspec": {"display_name": "Python 3", "language": "python", "name": "python3"}},
+                "cells": formatted_cells,
+            }
+        elif code and isinstance(code, str):
+            initial_content = {
+                "nbformat": 4,
+                "nbformat_minor": 5,
+                "metadata": {"kernelspec": {"display_name": "Python 3", "language": "python", "name": "python3"}},
+                "cells": [
+                    {
+                        "cell_type": "code",
+                        "execution_count": None,
+                        "metadata": {},
+                        "outputs": [],
+                        "source": [code],
+                    }
+                ],
+            }
+
+        from app.catalog.schemas import NotebookCreate
+        from app.catalog.service import create_notebook as create_catalog_notebook, _run_async
+
+        body = NotebookCreate(
+            name=notebook_name,
+            comment=comment,
+            initial_content=initial_content,
+        )
+
+        account_db = AccountSessionLocal()
+        try:
+            notebook = _run_async(
+                create_catalog_notebook(
+                    db=account_db,
+                    catalog_name=catalog_name,
+                    schema_name=schema_name,
+                    body=body,
+                    user=user_dict,
+                )
+            )
+            account_db.commit()
+            full_name = f"{notebook.catalog_name}.{notebook.schema_name}.{notebook.name}"
+            return NovaToolResult(
+                ok=True,
+                result={
+                    "id": notebook.id,
+                    "full_name": full_name,
+                    "catalog_name": notebook.catalog_name,
+                    "schema_name": notebook.schema_name,
+                    "name": notebook.name,
+                    "blob_path": notebook.blob_path,
+                    "storage_location": notebook.storage_location,
+                    "owner": notebook.owner,
+                    "comment": notebook.comment,
+                    "cells_count": len(initial_content["cells"]) if initial_content else 0,
+                    "code": code if code else (cells[0].get("code") if cells else None),
+                },
+            )
+        except Exception as exc:
+            logger.error("create_notebook tool failed: %s", exc, exc_info=True)
+            return NovaToolResult(ok=False, error=str(exc))
+        finally:
+            account_db.close()
+
+
 NOTEBOOK_NOVA_TOOLS.extend([
     ProposeCellEditTool(),
     StartKernelAndRunCellTool(),
     ApproveCellEditTool(),
     RejectCellEditTool(),
     GetCellStateTool(),
+    CreateNotebookTool(),
 ])

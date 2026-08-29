@@ -13,6 +13,7 @@ def test_catalog_tool_definition_registered():
     assert function["name"] == "catalog"
     assert "search_catalog" in function["parameters"]["properties"]["operation"]["enum"]
     assert "get_asset_schema" in function["parameters"]["properties"]["operation"]["enum"]
+    assert "search_catalog_metadata" in function["parameters"]["properties"]["operation"]["enum"]
 
 
 def test_unknown_operation_returns_tool_error():

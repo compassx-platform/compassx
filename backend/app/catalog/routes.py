@@ -54,6 +54,7 @@ from app.catalog.service import (
     create_volume,
     delete_catalog,
     delete_schema,
+    delete_table,
     ensure_default_catalog,
     get_lineage,
     get_sample_data,
@@ -441,6 +442,22 @@ def refresh_table_columns(
         return refresh_columns(db, f"{catalog}.{schema_name}.{table_name}")
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
+
+
+@router.delete("/catalogs/{catalog_name}/schemas/{schema_name}/tables/{table_name}", status_code=204)
+@router.delete("/tables/{catalog_name}/{schema_name}/{table_name}", status_code=204)
+def remove_table(
+    catalog_name: str,
+    schema_name: str,
+    table_name: str,
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    """Soft-delete an Iceberg table from the catalog (metadata only, storage data is preserved)."""
+    try:
+        delete_table(db, catalog_name, schema_name, table_name)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
 
 @router.post("/lineage", status_code=201)

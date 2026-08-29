@@ -33,7 +33,9 @@ class NotebookManagerTool(BaseTool):
             "payload": {
                 "type": "object",
                 "description": (
-                    "Operation-specific payload. Examples: get_cell_output uses {cell_index}; "
+                    "Operation-specific payload. Examples: create_notebook uses "
+                    "{catalog_name, schema_name, notebook_name, comment, code, cells}; "
+                    "get_cell_output uses {cell_index}; "
                     "get_variable_state uses {cell_index, variable_name}; get_schema uses "
                     "{table_or_view_name}; list_imports uses {}; read_notebook uses "
                     "{notebook_path, include_outputs, max_cells}; run_cell uses "

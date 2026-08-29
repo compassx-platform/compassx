@@ -64,6 +64,7 @@ CATALOG_OPERATIONS = [
     "resolve_entity",
     "list_related_assets",
     "sync_foreign_catalog",
+    "search_catalog_metadata",
 ]
 
 
@@ -176,6 +177,8 @@ class CatalogTool(BaseTool):
                 res = self._list_related_assets(account_db, payload, agent)
             elif operation == "sync_foreign_catalog":
                 res = self._sync_foreign_catalog(account_db, payload, agent)
+            elif operation == "search_catalog_metadata":
+                res = self._search_catalog_metadata(account_db, payload, agent)
             else:
                 return ToolResult(
                     ok=False,
@@ -783,6 +786,78 @@ class CatalogTool(BaseTool):
             triggered_by_user_id=user_id,
         )
         return res
+
+    def _search_catalog_metadata(
+        self,
+        account_db: Session,
+        payload: dict[str, Any],
+        agent: Agent,
+    ) -> dict[str, Any]:
+        query_str = str(payload.get("query") or "").strip()
+        object_type = str(payload.get("object_type") or "all").strip().lower()
+        catalog_filter = str(payload.get("catalog_name") or "").strip()
+        limit = min(int(payload.get("limit") or 20), 100)
+
+        results: list[dict[str, Any]] = []
+
+        allowed_catalogs = _get_allowed_catalogs(agent.workspace_id, account_db)
+
+        # 1. Search Catalogs
+        if object_type in ("all", "catalog"):
+            q_catalogs = account_db.query(UnifiedCatalog)
+            if allowed_catalogs is not None:
+                q_catalogs = q_catalogs.filter(UnifiedCatalog.name.in_(allowed_catalogs))
+            if query_str:
+                q_catalogs = q_catalogs.filter(
+                    (UnifiedCatalog.name.ilike(f"%{query_str}%")) |
+                    (UnifiedCatalog.description.ilike(f"%{query_str}%"))
+                )
+            catalogs = q_catalogs.order_by(UnifiedCatalog.name).limit(limit).all()
+            for cat in catalogs:
+                results.append({
+                    "object_type": "catalog",
+                    "name": cat.name,
+                    "description": cat.description,
+                    "catalog_type": cat.catalog_type,
+                    "database_name": cat.database_name,
+                    "created_by": cat.created_by,
+                    "created_at": cat.created_at.isoformat() if cat.created_at else None,
+                })
+
+        # 2. Search Schemas
+        if object_type in ("all", "schema"):
+            q_schemas = account_db.query(UnifiedCatalogSchema).join(UnifiedCatalog)
+            if allowed_catalogs is not None:
+                q_schemas = q_schemas.filter(UnifiedCatalog.name.in_(allowed_catalogs))
+            if catalog_filter:
+                q_schemas = q_schemas.filter(UnifiedCatalog.name.ilike(f"%{catalog_filter}%"))
+            if query_str:
+                q_schemas = q_schemas.filter(
+                    (UnifiedCatalogSchema.name.ilike(f"%{query_str}%")) |
+                    (UnifiedCatalogSchema.description.ilike(f"%{query_str}%"))
+                )
+            schemas = q_schemas.order_by(UnifiedCatalogSchema.name).limit(limit).all()
+            for sch in schemas:
+                results.append({
+                    "object_type": "schema",
+                    "name": sch.name,
+                    "catalog_name": sch.catalog.name,
+                    "description": sch.description,
+                    "created_by": sch.created_by,
+                    "created_at": sch.created_at.isoformat() if sch.created_at else None,
+                })
+
+        results.sort(key=lambda x: x["name"])
+        if object_type == "all":
+            results = results[:limit]
+
+        return {
+            "query": query_str,
+            "object_type": object_type,
+            "catalog_name_filter": catalog_filter or None,
+            "count": len(results),
+            "results": results,
+        }
 
 
 # Register tool dynamically into tool_registry

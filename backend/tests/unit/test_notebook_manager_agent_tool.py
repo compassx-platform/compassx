@@ -18,6 +18,7 @@ def test_notebook_manager_tool_definition_registered():
     assert "read_notebook" in function["parameters"]["properties"]["operation"]["enum"]
     assert "edit_cell" in function["parameters"]["properties"]["operation"]["enum"]
     assert "add_multiple_cells" in function["parameters"]["properties"]["operation"]["enum"]
+    assert "create_notebook" in function["parameters"]["properties"]["operation"]["enum"]
 
 
 def test_unknown_operation_returns_tool_error():

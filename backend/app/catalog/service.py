@@ -511,6 +511,50 @@ async def create_iceberg_table(
     return table
 
 
+def delete_table(db: Session, catalog_name: str, schema_name: str, table_name: str) -> None:
+    """Soft-delete an Iceberg table by removing its catalog metadata entry.
+
+    The actual physical data and metadata files in blob storage are preserved.
+    Only Iceberg tables can be deleted from the catalog.
+    """
+    catalog = db.query(UnifiedCatalog).filter(UnifiedCatalog.name == catalog_name).first()
+    if not catalog:
+        raise ValueError(f"Catalog '{catalog_name}' not found.")
+    schema = db.query(UnifiedCatalogSchema).filter(
+        UnifiedCatalogSchema.catalog_id == catalog.id,
+        UnifiedCatalogSchema.name == schema_name
+    ).first()
+    if not schema:
+        raise ValueError(f"Schema '{schema_name}' not found in catalog '{catalog_name}'.")
+    table = db.query(UnifiedCatalogTable).filter(
+        UnifiedCatalogTable.schema_id == schema.id,
+        UnifiedCatalogTable.name == table_name
+    ).first()
+    if not table:
+        raise ValueError(f"Table '{table_name}' not found in '{catalog_name}.{schema_name}'.")
+
+    if table.table_type != CatalogTableType.ICEBERG:
+        table_type_val = table.table_type.value if hasattr(table.table_type, 'value') else str(table.table_type)
+        raise ValueError(f"Only Iceberg tables can be deleted from the catalog. Table '{table_name}' is of type '{table_type_val}'.")
+
+    # Clean up search asset index if exists
+    try:
+        from app.catalog.search_models import CatalogSearchAsset
+        db.query(CatalogSearchAsset).filter(
+            CatalogSearchAsset.source_object_id == table.id
+        ).delete(synchronize_session=False)
+    except Exception:
+        pass
+
+    # Clean up lineage edges referencing this table
+    db.query(UnifiedCatalogLineage).filter(
+        (UnifiedCatalogLineage.source_table_id == table.id) | (UnifiedCatalogLineage.target_table_id == table.id)
+    ).delete(synchronize_session=False)
+
+    db.delete(table)
+    db.commit()
+
+
 def delete_catalog(db: Session, catalog_name: str) -> None:
     """Delete a catalog by name.
 

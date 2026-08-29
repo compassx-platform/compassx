@@ -381,20 +381,26 @@ export const ChatMessageList: React.FC<ChatMessageListProps> = React.memo(({
                         (m.tool_name === 'notebook_manager' &&
                           ['edit_cell', 'propose_cell_edit', 'apply_notebook_edit', 'add_multiple_cells', 'add_cells', 'create_cell', 'insert_cell', 'delete_cell', 'append_to_cell', 'create_notebook'].includes(
                             (m.tool_result.args as any)?.operation
+                          )) ||
+                        m.tool_name === 'create_dashboard' ||
+                        (m.tool_name === 'dashboard_manager' &&
+                          ['create_dashboard', 'update_dashboard', 'add_dataset', 'update_dataset', 'add_widget', 'update_widget', 'publish_dashboard'].includes(
+                            (m.tool_result.args as any)?.operation
                           )))
                     ) {
                       const res = m.tool_result.result as any;
                       const args = m.tool_result.args as any;
+                      const isDash = m.tool_name.includes('dashboard') || (args?.operation || '').includes('dashboard') || (args?.operation || '').includes('widget') || (args?.operation || '').includes('dataset');
                       const fn =
                         res?.full_name ||
-                        (args?.catalog_name && args?.schema_name && args?.notebook_name
-                          ? `${args.catalog_name}.${args.schema_name}.${args.notebook_name}`
+                        (args?.catalog_name && args?.schema_name && (args?.notebook_name || args?.dashboard_name || args?.name)
+                          ? `${args.catalog_name}.${args.schema_name}.${args.notebook_name || args.dashboard_name || args.name}`
                           : null);
                       if (fn && !seenNames.has(fn)) {
                         seenNames.add(fn);
                         turnEdits.push({
                           full_name: fn,
-                          object_type: (res?.object_type || args?.object_type || 'notebook') as any,
+                          object_type: (res?.object_type || args?.object_type || (isDash ? 'dashboard' : 'notebook')) as any,
                         });
                       }
                     }

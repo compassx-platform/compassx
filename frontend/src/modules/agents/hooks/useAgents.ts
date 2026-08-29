@@ -6,11 +6,6 @@ export interface AgentTool {
   tool_name: string;
 }
 
-export interface AgentDBConnection {
-  db_connection_id: number;
-  allowed_tables?: string[];
-}
-
 export interface AgentListItem {
   id: number;
   name: string;
@@ -46,7 +41,6 @@ export interface Agent {
   created_at: string;
   updated_at: string;
   tools: AgentTool[];
-  db_connections: AgentDBConnection[];
   skills?: any[];
 }
 
@@ -94,7 +88,6 @@ export function useCreateAgent() {
         manifest?: Record<string, any>;
         llm_connection_id?: number;
         tools?: { tool_name: string }[];
-        db_connections?: AgentDBConnection[];
       };
     }) => {
       const { data } = await api.post<Agent>("/agents", payload);
@@ -127,7 +120,6 @@ export function useUpdateAgent() {
         manifest?: Record<string, any>;
         llm_connection_id?: number | null;
         tools?: { tool_name: string }[];
-        db_connections?: AgentDBConnection[];
       };
     }) => {
       const { data } = await api.put<Agent>(`/agents/${agentId}`, payload);

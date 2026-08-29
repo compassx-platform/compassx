@@ -332,6 +332,7 @@ const catalogApi = {
   deleteVolumeFile: (volume_id: string, file_path: string) => api.delete(`/catalog/volumes/${volume_id}/files`, { params: { file_path } }).then((r) => r.data),
   renameVolumeFile: (volume_id: string, old_path: string, new_name: string) => api.post<VolumeFileInfo>(`/catalog/volumes/${volume_id}/files/rename`, { old_path, new_name }).then((r) => r.data),
   getTable: (catalog: string, schema: string, table: string) => api.get<CatalogTable>('/catalog/tables/' + catalog + '/' + schema + '/' + table).then((r) => r.data),
+  deleteTable: (catalog: string, schema: string, table: string) => api.delete(`/catalog/catalogs/${encodeURIComponent(catalog)}/schemas/${encodeURIComponent(schema)}/tables/${encodeURIComponent(table)}`).then((r) => r.data),
   refreshTable: (catalog: string, schema: string, table: string) => api.post<CatalogTable>('/catalog/tables/' + catalog + '/' + schema + '/' + table + '/refresh-columns').then((r) => r.data),
   getLineage: (catalog: string, schema: string, table: string) => api.get<LineageGraph>('/catalog/lineage/' + catalog + '/' + schema + '/' + table).then((r) => r.data),
   getSampleData: (catalog: string, schema: string, table: string, limit = 100) =>
@@ -543,6 +544,7 @@ export default function DataCatalog() {
   const [showMoreActionsDropdown, setShowMoreActionsDropdown] = useState(false);
   const [showDeleteCatalogModal, setShowDeleteCatalogModal] = useState(false);
   const [deleteCatalogConfirmText, setDeleteCatalogConfirmText] = useState('');
+  const [tableToDelete, setTableToDelete] = useState<{ catalog: string; schema: string; table: string } | null>(null);
   const moreActionsBtnRef = useRef<HTMLButtonElement>(null);
   const moreActionsDropdownRef = useRef<HTMLDivElement>(null);
   const [showPlusDropdown, setShowPlusDropdown] = useState(false);
@@ -650,7 +652,7 @@ export default function DataCatalog() {
   const [catalogForm, setCatalogForm] = useState<CatalogForm>({
     name: '',
     description: '',
-    catalog_type: 'postgres',
+    catalog_type: 'iceberg',
     connection_id: '',
     database_name: '',
     storageBackend: '',
@@ -1646,7 +1648,7 @@ export default function DataCatalog() {
       setCatalogForm({
         name: '',
         description: '',
-        catalog_type: 'postgres',
+        catalog_type: 'iceberg',
         connection_id: '',
         database_name: '',
         storageBackend: '',
@@ -1851,6 +1853,22 @@ export default function DataCatalog() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['uc-table'] });
       qc.invalidateQueries({ queryKey: ['uc-schema-tables'] });
+    },
+  });
+
+  const deleteTableMutation = useMutation({
+    mutationFn: (data: { catalog: string; schema: string; table: string }) =>
+      catalogApi.deleteTable(data.catalog, data.schema, data.table),
+    onSuccess: (_, vars) => {
+      qc.invalidateQueries({ queryKey: ['uc-tables'] });
+      qc.invalidateQueries({ queryKey: ['uc-table', vars.catalog, vars.schema, vars.table] });
+      qc.invalidateQueries({ queryKey: ['uc-schema-tables'] });
+      qc.invalidateQueries({ queryKey: ['uc-catalogs'] });
+      qc.invalidateQueries({ queryKey: ['explorer-catalogs'] });
+      setTableToDelete(null);
+      if (selection?.kind === 'table' && selection.catalog === vars.catalog && selection.schema === vars.schema && selection.table === vars.table) {
+        selectAndNavigate({ kind: 'schema', catalog: vars.catalog, schema: vars.schema });
+      }
     },
   });
 
@@ -2238,8 +2256,25 @@ export default function DataCatalog() {
             </button>
           </div>
 
-          {/* Action buttons (Create) */}
+          {/* Action buttons (Create / Delete) */}
           <div className="uc-hero-actions" style={{ position: 'relative' }}>
+            {/* Delete button for Iceberg tables */}
+            {kind === 'table' && tableQuery.data?.table_type === 'iceberg' && (
+              <button
+                type="button"
+                className="btn-outline flex items-center gap-1"
+                style={{ color: 'var(--color-danger)', borderColor: 'var(--color-danger)', fontSize: '13px' }}
+                onClick={() => {
+                  if (selection && selection.kind === 'table') {
+                    setTableToDelete({ catalog: selection.catalog, schema: selection.schema, table: selection.table });
+                  }
+                }}
+                disabled={deleteTableMutation.isPending}
+              >
+                <Trash size={13} /> Delete table
+              </button>
+            )}
+
             {/* Ellipsis menu button — only shows actions at catalog level */}
             {kind === 'catalog' && (
               <button
@@ -2543,9 +2578,11 @@ export default function DataCatalog() {
               {schemaSubTab === 'tables' && (
                 <tr>
                   <th>Name</th>
+                  <th>Type</th>
                   <th>Owner</th>
                   <th>Created at</th>
                   <th>Popularity</th>
+                  <th style={{ textAlign: 'right' }}>Actions</th>
                 </tr>
               )}
               {schemaSubTab === 'volumes' && (
@@ -2593,6 +2630,7 @@ export default function DataCatalog() {
             </thead>
             <tbody>
               {schemaSubTab === 'tables' && sorted.map(t => {
+                const isIceberg = t.table_type === 'iceberg';
                 return (
                   <tr 
                     key={t.id} 
@@ -2600,10 +2638,15 @@ export default function DataCatalog() {
                     style={{ cursor: 'pointer' }}
                   >
                     <td>
-                      <div className="flex items-center gap-2">
-                        <Table2 size={14} className="text-muted" />
+                      <div className="uc-item-meta-row" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <Table2 size={15} className="text-muted" style={{ flexShrink: 0 }} />
                         <span style={{ fontWeight: 500, color: 'var(--color-primary)' }}>{t.name}</span>
                       </div>
+                    </td>
+                    <td>
+                      <span className="uc-chip" style={{ fontSize: 11 }}>
+                        {isIceberg ? 'Iceberg' : 'Postgres Native'}
+                      </span>
                     </td>
                     <td>{getEntityOwner({ kind: 'table', catalog: t.catalog, schema: t.schema_name, table: t.name } as Selection, 'catalog-admin')}</td>
                     <td>{new Date(t.created_at).toLocaleDateString()}</td>
@@ -2613,6 +2656,21 @@ export default function DataCatalog() {
                         <span className="uc-popularity-bar is-active" style={{ height: '8px' }} />
                         <span className="uc-popularity-bar is-active" style={{ height: '12px' }} />
                       </div>
+                    </td>
+                    <td style={{ textAlign: 'right' }} onClick={(e) => e.stopPropagation()}>
+                      {isIceberg ? (
+                        <button
+                          type="button"
+                          className="uc-icon-btn"
+                          style={{ color: 'var(--color-danger)' }}
+                          title="Delete Iceberg table"
+                          onClick={() => setTableToDelete({ catalog: t.catalog, schema: t.schema_name, table: t.name })}
+                        >
+                          <Trash size={13} />
+                        </button>
+                      ) : (
+                        <span style={{ color: 'var(--color-text-subtle)', fontSize: 11 }}>—</span>
+                      )}
                     </td>
                   </tr>
                 );
@@ -2626,8 +2684,8 @@ export default function DataCatalog() {
                     style={{ cursor: 'pointer' }}
                   >
                     <td>
-                      <div className="flex items-center gap-2">
-                        <Folder size={14} className="text-muted" style={{ color: 'var(--color-primary)' }} />
+                      <div className="uc-item-meta-row" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <Folder size={15} className="text-muted" style={{ color: 'var(--color-primary)', flexShrink: 0 }} />
                         <span style={{ fontWeight: 500, color: 'var(--color-primary)' }}>{vol.name}</span>
                       </div>
                     </td>
@@ -2646,8 +2704,8 @@ export default function DataCatalog() {
                     style={{ cursor: 'pointer' }}
                   >
                     <td>
-                      <div className="flex items-center gap-2">
-                        <FileCode size={14} className="text-muted" />
+                      <div className="uc-item-meta-row" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <FileCode size={15} className="text-muted" style={{ flexShrink: 0 }} />
                         <span style={{ fontWeight: 500, color: 'var(--color-primary)' }}>{nb.name}</span>
                       </div>
                     </td>
@@ -2666,8 +2724,8 @@ export default function DataCatalog() {
                     style={{ cursor: 'pointer' }}
                   >
                     <td>
-                      <div className="flex items-center gap-2">
-                        <SlidersHorizontal size={14} className="text-muted" />
+                      <div className="uc-item-meta-row" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <SlidersHorizontal size={15} className="text-muted" style={{ flexShrink: 0 }} />
                         <span style={{ fontWeight: 500, color: 'var(--color-primary)' }}>{dbItem.name}</span>
                       </div>
                     </td>
@@ -2686,8 +2744,8 @@ export default function DataCatalog() {
                     style={{ cursor: 'pointer' }}
                   >
                     <td>
-                      <div className="flex items-center gap-2">
-                        <Wrench size={14} className="text-muted" style={{ color: '#2563eb' }} />
+                      <div className="uc-item-meta-row" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <Wrench size={15} className="text-muted" style={{ color: '#2563eb', flexShrink: 0 }} />
                         <span style={{ fontWeight: 500, color: 'var(--color-primary)' }}>{tItem.name}</span>
                       </div>
                     </td>
@@ -2722,8 +2780,8 @@ export default function DataCatalog() {
                     style={{ cursor: 'pointer' }}
                   >
                     <td>
-                      <div className="flex items-center gap-2">
-                        <FileCode size={14} className="text-muted" style={{ color: 'var(--color-primary)' }} />
+                      <div className="uc-item-meta-row" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <FileCode size={15} className="text-muted" style={{ color: 'var(--color-primary)', flexShrink: 0 }} />
                         <span style={{ fontWeight: 500, color: 'var(--color-primary)' }}>{qItem.name}</span>
                       </div>
                     </td>
@@ -4405,6 +4463,30 @@ export default function DataCatalog() {
                     {table.connection_name && <div><span>Connection</span><strong>{table.connection_name}</strong></div>}
                     {table.source_database && <div><span>Database</span><strong>{table.source_database}</strong></div>}
                     {table.storage_location && <div><span>Storage</span><strong style={{ wordBreak: 'break-all', fontSize: 11 }}>{table.storage_location}</strong></div>}
+                  </div>
+
+                  {/* Actions (Refresh columns, Delete if Iceberg table) */}
+                  <div style={{ marginTop: '20px', display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                    <button
+                      type="button"
+                      className="btn-outline flex items-center gap-1"
+                      onClick={() => refreshMutation.mutate()}
+                      disabled={refreshMutation.isPending}
+                    >
+                      <RefreshCw size={12} className={refreshMutation.isPending ? 'spin' : ''} />
+                      Refresh columns
+                    </button>
+                    {table.table_type === 'iceberg' && (
+                      <button
+                        type="button"
+                        className="btn-outline flex items-center gap-1"
+                        style={{ color: 'var(--color-danger)', borderColor: 'var(--color-danger)' }}
+                        onClick={() => setTableToDelete({ catalog: table.catalog, schema: table.schema_name, table: table.name })}
+                        disabled={deleteTableMutation.isPending}
+                      >
+                        <Trash size={12} /> Delete table
+                      </button>
+                    )}
                   </div>
                 </div>
                 <div className="uc-detail-card">
@@ -6326,8 +6408,8 @@ export default function DataCatalog() {
                 value={catalogForm.catalog_type} 
                 onChange={(e) => setCatalogForm({ ...catalogForm, catalog_type: e.target.value as 'postgres' | 'iceberg', connection_id: '', database_name: '' })}
               >
-                <option value="postgres">Postgres</option>
                 <option value="iceberg">Iceberg</option>
+                <option value="postgres">Postgres</option>
               </select>
             </label>
 
@@ -7240,6 +7322,87 @@ export default function DataCatalog() {
           </div>
         );
       })()}
+
+      {/* Delete Table Confirmation Modal */}
+      {tableToDelete && (
+        <div className="uc-modal-overlay" onClick={() => setTableToDelete(null)}>
+          <div className="uc-modal" style={{ maxWidth: 480 }} onClick={(e) => e.stopPropagation()}>
+            <div className="uc-modal-header">
+              <div>
+                <h3 style={{ color: '#ef4444' }}>Delete table</h3>
+                <p>Remove <strong>{tableToDelete.table}</strong> from the catalog</p>
+              </div>
+              <button className="uc-icon-btn" onClick={() => setTableToDelete(null)}>
+                <X size={16} />
+              </button>
+            </div>
+
+            <div style={{ padding: '0 24px 24px' }}>
+              {/* Warning banner */}
+              <div style={{
+                background: 'rgba(239,68,68,0.08)',
+                border: '1px solid rgba(239,68,68,0.3)',
+                borderRadius: 8,
+                padding: '12px 16px',
+                marginBottom: 16,
+                fontSize: 13,
+                color: 'var(--color-text)',
+                lineHeight: 1.5,
+              }}>
+                <strong style={{ color: '#ef4444' }}>⚠ Confirm Table Deletion</strong>
+                <p style={{ margin: '6px 0 0' }}>
+                  Are you sure you want to delete table <strong>{tableToDelete.catalog}.{tableToDelete.schema}.{tableToDelete.table}</strong> from the catalog?
+                </p>
+              </div>
+
+              {/* Soft delete explanation notice */}
+              <div style={{
+                background: 'rgba(234,179,8,0.08)',
+                border: '1px solid rgba(234,179,8,0.3)',
+                borderRadius: 6,
+                padding: '10px 14px',
+                marginBottom: 20,
+                fontSize: 12,
+                color: 'var(--color-text-muted)',
+                lineHeight: 1.4,
+              }}>
+                <strong>Soft delete:</strong> This operation deletes the table metadata registration from the CompassX Data Catalog. The actual data files in the storage backend will <strong>not</strong> be deleted.
+              </div>
+
+              <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+                <button
+                  type="button"
+                  className="btn-outline"
+                  onClick={() => setTableToDelete(null)}
+                  disabled={deleteTableMutation.isPending}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  className="btn-primary"
+                  style={{
+                    background: '#ef4444',
+                    border: 'none',
+                    color: '#ffffff',
+                  }}
+                  disabled={deleteTableMutation.isPending}
+                  onClick={() => deleteTableMutation.mutate(tableToDelete)}
+                >
+                  {deleteTableMutation.isPending && <Loader2 size={14} className="spin" style={{ marginRight: 4 }} />}
+                  Delete table
+                </button>
+              </div>
+
+              {deleteTableMutation.isError && (
+                <p style={{ color: '#ef4444', fontSize: 12, marginTop: 10 }}>
+                  {(deleteTableMutation.error as any)?.response?.data?.detail || 'Failed to delete table. Please try again.'}
+                </p>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

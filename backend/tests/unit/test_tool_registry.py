@@ -22,7 +22,7 @@ class DummyTestTool(BaseTool):
 
 
 def test_tool_registry_singleton_contains_core_tools():
-    assert tool_registry.get("sql_query") is not None
+    assert tool_registry.get("sql_warehouse") is not None
     assert tool_registry.get("python_code") is not None
     assert tool_registry.get("asset_manager") is not None
     assert tool_registry.get("create_plan") is not None
@@ -52,6 +52,6 @@ def test_tool_registry_open_closed_registration():
 
 
 def test_backward_compatible_proxies():
-    assert "sql_query" in TOOL_MAP
-    assert TOOL_MAP.get("sql_query") is not None
+    assert "sql_warehouse" in TOOL_MAP
+    assert TOOL_MAP.get("sql_warehouse") is not None
     assert len(TOOL_REGISTRY) > 0

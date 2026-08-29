@@ -16,7 +16,7 @@ class VisualizationTool(BaseTool):
     description = (
         "Generate a chart or graph. Provide a Vega-Lite JSON specification. "
         "The frontend will render it inline in the chat. "
-        "Use this after running sql_query or python_code to visualize the results."
+        "Use this after running sql_warehouse or python_code to visualize the results."
     )
     is_async = False
     input_schema = {

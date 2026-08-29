@@ -15,7 +15,6 @@ import {
   type ChatSession,
 } from '@/modules/agents/hooks/useChat';
 import { useAgent } from '@/modules/agents/hooks/useAgents';
-import { useResearchEngineRuns, useTriggerResearchEngineRun } from '@/modules/agents/hooks/useResearchEngine';
 import { useLLMConnections } from '@/modules/agents/hooks/useLLMConnections';
 import { useChatStore } from '@/modules/agents/stores/chatStore';
 import { useToast } from '@/lib/toast';
@@ -48,8 +47,6 @@ export default function AgentChatPage({ initialView }: AgentChatPageProps = {}) 
   const toast = useToast();
 
   const { data: agent } = useAgent(agentId);
-  const { data: researchRuns = [] } = useResearchEngineRuns();
-  const triggerResearchRun = useTriggerResearchEngineRun();
   const { data: sessions = [] } = useChatSessions(agentId);
   const { data: llmConnections = [] } = useLLMConnections();
   const createSession = useCreateSession();
@@ -95,10 +92,6 @@ export default function AgentChatPage({ initialView }: AgentChatPageProps = {}) 
 
   const { data: messages = [] } = useChatMessages(agentId, effectiveSessionId);
   const { data: storedPlans = [] } = useSessionPlans(agentId, effectiveSessionId);
-  const isResearchEngineAgent = (agent?.tools ?? []).some((tool) =>
-    ['fetch_research_proposal_history'].includes(tool.tool_name)
-  );
-  const researchRunsForAgent = researchRuns.filter((run) => run.agent_id === agentId);
 
   const {
     streamingText,
@@ -346,20 +339,6 @@ export default function AgentChatPage({ initialView }: AgentChatPageProps = {}) 
       qc.invalidateQueries({ queryKey: ['agents', agentId, 'sessions'] });
     } catch (err) {
       console.error('Failed to delete session:', err);
-    }
-  };
-
-  const handleTriggerResearchRun = async () => {
-    if (!agentId) return;
-    try {
-      await triggerResearchRun.mutateAsync({
-        agentId,
-        query: input.trim() || undefined,
-        chatSessionId: activeSessionId ?? undefined,
-      });
-      qc.invalidateQueries({ queryKey: ['research-engine-runs'] });
-    } catch (err) {
-      console.error('Failed to trigger research run:', err);
     }
   };
 
@@ -786,10 +765,6 @@ export default function AgentChatPage({ initialView }: AgentChatPageProps = {}) 
         onToggleSidebar={() => setIsSidebarCollapsed((prev) => !prev)}
         sidebarWidth={sidebarWidth}
         onSidebarWidthChange={handleSidebarWidthChange}
-        isResearchEngineAgent={isResearchEngineAgent}
-        researchRunsForAgent={researchRunsForAgent}
-        onTriggerResearchRun={handleTriggerResearchRun}
-        isTriggerResearchPending={triggerResearchRun.isPending}
         onInsertTable={handleInsertTable}
       />
 

@@ -243,10 +243,6 @@ interface ChatSessionsSidebarProps {
   onToggleSidebar: () => void;
   sidebarWidth?: number;
   onSidebarWidthChange?: (w: number) => void;
-  isResearchEngineAgent?: boolean;
-  researchRunsForAgent?: any[];
-  onTriggerResearchRun?: () => void;
-  isTriggerResearchPending?: boolean;
   sidebarMode?: 'chats' | 'catalog';
   onSidebarModeChange?: (mode: 'chats' | 'catalog') => void;
   onInsertTable?: (identifier: string) => void;
@@ -265,10 +261,6 @@ export function ChatSessionsSidebar({
   onToggleSidebar,
   sidebarWidth = 260,
   onSidebarWidthChange,
-  isResearchEngineAgent = false,
-  researchRunsForAgent = [],
-  onTriggerResearchRun,
-  isTriggerResearchPending = false,
   sidebarMode: propSidebarMode,
   onSidebarModeChange,
   onInsertTable,
@@ -1089,84 +1081,6 @@ export function ChatSessionsSidebar({
 
           {/* Session list */}
           <div className="sidebar-hover-scrollbar" style={{ flex: 1, padding: '0 6px 12px' }}>
-            {isResearchEngineAgent && (
-              <div
-                style={{
-                  margin: '4px 2px 10px',
-                  padding: '8px',
-                  border: '1px solid var(--color-border)',
-                  borderRadius: 8,
-                }}
-              >
-                <div
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    marginBottom: 8,
-                  }}
-                >
-                  <span style={{ fontSize: '0.74rem', fontWeight: 700, color: 'var(--color-text-muted)' }}>
-                    Research Runs
-                  </span>
-                  <button
-                    className="btn btn-primary"
-                    style={{ height: 28, padding: '0 10px', fontSize: '0.72rem' }}
-                    onClick={onTriggerResearchRun}
-                    disabled={isTriggerResearchPending}
-                  >
-                    {isTriggerResearchPending ? (
-                      <Loader2 size={12} className="spin" />
-                    ) : (
-                      <Zap size={12} />
-                    )}{' '}
-                    Trigger Run
-                  </button>
-                </div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                  {researchRunsForAgent.length === 0 ? (
-                    <div style={{ fontSize: '0.73rem', color: 'var(--color-text-muted)' }}>
-                      No research runs yet.
-                    </div>
-                  ) : (
-                    researchRunsForAgent.map((run) => {
-                      const linkedSessionId =
-                        Number(
-                          (run.context_package as Record<string, unknown> | undefined)?.chat_session_id ?? 0
-                        ) || null;
-                      return (
-                        <button
-                          key={run.id}
-                          type="button"
-                          onClick={() => linkedSessionId && onSelectSession(linkedSessionId)}
-                          style={{
-                            textAlign: 'left',
-                            border: '1px solid var(--color-border)',
-                            background:
-                              linkedSessionId === activeSessionId
-                                ? 'var(--color-surface-hover)'
-                                : 'var(--color-surface)',
-                            borderRadius: 8,
-                            padding: '8px',
-                            cursor: linkedSessionId ? 'pointer' : 'default',
-                            width: '100%',
-                          }}
-                        >
-                          <div style={{ fontSize: '0.75rem', fontWeight: 600 }}>
-                            Run {run.id.slice(0, 8)}
-                          </div>
-                          <div style={{ fontSize: '0.68rem', color: 'var(--color-text-muted)' }}>
-                            {run.status} -{' '}
-                            {run.started_at ? new Date(run.started_at).toLocaleString() : 'pending'}
-                          </div>
-                        </button>
-                      );
-                    })
-                  )}
-                </div>
-              </div>
-            )}
-
             {visibleSessions.map((s) => (
               <SessionListItem
                 key={s.id}

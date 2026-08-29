@@ -77,39 +77,19 @@ class ToolRegistry:
             pass
 
         # Load core agent tools
-        from app.agents.services.agent.tools.sql_query_tool import SqlQueryTool
         from app.agents.services.agent.tools.python_code_tool import PythonCodeTool
         from app.agents.services.agent.tools.visualization_tool import VisualizationTool
         from app.agents.services.agent.tools.rag_search_tool import RagSearchTool
-        from app.agents.services.agent.tools.claude_agent_tool import ClaudeAgentTool
-        from app.agents.services.agent.tools.git_workspace_tool import GitWorkspaceTool
         from app.agents.services.agent.tools.invoke_agent_tool import InvokeAgentTool
-        from app.agents.services.agent.tools.research_engine_tools import (
-            FetchLayer1ProfilesTool,
-            ScanPlatformMaturityTool,
-            FetchResearchProposalHistoryTool,
-        )
         from app.agents.services.agent.tools.platform.asset_manager import AssetManagerTool
         from app.agents.services.agent.tools.platform.notebooks import NotebookManagerTool
         from app.agents.services.agent.tools.platform.dashboards import DashboardManagerTool
         from app.agents.services.agent.tools.platform.sql_warehouse import SqlWarehouseTool
         from app.agents.services.agent.tools.list_available_skills_tool import ListAvailableSkillsTool
         from app.agents.services.agent.tools.read_skill_tool import ReadSkillTool
-        from app.agents.services.agent.tools.profiling_tools import (
-            ListTablesTool,
-            GetTableSchemaTool,
-            GetColumnStatsTool,
-            CheckValueOverlapTool,
-            SearchWorkspaceTool,
-            SaveDataProfileTool,
-            GetExistingProfileTool,
-            GetDataProfileTool,
-        )
-        from app.agents.services.agent.tools.db_explorer_tool import DatabaseExplorerTool
         from app.agents.services.agent.tools.search_assets_tool import SearchAssetsTool
-        from app.agents.services.agent.tools.create_notebook_tool import CreateNotebookTool
-        from app.agents.services.agent.tools.search_catalog_metadata_tool import SearchCatalogMetadataTool
         from app.agents.services.agent.tools.catalog_editor_tool import CatalogEditorTool
+        from app.catalog.tools import CatalogTool
         from app.agents.services.agent.tools.plan_tools import (
             CreatePlanTool,
             GetPlanTool,
@@ -120,34 +100,18 @@ class ToolRegistry:
         from app.agents.services.agent.tools.escalate_plan_tool import EscalateToPlanTool
 
         core_tool_classes = [
-            SqlQueryTool,
             SqlWarehouseTool,
             PythonCodeTool,
             VisualizationTool,
             RagSearchTool,
-            GitWorkspaceTool,
-            ClaudeAgentTool,
             AssetManagerTool,
             NotebookManagerTool,
             DashboardManagerTool,
             InvokeAgentTool,
-            FetchLayer1ProfilesTool,
-            ScanPlatformMaturityTool,
-            FetchResearchProposalHistoryTool,
             ListAvailableSkillsTool,
             ReadSkillTool,
-            ListTablesTool,
-            GetTableSchemaTool,
-            GetColumnStatsTool,
-            CheckValueOverlapTool,
-            SearchWorkspaceTool,
-            GetDataProfileTool,
-            SaveDataProfileTool,
-            GetExistingProfileTool,
-            DatabaseExplorerTool,
+            CatalogTool,
             SearchAssetsTool,
-            CreateNotebookTool,
-            SearchCatalogMetadataTool,
             CatalogEditorTool,
             CreatePlanTool,
             GetPlanTool,

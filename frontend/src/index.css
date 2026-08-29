@@ -676,11 +676,13 @@ textarea.form-input { resize: vertical; min-height: 80px; }
   flex-direction: column;
 }
 
-/* Zero padding for full-height / full-bleed pages (e.g. Chat Page, Monitoring) */
+/* Zero padding for full-height / full-bleed pages (e.g. Chat Page, Monitoring, Landing Page) */
 .page-content:has(> [style*="height: 100%"]),
 .page-content:has(> [style*="calc(100vh"]),
-.page-content:has(.monitoring-root) {
+.page-content:has(.monitoring-root),
+.page-content:has(.landing-page-root) {
   padding: 0;
+  overflow-y: auto;
 }
 
 .app-workspace {
@@ -2689,6 +2691,17 @@ html {
   background: var(--color-surface-hover);
 }
 
+.uc-item-meta-row {
+  display: flex !important;
+  flex-direction: row !important;
+  align-items: center !important;
+  gap: 8px !important;
+}
+
+.uc-item-meta-row svg {
+  flex-shrink: 0 !important;
+}
+
 .uc-item-meta-cell {
   display: flex;
   align-items: center;
@@ -3612,6 +3625,56 @@ html {
 
 .quick-connect-scroll-row:hover::-webkit-scrollbar-thumb {
   background: rgba(0, 0, 0, 0.25);
+}
+
+/* ── Essential Flex Utility Classes ────────────────────────────────────────── */
+.flex {
+  display: flex !important;
+}
+.inline-flex {
+  display: inline-flex !important;
+}
+.items-center {
+  align-items: center !important;
+}
+.items-start {
+  align-items: flex-start !important;
+}
+.items-end {
+  align-items: flex-end !important;
+}
+.justify-between {
+  justify-content: space-between !important;
+}
+.justify-center {
+  justify-content: center !important;
+}
+.justify-end {
+  justify-content: flex-end !important;
+}
+.flex-col {
+  flex-direction: column !important;
+}
+.flex-row {
+  flex-direction: row !important;
+}
+.flex-wrap {
+  flex-wrap: wrap !important;
+}
+.flex-1 {
+  flex: 1 1 0% !important;
+}
+.gap-1 {
+  gap: 4px !important;
+}
+.gap-2 {
+  gap: 8px !important;
+}
+.gap-3 {
+  gap: 12px !important;
+}
+.gap-4 {
+  gap: 16px !important;
 }
 
 

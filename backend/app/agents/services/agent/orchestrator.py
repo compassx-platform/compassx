@@ -28,7 +28,6 @@ from sqlalchemy.orm import Session, selectinload
 
 from app.models.agents import (
     Agent,
-    AgentGitConnection,
     AgentTool,
     ChatMessage,
     ChatSession,
@@ -79,8 +78,6 @@ def _load_agent(db: Session, agent_id: int) -> Agent | None:
         db.query(Agent)
         .options(
             selectinload(Agent.tools),
-            selectinload(Agent.db_connections),
-            selectinload(Agent.git_connections),
             selectinload(Agent.skills),
         )
         .filter(Agent.id == agent_id)
@@ -126,29 +123,10 @@ def _build_extra_tools(
             workspace_id=workspace_id,
         )
 
-    if "fetch_research_proposal_history" in enabled_tool_keys:
-        from app.agents.services.agent.tools.research_engine_tools import FetchResearchProposalHistoryTool
-
-        extra["fetch_research_proposal_history"] = FetchResearchProposalHistoryTool(workspace_id=workspace_id)
-
-    if "save_data_profile" in enabled_tool_keys:
-        from app.agents.services.agent.tools.profiling_tools import SaveDataProfileTool
-
-        extra["save_data_profile"] = SaveDataProfileTool(
-            session_id=session_id,
-        )
-
     if "create_plan" in enabled_tool_keys:
         from app.agents.services.agent.tools.plan_tools import CreatePlanTool
 
         extra["create_plan"] = CreatePlanTool(
-            session_id=session_id,
-        )
-
-    if "db_explorer" in enabled_tool_keys:
-        from app.agents.services.agent.tools.db_explorer_tool import DatabaseExplorerTool
-
-        extra["db_explorer"] = DatabaseExplorerTool(
             session_id=session_id,
         )
 
@@ -526,7 +504,7 @@ async def orchestrate_stream(
             f"   a. Call get_next_step(plan_id='{active_plan.plan_id}') to get the next pending step.\n"
             f"   b. If get_next_step indicates blocked=True or completed=True, STOP immediately.\n"
             f"   c. Call mark_step(..., step_id=<id>, status='in_progress').\n"
-            f"   d. Perform the ACTUAL work for that step. When creating notebooks or assets, use the registered catalogs (e.g. 'main', 'sandbox') and pass complete code into create_notebook(code='...'). Always execute the notebook cells using notebook_manager(operation='run_cell', payload={{'run_all': True}}) or specific cell_index / cell_indices to test and persist cell outputs.\n"
+            f"   d. Perform the ACTUAL work for that step. When creating notebooks or assets, use the registered catalogs (e.g. 'main', 'sandbox') and pass complete code into notebook_manager(operation='create_notebook', payload={{'catalog_name': '...', 'schema_name': '...', 'notebook_name': '...', 'code': '...'}}). Always execute the notebook cells using notebook_manager(operation='run_cell', payload={{'run_all': True}}) or specific cell_index / cell_indices to test and persist cell outputs.\n"
             f"   e. If tool execution encounters an error, DO NOT mark it 'done' and DO NOT skip to the next step! Either fix the error and retry that same step until successful, or record the failure and halt.\n"
             f"   f. Call mark_step(..., step_id=<id>, status='done', result={{...}}).\n"
             f"   g. IMMEDIATELY continue to the next step.\n"
@@ -539,7 +517,7 @@ async def orchestrate_stream(
     for plan_tool_name in ["create_plan", "get_plan", "get_next_step", "mark_step", "append_correction", "escalate_to_plan"]:
         if plan_tool_name not in enabled_tool_keys:
             enabled_tool_keys.append(plan_tool_name)
-    for build_tool_name in ["create_notebook", "notebook_manager", "python_code", "sql_query", "asset_manager"]:
+    for build_tool_name in ["notebook_manager", "python_code", "sql_warehouse", "asset_manager"]:
         if build_tool_name not in enabled_tool_keys:
             enabled_tool_keys.append(build_tool_name)
 
@@ -834,175 +812,25 @@ async def orchestrate_stream(
                             except Exception: args = {}
                         if not isinstance(args, dict): args = {}
 
-                        ctx = args.get("context") if isinstance(args.get("context"), dict) else {}
-                        pld = args.get("payload") if isinstance(args.get("payload"), dict) else {}
-                        res_data = result_payload.get("data") if isinstance(result_payload.get("data"), dict) else {}
-                        step_res = args.get("result") if isinstance(args.get("result"), dict) else (result_payload.get("result") if isinstance(result_payload.get("result"), dict) else {})
+                        curr_step = None
+                        if active_plan:
+                            for st in active_plan.steps:
+                                if st.status in ("in_progress", "done"):
+                                    curr_step = st.id
+                                    break
 
-                        tool_name_lower = tc.get("name", "").lower()
-                        nb_op = (args.get("operation") or pld.get("operation") or result_payload.get("operation") or "").lower()
-
-                        READ_ONLY_OPERATIONS = {
-                            "read_notebook",
-                            "get_cell",
-                            "inspect_notebook",
-                            "get_notebook_outline",
-                            "search_notebook",
-                            "get_outputs",
-                            "get_variable",
-                            "list_variables",
-                            "get_notebook_schema",
-                            "list_notebooks",
-                            "find_notebooks",
-                            "run_cell",
-                            "run_all_cells",
-                            "execute_cell",
-                            "approve_cell_edit",
-                            "reject_cell_edit",
-                        }
-
-                        READ_ONLY_TOOLS = {
-                            "read_file",
-                            "view_file",
-                            "list_dir",
-                            "grep_search",
-                            "find_by_name",
-                            "search_web",
-                            "read_url_content",
-                            "get_column_stats",
-                            "db_explorer",
-                        }
-
-                        is_read_only = (
-                            tool_name_lower in READ_ONLY_TOOLS or
-                            (tool_name_lower == "notebook_manager" and (nb_op in READ_ONLY_OPERATIONS or not nb_op)) or
-                            nb_op in READ_ONLY_OPERATIONS
+                        from app.agents.services.agent.change_capture import capture_tool_change
+                        captured_change_info = capture_tool_change(
+                            db=db,
+                            session_id=session_id,
+                            tool_name=tc["name"],
+                            arguments=args,
+                            result_payload=result_payload if isinstance(result_payload, dict) else {},
+                            step_id=curr_step or (args.get("step_id") if isinstance(args.get("step_id"), int) else None),
+                            plan_id=_active_plan_id,
+                            goal=active_plan.goal if active_plan else None,
+                            context=tc.get("context"),
                         )
-
-                        if is_read_only:
-                            is_nb_tool = False
-                        else:
-                            is_nb_tool = (
-                                "notebook" in tool_name_lower or
-                                nb_op in ("edit_cell", "propose_cell_edit", "apply_notebook_edit", "add_multiple_cells", "add_cells", "create_cell", "insert_cell", "delete_cell", "create_notebook") or
-                                (isinstance(step_res, dict) and step_res.get("notebook_content"))
-                            )
-
-                        if not is_read_only:
-                            ot = result_payload.get("object_type") or args.get("object_type") or pld.get("object_type") or ("notebook" if is_nb_tool else "table")
-
-                        fn = (
-                            result_payload.get("full_name") or
-                            result_payload.get("resource_id") or
-                            args.get("full_name") or
-                            ctx.get("path") or
-                            ctx.get("notebook_path") or
-                            pld.get("notebook_path") or
-                            pld.get("full_name") or
-                            pld.get("path") or
-                            args.get("path") or
-                            (step_res.get("full_name") if isinstance(step_res, dict) else None) or
-                            (step_res.get("notebook_path") if isinstance(step_res, dict) else None)
-                        )
-                        if not fn:
-                            cat = result_payload.get("catalog_name") or args.get("catalog_name") or pld.get("catalog_name")
-                            sch = result_payload.get("schema_name") or args.get("schema_name") or pld.get("schema_name")
-                            nm = (
-                                result_payload.get("notebook_name") or
-                                result_payload.get("name") or
-                                args.get("notebook_name") or
-                                args.get("name") or
-                                pld.get("notebook_name") or
-                                (step_res.get("notebook_name") if isinstance(step_res, dict) else None)
-                            )
-                            if cat and sch and nm:
-                                fn = f"{cat}.{sch}.{nm}"
-
-                        # Fallback for notebook operations
-                        if not fn and is_nb_tool:
-                            try:
-                                from app.agents.models.agents import ChangeRecord
-                                prev_rec = db.query(ChangeRecord).filter(
-                                    ChangeRecord.session_id == session_id,
-                                    ChangeRecord.object_type == "notebook",
-                                ).order_by(ChangeRecord.captured_at.desc()).first()
-                                if prev_rec and prev_rec.full_name:
-                                    fn = prev_rec.full_name
-                            except Exception:
-                                pass
-                            if not fn:
-                                goal_slug = re.sub(r'[^a-zA-Z0-9_]', '_', (active_plan.goal if active_plan else "notebook")[:30].strip()).strip('_').lower()
-                                fn = f"workspace.notebooks.{goal_slug or 'analysis_notebook'}"
-
-                        # Fallback asset name if code/notebook was produced in a step
-                        if not fn and isinstance(step_res, dict) and (step_res.get("notebook_content") or step_res.get("code") or step_res.get("query")):
-                            goal_slug = re.sub(r'[^a-zA-Z0-9_]', '_', (active_plan.goal if active_plan else "asset")[:30].strip()).strip('_').lower()
-                            fn = f"workspace.notebooks.{goal_slug or 'notebook_output'}"
-
-                        before = (
-                            result_payload.get("before_content") or
-                            args.get("before_content") or
-                            pld.get("before_content") or
-                            pld.get("original_code") or
-                            res_data.get("original_code") or
-                            res_data.get("before_content")
-                        )
-
-                        after = (
-                            result_payload.get("after_content") or
-                            result_payload.get("content") or
-                            result_payload.get("code") or
-                            pld.get("code") or
-                            pld.get("source") or
-                            pld.get("content") or
-                            res_data.get("code") or
-                            res_data.get("source") or
-                            res_data.get("content") or
-                            (step_res.get("notebook_content") if isinstance(step_res, dict) else None) or
-                            (step_res.get("code") if isinstance(step_res, dict) else None) or
-                            (step_res.get("query") if isinstance(step_res, dict) else None) or
-                            args.get("content") or
-                            args.get("code") or
-                            args.get("query")
-                        )
-                        if not after:
-                            cells = pld.get("cells") or res_data.get("cells")
-                            if isinstance(cells, list):
-                                c_texts = [c.get("code") or c.get("source") for c in cells if isinstance(c, dict) and (c.get("code") or c.get("source"))]
-                                if c_texts:
-                                    after = "\n\n".join(c_texts)
-                            elif "comment" in args or "comment" in pld:
-                                c_text = args.get("comment") or pld.get("comment")
-                                after = f"# Notebook/Asset created\n# Comment: {c_text}"
-
-                        captured_change_info = None
-                        if not is_read_only and fn and after and isinstance(fn, str) and isinstance(after, str):
-                            curr_step = None
-                            if active_plan:
-                                for st in active_plan.steps:
-                                    if st.status in ("in_progress", "done"):
-                                        curr_step = st.id
-                                        break
-                            from app.agents.services.agent.change_capture_service import capture_change
-                            rec = capture_change(
-                                db=db,
-                                session_id=session_id,
-                                full_name=fn,
-                                object_type=str(ot),
-                                before=before if isinstance(before, str) else None,
-                                after=after,
-                                step_id=curr_step or (args.get("step_id") if isinstance(args.get("step_id"), int) else None),
-                                plan_id=_active_plan_id,
-                            )
-                            if rec:
-                                captured_change_info = {
-                                    "change_id": rec.change_id,
-                                    "full_name": rec.full_name,
-                                    "object_type": rec.object_type,
-                                    "additions": rec.additions,
-                                    "deletions": rec.deletions,
-                                    "status": rec.status,
-                                }
                     except Exception as _cap_err:
                         logger.warning("Change capture failed (non-fatal): %s", _cap_err)
 

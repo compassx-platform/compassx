@@ -7,8 +7,6 @@ import { useQuery } from "@tanstack/react-query";
 import { useScopedNavigate } from "@/lib/appNavigation";
 import {
   Zap,
-  Database,
-  GitBranch,
   BookOpen,
   Loader2,
   Save,
@@ -20,10 +18,8 @@ import {
   Wrench,
 } from "lucide-react";
 import { PageTabs } from "@/components/common/PageTabs";
-import { useAgent, useCreateAgent, useUpdateAgent, type AgentDBConnection } from "@/modules/agents/hooks/useAgents";
+import { useAgent, useCreateAgent, useUpdateAgent } from "@/modules/agents/hooks/useAgents";
 import { useLLMConnections } from "@/modules/agents/hooks/useLLMConnections";
-import { useDBConnections } from "@/modules/agents/hooks/useDBConnections";
-import { useGitConnections, type GitConnection } from "@/modules/agents/hooks/useGitConnections";
 import {
   useAgentContext,
   useCreateAgentContext,
@@ -38,14 +34,13 @@ import { getAuthKey } from "@/lib/auth";
 import { AVAILABLE_TOOLS } from "@/modules/agents/toolCatalog";
 import { AgentConfigPanel, type AgentManifestData } from "@/modules/agents/components/AgentConfigPanel";
 
-// â”€â”€ Tool catalog â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Tool catalog ─────────────────────────────────────────────────────────────
 
-type AgentBuilderTab = "define" | "tools" | "data" | "skills" | "context";
+type AgentBuilderTab = "define" | "tools" | "skills" | "context";
 
 const BUILDER_TABS = [
   { value: "define", label: "About" },
   { value: "tools", label: "Tools" },
-  { value: "data", label: "Data" },
   { value: "skills", label: "Skills" },
   { value: "context", label: "Context" },
 ] as const;
@@ -236,7 +231,6 @@ function StepTools({
   }
 
   const enabledKeys = new Set(selectedTools);
-  const hasClaudeAgent = enabledKeys.has("claude_agent");
   const hasInvokeAgent = enabledKeys.has("invoke_agent");
 
   return (
@@ -338,28 +332,6 @@ function StepTools({
         </div>
       )}
 
-      {hasClaudeAgent && (
-        <div
-          style={{
-            border: "1px solid var(--color-border)",
-            borderRadius: 8,
-            padding: "14px 16px",
-            background: "var(--color-surface)",
-            display: "flex",
-            alignItems: "center",
-            gap: 10,
-            fontSize: "0.8rem",
-            color: "var(--color-text-muted)",
-          }}
-        >
-          <GitBranch size={14} color="var(--color-primary)" />
-          <span>
-            Claude Agent requires a Git connection for PR and work item actions. Attach one in{" "}
-            <strong style={{ color: "var(--color-text)" }}>Step 3 â†’ Git Connections</strong>.
-          </span>
-        </div>
-      )}
-
       {hasInvokeAgent && (
         <div
           style={{
@@ -389,139 +361,7 @@ function StepTools({
 }
 
 
-// â”€â”€ Step 3: Data â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-
-function StepData({
-  dbConnections,
-  selectedDBs,
-  setSelectedDBs,
-  gitConnections,
-  selectedGits,
-  setSelectedGits,
-}: {
-  dbConnections: { id: number; name: string; db_type: string }[];
-  selectedDBs: AgentDBConnection[];
-  setSelectedDBs: React.Dispatch<React.SetStateAction<AgentDBConnection[]>>;
-  gitConnections: GitConnection[];
-  selectedGits: { git_connection_id: number }[];
-  setSelectedGits: React.Dispatch<React.SetStateAction<{ git_connection_id: number }[]>>;
-}) {
-  function toggleDB(id: number) {
-    setSelectedDBs((prev) =>
-      prev.find((d) => d.db_connection_id === id)
-        ? prev.filter((d) => d.db_connection_id !== id)
-        : [...prev, { db_connection_id: id }]
-    );
-  }
-
-  function toggleGit(id: number) {
-    setSelectedGits((prev) =>
-      prev.find((g) => g.git_connection_id === id)
-        ? prev.filter((g) => g.git_connection_id !== id)
-        : [...prev, { git_connection_id: id }]
-    );
-  }
-
-  const enabledDBIds = new Set(selectedDBs.map((d) => d.db_connection_id));
-  const enabledGitIds = new Set(selectedGits.map((g) => g.git_connection_id));
-
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 28 }}>
-      {/* DB Connections */}
-      <div>
-        <div style={{ fontWeight: 600, fontSize: "0.875rem", marginBottom: 8, display: "flex", alignItems: "center", gap: 6 }}>
-          <Database size={14} color="var(--color-primary)" /> Database Connections
-        </div>
-        <p style={{ fontSize: "0.8rem", color: "var(--color-text-muted)", marginBottom: 12, marginTop: 0 }}>
-          Select databases this agent can query (requires SQL Query skill).
-        </p>
-        {dbConnections.length === 0 ? (
-          <div style={{ fontSize: "0.8rem", color: "var(--color-text-muted)" }}>
-            No database connections yet. Add them from Agents â†’ Connections.
-          </div>
-        ) : (
-          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            {dbConnections.map((db) => {
-              const enabled = enabledDBIds.has(db.id);
-              return (
-                <label
-                  key={db.id}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 12,
-                    padding: "10px 14px",
-                    border: `1.5px solid ${enabled ? "var(--color-primary)" : "var(--color-border)"}`,
-                    borderRadius: 8,
-                    cursor: "pointer",
-                    background: enabled ? "var(--color-primary-subtle, rgba(27,110,243,0.06))" : "var(--color-surface)",
-                  }}
-                >
-                  <input type="checkbox" checked={enabled} onChange={() => toggleDB(db.id)} />
-                  <Database size={14} color="var(--color-text-muted)" />
-                  <div>
-                    <div style={{ fontWeight: 500, fontSize: "0.875rem" }}>{db.name}</div>
-                    <div style={{ fontSize: "0.72rem", color: "var(--color-text-muted)" }}>{db.db_type}</div>
-                  </div>
-                </label>
-              );
-            })}
-          </div>
-        )}
-      </div>
-
-      {/* Git Connections */}
-      <div>
-        <div style={{ fontWeight: 600, fontSize: "0.875rem", marginBottom: 8, display: "flex", alignItems: "center", gap: 6 }}>
-          <GitBranch size={14} color="var(--color-primary)" /> Git Connections
-        </div>
-        <p style={{ fontSize: "0.8rem", color: "var(--color-text-muted)", marginBottom: 12, marginTop: 0 }}>
-          Select Git connections for PR review and code skills.
-        </p>
-        {gitConnections.length === 0 ? (
-          <div style={{ fontSize: "0.8rem", color: "var(--color-text-muted)" }}>
-            No Git connections yet. Add them from Agents â†’ Connections.
-          </div>
-        ) : (
-          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            {gitConnections.map((gc) => {
-              const enabled = enabledGitIds.has(gc.id);
-              return (
-                <label
-                  key={gc.id}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 12,
-                    padding: "10px 14px",
-                    border: `1.5px solid ${enabled ? "var(--color-primary)" : "var(--color-border)"}`,
-                    borderRadius: 8,
-                    cursor: "pointer",
-                    background: enabled ? "var(--color-primary-subtle, rgba(27,110,243,0.06))" : "var(--color-surface)",
-                  }}
-                >
-                  <input type="checkbox" checked={enabled} onChange={() => toggleGit(gc.id)} />
-                  <GitBranch size={14} color="var(--color-text-muted)" />
-                  <div>
-                    <div style={{ fontWeight: 500, fontSize: "0.875rem" }}>{gc.name}</div>
-                    <div style={{ fontSize: "0.72rem", color: "var(--color-text-muted)" }}>
-                      {gc.provider === "azure_devops" ? "Azure DevOps" : "GitHub"}
-                      {gc.organization ? ` Â· ${gc.organization}` : ""}
-                      {gc.default_project ? ` / ${gc.default_project}` : ""}
-                      {gc.pat_configured && <span style={{ color: "var(--color-success, #38a169)", marginLeft: 4 }}>âœ“ PAT</span>}
-                    </div>
-                  </div>
-                </label>
-              );
-            })}
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-// â”€â”€ Agent Context entry form â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Agent Context entry form ──────────────────────────────────────────────────
 
 function AgentContextForm({
   initial,
@@ -1060,8 +900,6 @@ export default function AgentBuilderPage() {
 
   const { data: existingAgent } = useAgent(editingId);
   const { data: llmConnections = [] } = useLLMConnections();
-  const { data: dbConnections = [] } = useDBConnections();
-  const { data: gitConnections = [] } = useGitConnections();
   const { data: allSkills = [] } = useSkills();
 
   const createMutation = useCreateAgent();
@@ -1079,8 +917,6 @@ export default function AgentBuilderPage() {
     visibility: "shared",
   });
   const [selectedTools, setSelectedTools] = useState<string[]>([]);
-  const [selectedDBs, setSelectedDBs] = useState<AgentDBConnection[]>([]);
-  const [selectedGits, setSelectedGits] = useState<{ git_connection_id: number }[]>([]);
   const [selectedSkills, setSelectedSkills] = useState<{ skill_id: number; position: number }[]>([]);
   const [savedAgentId, setSavedAgentId] = useState<number | null>(editingId);
 
@@ -1101,8 +937,6 @@ export default function AgentBuilderPage() {
         manifest: (existingAgent as any).manifest ?? undefined,
       });
       setSelectedTools(existingAgent.tools.map((t) => t.tool_name));
-      setSelectedDBs(existingAgent.db_connections);
-      setSelectedGits((existingAgent as any).git_connections ?? []);
       setSelectedSkills((existingAgent.skills ?? []).map((s) => ({ skill_id: s.skill_id, position: s.position })));
     }
   }, [existingAgent]);
@@ -1121,8 +955,6 @@ export default function AgentBuilderPage() {
       manifest: (form as any).manifest || undefined,
       llm_connection_id: form.llm_connection_id,
       tools: selectedTools.map((key) => ({ tool_name: key })),
-      db_connections: selectedDBs,
-      git_connections: selectedGits,
       skills: selectedSkills.map((s, idx) => ({ skill_id: s.skill_id, position: idx })),
     };
     try {
@@ -1147,7 +979,7 @@ export default function AgentBuilderPage() {
         <div>
           <h1 className="page-title">{isEditing ? "Edit Agent" : "New Agent"}</h1>
           <p className="page-subtitle">
-            {isEditing ? `Editing: ${existingAgent?.name ?? "â€¦"}` : "Configure your AI agent step by step."}
+            {isEditing ? `Editing: ${existingAgent?.name ?? "…"}` : "Configure your AI agent step by step."}
           </p>
         </div>
       </div>
@@ -1168,23 +1000,13 @@ export default function AgentBuilderPage() {
           <StepTools selectedTools={selectedTools} setSelectedTools={setSelectedTools} />
         )}
         {step === 2 && (
-          <StepData
-            dbConnections={dbConnections}
-            selectedDBs={selectedDBs}
-            setSelectedDBs={setSelectedDBs}
-            gitConnections={gitConnections}
-            selectedGits={selectedGits}
-            setSelectedGits={setSelectedGits}
-          />
-        )}
-        {step === 3 && (
           <StepSkills
             allSkills={allSkills}
             selectedSkills={selectedSkills}
             setSelectedSkills={setSelectedSkills}
           />
         )}
-        {step === 4 && (
+        {step === 3 && (
           <StepContext
             agentId={savedAgentId}
             form={form}

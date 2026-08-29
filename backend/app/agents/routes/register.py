@@ -19,7 +19,6 @@ def register_agent_routers(app: FastAPI) -> None:
         skill_routes,
         llm_call_routes,
         budget_routes,
-        research_engine_routes,
         document_routes,
         artifact_routes,
     )
@@ -34,7 +33,6 @@ def register_agent_routers(app: FastAPI) -> None:
     app.include_router(stream_routes.router)
     app.include_router(llm_call_routes.router)
     app.include_router(budget_routes.router)
-    app.include_router(research_engine_routes.router)
     app.include_router(document_routes.router)  # Part F — document upload
     app.include_router(artifact_routes.router)  # Part G — artifact visibility
     app.include_router(attachment_routes.router) # Nova File Attachments

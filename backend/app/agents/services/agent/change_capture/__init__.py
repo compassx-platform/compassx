@@ -1,20 +1,18 @@
-"""Change Capture Service — Backwards compatibility facade for app.agents.services.agent.change_capture."""
+"""Change Capture package — Modular, SOLID-compliant change tracking and rollback architecture."""
 
-from app.agents.services.agent.change_capture import (
-    BaseAssetChangeHandler,
+from app.agents.services.agent.change_capture.base import BaseAssetChangeHandler
+from app.agents.services.agent.change_capture.registry import (
     ChangeHandlerRegistry,
+    get_change_handler_registry,
+)
+from app.agents.services.agent.change_capture.service import (
     accept_change,
     bulk_review_changes,
     capture_change,
     capture_tool_change,
-    get_change_handler_registry,
     get_change_record,
     get_changes_for_session,
     reject_change,
-)
-from app.agents.services.agent.change_capture.service import (
-    _compute_diff_counts,
-    _normalize_text,
 )
 
 __all__ = [
@@ -28,6 +26,4 @@ __all__ = [
     "bulk_review_changes",
     "get_change_record",
     "get_changes_for_session",
-    "_normalize_text",
-    "_compute_diff_counts",
 ]

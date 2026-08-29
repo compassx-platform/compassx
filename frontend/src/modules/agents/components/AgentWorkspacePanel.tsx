@@ -355,7 +355,7 @@ export const AgentWorkspacePanel: React.FC<AgentWorkspacePanelProps> = ({
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0, flex: 1 }}>
           {isNotebook ? (
             <BookOpen size={16} color="#0284c7" style={{ flexShrink: 0 }} />
-          ) : activeItem?.type === 'visualization' ? (
+          ) : activeItem?.type === 'visualization' || activeItem?.objectType === 'dashboard' ? (
             <BarChart2 size={16} color="#8b5cf6" style={{ flexShrink: 0 }} />
           ) : activeItem?.type === 'document' ? (
             <FileText size={16} color="#10b981" style={{ flexShrink: 0 }} />
@@ -479,7 +479,7 @@ export const AgentWorkspacePanel: React.FC<AgentWorkspacePanelProps> = ({
             <BookOpen size={36} style={{ opacity: 0.3 }} />
             <div>Workspace Panel</div>
             <div style={{ fontSize: '0.76rem', color: '#94a3b8', maxWidth: 280 }}>
-              Click any file or notebook in the changes dock to view, edit, or run it here.
+              Click any file, notebook, or dashboard in the changes dock to view, edit, or run it here.
             </div>
           </div>
         ) : isNotebook ? (
