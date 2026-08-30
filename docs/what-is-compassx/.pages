@@ -1,0 +1,5 @@
+nav:
+  - Overview: index.md
+  - Platform Architecture & Foundations: platform-architecture.md
+  - AI-Native Data Intelligence: data-intelligence.md
+  - Teams, Personas & Use Cases: personas-and-use-cases.md

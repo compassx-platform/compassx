@@ -1,0 +1,8 @@
+title: Dashboards
+nav:
+  - Overview: index.md
+  - Canvas Designer & Grid Layout: canvas-and-layout.md
+  - Chart Types & Visual Widgets: chart-types-and-widgets.md
+  - Datasets, SQL & Parameters: datasets-and-parameters.md
+  - Interactive Filters & Interactivity: filters-and-interactivity.md
+  - Publishing & Business Center: publishing-and-business-center.md
