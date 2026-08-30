@@ -111,16 +111,17 @@ export default function CounterWidget({ widget }: Props) {
     const compTransform = cfg.comparisonTransform || mainTransform;
 
     // Compute main value using selected transformation across series rows
-    const yVals = rows.map((r) => r[yField]);
+    const yVals = (rows as any[]).map((r) => r[yField]) as (string | number | null | undefined)[];
     const main = aggregateValues(yVals, mainTransform);
 
     // Compute comparison value using transformation or comparison field
     let compare: number | null = null;
     if (cfg.comparisonField) {
-      const compVals = rows.map((r) => r[cfg.comparisonField!]);
+      const compVals = (rows as any[]).map((r) => r[cfg.comparisonField!]) as (string | number | null | undefined)[];
       compare = aggregateValues(compVals, compTransform);
     } else if (rows.length >= 2 && (mainTransform.toUpperCase() === 'NONE' || mainTransform.toUpperCase() === 'FIRST')) {
-      compare = rows[1] && rows[1][yField] !== undefined ? aggregateValues([rows[1][yField]], 'NONE') : null;
+      const val = (rows[1] as any)?.[yField];
+      compare = val !== undefined ? aggregateValues([val], 'NONE') : null;
     }
 
     const d = main !== null && compare !== null && !isNaN(main) && !isNaN(compare) ? main - compare : null;

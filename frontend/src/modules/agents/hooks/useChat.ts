@@ -90,10 +90,12 @@ export function useCreateSession() {
   return useMutation({
     mutationFn: async ({
       agentId,
+      title,
     }: {
       agentId: number;
+      title?: string;
     }) => {
-      const { data } = await api.post<ChatSession>(`/agents/${agentId}/sessions`, {});
+      const { data } = await api.post<ChatSession>(`/agents/${agentId}/sessions`, title ? { title } : {});
       return data;
     },
     onSuccess: (_, { agentId }) => qc.invalidateQueries({ queryKey: ["agents", agentId, "sessions"] }),

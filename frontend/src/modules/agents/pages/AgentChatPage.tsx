@@ -375,7 +375,7 @@ export default function AgentChatPage({ initialView }: AgentChatPageProps = {}) 
     setStreaming(true, targetSessionId);
 
     requestAnimationFrame(() => {
-      scrollToLatestUserMessage('smooth');
+      scrollToBottom('smooth');
     });
 
     const baseUrl = (import.meta.env.VITE_API_BASE_URL || '/api/v1').replace(/\/$/, '');

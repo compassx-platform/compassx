@@ -476,7 +476,7 @@ const notebookStoreCreator: StateCreator<NotebookStore> = (set, get) => ({
           source: proposed,
           committedSource: proposed,
           pendingSource: undefined,
-          cellStatus: 'clean',
+          cellStatus: 'clean' as const,
           pendingAgentEdit: undefined,
           hasConfirmedSideEffects: undefined,
         };
@@ -485,7 +485,7 @@ const notebookStoreCreator: StateCreator<NotebookStore> = (set, get) => ({
     })),
   rejectAllAgentEdits: () =>
     set((s) => {
-      const cells = s.cells
+      const cells: Cell[] = s.cells
         .filter((cell) => !(cell.pendingAgentEdit?.createdCell && s.cells.length > 1))
         .map((cell) => {
           if (!cell.pendingAgentEdit && cell.cellStatus !== 'pending') return cell;
@@ -495,7 +495,7 @@ const notebookStoreCreator: StateCreator<NotebookStore> = (set, get) => ({
             source: original,
             committedSource: original,
             pendingSource: undefined,
-            cellStatus: 'clean',
+            cellStatus: 'clean' as const,
             pendingAgentEdit: undefined,
             hasConfirmedSideEffects: undefined,
           };

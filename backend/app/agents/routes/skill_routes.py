@@ -75,9 +75,9 @@ def list_skills(
         Skill.is_active.is_(True),
         Skill.workspace_id == guard.workspace_id,
     )
-    if search:
+    if isinstance(search, str) and search.strip():
         query = query.filter(
-            Skill.name.ilike(f"%{search}%") | Skill.description.ilike(f"%{search}%")
+            Skill.name.ilike(f"%{search.strip()}%") | Skill.description.ilike(f"%{search.strip()}%")
         )
     return query.order_by(Skill.name).all()
 

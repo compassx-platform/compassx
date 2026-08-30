@@ -304,6 +304,18 @@ def _make_test_app(db: Session) -> FastAPI:
 
     app = FastAPI()
 
+    from app.workspace.models import Account, Workspace, Principal as DbPrincipal
+    ws_id = "11111111-1111-1111-1111-111111111111"
+    acc_id = "aaaaaaaa-0000-0000-0000-000000000001"
+    principal_id = "bbbbbbbb-0000-0000-0000-000000000001"
+    if not db.query(Account).filter(Account.id == acc_id).first():
+        db.add(Account(id=acc_id, name="Test Account", slug="test-account"))
+    if not db.query(DbPrincipal).filter(DbPrincipal.id == principal_id).first():
+        db.add(DbPrincipal(id=principal_id, account_id=acc_id, type="user", email="admin@compass.internal", name="Administrator", is_account_admin=True, is_active=True))
+    if not db.query(Workspace).filter(Workspace.id == ws_id).first():
+        db.add(Workspace(id=ws_id, account_id=acc_id, name="Test Workspace", slug="test-ws", storage_backend="managed", created_by=principal_id))
+    db.flush()
+
     # Override DB dependency
     def _override_get_db():
         yield db
@@ -312,11 +324,24 @@ def _make_test_app(db: Session) -> FastAPI:
     async def _override_get_current_user():
         return {"id": 1, "email": "test@example.com", "first_name": "Test", "last_name": "User"}
 
+    from app.governance.dependencies import get_guard, Guard
+    from app.governance.resolver import Principal, PermissionSet
+
+    def _override_guard():
+        p = Principal(
+            id="bbbbbbbb-0000-0000-0000-000000000001",
+            is_account_admin=True,
+            workspace_roles={"11111111-1111-1111-1111-111111111111": "admin"},
+        )
+        pset = PermissionSet(p, "11111111-1111-1111-1111-111111111111", (), frozenset())
+        return Guard(pset, db, p, "11111111-1111-1111-1111-111111111111")
+
     app.dependency_overrides[get_db] = _override_get_db
     app.dependency_overrides[get_system_db] = _override_get_db
     app.dependency_overrides[get_account_db] = _override_get_db
     app.dependency_overrides[get_asset_db] = _override_get_db
     app.dependency_overrides[get_current_user] = _override_get_current_user
+    app.dependency_overrides[get_guard] = _override_guard
 
     app.include_router(data_catalog_routes.router)
     app.include_router(catalog_routes.router)

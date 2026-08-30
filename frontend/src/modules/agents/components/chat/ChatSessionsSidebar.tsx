@@ -114,7 +114,9 @@ export function SessionListItem({
         }}
       >
         {hasFileChanges ? (
-          <Check size={13} color="#16a34a" title="Files modified in this session" />
+          <span title="Files modified in this session" style={{ display: 'inline-flex' }}>
+            <Check size={13} color="#16a34a" />
+          </span>
         ) : null}
       </div>
 

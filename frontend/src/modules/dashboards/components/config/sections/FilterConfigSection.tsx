@@ -290,8 +290,9 @@ export default function FilterConfigSection({
           <AxisConfigPopover
             fieldName={cfg.field}
             fieldType={getFieldType(cfg.field)}
-            fieldOptions={fieldOptions.map((f) => f.value)}
+            fieldOptions={fieldOptions}
             onFieldChange={(newField) => patchFilter({ field: newField, defaultValue: undefined })}
+            onUpdate={(updated) => patchFilter(updated)}
             hideDisplayName
             hideScaleType
             hideErrorBar

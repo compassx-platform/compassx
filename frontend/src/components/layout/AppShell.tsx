@@ -841,7 +841,7 @@ export default function AppShell() {
                       userSelect: 'none',
                     }}
                   >
-                    CompassX v{typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '0.3.0'}
+                    CompassX v{typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '0.4.0'}
                   </div>
                 </div>
               )}

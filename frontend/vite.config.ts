@@ -63,7 +63,7 @@ function patchExposeChunkReact(): Plugin {
 
 export default defineConfig({
   define: {
-    __APP_VERSION__: JSON.stringify(process.env.VITE_APP_VERSION || pkg.version || "0.3.0"),
+    __APP_VERSION__: JSON.stringify(process.env.VITE_APP_VERSION || pkg.version || "0.4.0"),
   },
   plugins: [
     nodePolyfills({ include: ['buffer', 'stream', 'util'] }),

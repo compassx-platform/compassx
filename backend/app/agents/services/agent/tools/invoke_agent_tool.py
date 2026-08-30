@@ -191,7 +191,7 @@ class InvokeAgentTool(BaseTool):
             tool_name="invoke_agent",
             tool_result={
                 "source": "system",
-                "content": f"Invoked {target_agent.name}",
+                "content": f"{self._invoking_agent_name or 'Agent'} invoked {target_agent.name}",
                 "metadata": {
                     "invoked_by": self._invoking_agent_name,
                     "invoked_agent": target_agent.name,

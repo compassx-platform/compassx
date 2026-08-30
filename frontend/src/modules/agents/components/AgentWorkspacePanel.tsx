@@ -125,7 +125,7 @@ const CodeDiffView: React.FC<{ before: string | null; after: string | null; full
             const lineNumColor = isAdd ? '#3fb950' : isDel ? '#f85149' : '#484f58';
             const sign = isAdd ? '+' : isDel ? '-' : ' ';
             return (
-              <tr key={idx} style={{ background }}>
+              <tr key={idx} style={{ background: bg }}>
                 <td
                   style={{
                     width: 44,

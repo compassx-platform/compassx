@@ -22,9 +22,9 @@ interface ChatMessageListProps {
   activeToolArgs: any;
   agentId?: number | null;
   knownAssetNames?: Set<string>;
-  messagesContainerRef: React.RefObject<HTMLDivElement | null>;
-  messagesEndRef: React.RefObject<HTMLDivElement | null>;
-  latestUserMsgRef: React.RefObject<HTMLDivElement | null>;
+  messagesContainerRef: React.RefObject<any>;
+  messagesEndRef: React.RefObject<any>;
+  latestUserMsgRef: React.RefObject<any>;
   onMessagesScroll: () => void;
   onOpenDiff: (record: ChangeRecord) => void;
   onStatusChange?: (changeId: string, newStatus: 'accepted' | 'rejected') => void;
@@ -40,7 +40,7 @@ export const ChatMessageList: React.FC<ChatMessageListProps> = React.memo(({
   activeToolName,
   activeToolArgs,
   agentId,
-  knownAssetNames = new Set(),
+  knownAssetNames = new Set<string>(),
   messagesContainerRef,
   messagesEndRef,
   latestUserMsgRef,

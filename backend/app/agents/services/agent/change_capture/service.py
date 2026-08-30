@@ -246,7 +246,7 @@ def reject_change(
         after_content=record.before_content,
         additions=additions,
         deletions=deletions,
-        status="rejected",
+        status="accepted",
         step_id=record.step_id,
         plan_id=record.plan_id,
         reverted_by_change_id=change_id,
