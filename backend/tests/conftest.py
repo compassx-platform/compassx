@@ -210,6 +210,7 @@ def create_tables():
     import app.sql_warehouse.models  # noqa: F401
     import app.user_manager.models.system_models  # noqa: F401
     import app.user_manager.models.account_models  # noqa: F401
+    import app.governance.models  # noqa: F401
     from app.database import AccountBase, SystemBase, AssetBase
     if "sqlite" in test_engine.name:
         for table in AccountBase.metadata.tables.values():

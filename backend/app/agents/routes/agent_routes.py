@@ -5,7 +5,11 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session, selectinload
 
+from app.agents.routes._authz import authorized_agent, visible_agents
 from app.database import get_system_db as get_db
+from app.governance.dependencies import Guard, get_guard
+from app.governance.privileges import Privilege
+from app.governance.securable import Securable
 from app.models.agents import Agent, AgentTool, AgentSkillAttachment
 from app.schemas.agents import (
     AgentCreate,
@@ -20,23 +24,24 @@ from app.schemas.agents import (
 router = APIRouter(prefix="/api/v1/agents", tags=["Agents"])
 
 
-def _load_agent(db: Session, agent_id: int, workspace_id: str | None = None) -> Agent:
-    query = (
+def _load_agent(db: Session, agent_id: int, guard: Guard, privilege: Privilege) -> Agent:
+    """Load an agent the caller holds ``privilege`` on, with tools and skills.
+
+    Scoped to the guard's workspace before the grant check. The previous
+    version fell back to ``Agent.workspace_id == None`` whenever no workspace
+    was resolved, which meant an unscoped request reached the workspace-less
+    agents rather than being refused.
+    """
+    authorized_agent(db, guard, agent_id, privilege)
+    return (
         db.query(Agent)
         .options(
             selectinload(Agent.tools),
             selectinload(Agent.skills).selectinload(AgentSkillAttachment.skill),
         )
         .filter(Agent.id == agent_id)
+        .first()
     )
-    if workspace_id:
-        query = query.filter(Agent.workspace_id == workspace_id)
-    else:
-        query = query.filter(Agent.workspace_id == None)
-    agent = query.first()
-    if not agent:
-        raise HTTPException(404, "Agent not found")
-    return agent
 
 
 def _agent_response(agent: Agent) -> AgentResponse:
@@ -61,20 +66,17 @@ def _agent_response(agent: Agent) -> AgentResponse:
 def list_agents(
     request: Request,
     db: Session = Depends(get_db),
+    guard: Guard = Depends(get_guard),
 ):
-    workspace_id = getattr(request.state, "workspace", None) and request.state.workspace.workspace_id
-    query = db.query(Agent)
-    if workspace_id:
-        query = query.filter(Agent.workspace_id == workspace_id)
-    else:
-        query = query.filter(Agent.workspace_id == None)
-        
+    """List the agents in this workspace that the caller may browse."""
     agents = (
-        query
+        db.query(Agent)
+        .filter(Agent.workspace_id == guard.workspace_id)
         .options(selectinload(Agent.tools))
         .order_by(Agent.name)
         .all()
     )
+    agents = visible_agents(guard, agents)
     return [
         AgentListResponse(
             id=a.id,
@@ -100,8 +102,16 @@ def create_agent(
     request: Request,
     body: AgentCreate,
     db: Session = Depends(get_db),
+    guard: Guard = Depends(get_guard),
 ):
-    workspace_id = getattr(request.state, "workspace", None) and request.state.workspace.workspace_id
+    """Create an agent, owned by its creator.
+
+    An agent holds its own grants and runs tools under its own identity, so
+    bringing one into being is an admin action rather than something any
+    member may do.
+    """
+    guard.require_workspace_admin("Creating an agent")
+    workspace_id = guard.workspace_id
     agent = Agent(
         workspace_id=workspace_id,
         llm_connection_id=body.llm_connection_id,
@@ -114,14 +124,15 @@ def create_agent(
         max_tokens=body.max_tokens,
         is_orchestrator=body.is_orchestrator,
         visibility=body.visibility,
-        created_by="system",
+        created_by=str(guard.principal.id),
     )
     db.add(agent)
     db.flush()
     _sync_tools(db, agent.id, body.tools)
     _sync_skills(db, agent.id, body.skills)
     db.commit()
-    return _agent_response(_load_agent(db, agent.id, workspace_id))
+    guard.claim_ownership(Securable.agent(str(agent.id)))
+    return _agent_response(_load_agent(db, agent.id, guard, Privilege.BROWSE))
 
 
 @router.get("/{agent_id}", response_model=AgentResponse)
@@ -129,9 +140,14 @@ def get_agent(
     request: Request,
     agent_id: int,
     db: Session = Depends(get_db),
+    guard: Guard = Depends(get_guard),
 ):
-    workspace_id = getattr(request.state, "workspace", None) and request.state.workspace.workspace_id
-    return _agent_response(_load_agent(db, agent_id, workspace_id))
+    """Return an agent's definition.
+
+    BROWSE, not EDIT: the response includes the system prompt, which is what
+    someone deciding whether to run this agent needs to read.
+    """
+    return _agent_response(_load_agent(db, agent_id, guard, Privilege.BROWSE))
 
 
 @router.put("/{agent_id}", response_model=AgentResponse)
@@ -140,9 +156,15 @@ def update_agent(
     agent_id: int,
     body: AgentUpdate,
     db: Session = Depends(get_db),
+    guard: Guard = Depends(get_guard),
 ):
-    workspace_id = getattr(request.state, "workspace", None) and request.state.workspace.workspace_id
-    agent = _load_agent(db, agent_id, workspace_id)
+    """Change an agent's definition.
+
+    EDIT covers the prompt, model, and tool list — that is, what the agent
+    does and what it may reach. Anyone who can run the agent inherits the
+    consequences, so it is deliberately not implied by EXECUTE.
+    """
+    agent = _load_agent(db, agent_id, guard, Privilege.EDIT)
     data = body.model_dump(exclude_none=True)
     tools = data.pop("tools", None)
     data.pop("db_connections", None)
@@ -157,7 +179,7 @@ def update_agent(
         db.query(AgentSkillAttachment).filter(AgentSkillAttachment.agent_id == agent_id).delete()
         _sync_skills(db, agent_id, skills)
     db.commit()
-    return _agent_response(_load_agent(db, agent_id, workspace_id))
+    return _agent_response(_load_agent(db, agent_id, guard, Privilege.BROWSE))
 
 
 @router.delete("/{agent_id}", status_code=204)
@@ -165,9 +187,14 @@ def delete_agent(
     request: Request,
     agent_id: int,
     db: Session = Depends(get_db),
+    guard: Guard = Depends(get_guard),
 ):
-    workspace_id = getattr(request.state, "workspace", None) and request.state.workspace.workspace_id
-    agent = _load_agent(db, agent_id, workspace_id)
+    """Delete an agent.
+
+    Takes its chat history with it and cannot be undone by whoever was relying
+    on it, so MANAGE rather than EDIT.
+    """
+    agent = _load_agent(db, agent_id, guard, Privilege.MANAGE)
     db.delete(agent)
     db.commit()
 
@@ -177,9 +204,17 @@ def clone_agent(
     request: Request,
     agent_id: int,
     db: Session = Depends(get_db),
+    guard: Guard = Depends(get_guard),
 ):
-    workspace_id = getattr(request.state, "workspace", None) and request.state.workspace.workspace_id
-    source = _load_agent(db, agent_id, workspace_id)
+    """Copy an agent into a new one owned by the caller.
+
+    A clone reproduces the source's prompt and tool list verbatim, so it
+    discloses exactly what BROWSE does. Creating the copy is still an admin
+    action, for the same reason ``create_agent`` is.
+    """
+    source = _load_agent(db, agent_id, guard, Privilege.BROWSE)
+    guard.require_workspace_admin("Cloning an agent")
+    workspace_id = guard.workspace_id
 
     clone = Agent(
         workspace_id=workspace_id,
@@ -193,7 +228,7 @@ def clone_agent(
         max_tokens=source.max_tokens,
         is_orchestrator=source.is_orchestrator,
         visibility=source.visibility,
-        created_by="system",
+        created_by=str(guard.principal.id),
     )
     db.add(clone)
     db.flush()
@@ -204,7 +239,11 @@ def clone_agent(
         db.add(AgentSkillAttachment(agent_id=clone.id, skill_id=s.skill_id, position=s.position))
 
     db.commit()
-    return _agent_response(_load_agent(db, clone.id, workspace_id))
+    # The clone is a new object: it starts with the caller as owner and no
+    # grants, rather than inheriting the source's, whose grantees consented to
+    # the source and not to a copy someone else now controls.
+    guard.claim_ownership(Securable.agent(str(clone.id)))
+    return _agent_response(_load_agent(db, clone.id, guard, Privilege.BROWSE))
 
 
 def _sync_tools(db: Session, agent_id: int, tools) -> None:

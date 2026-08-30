@@ -415,6 +415,10 @@ app.include_router(um_entry_point_routes.router)
 # User Manager v1 routes now include the /api/um prefix directly so they
 # match the rest of the API surface.
 
+# Governance — grants, ownership, and effective-permission inspection.
+from app.governance import routes as governance_routes  # noqa: E402
+app.include_router(governance_routes.router)
+
 from app.compute.routes.router import router as compute_router  # noqa: E402
 app.include_router(compute_router, prefix="/api/v1/compute")
 

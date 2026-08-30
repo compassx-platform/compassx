@@ -18,6 +18,9 @@ from sqlalchemy.orm import Session
 
 from app.database import get_system_db
 from app.dependencies import get_current_user
+from app.governance.dependencies import Guard, get_guard
+from app.governance.privileges import Privilege
+from app.governance.securable import Securable
 from app.jobs.dependencies import get_scheduler_gateway
 from app.jobs.assets import missing_notebook_targets
 from app.jobs.execution_service import task_executors
@@ -259,17 +262,83 @@ def _ensure_schema(db: Session) -> None:
         db.rollback()
 
 
+# ── authorisation ─────────────────────────────────────────────────────────────
+
+def _job_id(raw: str) -> uuid.UUID:
+    """Parse a job or run id, treating a malformed one as absent.
+
+    ``uuid.UUID(raw)`` on a non-uuid string raises ValueError, which FastAPI
+    turns into a 500. A caller probing with garbage should get the same answer
+    as one probing with a well-formed id that does not exist.
+    """
+    try:
+        return uuid.UUID(raw)
+    except (ValueError, AttributeError, TypeError):
+        raise HTTPException(status_code=404, detail="Job not found")
+
+
+def _authorized_job(db: Session, guard: Guard, job_id: str, privilege: Privilege) -> Job:
+    """Load a job the caller holds ``privilege`` on, or raise.
+
+    Scoped to the guard's workspace before the grant check, so a job id from
+    another workspace is simply not found — a grant in workspace A must never
+    be evaluated against an object in workspace B.
+    """
+    job = (
+        db.query(Job)
+        .filter(
+            Job.job_id == _job_id(job_id),
+            Job.workspace_id == uuid.UUID(guard.workspace_id),
+        )
+        .first()
+    )
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    guard.require(privilege, Securable.job(str(job.job_id)))
+    return job
+
+
+def _authorized_run(
+    db: Session, guard: Guard, run_id: str, privilege: Privilege
+) -> tuple[JobRun, Job]:
+    """Load a run, and the job that owns it, after checking access to the job.
+
+    Runs carry no grants of their own: a run is an execution of a job, so the
+    job is the securable. Resolving the parent first is also what scopes the
+    lookup — ``JobRun.job_run_id`` is globally unique, so an unscoped query
+    would happily return a run belonging to another workspace.
+    """
+    run = db.query(JobRun).filter(JobRun.job_run_id == _job_id(run_id)).first()
+    if not run:
+        raise HTTPException(status_code=404, detail="Run not found")
+    job = (
+        db.query(Job)
+        .filter(
+            Job.job_id == run.job_id,
+            Job.workspace_id == uuid.UUID(guard.workspace_id),
+        )
+        .first()
+    )
+    if not job:
+        raise HTTPException(status_code=404, detail="Run not found")
+    guard.require(privilege, Securable.job(str(job.job_id)))
+    return run, job
+
+
 # ── Jobs CRUD ─────────────────────────────────────────────────────────────────
 
 @router.get("", response_model=List[JobOut])
 def list_jobs(
     search: Optional[str] = Query(None),
     status: Optional[str] = Query(None),
-    workspace_id: Optional[str] = Query(None),
     db: Session = Depends(get_system_db),
+    guard: Guard = Depends(get_guard),
 ):
-    """List all jobs, optionally filtered by status/search/workspace."""
-    q = db.query(Job)
+    """List the jobs in this workspace that the caller may browse."""
+    # The workspace comes from the resolved request context. It used to be a
+    # ``workspace_id`` query parameter, which meant a caller could name any
+    # workspace — and omitting it returned every job on the deployment.
+    q = db.query(Job).filter(Job.workspace_id == uuid.UUID(guard.workspace_id))
     if status:
         try:
             q = q.filter(Job.status == JobStatus(status))
@@ -277,32 +346,33 @@ def list_jobs(
             pass
     if search:
         q = q.filter(Job.name.ilike(f"%{search}%"))
-    if workspace_id:
-        try:
-            q = q.filter(Job.workspace_id == uuid.UUID(workspace_id))
-        except ValueError:
-            pass
     jobs = q.order_by(Job.updated_at.desc()).all()
-    return [_job_out(j, db) for j in jobs]
+    visible = guard.filter(
+        Privilege.BROWSE, jobs, lambda j: Securable.job(str(j.job_id))
+    )
+    return [_job_out(j, db) for j in visible]
 
 
 @router.post("", response_model=JobOut, status_code=201)
 def create_job(
     body: JobCreate,
-    request: Request,
-    current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_system_db),
+    guard: Guard = Depends(get_guard),
 ):
     """Create a new job with an initial empty draft version."""
+    # A job has no parent securable to hold CREATE on, and a published job
+    # runs on a schedule with its owner's identity, so creation sits with the
+    # workspace admin rather than being open to every member.
+    guard.require_workspace_admin("Creating a job")
     _ensure_schema(db)
     job = Job(
         name=body.name,
         description=body.description,
-        workspace_id=(
-            body.workspace_id
-            or getattr(getattr(request.state, "workspace", None), "workspace_id", None)
-        ),
-        owner_user_id=current_user.get("id"),
+        # Taken from the resolved workspace, never from the body: accepting
+        # ``body.workspace_id`` let a caller plant a job in a workspace they
+        # have no access to, where it would then run on a schedule.
+        workspace_id=uuid.UUID(guard.workspace_id),
+        owner_user_id=guard.principal.id,
         status=JobStatus.active,
         current_version=None,
         draft_version=None,
@@ -317,29 +387,35 @@ def create_job(
         is_published=False,
         task_definitions=[],
         retry_policy={},
-        created_by=current_user.get("id"),
+        created_by=guard.principal.id,
     )
     db.add(ver)
     db.flush()
     job.draft_version = 1
+    guard.claim_ownership(Securable.job(str(job.job_id)))
     db.commit()
     db.refresh(job)
     return _job_out(job, db)
 
 
 @router.get("/{job_id}", response_model=JobOut)
-def get_job(job_id: str, db: Session = Depends(get_system_db)):
-    job = db.query(Job).filter(Job.job_id == uuid.UUID(job_id)).first()
-    if not job:
-        raise HTTPException(status_code=404, detail="Job not found")
+def get_job(
+    job_id: str,
+    db: Session = Depends(get_system_db),
+    guard: Guard = Depends(get_guard),
+):
+    job = _authorized_job(db, guard, job_id, Privilege.BROWSE)
     return _job_out(job, db)
 
 
 @router.put("/{job_id}", response_model=JobOut)
-def update_job(job_id: str, body: JobUpdate, db: Session = Depends(get_system_db)):
-    job = db.query(Job).filter(Job.job_id == uuid.UUID(job_id)).first()
-    if not job:
-        raise HTTPException(status_code=404, detail="Job not found")
+def update_job(
+    job_id: str,
+    body: JobUpdate,
+    db: Session = Depends(get_system_db),
+    guard: Guard = Depends(get_guard),
+):
+    job = _authorized_job(db, guard, job_id, Privilege.EDIT)
     if body.name is not None:
         job.name = body.name
     if body.description is not None:
@@ -351,10 +427,14 @@ def update_job(job_id: str, body: JobUpdate, db: Session = Depends(get_system_db
 
 
 @router.delete("/{job_id}", status_code=204)
-def delete_job(job_id: str, db: Session = Depends(get_system_db)):
-    job = db.query(Job).filter(Job.job_id == uuid.UUID(job_id)).first()
-    if not job:
-        raise HTTPException(status_code=404, detail="Job not found")
+def delete_job(
+    job_id: str,
+    db: Session = Depends(get_system_db),
+    guard: Guard = Depends(get_guard),
+):
+    # Deleting takes the run history with it, and cannot be undone by whoever
+    # was relying on the schedule — so MANAGE, not EDIT.
+    job = _authorized_job(db, guard, job_id, Privilege.MANAGE)
     db.delete(job)
     db.commit()
 
@@ -365,16 +445,14 @@ def delete_job(job_id: str, db: Session = Depends(get_system_db)):
 def save_draft(
     job_id: str,
     body: DraftUpdate,
-    current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_system_db),
+    guard: Guard = Depends(get_guard),
 ):
     """
     Autosave the draft version for a job.
     Creates a new draft version if none exists, or updates the existing one.
     """
-    job = db.query(Job).filter(Job.job_id == uuid.UUID(job_id)).first()
-    if not job:
-        raise HTTPException(status_code=404, detail="Job not found")
+    job = _authorized_job(db, guard, job_id, Privilege.EDIT)
 
     # Versions are immutable snapshots. Every explicit save appends a row and
     # moves the draft pointer; prior drafts remain available for audit.
@@ -393,7 +471,7 @@ def save_draft(
         retry_policy=body.retry_policy.model_dump(),
         task_definitions=[t.model_dump() for t in body.task_definitions],
         is_published=False,
-        created_by=current_user.get("id"),
+        created_by=guard.principal.id,
     )
     db.add(draft)
     db.flush()
@@ -407,16 +485,14 @@ def save_draft(
 @router.post("/{job_id}/publish", response_model=JobOut)
 def publish_job(
     job_id: str,
-    current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_system_db),
+    guard: Guard = Depends(get_guard),
 ):
     """
     Publish the current draft: mark it published, update current_version pointer,
     upsert airflow_job_specs for DAG factory consumption.
     """
-    job = db.query(Job).filter(Job.job_id == uuid.UUID(job_id)).first()
-    if not job:
-        raise HTTPException(status_code=404, detail="Job not found")
+    job = _authorized_job(db, guard, job_id, Privilege.EDIT)
     if job.draft_version is None:
         raise HTTPException(status_code=400, detail="No draft version to publish")
 
@@ -449,7 +525,7 @@ def publish_job(
     # Mark published
     draft.is_published = True
     draft.published_at = _utcnow()
-    draft.published_by = current_user.get("id")
+    draft.published_by = guard.principal.id
 
     # Promote
     job.current_version = draft.version_number
@@ -512,10 +588,9 @@ def get_publish_status(
     job_id: str,
     gateway: SchedulerGateway = Depends(get_scheduler_gateway),
     db: Session = Depends(get_system_db),
+    guard: Guard = Depends(get_guard),
 ):
-    job = db.query(Job).filter(Job.job_id == uuid.UUID(job_id)).first()
-    if not job:
-        raise HTTPException(status_code=404, detail="Job not found")
+    job = _authorized_job(db, guard, job_id, Privilege.BROWSE)
     spec = db.query(AirflowJobSpec).filter(AirflowJobSpec.job_id == job.job_id).first()
     if not spec:
         return {"state": "draft", "confirmed_at": None}
@@ -536,11 +611,14 @@ def get_publish_status(
 
 
 @router.get("/{job_id}/version", response_model=JobVersionOut)
-def get_version(job_id: str, which: str = Query("published"), db: Session = Depends(get_system_db)):
+def get_version(
+    job_id: str,
+    which: str = Query("published"),
+    db: Session = Depends(get_system_db),
+    guard: Guard = Depends(get_guard),
+):
     """Get published or draft version for a job."""
-    job = db.query(Job).filter(Job.job_id == uuid.UUID(job_id)).first()
-    if not job:
-        raise HTTPException(status_code=404, detail="Job not found")
+    job = _authorized_job(db, guard, job_id, Privilege.BROWSE)
     ver = _get_draft_version(job, db) if which == "draft" else _get_published_version(job, db)
     if not ver:
         raise HTTPException(status_code=404, detail=f"No {which} version found")
@@ -554,10 +632,11 @@ def pause_job(
     job_id: str,
     gateway: SchedulerGateway = Depends(get_scheduler_gateway),
     db: Session = Depends(get_system_db),
+    guard: Guard = Depends(get_guard),
 ):
-    job = db.query(Job).filter(Job.job_id == uuid.UUID(job_id)).first()
-    if not job:
-        raise HTTPException(status_code=404, detail="Job not found")
+    # Pausing stops the schedule for everyone who depends on this job's
+    # output. That is a change to the job, not a run of it, so EDIT.
+    job = _authorized_job(db, guard, job_id, Privilege.EDIT)
     job.status = JobStatus.paused
     job.updated_at = _utcnow()
     # Mark Airflow spec as inactive
@@ -580,10 +659,11 @@ def resume_job(
     job_id: str,
     gateway: SchedulerGateway = Depends(get_scheduler_gateway),
     db: Session = Depends(get_system_db),
+    guard: Guard = Depends(get_guard),
 ):
-    job = db.query(Job).filter(Job.job_id == uuid.UUID(job_id)).first()
-    if not job:
-        raise HTTPException(status_code=404, detail="Job not found")
+    # Resuming puts the job back on its schedule, where every future run acts
+    # as the owner. Same bar as pausing.
+    job = _authorized_job(db, guard, job_id, Privilege.EDIT)
     published = _get_published_version(job, db)
     if published:
         try:
@@ -615,10 +695,14 @@ def resume_job(
 
 
 @router.post("/{job_id}/archive", response_model=JobOut)
-def archive_job(job_id: str, db: Session = Depends(get_system_db)):
-    job = db.query(Job).filter(Job.job_id == uuid.UUID(job_id)).first()
-    if not job:
-        raise HTTPException(status_code=404, detail="Job not found")
+def archive_job(
+    job_id: str,
+    db: Session = Depends(get_system_db),
+    guard: Guard = Depends(get_guard),
+):
+    # Archiving retires the job permanently as far as the UI is concerned;
+    # closer to deletion than to pausing, so MANAGE.
+    job = _authorized_job(db, guard, job_id, Privilege.MANAGE)
     job.status = JobStatus.archived
     job.updated_at = _utcnow()
     spec = db.query(AirflowJobSpec).filter(AirflowJobSpec.job_id == job.job_id).first()
@@ -636,18 +720,20 @@ def archive_job(job_id: str, db: Session = Depends(get_system_db)):
 def trigger_run(
     job_id: str,
     body: RunTriggerIn = RunTriggerIn(),
-    current_user: dict = Depends(get_current_user),
     gateway: SchedulerGateway = Depends(get_scheduler_gateway),
     db: Session = Depends(get_system_db),
+    guard: Guard = Depends(get_guard),
 ):
     """
     Trigger a manual run of the job. Creates a JobRun row (queued) and TaskRun
     rows for each task in the published version. Actual Airflow trigger happens
     via the DAG factory — this persists the intent and correlation IDs.
     """
-    job = db.query(Job).filter(Job.job_id == uuid.UUID(job_id)).first()
-    if not job:
-        raise HTTPException(status_code=404, detail="Job not found")
+    # Tasks execute under a token minted for ``job.owner_user_id`` (see
+    # _create_run_records), so EXECUTE on a job is a delegation of the owner's
+    # data access, not merely permission to press a button. It is granted
+    # deliberately and never inferred from BROWSE.
+    job = _authorized_job(db, guard, job_id, Privilege.EXECUTE)
     if job.current_version is None:
         raise HTTPException(status_code=400, detail="Job has no published version. Publish first.")
     if job.status == JobStatus.archived:
@@ -674,7 +760,7 @@ def trigger_run(
         job,
         pub,
         trigger_type=TriggerType.manual,
-        triggered_by=current_user.get("id"),
+        triggered_by=guard.principal.id,
     )
     try:
         _trigger_scheduler(gateway, spec, run, token_refs, task_run_ids)
@@ -698,10 +784,9 @@ def list_runs(
     limit: int = Query(50, le=200),
     offset: int = Query(0),
     db: Session = Depends(get_system_db),
+    guard: Guard = Depends(get_guard),
 ):
-    job = db.query(Job).filter(Job.job_id == uuid.UUID(job_id)).first()
-    if not job:
-        raise HTTPException(status_code=404, detail="Job not found")
+    job = _authorized_job(db, guard, job_id, Privilege.BROWSE)
     runs = (
         db.query(JobRun)
         .filter(JobRun.job_id == job.job_id)
@@ -723,10 +808,12 @@ run_router = APIRouter(
 
 
 @run_router.get("/{run_id}", response_model=JobRunOut)
-def get_run(run_id: str, db: Session = Depends(get_system_db)):
-    run = db.query(JobRun).filter(JobRun.job_run_id == uuid.UUID(run_id)).first()
-    if not run:
-        raise HTTPException(status_code=404, detail="Run not found")
+def get_run(
+    run_id: str,
+    db: Session = Depends(get_system_db),
+    guard: Guard = Depends(get_guard),
+):
+    run, _ = _authorized_run(db, guard, run_id, Privilege.BROWSE)
     return _job_run_out(run, include_tasks=True)
 
 
@@ -735,10 +822,11 @@ def cancel_run(
     run_id: str,
     gateway: SchedulerGateway = Depends(get_scheduler_gateway),
     db: Session = Depends(get_system_db),
+    guard: Guard = Depends(get_guard),
 ):
-    run = db.query(JobRun).filter(JobRun.job_run_id == uuid.UUID(run_id)).first()
-    if not run:
-        raise HTTPException(status_code=404, detail="Run not found")
+    # Whoever may start a run may stop one — a runaway job that only its
+    # owner can kill is worse than a cancelled run.
+    run, _ = _authorized_run(db, guard, run_id, Privilege.EXECUTE)
     if run.state not in (RunState.queued, RunState.running):
         raise HTTPException(status_code=400, detail="Run is not in a cancellable state")
     spec = db.query(AirflowJobSpec).filter(AirflowJobSpec.job_id == run.job_id).first()
@@ -764,17 +852,13 @@ def cancel_run(
 @run_router.post("/{run_id}/rerun", response_model=JobRunOut, status_code=201)
 def rerun(
     run_id: str,
-    current_user: dict = Depends(get_current_user),
     gateway: SchedulerGateway = Depends(get_scheduler_gateway),
     db: Session = Depends(get_system_db),
+    guard: Guard = Depends(get_guard),
 ):
     """Start a new full run using the current published version of the job."""
-    original = db.query(JobRun).filter(JobRun.job_run_id == uuid.UUID(run_id)).first()
-    if not original:
-        raise HTTPException(status_code=404, detail="Run not found")
-
-    job = db.query(Job).filter(Job.job_id == original.job_id).first()
-    if not job or job.current_version is None:
+    original, job = _authorized_run(db, guard, run_id, Privilege.EXECUTE)
+    if job.current_version is None:
         raise HTTPException(status_code=400, detail="Job has no published version")
 
     pub = _get_published_version(job, db)
@@ -786,7 +870,7 @@ def rerun(
         job,
         pub,
         trigger_type=TriggerType.rerun,
-        triggered_by=current_user.get("id"),
+        triggered_by=guard.principal.id,
         parent_job_run_id=original.job_run_id,
     )
     try:
@@ -809,14 +893,15 @@ def retry_task(
     task_key: str,
     gateway: SchedulerGateway = Depends(get_scheduler_gateway),
     db: Session = Depends(get_system_db),
+    guard: Guard = Depends(get_guard),
 ):
     """
     Retry a specific failed task within a run. Creates a new TaskRun row with
     incremented try_number. Transitions job_run back to running state.
     """
-    run = db.query(JobRun).filter(JobRun.job_run_id == uuid.UUID(run_id)).first()
-    if not run:
-        raise HTTPException(status_code=404, detail="Run not found")
+    # Mints a fresh execution token as the job owner, exactly as a manual
+    # trigger does, so it takes the same privilege.
+    run, job = _authorized_run(db, guard, run_id, Privilege.EXECUTE)
 
     # Find the latest task run for this task_key
     last_tr = (
@@ -840,9 +925,8 @@ def retry_task(
         last_synced_at=_utcnow(),
     )
     db.add(new_try)
-    job = db.query(Job).filter(Job.job_id == run.job_id).first()
     spec = db.query(AirflowJobSpec).filter(AirflowJobSpec.job_id == run.job_id).first()
-    if not job or not spec or not run.dag_run_id:
+    if not spec or not run.dag_run_id:
         raise HTTPException(status_code=400, detail="Scheduler correlation is missing")
     mint_execution_token(
         db,

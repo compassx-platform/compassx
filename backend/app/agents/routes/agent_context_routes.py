@@ -5,18 +5,19 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
+from app.agents.routes._authz import authorized_agent
 from app.database import get_system_db as get_db
+from app.governance.dependencies import Guard, get_guard
+from app.governance.privileges import Privilege
 from app.models.agents import Agent, AgentContextEntry
 from app.schemas.agents import AgentContextEntryResponse, ContextEntryCreate, ContextEntryUpdate
 
 router = APIRouter(prefix="/api/v1/agents/{agent_id}/context", tags=["Agent Context"])
 
-
-def _check_agent(db: Session, agent_id: int) -> Agent:
-    agent = db.query(Agent).filter(Agent.id == agent_id).first()
-    if not agent:
-        raise HTTPException(404, "Agent not found")
-    return agent
+# Context entries are standing instructions injected into every run of an
+# agent, so they are part of what the agent does — governed by the agent, at
+# the same privileges as its prompt. They have no workspace_id of their own;
+# resolving the agent first is what scopes them.
 
 
 @router.get("", response_model=list[AgentContextEntryResponse])
@@ -25,8 +26,10 @@ def list_agent_context(
     active_only: bool = True,
     search: str | None = Query(None),
     db: Session = Depends(get_db),
+    guard: Guard = Depends(get_guard),
 ):
-    _check_agent(db, agent_id)
+    """List an agent's standing context entries."""
+    authorized_agent(db, guard, agent_id, Privilege.BROWSE)
     q = db.query(AgentContextEntry).filter(AgentContextEntry.agent_id == agent_id)
     if active_only:
         q = q.filter(AgentContextEntry.is_active.is_(True))
@@ -36,9 +39,24 @@ def list_agent_context(
 
 
 @router.post("", response_model=AgentContextEntryResponse, status_code=201)
-def add_agent_context(agent_id: int, body: ContextEntryCreate, db: Session = Depends(get_db)):
-    _check_agent(db, agent_id)
-    entry = AgentContextEntry(agent_id=agent_id, text=body.text, tags=body.tags, created_by="system")
+def add_agent_context(
+    agent_id: int,
+    body: ContextEntryCreate,
+    db: Session = Depends(get_db),
+    guard: Guard = Depends(get_guard),
+):
+    """Add a standing instruction to an agent.
+
+    EDIT, because this text is prepended to every subsequent run: it changes
+    what the agent does for everyone who may execute it.
+    """
+    authorized_agent(db, guard, agent_id, Privilege.EDIT)
+    entry = AgentContextEntry(
+        agent_id=agent_id,
+        text=body.text,
+        tags=body.tags,
+        created_by=str(guard.principal.id),
+    )
     db.add(entry)
     db.commit()
     db.refresh(entry)
@@ -46,8 +64,14 @@ def add_agent_context(agent_id: int, body: ContextEntryCreate, db: Session = Dep
 
 
 @router.put("/{entry_id}", response_model=AgentContextEntryResponse)
-def update_agent_context(agent_id: int, entry_id: int, body: ContextEntryUpdate, db: Session = Depends(get_db)):
-    _check_agent(db, agent_id)
+def update_agent_context(
+    agent_id: int,
+    entry_id: int,
+    body: ContextEntryUpdate,
+    db: Session = Depends(get_db),
+    guard: Guard = Depends(get_guard),
+):
+    authorized_agent(db, guard, agent_id, Privilege.EDIT)
     entry = _get_or_404(db, agent_id, entry_id)
     if body.text and body.text != entry.text:
         entry.is_active = False
@@ -57,7 +81,7 @@ def update_agent_context(agent_id: int, entry_id: int, body: ContextEntryUpdate,
             tags=body.tags if body.tags is not None else entry.tags,
             version=entry.version + 1,
             is_active=True,
-            created_by="system",
+            created_by=str(guard.principal.id),
         )
         db.add(new_entry)
         db.commit()
@@ -73,8 +97,13 @@ def update_agent_context(agent_id: int, entry_id: int, body: ContextEntryUpdate,
 
 
 @router.delete("/{entry_id}", status_code=204)
-def delete_agent_context(agent_id: int, entry_id: int, db: Session = Depends(get_db)):
-    _check_agent(db, agent_id)
+def delete_agent_context(
+    agent_id: int,
+    entry_id: int,
+    db: Session = Depends(get_db),
+    guard: Guard = Depends(get_guard),
+):
+    authorized_agent(db, guard, agent_id, Privilege.EDIT)
     entry = _get_or_404(db, agent_id, entry_id)
     db.delete(entry)
     db.commit()

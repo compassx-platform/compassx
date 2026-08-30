@@ -90,25 +90,11 @@ class UmLandingRule(SystemBase):
 
 
 # ─────────────────────────────────────────────────────────────────
-# object_grants  (schema-complete in v1, not enforced — §5 assumption #5)
-# workspace_id  → account_db workspaces.id (soft ref)
-# principal_id  → account_db users.id or groups.id (soft ref)
-# object_role_id → account_db um_object_roles.id (soft ref)
+# object_grants
+#
+# The um_object_grants table is now declared and enforced by the governance
+# engine: see app/governance/models.py (ObjectGrant). The declaration was moved
+# there because the governance package owns the columns that make it
+# evaluable — securable_type, privilege, expires_at — and two mapped classes
+# for one table would conflict.
 # ─────────────────────────────────────────────────────────────────
-
-class UmObjectGrant(SystemBase):
-    __tablename__ = "um_object_grants"
-
-    id:             Mapped[str]      = mapped_column(UUID(as_uuid=False), primary_key=True, default=_uuid)
-    workspace_id:   Mapped[str]      = mapped_column(UUID(as_uuid=False), nullable=False, index=True)
-    principal_id:   Mapped[str]      = mapped_column(UUID(as_uuid=False), nullable=False)
-    principal_type: Mapped[str]      = mapped_column(
-        Enum(UmPrincipalType, name="um_principal_type_sys", create_type=False),
-        nullable=False,
-    )
-    catalog_name:   Mapped[str]      = mapped_column(String(255), nullable=False)
-    schema_name:    Mapped[str|None] = mapped_column(String(255), nullable=True)
-    asset_name:     Mapped[str|None] = mapped_column(String(255), nullable=True)
-    object_role_id: Mapped[str]      = mapped_column(String(100), nullable=False)          # soft ref
-    granted_by:     Mapped[str|None] = mapped_column(UUID(as_uuid=False), nullable=True)
-    granted_at:     Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)

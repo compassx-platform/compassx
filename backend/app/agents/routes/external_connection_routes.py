@@ -1,20 +1,43 @@
-"""API routes for managing External Connections (Loki, Prometheus, REST APIs)."""
+"""API routes for managing External Connections (Loki, Prometheus, REST APIs).
+
+An external connection is a base URL plus an encrypted ``auth_config``, and the
+tool runtime calls through it on an agent's behalf. It is governed as a
+``connection`` securable, exactly like the database, LLM, and git connections:
+all four are credentials pointing at a system outside the platform.
+
+Two problems this module used to have, both fixed here:
+
+* the workspace was read from ``request.state.workspace_id``, which nothing
+  sets — ``WorkspaceMiddleware`` sets ``request.state.workspace``. So every
+  request ran with ``workspace_id=None``;
+* ``svc.get_connection`` looks a connection up by id *or name* and ignores the
+  workspace argument entirely, so any id or name resolved from any workspace.
+
+Lookups therefore go through ``authorized_connection`` here rather than through
+the service, and the service is only handed an id that has already been
+resolved and authorised.
+"""
 
 from __future__ import annotations
 
 import logging
 from typing import List, Optional
+
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy.orm import Session
 
-from app.database import get_system_db as get_db
-from app.dependencies import get_current_user
+from app.agents.models.external_connection import ExternalConnection
+from app.agents.routes._authz import authorized_connection, visible_connections
 from app.agents.schemas.external_connections import (
     ExternalConnectionCreate,
     ExternalConnectionResponse,
     ExternalConnectionUpdate,
 )
 from app.agents.services import external_connection_service as svc
+from app.database import get_system_db as get_db
+from app.governance.dependencies import Guard, get_guard
+from app.governance.privileges import Privilege
+from app.governance.securable import Securable
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +58,11 @@ def _to_response(conn) -> ExternalConnectionResponse:
     )
 
 
+def _get_or_404(db: Session, connection_id: str, guard: Guard, privilege: Privilege) -> ExternalConnection:
+    """Load an external connection the caller holds ``privilege`` on."""
+    return authorized_connection(db, guard, ExternalConnection, connection_id, privilege)
+
+
 @router.post(
     "/api/v1/external-connections",
     response_model=ExternalConnectionResponse,
@@ -50,23 +78,25 @@ def create_external_connection(
     payload: ExternalConnectionCreate,
     request: Request,
     db: Session = Depends(get_db),
-    current_user: Any = Depends(get_current_user),
+    guard: Guard = Depends(get_guard),
 ):
-    workspace_id = getattr(request.state, "workspace_id", None)
-    user_id = getattr(current_user, "id", "default_user")
-    if hasattr(user_id, "__str__"):
-        user_id = str(user_id)
+    """Register an external system.
 
+    Admin: ``auth_config`` is a credential for a system CompassX does not
+    control, and every agent granted on the connection then calls with it.
+    """
+    guard.require_workspace_admin("Creating an external connection")
     try:
         conn = svc.create_connection(
             db=db,
             data=payload,
-            workspace_id=workspace_id,
-            user_id=user_id,
+            workspace_id=guard.workspace_id,
+            user_id=str(guard.principal.id),
         )
-        return _to_response(conn)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    guard.claim_ownership(Securable.connection(str(conn.id)))
+    return _to_response(conn)
 
 
 @router.get(
@@ -82,11 +112,20 @@ def list_external_connections(
     request: Request,
     status_filter: Optional[str] = Query(None, alias="status"),
     db: Session = Depends(get_db),
-    current_user: Any = Depends(get_current_user),
+    guard: Guard = Depends(get_guard),
 ):
-    workspace_id = getattr(request.state, "workspace_id", None)
-    conns = svc.list_connections(db, workspace_id=workspace_id, status=status_filter)
-    return [_to_response(c) for c in conns]
+    """List the external connections the caller may see.
+
+    Queried here rather than through ``svc.list_connections``, which also
+    returns rows with a null workspace to every workspace.
+    """
+    q = db.query(ExternalConnection).filter(
+        ExternalConnection.workspace_id == guard.workspace_id
+    )
+    if status_filter:
+        q = q.filter(ExternalConnection.status == status_filter)
+    rows = q.order_by(ExternalConnection.created_at.desc()).all()
+    return [_to_response(c) for c in visible_connections(guard, rows)]
 
 
 @router.get(
@@ -102,13 +141,9 @@ def get_external_connection(
     connection_id: str,
     request: Request,
     db: Session = Depends(get_db),
-    current_user: Any = Depends(get_current_user),
+    guard: Guard = Depends(get_guard),
 ):
-    workspace_id = getattr(request.state, "workspace_id", None)
-    conn = svc.get_connection(db, connection_id, workspace_id=workspace_id)
-    if not conn:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"External connection '{connection_id}' not found.")
-    return _to_response(conn)
+    return _to_response(_get_or_404(db, connection_id, guard, Privilege.BROWSE))
 
 
 @router.put(
@@ -129,14 +164,19 @@ def update_external_connection(
     payload: ExternalConnectionUpdate,
     request: Request,
     db: Session = Depends(get_db),
-    current_user: Any = Depends(get_current_user),
+    guard: Guard = Depends(get_guard),
 ):
-    workspace_id = getattr(request.state, "workspace_id", None)
+    """Change an external connection.
+
+    EDIT: ``base_url`` decides which host the stored credential is sent to, so
+    this can redirect an existing grant at a different system.
+    """
+    conn = _get_or_404(db, connection_id, guard, Privilege.EDIT)
     try:
-        conn = svc.update_connection(db, connection_id, payload, workspace_id=workspace_id)
-        return _to_response(conn)
+        updated = svc.update_connection(db, conn.id, payload, workspace_id=guard.workspace_id)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+    return _to_response(updated)
 
 
 @router.post(
@@ -152,14 +192,19 @@ def disable_external_connection(
     connection_id: str,
     request: Request,
     db: Session = Depends(get_db),
-    current_user: Any = Depends(get_current_user),
+    guard: Guard = Depends(get_guard),
 ):
-    workspace_id = getattr(request.state, "workspace_id", None)
+    """Take a connection out of service.
+
+    EDIT rather than MANAGE: it is reversible and nothing is destroyed, but it
+    stops every agent using it, so it is not a read.
+    """
+    conn = _get_or_404(db, connection_id, guard, Privilege.EDIT)
     try:
-        conn = svc.disable_connection(db, connection_id, workspace_id=workspace_id)
-        return _to_response(conn)
+        updated = svc.disable_connection(db, conn.id, workspace_id=guard.workspace_id)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+    return _to_response(updated)
 
 
 @router.delete(
@@ -175,10 +220,13 @@ def delete_external_connection(
     connection_id: str,
     request: Request,
     db: Session = Depends(get_db),
-    current_user: Any = Depends(get_current_user),
+    guard: Guard = Depends(get_guard),
 ):
-    workspace_id = getattr(request.state, "workspace_id", None)
-    deleted = svc.delete_connection(db, connection_id, workspace_id=workspace_id)
-    if not deleted:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"External connection '{connection_id}' not found.")
+    """Remove a connection and its stored credential.
+
+    MANAGE: irreversible, and it revokes access for everyone granted on it.
+    """
+    conn = _get_or_404(db, connection_id, guard, Privilege.MANAGE)
+    db.delete(conn)
+    db.commit()
     return None

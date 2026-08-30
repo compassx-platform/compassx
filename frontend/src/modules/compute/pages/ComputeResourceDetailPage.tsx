@@ -21,7 +21,7 @@ export default function ComputeResourceDetailPage() {
   const fetchResource = useCallback(async () => {
     if (!resourceId) return;
     try {
-      const data = await computeApi.getResourceStatus(resourceId, currentUserId);
+      const data = await computeApi.getResourceStatus(resourceId);
       setResource(data);
       setError(null);
     } catch (e) {

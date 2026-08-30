@@ -29,6 +29,21 @@ def _mock_request(workspace_id: str | None = None) -> Request:
     return request
 
 
+def _permissive_guard(principal_id: str) -> MagicMock:
+    """A guard that allows everything, acting as ``principal_id``.
+
+    This test is about workspace default provisioning, not access control —
+    that is covered by the governance suite. Calling the handler directly
+    bypasses FastAPI's dependency injection, so the guard has to be supplied
+    by hand.
+    """
+    guard = MagicMock()
+    guard.principal.id = principal_id
+    guard.require.return_value = None
+    guard.can.return_value = True
+    return guard
+
+
 def test_ensure_workspace_default_resources_creates_both(db_session: Session):
     """Test that when a workspace has no compute or warehouse, both are created and running."""
     ws_id = str(uuid4())
@@ -192,14 +207,19 @@ def test_workspace_defaults_isolation_and_querying(db_session: Session):
     req1 = _mock_request(ws1_id)
     req2 = _mock_request(ws2_id)
 
-    # Query compute under ws1 context
-    ws1_computes = list_compute_resources(req1, user_id="user-1", db=db_session)
+    # Query compute under ws1 context. The handler resolves the caller from
+    # the guard now, so one has to be supplied by hand.
+    ws1_computes = list_compute_resources(
+        req1, db=db_session, guard=_permissive_guard("user-1")
+    )
     assert len(ws1_computes) == 1
     assert ws1_computes[0].name == "default"
     assert ws1_computes[0].runtime == "duckdb"
 
     # Query compute under ws2 context
-    ws2_computes = list_compute_resources(req2, user_id="user-2", db=db_session)
+    ws2_computes = list_compute_resources(
+        req2, db=db_session, guard=_permissive_guard("user-2")
+    )
     assert len(ws2_computes) == 1
     assert ws2_computes[0].name == "default"
     assert ws2_computes[0].runtime == "duckdb"

@@ -49,6 +49,9 @@ import DashboardEditorPage from '@/modules/dashboards/pages/DashboardEditorPage'
 import { useNotebookStore } from '@/modules/notebooks/store/notebookStore';
 import { CatalogQueryEditorTab, CatalogQueryVersion } from '../components/CatalogQueryEditorTab';
 import { useCatalogConnections } from '@/modules/agents/hooks/useCatalogConnections';
+import { OwnerName, PermissionsPanel, useMyPrivileges } from '@/modules/governance';
+import type { SecurableType } from '@/modules/governance';
+import { useWorkspaceContext } from '@/lib/workspaceContext';
 
 const CATALOG_TABS_STORAGE_KEY = 'compassx_catalog_open_tabs_v1';
 
@@ -530,7 +533,6 @@ export default function DataCatalog() {
 
   // Governed Notebook editing / execution states
   const [editingNbComment, setEditingNbComment] = useState<string | null>(null);
-  const [editingNbOwner, setEditingNbOwner] = useState<string | null>(null);
   const [showMoveNbModal, setShowMoveNbModal] = useState(false);
   const [moveNbTargetCatalog, setMoveNbTargetCatalog] = useState('');
   const [moveNbTargetSchema, setMoveNbTargetSchema] = useState('');
@@ -566,7 +568,6 @@ export default function DataCatalog() {
   const [moveDbTargetSchema, setMoveDbTargetSchema] = useState('');
   const [moveDbNewName, setMoveDbNewName] = useState('');
   const [editingDbComment, setEditingDbComment] = useState<string | null>(null);
-  const [editingDbOwner, setEditingDbOwner] = useState<string | null>(null);
 
   // Schema overview subtab state
   const [schemaSubTab, setSchemaSubTab] = useState<'tables' | 'volumes' | 'notebooks' | 'dashboards' | 'tools' | 'queries'>(() => {
@@ -660,6 +661,12 @@ export default function DataCatalog() {
 
   // Active tab per selection level
   const [activeTab, setActiveTab] = useState<string>('overview');
+
+  // Only a workspace admin may inspect another principal's effective access.
+  // This shapes the UI only; the backend enforces it regardless.
+  const workspace = useWorkspaceContext();
+  const isWorkspaceAdmin =
+    workspace.is_account_admin || workspace.current_user_role === 'workspace_admin';
 
   // Secondary sidebar collapse state
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState<boolean>(() => {
@@ -879,17 +886,8 @@ export default function DataCatalog() {
   const [fileSearchQuery, setFileSearchQuery] = useState('');
   
   // Custom metadata states for simulated persistence
-  const [dynamicOwners, setDynamicOwners] = useState<Record<string, string>>({});
-  const [editingOwnerId, setEditingOwnerId] = useState<string | null>(null);
-  const [newOwnerValue, setNewOwnerValue] = useState('');
 
   const [selectedWarehouseId, setSelectedWarehouseId] = useState<string>('');
-
-  // Schema permissions roles states
-  const [customReadRoles, setCustomReadRoles] = useState<Record<string, string[]>>({});
-  const [customWriteRoles, setCustomWriteRoles] = useState<Record<string, string[]>>({});
-  const [newReadRole, setNewReadRole] = useState('');
-  const [newWriteRole, setNewWriteRole] = useState('');
 
   const catalogsQuery = useQuery({ queryKey: ['uc-catalogs'], queryFn: catalogApi.listCatalogs });
   
@@ -1512,7 +1510,6 @@ export default function DataCatalog() {
       queryClient.invalidateQueries({ queryKey: ['uc-notebook'] });
       queryClient.invalidateQueries({ queryKey: ['uc-schema-notebooks', updated.catalog_name, updated.schema_name] });
       setEditingNbComment(null);
-      setEditingNbOwner(null);
       if (selection?.kind === 'notebook') {
         replaceOpenPanel(selection, { kind: 'notebook', catalog: updated.catalog_name, schema: updated.schema_name, notebook: updated.name, blob_path: updated.blob_path });
       }
@@ -1552,7 +1549,6 @@ export default function DataCatalog() {
       queryClient.invalidateQueries({ queryKey: ['uc-dashboard'] });
       queryClient.invalidateQueries({ queryKey: ['uc-schema-dashboards', updated.catalog_name, updated.schema_name] });
       setEditingDbComment(null);
-      setEditingDbOwner(null);
       if (selection?.kind === 'dashboard') {
         replaceOpenPanel(selection, { kind: 'dashboard', catalog: updated.catalog_name, schema: updated.schema_name, dashboard: updated.name, dashboard_id: updated.dashboard_id ?? undefined });
       }
@@ -2062,14 +2058,44 @@ export default function DataCatalog() {
     return '';
   };
 
-  const getEntityOwner = (sel: Selection, fallback: string) => {
-    const key = getFqn(sel);
-    return dynamicOwners[key] ?? fallback;
-  };
-  const handleSaveOwner = (sel: Selection, value: string) => {
-    const key = getFqn(sel);
-    setDynamicOwners(prev => ({ ...prev, [key]: value }));
-    setEditingOwnerId(null);
+  /**
+   * What the current user may do on whatever is selected.
+   *
+   * Used to hide actions rather than to authorise them — every one of these
+   * calls is checked again on the server. Hiding is still worth doing: an
+   * action that only fails on click teaches the user nothing about why.
+   */
+  const selectionPrivileges = useMyPrivileges(
+    (selection && selection.kind !== 'root' ? selection.kind : 'catalog') as SecurableType,
+    selection && selection.kind !== 'root' ? getFqn(selection) : '',
+  );
+  // MODIFY covers the data-bearing objects (tables, volumes); EDIT covers the
+  // code-bearing ones (notebooks, dashboards, queries). The backend draws the
+  // same line, so the UI keeps them apart rather than collapsing them.
+  const canModifySelection = selectionPrivileges.has('MODIFY');
+  const canEditSelection = selectionPrivileges.has('EDIT');
+  const canManageSelection = selectionPrivileges.has('MANAGE');
+  const canCreateInSelection = selectionPrivileges.has('CREATE');
+
+  /**
+   * The Permissions tab for the current selection.
+   *
+   * `getFqn` already produces exactly the dotted path the governance API uses
+   * to address a catalog-path securable, and every selection kind here maps to
+   * a securable type of the same name, so no translation is needed beyond the
+   * root case — which addresses nothing and therefore has no permissions.
+   */
+  const renderPermissionsTab = (sel: Selection) => {
+    if (!sel || sel.kind === 'root') return null;
+    return (
+      <div className="uc-tab-content">
+        <PermissionsPanel
+          securableType={sel.kind as SecurableType}
+          name={getFqn(sel)}
+          isWorkspaceAdmin={isWorkspaceAdmin}
+        />
+      </div>
+    );
   };
 
   const handleRunNotebook = async () => {
@@ -2084,52 +2110,6 @@ export default function DataCatalog() {
     } finally {
       setExecutingNotebook(false);
     }
-  };
-
-  const getEntityReadRoles = (sel: Selection, fallback: string[]) => {
-    const key = getFqn(sel);
-    return customReadRoles[key] ?? fallback;
-  };
-
-  const getEntityWriteRoles = (sel: Selection, fallback: string[]) => {
-    const key = getFqn(sel);
-    return customWriteRoles[key] ?? fallback;
-  };
-
-  const handleAddReadRole = (sel: Selection, role: string) => {
-    if (!role.trim()) return;
-    const key = getFqn(sel);
-    setCustomReadRoles(prev => ({
-      ...prev,
-      [key]: [...(prev[key] ?? []), role.trim()]
-    }));
-    setNewReadRole('');
-  };
-
-  const handleRemoveReadRole = (sel: Selection, roleToRemove: string) => {
-    const key = getFqn(sel);
-    setCustomReadRoles(prev => ({
-      ...prev,
-      [key]: (prev[key] ?? []).filter(r => r !== roleToRemove)
-    }));
-  };
-
-  const handleAddWriteRole = (sel: Selection, role: string) => {
-    if (!role.trim()) return;
-    const key = getFqn(sel);
-    setCustomWriteRoles(prev => ({
-      ...prev,
-      [key]: [...(prev[key] ?? []), role.trim()]
-    }));
-    setNewWriteRole('');
-  };
-
-  const handleRemoveWriteRole = (sel: Selection, roleToRemove: string) => {
-    const key = getFqn(sel);
-    setCustomWriteRoles(prev => ({
-      ...prev,
-      [key]: (prev[key] ?? []).filter(r => r !== roleToRemove)
-    }));
   };
 
   const renderDetailHeader = (title: string, kind: 'catalog' | 'schema' | 'table' | 'volume' | 'notebook' | 'dashboard' | 'tool' | 'query') => {
@@ -2258,8 +2238,8 @@ export default function DataCatalog() {
 
           {/* Action buttons (Create / Delete) */}
           <div className="uc-hero-actions" style={{ position: 'relative' }}>
-            {/* Delete button for Iceberg tables */}
-            {kind === 'table' && tableQuery.data?.table_type === 'iceberg' && (
+            {/* Delete button for Iceberg tables. Dropping a table needs MANAGE. */}
+            {kind === 'table' && tableQuery.data?.table_type === 'iceberg' && canManageSelection && (
               <button
                 type="button"
                 className="btn-outline flex items-center gap-1"
@@ -2275,8 +2255,9 @@ export default function DataCatalog() {
               </button>
             )}
 
-            {/* Ellipsis menu button — only shows actions at catalog level */}
-            {kind === 'catalog' && (
+            {/* Ellipsis menu button — only shows actions at catalog level.
+                Everything inside it (sync, delete) requires MANAGE. */}
+            {kind === 'catalog' && canManageSelection && (
               <button
                 ref={moreActionsBtnRef}
                 type="button"
@@ -2291,14 +2272,16 @@ export default function DataCatalog() {
             {/* Create Dropdown */}
             {kind === 'volume' ? (
               <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  className="btn-primary"
-                  onClick={() => document.getElementById('volume-file-upload')?.click()}
-                  disabled={uploadVolumeFileMutation.isPending}
-                >
-                  {uploadVolumeFileMutation.isPending ? <Loader2 size={14} className="spin" /> : 'Upload to this volume'}
-                </button>
+                {canModifySelection && (
+                  <button
+                    type="button"
+                    className="btn-primary"
+                    onClick={() => document.getElementById('volume-file-upload')?.click()}
+                    disabled={uploadVolumeFileMutation.isPending}
+                  >
+                    {uploadVolumeFileMutation.isPending ? <Loader2 size={14} className="spin" /> : 'Upload to this volume'}
+                  </button>
+                )}
               </div>
             ) : (
               <div className="uc-action-menu-container">
@@ -2316,7 +2299,7 @@ export default function DataCatalog() {
                     className="uc-action-dropdown-menu" 
                     style={{ right: 0 }}
                   >
-                    {kind === 'catalog' && isIcebergCatalog && (
+                    {kind === 'catalog' && isIcebergCatalog && canCreateInSelection && (
                       <button 
                         type="button"
                         onClick={() => {
@@ -2329,7 +2312,7 @@ export default function DataCatalog() {
                       </button>
                     )}
 
-                    {kind === 'schema' && (
+                    {kind === 'schema' && canCreateInSelection && (
                       <>
                         <button 
                           type="button"
@@ -2388,71 +2371,22 @@ export default function DataCatalog() {
                       </>
                     )}
 
-                    <button 
-                      type="button"
-                      onClick={() => {
-                        setShowCreateDropdown(false);
-                        setShowCatalogModal(true);
-                      }}
-                    >
-                      <strong>Create new catalog</strong>
-                      <span>Define iceberg/postgres connections</span>
-                    </button>
+                    {/* A catalog has no parent to hold CREATE on, so the
+                        backend puts it with the workspace admin instead. */}
+                    {isWorkspaceAdmin && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setShowCreateDropdown(false);
+                          setShowCatalogModal(true);
+                        }}
+                      >
+                        <strong>Create new catalog</strong>
+                        <span>Define iceberg/postgres connections</span>
+                      </button>
+                    )}
                   </div>
                 )}
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
-    );
-  };
-
-  const renderMetadataSidebar = (
-    defaultOwner: string, 
-    kindLabel: string
-  ) => {
-    const fqn = getFqn(selection);
-    const currentOwner = getEntityOwner(selection, defaultOwner);
-
-    return (
-      <div className="uc-metadata-sidebar-section">
-        {/* Block 1: About */}
-        <div className="uc-sidebar-block">
-          <h4>About this {kindLabel}</h4>
-          <div className="uc-sidebar-owner-row">
-            <span>Owner</span>
-            {editingOwnerId === fqn ? (
-              <form 
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  handleSaveOwner(selection, newOwnerValue);
-                }}
-                style={{ flex: 1, display: 'flex', gap: '4px' }}
-              >
-                <input 
-                  type="text" 
-                  className="uc-sidebar-owner-input"
-                  value={newOwnerValue}
-                  onChange={(e) => setNewOwnerValue(e.target.value)}
-                  autoFocus
-                />
-                <button type="submit" className="btn-primary" style={{ padding: '2px 6px', minHeight: 'unset', fontSize: '11px' }}>Save</button>
-              </form>
-            ) : (
-              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                <strong style={{ color: 'var(--color-text)' }}>{currentOwner}</strong>
-                <button 
-                  type="button" 
-                  className="uc-icon-btn" 
-                  style={{ padding: '2px' }}
-                  onClick={() => {
-                    setEditingOwnerId(fqn);
-                    setNewOwnerValue(currentOwner);
-                  }}
-                >
-                  <Pencil size={11} />
-                </button>
               </div>
             )}
           </div>
@@ -2648,7 +2582,7 @@ export default function DataCatalog() {
                         {isIceberg ? 'Iceberg' : 'Postgres Native'}
                       </span>
                     </td>
-                    <td>{getEntityOwner({ kind: 'table', catalog: t.catalog, schema: t.schema_name, table: t.name } as Selection, 'catalog-admin')}</td>
+                    <td>{t.owner || '—'}</td>
                     <td>{new Date(t.created_at).toLocaleDateString()}</td>
                     <td>
                       <div className="uc-popularity-bars">
@@ -2909,13 +2843,27 @@ export default function DataCatalog() {
       return (
         <div className="uc-empty-state">
           <div className="uc-empty-badge">Unity Catalog-inspired</div>
-          <h2>Register your first governed data asset.</h2>
-          <p>Start by creating a Catalog or registering a Postgres or Iceberg table namespace directly into CompassX.</p>
-          <div className="uc-empty-actions">
-            <button className="btn-primary flex items-center gap-1" onClick={() => setShowCatalogModal(true)}>
-              <Plus size={15} /> Create Catalog
-            </button>
-          </div>
+          {isWorkspaceAdmin ? (
+            <>
+              <h2>Register your first governed data asset.</h2>
+              <p>Start by creating a Catalog or registering a Postgres or Iceberg table namespace directly into CompassX.</p>
+              <div className="uc-empty-actions">
+                <button className="btn-primary flex items-center gap-1" onClick={() => setShowCatalogModal(true)}>
+                  <Plus size={15} /> Create Catalog
+                </button>
+              </div>
+            </>
+          ) : (
+            <>
+              {/* The list is filtered to what the caller may browse, so an empty
+                  list here means no access rather than no catalogs. */}
+              <h2>No catalogs available to you.</h2>
+              <p>
+                Catalogs you have access to appear here. Ask a workspace administrator
+                to grant you access, or to create the first catalog.
+              </p>
+            </>
+          )}
         </div>
       );
     }
@@ -3143,14 +3091,19 @@ export default function DataCatalog() {
                 <h4 style={{ fontSize: '14px', fontWeight: 600, color: 'var(--color-text-muted)', marginBottom: '8px' }}>About this volume</h4>
                 <div className="flex items-center gap-2 text-sm text-subtle">
                   <span>Owner:</span>
-                  <strong>{vol.owner}</strong>
-                  <button className="uc-icon-btn" onClick={() => {
-                    const newOwner = prompt("Change owner:", vol.owner);
-                    if (newOwner) {
-                      alert("Owner change is local only in this prototype.");
-                    }
-                  }}>
-                    <Pencil size={12} />
+                  <strong>
+                    <OwnerName
+                      securableType="volume"
+                      name={getFqn(selection)}
+                      fallback={vol.owner || '—'}
+                    />
+                  </strong>
+                  <button
+                    type="button"
+                    className="gov-link-btn"
+                    onClick={() => setActiveTab('permissions')}
+                  >
+                    Manage
                   </button>
                 </div>
               </div>
@@ -3211,11 +3164,7 @@ export default function DataCatalog() {
             </div>
           )}
 
-          {activeTab === 'permissions' && (
-            <div className="uc-tab-content">
-              <p className="text-sm text-subtle">Permissions management is handled at the schema level.</p>
-            </div>
-          )}
+          {activeTab === 'permissions' && renderPermissionsTab(selection)}
 
           {/* Hidden file input for header row button upload */}
           <input 
@@ -3293,6 +3242,7 @@ export default function DataCatalog() {
       const notebookTabs = [
         { value: 'overview', label: 'Overview' },
         { value: 'cells', label: 'Execution & Cells' },
+        { value: 'permissions', label: 'Permissions' },
       ] as const;
 
       const cells = executionOutput || notebookContentQuery.data?.cells || [];
@@ -3302,6 +3252,8 @@ export default function DataCatalog() {
           {renderDetailHeader(notebook.name, 'notebook')}
 
           <PageTabs tabs={notebookTabs} value={activeTab} onChange={setActiveTab} />
+
+          {activeTab === 'permissions' && renderPermissionsTab(selection)}
 
           {activeTab === 'overview' && (
             <div className="uc-tab-content">
@@ -3314,50 +3266,20 @@ export default function DataCatalog() {
                     <div>
                       <span>Owner</span>
                       <div className="flex items-center gap-2">
-                        {editingNbOwner !== null ? (
-                          <div className="flex items-center gap-1">
-                            <input
-                              className="uc-sidebar-owner-input"
-                              style={{ width: '130px', padding: '2px 6px', fontSize: '12px' }}
-                              value={editingNbOwner}
-                              onChange={(e) => setEditingNbOwner(e.target.value)}
-                            />
-                            <button
-                              className="btn-primary"
-                              style={{ padding: '2px 6px', fontSize: '11px', minHeight: 'unset' }}
-                              onClick={() =>
-                                updateNotebookMutation.mutate({
-                                  catalog: selection.catalog,
-                                  schema: selection.schema,
-                                  notebook: selection.notebook,
-                                  body: { owner: editingNbOwner },
-                                })
-                              }
-                              disabled={updateNotebookMutation.isPending}
-                            >
-                              Save
-                            </button>
-                            <button
-                              className="btn-outline"
-                              style={{ padding: '2px 6px', fontSize: '11px', minHeight: 'unset' }}
-                              onClick={() => setEditingNbOwner(null)}
-                            >
-                              Cancel
-                            </button>
-                          </div>
-                        ) : (
-                          <>
-                            <strong>{notebook.owner || 'catalog-admin'}</strong>
-                            <button
-                              className="uc-icon-btn"
-                              style={{ padding: '2px' }}
-                              onClick={() => setEditingNbOwner(notebook.owner || 'catalog-admin')}
-                              title="Edit Owner"
-                            >
-                              <Pencil size={12} />
-                            </button>
-                          </>
-                        )}
+                        <strong>
+                          <OwnerName
+                            securableType="notebook"
+                            name={getFqn(selection)}
+                            fallback={notebook.owner || '—'}
+                          />
+                        </strong>
+                        <button
+                          type="button"
+                          className="gov-link-btn"
+                          onClick={() => setActiveTab('permissions')}
+                        >
+                          Manage
+                        </button>
                       </div>
                     </div>
                     <div><span>Catalog</span><strong>{notebook.catalog_name}</strong></div>
@@ -3369,6 +3291,7 @@ export default function DataCatalog() {
 
                   {/* Actions (Rename, Delete) */}
                   <div style={{ marginTop: '20px', display: 'flex', gap: '8px' }}>
+                    {canEditSelection && (
                     <button
                       className="btn-outline flex items-center gap-1"
                       onClick={() => {
@@ -3380,6 +3303,8 @@ export default function DataCatalog() {
                     >
                       <Pencil size={12} /> Rename / Move
                     </button>
+                    )}
+                    {canManageSelection && (
                     <button
                       className="btn-outline flex items-center gap-1"
                       style={{ color: 'var(--color-danger)', borderColor: 'var(--color-danger)' }}
@@ -3392,6 +3317,7 @@ export default function DataCatalog() {
                     >
                       <Trash size={12} /> Delete
                     </button>
+                    )}
                   </div>
                 </div>
 
@@ -3443,13 +3369,15 @@ export default function DataCatalog() {
                         }}>
                           {notebook.comment || 'No description provided. Click below to add a description.'}
                         </p>
-                        <button
-                          className="btn-outline flex items-center gap-1 mt-4"
-                          style={{ alignSelf: 'flex-start' }}
-                          onClick={() => setEditingNbComment(notebook.comment || '')}
-                        >
-                          <Pencil size={12} /> Edit Description
-                        </button>
+                        {canEditSelection && (
+                          <button
+                            className="btn-outline flex items-center gap-1 mt-4"
+                            style={{ alignSelf: 'flex-start' }}
+                            onClick={() => setEditingNbComment(notebook.comment || '')}
+                          >
+                            <Pencil size={12} /> Edit Description
+                          </button>
+                        )}
                       </div>
                     )}
                   </div>
@@ -3642,6 +3570,7 @@ export default function DataCatalog() {
 
       const dashboardTabs = [
         { value: 'overview', label: 'Overview' },
+        { value: 'permissions', label: 'Permissions' },
       ] as const;
 
       return (
@@ -3649,6 +3578,8 @@ export default function DataCatalog() {
           {renderDetailHeader(dashboard.name, 'dashboard')}
 
           <PageTabs tabs={dashboardTabs} value={activeTab} onChange={setActiveTab} />
+
+          {activeTab === 'permissions' && renderPermissionsTab(selection)}
 
           {activeTab === 'overview' && (
             <div className="uc-tab-content" style={{ display: 'grid', gridTemplateColumns: '3fr 2fr', gap: '20px' }}>
@@ -3659,6 +3590,16 @@ export default function DataCatalog() {
                   <div className="uc-detail-title font-semibold">General Information</div>
                   <div className="uc-detail-grid">
                     <div><span>Name</span><strong>{dashboard.name}</strong></div>
+                    <div>
+                      <span>Owner</span>
+                      <strong>
+                        <OwnerName
+                          securableType="dashboard"
+                          name={getFqn(selection)}
+                          fallback={dashboard.owner || '—'}
+                        />
+                      </strong>
+                    </div>
                     <div><span>Type</span><strong>Governed Dashboard</strong></div>
                     <div><span>Dashboard Link</span>
                       <strong>
@@ -3684,6 +3625,7 @@ export default function DataCatalog() {
                         <Play size={12} fill="currentColor" /> Open Editor
                       </button>
                     )}
+                    {canEditSelection && (
                     <button
                       className="btn-outline flex items-center gap-1"
                       onClick={() => {
@@ -3695,6 +3637,8 @@ export default function DataCatalog() {
                     >
                       <Pencil size={12} /> Rename / Move
                     </button>
+                    )}
+                    {canManageSelection && (
                     <button
                       className="btn-outline flex items-center gap-1"
                       style={{ color: 'var(--color-danger)', borderColor: 'var(--color-danger)' }}
@@ -3707,6 +3651,7 @@ export default function DataCatalog() {
                     >
                       <Trash size={12} /> Delete
                     </button>
+                    )}
                   </div>
                 </div>
 
@@ -3758,13 +3703,15 @@ export default function DataCatalog() {
                         }}>
                           {dashboard.comment || 'No description provided. Click below to add a description.'}
                         </p>
-                        <button
-                          className="btn-outline flex items-center gap-1 mt-4"
-                          style={{ alignSelf: 'flex-start' }}
-                          onClick={() => setEditingDbComment(dashboard.comment || '')}
-                        >
-                          <Pencil size={12} /> Edit Description
-                        </button>
+                        {canEditSelection && (
+                          <button
+                            className="btn-outline flex items-center gap-1 mt-4"
+                            style={{ alignSelf: 'flex-start' }}
+                            onClick={() => setEditingDbComment(dashboard.comment || '')}
+                          >
+                            <Pencil size={12} /> Edit Description
+                          </button>
+                        )}
                       </div>
                     )}
                   </div>
@@ -3792,6 +3739,7 @@ export default function DataCatalog() {
         { value: 'params', label: 'Parameter Schema' },
         { value: 'source', label: 'Source Code' },
         { value: 'versions', label: `Version History (${tool.versions?.length || 1})` },
+        { value: 'permissions', label: 'Permissions' },
       ] as const;
 
       const properties = tool.param_schema?.properties || {};
@@ -3802,6 +3750,8 @@ export default function DataCatalog() {
           {renderDetailHeader(tool.name, 'tool')}
 
           <PageTabs tabs={toolTabs} value={activeTab} onChange={setActiveTab} />
+
+          {activeTab === 'permissions' && renderPermissionsTab(selection)}
 
           {activeTab === 'overview' && (
             <div className="uc-tab-content" style={{ display: 'grid', gridTemplateColumns: '3fr 2fr', gap: '20px' }}>
@@ -4148,6 +4098,7 @@ export default function DataCatalog() {
         { value: 'overview', label: 'Overview' },
         { value: 'versions', label: `Version History (${allQueryVersions.length || 1})` },
         { value: 'sql', label: 'SQL Query' },
+        { value: 'permissions', label: 'Permissions' },
       ] as const;
 
       return (
@@ -4155,6 +4106,8 @@ export default function DataCatalog() {
           {renderDetailHeader(q.name, 'query')}
 
           <PageTabs tabs={queryTabs} value={activeTab} onChange={setActiveTab} />
+
+          {activeTab === 'permissions' && renderPermissionsTab(selection)}
 
           {activeTab === 'overview' && (
             <div className="uc-tab-content" style={{ display: 'grid', gridTemplateColumns: '3fr 2fr', gap: '20px' }}>
@@ -4188,6 +4141,7 @@ export default function DataCatalog() {
                     >
                       <Database size={12} /> Open in SQL Warehouse
                     </button>
+                    {canManageSelection && (
                     <button
                       className="btn-outline flex items-center gap-1"
                       style={{ color: 'var(--color-danger)', borderColor: 'var(--color-danger)' }}
@@ -4200,6 +4154,7 @@ export default function DataCatalog() {
                     >
                       <Trash size={12} /> Delete
                     </button>
+                    )}
                   </div>
                 </div>
 
@@ -4439,9 +4394,8 @@ export default function DataCatalog() {
         { value: 'sample', label: 'Sample Data' },
         { value: 'lineage', label: 'Lineage' },
         { value: 'details', label: 'Details' },
+        { value: 'permissions', label: 'Permissions' },
       ] as const;
-
-      const defaultOwner = table.owner || 'catalog-admin';
 
       return (
         <div className="uc-panel">
@@ -4449,13 +4403,15 @@ export default function DataCatalog() {
 
           <PageTabs tabs={tableTabs} value={activeTab} onChange={setActiveTab} />
 
+          {activeTab === 'permissions' && renderPermissionsTab(selection)}
+
           {activeTab === 'overview' && (
             <div className="uc-tab-content">
               <div className="uc-detail-grid">
                 <div className="uc-detail-card">
                   <div className="uc-detail-title">Properties</div>
                   <div className="uc-key-values">
-                    <div><span>Owner</span><strong>{getEntityOwner(selection, defaultOwner)}</strong></div>
+                    <div><span>Owner</span><strong><OwnerName securableType="table" name={table.fqn} fallback={table.owner || '—'} /></strong></div>
                     <div><span>Catalog</span><strong>{table.catalog}</strong></div>
                     <div><span>Schema</span><strong>{table.schema_name}</strong></div>
                     <div><span>Table</span><strong>{table.name}</strong></div>
@@ -4467,16 +4423,18 @@ export default function DataCatalog() {
 
                   {/* Actions (Refresh columns, Delete if Iceberg table) */}
                   <div style={{ marginTop: '20px', display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                    <button
-                      type="button"
-                      className="btn-outline flex items-center gap-1"
-                      onClick={() => refreshMutation.mutate()}
-                      disabled={refreshMutation.isPending}
-                    >
-                      <RefreshCw size={12} className={refreshMutation.isPending ? 'spin' : ''} />
-                      Refresh columns
-                    </button>
-                    {table.table_type === 'iceberg' && (
+                    {canModifySelection && (
+                      <button
+                        type="button"
+                        className="btn-outline flex items-center gap-1"
+                        onClick={() => refreshMutation.mutate()}
+                        disabled={refreshMutation.isPending}
+                      >
+                        <RefreshCw size={12} className={refreshMutation.isPending ? 'spin' : ''} />
+                        Refresh columns
+                      </button>
+                    )}
+                    {table.table_type === 'iceberg' && canManageSelection && (
                       <button
                         type="button"
                         className="btn-outline flex items-center gap-1"
@@ -4493,8 +4451,6 @@ export default function DataCatalog() {
                   <div className="uc-detail-title">Schema Summary</div>
                   <div className="uc-key-values">
                     <div><span>Columns</span><strong>{table.columns.length}</strong></div>
-                    <div><span>Read Roles</span><strong>{getEntityReadRoles(selection, table.read_roles).length > 0 ? getEntityReadRoles(selection, table.read_roles).join(', ') : '—'}</strong></div>
-                    <div><span>Write Roles</span><strong>{getEntityWriteRoles(selection, table.write_roles).length > 0 ? getEntityWriteRoles(selection, table.write_roles).join(', ') : '—'}</strong></div>
                   </div>
                   {table.columns.length > 0 && (
                     <div className="uc-col-preview">
@@ -4612,7 +4568,7 @@ export default function DataCatalog() {
                 <div className="uc-key-values">
                   <div><span>FQN</span><strong style={{ fontFamily: 'monospace', fontSize: 12 }}>{table.fqn}</strong></div>
                   <div><span>ID</span><strong style={{ fontFamily: 'monospace', fontSize: 11 }}>{table.id}</strong></div>
-                  <div><span>Owner</span><strong>{getEntityOwner(selection, defaultOwner)}</strong></div>
+                  <div><span>Owner</span><strong><OwnerName securableType="table" name={table.fqn} fallback={table.owner || '—'} /></strong></div>
                   <div><span>Type</span><strong>{table.table_type}</strong></div>
                   {table.connection_name && <div><span>Connection</span><strong>{table.connection_name}</strong></div>}
                   {table.source_database && <div><span>Source DB</span><strong>{table.source_database}</strong></div>}
@@ -4620,8 +4576,6 @@ export default function DataCatalog() {
                   {table.pg_table && <div><span>PG Table</span><strong>{table.pg_table}</strong></div>}
                   {table.metadata_location && <div><span>Metadata</span><strong style={{ wordBreak: 'break-all', fontSize: 11 }}>{table.metadata_location}</strong></div>}
                   {table.storage_location && <div><span>Storage</span><strong style={{ wordBreak: 'break-all', fontSize: 11 }}>{table.storage_location}</strong></div>}
-                  <div><span>Read Roles</span><strong>{getEntityReadRoles(selection, table.read_roles).join(', ') || '—'}</strong></div>
-                  <div><span>Write Roles</span><strong>{getEntityWriteRoles(selection, table.write_roles).join(', ') || '—'}</strong></div>
                 </div>
               </div>
             </div>
@@ -4638,15 +4592,16 @@ export default function DataCatalog() {
         { value: 'schemas', label: 'Schemas' },
         { value: 'workspaces', label: 'Workspaces' },
         { value: 'details', label: 'Details' },
+        { value: 'permissions', label: 'Permissions' },
       ] as const;
-
-      const defaultOwner = 'catalog-admin';
 
       return (
         <div className="uc-panel">
           {renderDetailHeader(selection.catalog, 'catalog')}
 
           <PageTabs tabs={catalogTabs} value={activeTab} onChange={setActiveTab} />
+
+          {activeTab === 'permissions' && renderPermissionsTab(selection)}
 
           {activeTab === 'overview' && (
             <div className="uc-tab-content">
@@ -4724,9 +4679,6 @@ export default function DataCatalog() {
         { value: 'permissions', label: 'Permissions' },
       ] as const;
 
-      const defaultOwner = 'catalog-admin';
-      const fqn = getFqn(selection);
-
       return (
         <div className="uc-panel">
           {renderDetailHeader(selection.schema, 'schema')}
@@ -4739,90 +4691,7 @@ export default function DataCatalog() {
             </div>
           )}
 
-          {activeTab === 'permissions' && (
-            <div className="uc-tab-content">
-              <div className="uc-detail-card" style={{ maxWidth: '640px' }}>
-                <div className="uc-detail-title">Schema Permissions</div>
-                <p style={{ fontSize: '13px', color: 'var(--color-text-muted)', marginBottom: '16px' }}>
-                  Manage roles and access permissions for this schema namespace.
-                </p>
-                
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-                  {/* Read Roles */}
-                  <div>
-                    <h4 style={{ fontSize: '13.5px', fontWeight: 600, marginBottom: '8px' }}>Read Roles</h4>
-                    <div className="uc-tags-list" style={{ marginBottom: '8px' }}>
-                      {getEntityReadRoles(selection, schemaInfo?.read_roles || []).map(role => (
-                        <span key={role} className="uc-tag-badge" style={{ background: 'var(--color-primary-bg)', color: 'var(--color-primary)', borderColor: 'var(--color-primary)' }}>
-                          {role}
-                          <button type="button" onClick={() => handleRemoveReadRole(selection, role)}>
-                            <X size={10} />
-                          </button>
-                        </span>
-                      ))}
-                      {getEntityReadRoles(selection, schemaInfo?.read_roles || []).length === 0 && (
-                        <span style={{ fontSize: '12px', color: 'var(--color-text-muted)' }}>No read roles configured.</span>
-                      )}
-                    </div>
-                    <form 
-                      onSubmit={(e) => {
-                        e.preventDefault();
-                        handleAddReadRole(selection, newReadRole);
-                      }}
-                      style={{ display: 'flex', gap: '8px', maxWidth: '320px' }}
-                    >
-                      <input 
-                        type="text" 
-                        className="uc-sidebar-owner-input"
-                        placeholder="Add read role..."
-                        value={newReadRole}
-                        onChange={(e) => setNewReadRole(e.target.value)}
-                      />
-                      <button type="submit" className="btn-primary" style={{ padding: '4px 10px', minHeight: 'unset', fontSize: '12px' }}>Add</button>
-                    </form>
-                  </div>
-
-                  <hr style={{ border: 'none', borderBottom: '1px solid var(--color-border)', margin: 0 }} />
-
-                  {/* Write Roles */}
-                  <div>
-                    <h4 style={{ fontSize: '13.5px', fontWeight: 600, marginBottom: '8px' }}>Write Roles</h4>
-                    <div className="uc-tags-list" style={{ marginBottom: '8px' }}>
-                      {getEntityWriteRoles(selection, schemaInfo?.write_roles || []).map(role => (
-                        <span key={role} className="uc-tag-badge" style={{ background: 'rgba(16, 185, 129, 0.08)', color: '#059669', borderColor: '#a7f3d0' }}>
-                          {role}
-                          <button type="button" onClick={() => handleRemoveWriteRole(selection, role)}>
-                            <X size={10} />
-                          </button>
-                        </span>
-                      ))}
-                      {getEntityWriteRoles(selection, schemaInfo?.write_roles || []).length === 0 && (
-                        <span style={{ fontSize: '12px', color: 'var(--color-text-muted)' }}>No write roles configured.</span>
-                      )}
-                    </div>
-                    <form 
-                      onSubmit={(e) => {
-                        e.preventDefault();
-                        handleAddWriteRole(selection, newWriteRole);
-                      }}
-                      style={{ display: 'flex', gap: '8px', maxWidth: '320px' }}
-                    >
-                      <input 
-                        type="text" 
-                        className="uc-sidebar-owner-input"
-                        placeholder="Add write role..."
-                        value={newWriteRole}
-                        onChange={(e) => setNewWriteRole(e.target.value)}
-                      />
-                      <button type="submit" className="btn-primary" style={{ padding: '4px 10px', minHeight: 'unset', fontSize: '12px' }}>Add</button>
-                    </form>
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-
-
+          {activeTab === 'permissions' && renderPermissionsTab(selection)}
 
           {activeTab === 'details' && (
             <div className="uc-tab-content">

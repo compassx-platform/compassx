@@ -198,8 +198,15 @@ def test_add_catalog_auto_binds(db_session: Session):
 
     user = {"email": "system@local", "id": principal_id}
 
+    # This test is about auto-binding, not access control, and calling the
+    # handler directly bypasses dependency injection — so supply a guard that
+    # allows the create. Enforcement itself is covered by the governance suite.
+    guard = MagicMock()
+    guard.require_workspace_admin.return_value = None
+    guard.claim_ownership.return_value = None
+
     # Call the router function
-    catalog = add_catalog(request, body, db_session, user)
+    catalog = add_catalog(request, body, db_session, user, guard)
 
     # Check that a binding was created
     binding = db_session.query(CatalogWorkspaceBinding).filter(

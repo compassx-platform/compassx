@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+
 from pydantic import BaseModel
 from fastapi import APIRouter, Depends, HTTPException, Query, Form, UploadFile, File, BackgroundTasks, Request, Header
 from fastapi.responses import JSONResponse
@@ -87,23 +89,135 @@ from app.catalog.service import (
     restore_query_version,
 )
 from app.database import get_account_db as get_db
+from app.database import get_system_db
 from app.dependencies import get_current_user
+from app.governance.dependencies import Guard, get_guard
+from app.governance.privileges import Privilege
+from app.governance.resolver import Principal as GovernancePrincipal
+from app.governance.resolver import load_permission_set
+from app.governance.securable import Securable
 from app.workspace.auth import validate_bearer_token
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/api/v1/catalog", tags=["Catalog"])
+
+
+def _volume_securable(db: Session, volume_id: str) -> Securable:
+    """Address a volume by its catalog path, given only its surrogate id.
+
+    The file endpoints below take a volume id, but grants are made against
+    ``catalog.schema.volume``. Resolving here — and raising 404 for an unknown
+    id — keeps the id from becoming a way to bypass the catalog path.
+    """
+    from app.catalog.models import UnifiedCatalog, UnifiedCatalogSchema, UnifiedCatalogVolume
+
+    row = (
+        db.query(UnifiedCatalogVolume.name, UnifiedCatalogSchema.name, UnifiedCatalog.name)
+        .join(UnifiedCatalogSchema, UnifiedCatalogVolume.schema_id == UnifiedCatalogSchema.id)
+        .join(UnifiedCatalog, UnifiedCatalogSchema.catalog_id == UnifiedCatalog.id)
+        .filter(UnifiedCatalogVolume.id == volume_id)
+        .first()
+    )
+    if row is None:
+        raise HTTPException(status_code=404, detail="volume not found")
+    volume_name, schema_name, catalog_name = row
+    return Securable.volume(catalog_name, schema_name, volume_name)
+
+
+#: How far past ``limit`` the search index is read before filtering. Deep
+#: enough that a user with narrow access still gets a full page, shallow
+#: enough that the per-row permission check stays cheap.
+_SEARCH_OVERFETCH = 10
+
+#: ``vector_db.assets.object_type`` uses its own vocabulary, which is not the
+#: governance securable vocabulary. Anything unmapped — a foreign table, a
+#: type added later — is deliberately absent, and ``_search_row_securable``
+#: falls back to the containing schema for those.
+_SEARCH_TYPE_TO_SECURABLE = {
+    "table": Securable.table,
+    "volume": Securable.volume,
+    "notebook": Securable.notebook,
+    "dashboard": Securable.dashboard,
+    "query": Securable.query,
+}
+
+
+def _search_row_securable(row) -> Securable:
+    """The securable a search hit should be authorised against.
+
+    A row whose ``object_type`` has no securable of its own is checked
+    against its schema instead. That is the conservative reading: the caller
+    must at least be able to browse the schema the thing sits in, so an
+    unrecognised type cannot leak by falling through the mapping.
+    """
+    catalog, _, rest = row.full_name.partition(".")
+    schema, _, asset = rest.partition(".")
+    factory = _SEARCH_TYPE_TO_SECURABLE.get(row.object_type)
+    if factory is None or not asset:
+        return Securable.schema_(catalog, schema)
+    return factory(catalog, schema, asset)
+
+
+def _kernel_principal(principal, system_db: Session, workspace_id: str) -> GovernancePrincipal:
+    """Governance identity for a notebook kernel calling back into the API.
+
+    Kernel-facing endpoints authenticate their own bearer token rather than
+    going through ``get_principal``, so the principal has to be rebuilt here.
+    Group membership is expanded the same way, because a kernel acting for a
+    user whose access comes via a group must see that access — otherwise the
+    same notebook behaves differently when run from the UI.
+    """
+    from app.user_manager.models.account_models import UmGroupMember
+
+    user_id = str(getattr(principal, "id", None) or principal.get("sub"))
+    try:
+        group_ids = tuple(
+            str(row[0])
+            for row in system_db.query(UmGroupMember.group_id)
+            .filter(UmGroupMember.user_id == user_id)
+            .all()
+        )
+    except Exception:  # pragma: no cover - identity store unavailable
+        logger.exception("Group expansion failed for kernel principal %s", user_id)
+        group_ids = ()
+
+    return GovernancePrincipal(
+        id=user_id,
+        type="user",
+        is_account_admin=bool(getattr(principal, "is_account_admin", False)),
+        group_ids=group_ids,
+        workspace_roles={},
+    )
 
 
 @router.get("/catalogs", response_model=list[CatalogSummary])
 def read_catalogs(
     request: Request,
     db: Session = Depends(get_db),
+    guard: Guard = Depends(get_guard),
 ):
     ensure_default_catalog(db)
     workspace_id = None
     workspace = getattr(request.state, "workspace", None)
     if workspace:
         workspace_id = workspace.workspace_id
-    return list_catalogs(db, workspace_id=workspace_id)
+    catalogs = list_catalogs(db, workspace_id=workspace_id)
+
+    # Filter, never refuse: a user entitled to two of twenty catalogs sees
+    # two. Schemas are filtered within each surviving catalog for the same
+    # reason — the schema list is itself a disclosure of what exists.
+    visible = guard.filter(
+        Privilege.BROWSE, catalogs, lambda c: Securable.catalog_(c.name)
+    )
+    for catalog in visible:
+        catalog.schemas = guard.filter(
+            Privilege.BROWSE,
+            catalog.schemas,
+            lambda s, c=catalog: Securable.schema_(c.name, s.name),
+        )
+        catalog.schema_count = len(catalog.schemas)
+    return visible
 
 @router.post("/catalogs", response_model=CatalogRead, status_code=201)
 def add_catalog(
@@ -111,10 +225,15 @@ def add_catalog(
     body: CatalogCreate,
     db: Session = Depends(get_db),
     user: dict = Depends(get_current_user),
+    guard: Guard = Depends(get_guard),
 ):
+    # A catalog is the top of the hierarchy, so there is no parent to hold
+    # CREATE on. It sits with the workspace admin instead.
+    guard.require_workspace_admin("Creating a catalog")
     try:
         catalog = create_catalog(db, body, user)
-        
+        guard.claim_ownership(Securable.catalog_(catalog.name))
+
         # If there is an active workspace, automatically bind this catalog to it
         workspace = getattr(request.state, "workspace", None)
         if workspace:
@@ -139,7 +258,9 @@ def remove_catalog(
     catalog_name: str,
     db: Session = Depends(get_db),
     user: dict = Depends(get_current_user),
+    guard: Guard = Depends(get_guard),
 ):
+    guard.require(Privilege.MANAGE, Securable.catalog_(catalog_name))
     try:
         delete_catalog(db, catalog_name)
     except ValueError as exc:
@@ -157,11 +278,13 @@ def update_catalog_storage(
     body: CatalogStorageUpdate,
     db: Session = Depends(get_db),
     user: dict = Depends(get_current_user),
+    guard: Guard = Depends(get_guard),
 ):
     """Set or clear the default storage backend for a catalog.
     All schemas / tables / volumes / notebooks under this catalog inherit
     this backend unless they have an explicit schema-level override.
     """
+    guard.require(Privilege.MANAGE, Securable.catalog_(catalog_name))
     from app.catalog.models import UnifiedCatalog
     catalog = db.query(UnifiedCatalog).filter(UnifiedCatalog.name == catalog_name).first()
     if not catalog:
@@ -183,7 +306,10 @@ def get_workspace_bindings(
     catalog_name: str,
     db: Session = Depends(get_db),
     user: dict = Depends(get_current_user),
+    guard: Guard = Depends(get_guard),
 ):
+    # Which workspaces a catalog is exposed to is administrative information.
+    guard.require(Privilege.MANAGE, Securable.catalog_(catalog_name))
     try:
         from app.catalog.binding_service import CatalogBindingService
         service = CatalogBindingService(db)
@@ -198,7 +324,9 @@ def update_workspace_bindings(
     body: CatalogBindWorkspacesRequest,
     db: Session = Depends(get_db),
     user: dict = Depends(get_current_user),
+    guard: Guard = Depends(get_guard),
 ):
+    guard.require(Privilege.MANAGE, Securable.catalog_(catalog_name))
     try:
         from app.catalog.binding_service import CatalogBindingService
         service = CatalogBindingService(db)
@@ -215,9 +343,12 @@ def sync_catalog(
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     user: dict = Depends(get_current_user),
+    guard: Guard = Depends(get_guard),
 ):
     """Sync a postgres catalog: walk information_schema, persist schemas/tables/columns,
     and enqueue embeddings. Runs in background; returns immediately."""
+    # A sync rewrites every schema and table under the catalog.
+    guard.require(Privilege.MANAGE, Securable.catalog_(catalog_name))
     from app.catalog.models import UnifiedCatalog
     catalog = db.query(UnifiedCatalog).filter(UnifiedCatalog.name == catalog_name).first()
     if not catalog:
@@ -249,8 +380,10 @@ def remove_schema(
     schema_name: str,
     db: Session = Depends(get_db),
     user: dict = Depends(get_current_user),
+    guard: Guard = Depends(get_guard),
 ):
     """Delete a schema from the catalog. Blocked if the schema contains notebooks."""
+    guard.require(Privilege.MANAGE, Securable.schema_(catalog_name, schema_name))
     try:
         delete_schema(db, catalog_name, schema_name)
     except ValueError as exc:
@@ -263,9 +396,13 @@ def add_schema(
     body: SchemaCreate,
     db: Session = Depends(get_db),
     user: dict = Depends(get_current_user),
+    guard: Guard = Depends(get_guard),
 ):
+    guard.require(Privilege.CREATE, Securable.catalog_(catalog_name))
     try:
-        return create_schema(db, catalog_name, body, user)
+        schema = create_schema(db, catalog_name, body, user)
+        guard.claim_ownership(Securable.schema_(catalog_name, schema.name))
+        return schema
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
@@ -277,9 +414,12 @@ def add_table(
     body: TableCreate,
     db: Session = Depends(get_db),
     user: dict = Depends(get_current_user),
+    guard: Guard = Depends(get_guard),
 ):
+    guard.require(Privilege.CREATE, Securable.schema_(catalog_name, schema_name))
     try:
         table = create_table(db, catalog_name, schema_name, body, user)
+        guard.claim_ownership(Securable.table(catalog_name, schema_name, table.name))
         return _to_table_read(table)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
@@ -295,7 +435,9 @@ async def add_table_from_file(
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
     user: dict = Depends(get_current_user),
+    guard: Guard = Depends(get_guard),
 ):
+    guard.require(Privilege.CREATE, Securable.schema_(catalog_name, schema_name))
     import json
     try:
         columns = json.loads(columns_json)
@@ -314,18 +456,25 @@ async def add_table_from_file(
             file_bytes=file_bytes,
             user=user,
         )
+        guard.claim_ownership(Securable.table(catalog_name, schema_name, table.name))
         return _to_table_read(table)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
 
 @router.post("/iceberg/repair-version-hints", status_code=200)
-async def repair_iceberg_version_hints(db: Session = Depends(get_db)):
+async def repair_iceberg_version_hints(
+    db: Session = Depends(get_db),
+    guard: Guard = Depends(get_guard),
+):
     """
     Backfill version-hint.text for all Iceberg tables missing it.
     DuckDB requires this file to locate the current metadata version.
     Safe to run multiple times (idempotent).
     """
+    # Sweeps every Iceberg table in the workspace and reports their names, so
+    # it cannot be expressed as a privilege on any one of them.
+    guard.require_workspace_admin("Repairing Iceberg version hints")
     from app.catalog.models import CatalogTableType, UnifiedCatalogSchema, UnifiedCatalogTable
     from app.catalog.storage_context import resolve_catalog_storage_by_schema_id
 
@@ -381,9 +530,13 @@ async def add_volume(
     body: VolumeCreate,
     db: Session = Depends(get_db),
     user: dict = Depends(get_current_user),
+    guard: Guard = Depends(get_guard),
 ):
+    guard.require(Privilege.CREATE, Securable.schema_(catalog_name, schema_name))
     try:
-        return await create_volume(db, catalog_name, schema_name, body, user)
+        volume = await create_volume(db, catalog_name, schema_name, body, user)
+        guard.claim_ownership(Securable.volume(catalog_name, schema_name, volume.name))
+        return volume
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
@@ -393,23 +546,44 @@ def read_tables(
     catalog: str | None = Query(default=None),
     schema_name: str | None = Query(default=None),
     db: Session = Depends(get_db),
+    guard: Guard = Depends(get_guard),
 ):
-    return list_tables(db, catalog=catalog, schema_name=schema_name)
+    tables = list_tables(db, catalog=catalog, schema_name=schema_name)
+    return guard.filter(
+        Privilege.BROWSE,
+        tables,
+        lambda t: Securable.table(t.catalog, t.schema_name, t.name),
+    )
 
 
 @router.get("/volumes", response_model=list[VolumeRead])
 def read_volumes(
     catalog: str | None = Query(default=None),
     schema_name: str | None = Query(default=None),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    guard: Guard = Depends(get_guard),
 ):
     from app.catalog.service import list_volumes
-    return list_volumes(db, catalog=catalog, schema_name=schema_name)
+    volumes = list_volumes(db, catalog=catalog, schema_name=schema_name)
+    return guard.filter(
+        Privilege.BROWSE,
+        volumes,
+        lambda v: Securable.volume(v.schema.catalog.name, v.schema.name, v.name),
+    )
 
 
 
 @router.get("/tables/{catalog}/{schema_name}/{table_name}", response_model=CatalogTableRead)
-def read_table(catalog: str, schema_name: str, table_name: str, db: Session = Depends(get_db)):
+def read_table(
+    catalog: str,
+    schema_name: str,
+    table_name: str,
+    db: Session = Depends(get_db),
+    guard: Guard = Depends(get_guard),
+):
+    # BROWSE, not SELECT: the schema and description are what a user needs in
+    # order to know this table is worth requesting access to.
+    guard.require(Privilege.BROWSE, Securable.table(catalog, schema_name, table_name))
     try:
         return get_table(db, f"{catalog}.{schema_name}.{table_name}")
     except ValueError as exc:
@@ -424,7 +598,10 @@ def read_sample_data(
     table_name: str,
     limit: int = Query(default=100, ge=1, le=1000),
     db: Session = Depends(get_db),
+    guard: Guard = Depends(get_guard),
 ):
+    # Rows, so SELECT — a preview of real data is not metadata.
+    guard.require(Privilege.SELECT, Securable.table(catalog, schema_name, table_name))
     try:
         return get_sample_data(db, f"{catalog}.{schema_name}.{table_name}", limit=limit)
     except ValueError as exc:
@@ -437,7 +614,9 @@ def refresh_table_columns(
     schema_name: str,
     table_name: str,
     db: Session = Depends(get_db),
+    guard: Guard = Depends(get_guard),
 ):
+    guard.require(Privilege.MODIFY, Securable.table(catalog, schema_name, table_name))
     try:
         return refresh_columns(db, f"{catalog}.{schema_name}.{table_name}")
     except ValueError as exc:
@@ -452,8 +631,13 @@ def remove_table(
     table_name: str,
     db: Session = Depends(get_db),
     user: dict = Depends(get_current_user),
+    guard: Guard = Depends(get_guard),
 ):
     """Soft-delete an Iceberg table from the catalog (metadata only, storage data is preserved)."""
+    # MANAGE, not MODIFY: dropping the object is not the same as changing the
+    # rows in it, and someone trusted to write data is not thereby trusted to
+    # make the table disappear.
+    guard.require(Privilege.MANAGE, Securable.table(catalog_name, schema_name, table_name))
     try:
         delete_table(db, catalog_name, schema_name, table_name)
     except ValueError as exc:
@@ -465,7 +649,16 @@ def add_lineage(
     body: LineageEdgeCreate,
     db: Session = Depends(get_db),
     user: dict = Depends(get_current_user),
+    guard: Guard = Depends(get_guard),
 ):
+    # Recording an edge writes to both ends and, by naming them together,
+    # discloses each to anyone who can read the other. Require MODIFY on both.
+    for fqn in (body.source_fqn, body.target_fqn):
+        try:
+            securable = Securable.parse("table", fqn)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        guard.require(Privilege.MODIFY, securable)
     try:
         register_lineage(db, body, user)
         return {"status": "ok"}
@@ -474,15 +667,45 @@ def add_lineage(
 
 
 @router.get("/lineage/{catalog}/{schema_name}/{table_name}", response_model=LineageGraphRead)
-def read_lineage(catalog: str, schema_name: str, table_name: str, db: Session = Depends(get_db)):
+def read_lineage(
+    catalog: str,
+    schema_name: str,
+    table_name: str,
+    db: Session = Depends(get_db),
+    guard: Guard = Depends(get_guard),
+):
+    guard.require(Privilege.BROWSE, Securable.table(catalog, schema_name, table_name))
     try:
-        return get_lineage(db, f"{catalog}.{schema_name}.{table_name}")
+        graph = get_lineage(db, f"{catalog}.{schema_name}.{table_name}")
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
 
+    # A lineage graph names tables other than the one asked for. Without this
+    # the graph becomes a way to enumerate table names across the catalog.
+    # The far end is the source on an upstream edge and the target on a
+    # downstream one; the near end is always the table just authorised above.
+    graph.upstream = guard.filter(
+        Privilege.BROWSE,
+        graph.upstream,
+        lambda e: Securable.parse("table", e.source_fqn),
+    )
+    graph.downstream = guard.filter(
+        Privilege.BROWSE,
+        graph.downstream,
+        lambda e: Securable.parse("table", e.target_fqn),
+    )
+    return graph
+
 
 @router.get("/connections/{connection_id}/browse/databases", response_model=list[RemoteDatabaseRead])
-def read_remote_databases(connection_id: str, db: Session = Depends(get_db)):
+def read_remote_databases(
+    connection_id: str,
+    db: Session = Depends(get_db),
+    guard: Guard = Depends(get_guard),
+):
+    # Browsing through a connection reaches an external system with stored
+    # credentials, so it is gated on the connection itself.
+    guard.require(Privilege.USE_COMPUTE, Securable.connection(str(connection_id)))
     try:
         return browse_connection_databases(db, connection_id)
     except ValueError as exc:
@@ -490,7 +713,13 @@ def read_remote_databases(connection_id: str, db: Session = Depends(get_db)):
 
 
 @router.get("/connections/{connection_id}/browse/schemas", response_model=list[RemoteSchemaRead])
-def read_remote_schemas(connection_id: str, database: str, db: Session = Depends(get_db)):
+def read_remote_schemas(
+    connection_id: str,
+    database: str,
+    db: Session = Depends(get_db),
+    guard: Guard = Depends(get_guard),
+):
+    guard.require(Privilege.USE_COMPUTE, Securable.connection(str(connection_id)))
     try:
         return browse_connection_schemas(db, connection_id, database)
     except ValueError as exc:
@@ -498,7 +727,14 @@ def read_remote_schemas(connection_id: str, database: str, db: Session = Depends
 
 
 @router.get("/connections/{connection_id}/browse/tables", response_model=list[RemoteTableRead])
-def read_remote_tables(connection_id: str, database: str, schema_name: str, db: Session = Depends(get_db)):
+def read_remote_tables(
+    connection_id: str,
+    database: str,
+    schema_name: str,
+    db: Session = Depends(get_db),
+    guard: Guard = Depends(get_guard),
+):
+    guard.require(Privilege.USE_COMPUTE, Securable.connection(str(connection_id)))
     try:
         return browse_connection_tables(db, connection_id, database, schema_name)
     except ValueError as exc:
@@ -517,14 +753,16 @@ async def create_iceberg_schema_endpoint(
     description: str | None = None,
     db: Session = Depends(get_db),
     user: dict = Depends(get_current_user),
+    guard: Guard = Depends(get_guard),
 ):
     """
     Create an Iceberg schema bound to a storage backend.
     Writes a .schema marker file to blob storage and sets base_path on the schema row.
     """
+    guard.require(Privilege.CREATE, Securable.catalog_(catalog))
     from app.catalog.service import create_iceberg_schema
     try:
-        return await create_iceberg_schema(
+        result = await create_iceberg_schema(
             db=db,
             catalog_name=catalog,
             schema_name=schema_name,
@@ -532,6 +770,8 @@ async def create_iceberg_schema_endpoint(
             user=user,
             description=description,
         )
+        guard.claim_ownership(Securable.schema_(catalog, schema_name))
+        return result
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
@@ -550,14 +790,18 @@ async def create_iceberg_table_endpoint(
     payload: IcebergTableCreate,
     db: Session = Depends(get_db),
     user: dict = Depends(get_current_user),
+    guard: Guard = Depends(get_guard),
 ):
     """
     Create an Iceberg table — writes v1.metadata.json + data/.keep to blob storage,
     then registers the table in the catalog with metadata_location.
     """
+    guard.require(
+        Privilege.CREATE, Securable.schema_(payload.catalog, payload.schema_name)
+    )
     from app.catalog.service import create_iceberg_table
     try:
-        return await create_iceberg_table(
+        table = await create_iceberg_table(
             db=db,
             catalog_name=payload.catalog,
             schema_name=payload.schema_name,
@@ -567,6 +811,10 @@ async def create_iceberg_table_endpoint(
             description=payload.description,
             properties=payload.properties,
         )
+        guard.claim_ownership(
+            Securable.table(payload.catalog, payload.schema_name, payload.table_name)
+        )
+        return table
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
@@ -605,8 +853,10 @@ async def upload_volume_file(
     sub_path: str = "",
     db: Session = Depends(get_db),
     user: dict = Depends(get_current_user),
+    guard: Guard = Depends(get_guard),
 ):
     """Upload a file to a volume on blob storage and index it in Postgres."""
+    guard.require(Privilege.MODIFY, _volume_securable(db, volume_id))
     try:
         manager = _get_volume_manager(db, volume_id)
         data = await file.read()
@@ -626,8 +876,10 @@ async def create_volume_directory(
     sub_path: str = "",
     db: Session = Depends(get_db),
     user: dict = Depends(get_current_user),
+    guard: Guard = Depends(get_guard),
 ):
     """Create a directory in a volume on blob storage and index it in Postgres."""
+    guard.require(Privilege.MODIFY, _volume_securable(db, volume_id))
     try:
         manager = _get_volume_manager(db, volume_id)
         actor = user.get("email", user.get("id", "unknown"))
@@ -639,8 +891,15 @@ async def create_volume_directory(
 
 
 @router.get("/volumes/{volume_id}/files", response_model=list[FileInfo])
-async def list_volume_files(volume_id: str, db: Session = Depends(get_db)):
+async def list_volume_files(
+    volume_id: str,
+    db: Session = Depends(get_db),
+    guard: Guard = Depends(get_guard),
+):
     """List all files in a volume from blob storage."""
+    # SELECT, not BROWSE: file names in a volume are content, not catalog
+    # metadata, and often carry more than the volume's own description does.
+    guard.require(Privilege.SELECT, _volume_securable(db, volume_id))
     try:
         manager = _get_volume_manager(db, volume_id)
         return await manager.list_files(db, volume_id)
@@ -657,13 +916,13 @@ class RecordFileRequest(BaseModel):
 
 @router.post("/volumes/record-file", status_code=201)
 async def record_volume_file(
+    req_context: Request,
     body: RecordFileRequest,
     authorization: str = Header(None),
     db: Session = Depends(get_db),
+    system_db: Session = Depends(get_system_db),
 ):
     """Index a file written from a notebook client in Postgres."""
-    import logging
-    logger = logging.getLogger(__name__)
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(
             status_code=401,
@@ -677,6 +936,24 @@ async def record_volume_file(
     except Exception as exc:
         logger.warning("Volume record-file: token validation failed: %s", exc)
         raise HTTPException(status_code=401, detail=f"Invalid token: {str(exc)}")
+
+    # Writing the index row is what makes a file visible in the volume
+    # listing, so it takes the same privilege as writing the file would.
+    ctx = getattr(req_context.state, "workspace", None)
+    if ctx is None:
+        raise HTTPException(
+            status_code=403, detail="No workspace context for this request."
+        )
+    kernel = _kernel_principal(principal, system_db, str(ctx.workspace_id))
+    Guard(
+        load_permission_set(system_db, kernel, str(ctx.workspace_id)),
+        system_db,
+        kernel,
+        str(ctx.workspace_id),
+    ).require(
+        Privilege.MODIFY,
+        Securable.volume(body.catalog, body.schema_name, body.volume_name),
+    )
 
     try:
         from app.catalog.models import UnifiedCatalogVolume, UnifiedCatalogSchema, UnifiedCatalog
@@ -796,8 +1073,10 @@ async def rename_volume_file(
     new_name: str = Body(..., embed=True),
     db: Session = Depends(get_db),
     user: dict = Depends(get_current_user),
+    guard: Guard = Depends(get_guard),
 ):
     """Rename a file or directory in a volume."""
+    guard.require(Privilege.MODIFY, _volume_securable(db, volume_id))
     try:
         manager = _get_volume_manager(db, volume_id)
         return await manager.rename_file(db, volume_id, old_path, new_name)
@@ -806,8 +1085,14 @@ async def rename_volume_file(
 
 
 @router.get("/volumes/{volume_id}/files/download")
-async def download_volume_file(volume_id: str, file_path: str, db: Session = Depends(get_db)):
+async def download_volume_file(
+    volume_id: str,
+    file_path: str,
+    db: Session = Depends(get_db),
+    guard: Guard = Depends(get_guard),
+):
     """Download a file from a volume."""
+    guard.require(Privilege.SELECT, _volume_securable(db, volume_id))
     try:
         manager = _get_volume_manager(db, volume_id)
         data, content_type = await manager.download_file(db, volume_id, file_path)
@@ -818,9 +1103,16 @@ async def download_volume_file(volume_id: str, file_path: str, db: Session = Dep
 
 @router.get("/volumes/{volume_id}/files/url")
 async def get_volume_file_url(
-    volume_id: str, file_path: str, expiry_seconds: int = 3600, db: Session = Depends(get_db)
+    volume_id: str,
+    file_path: str,
+    expiry_seconds: int = 3600,
+    db: Session = Depends(get_db),
+    guard: Guard = Depends(get_guard),
 ):
     """Get a presigned/SAS URL for temporary direct access to a volume file."""
+    # The URL bypasses this API entirely for its lifetime, so the check has to
+    # happen here — there is no second chance once it is minted.
+    guard.require(Privilege.SELECT, _volume_securable(db, volume_id))
     try:
         manager = _get_volume_manager(db, volume_id)
         url = await manager.get_download_url(db, volume_id, file_path, expiry_seconds)
@@ -834,8 +1126,10 @@ async def delete_volume_file(
     volume_id: str, file_path: str,
     db: Session = Depends(get_db),
     user: dict = Depends(get_current_user),
+    guard: Guard = Depends(get_guard),
 ):
     """Delete a file from a volume on blob storage and remove its index entry."""
+    guard.require(Privilege.MODIFY, _volume_securable(db, volume_id))
     try:
         manager = _get_volume_manager(db, volume_id)
         await manager.delete_file(db, volume_id, file_path)
@@ -849,13 +1143,19 @@ async def delete_volume_file(
 def get_notebooks(
     catalog_name: str,
     schema_name: str,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    guard: Guard = Depends(get_guard),
 ):
     """List notebooks registered under a schema."""
     try:
-        return list_notebooks(db, catalog_name, schema_name)
+        notebooks = list_notebooks(db, catalog_name, schema_name)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
+    return guard.filter(
+        Privilege.BROWSE,
+        notebooks,
+        lambda n: Securable.notebook(catalog_name, schema_name, n.name),
+    )
 
 
 @router.post("/catalogs/{catalog_name}/schemas/{schema_name}/notebooks", response_model=NotebookRead, status_code=201)
@@ -865,10 +1165,16 @@ async def add_notebook(
     body: NotebookCreate,
     db: Session = Depends(get_db),
     user: dict = Depends(get_current_user),
+    guard: Guard = Depends(get_guard),
 ):
     """Register and create a new notebook in a schema."""
+    guard.require(Privilege.CREATE, Securable.schema_(catalog_name, schema_name))
     try:
-        return await create_notebook(db, catalog_name, schema_name, body, user)
+        notebook = await create_notebook(db, catalog_name, schema_name, body, user)
+        guard.claim_ownership(
+            Securable.notebook(catalog_name, schema_name, notebook.name)
+        )
+        return notebook
     except ValueError as exc:
         if "already exists" in str(exc):
             raise HTTPException(status_code=409, detail=str(exc))
@@ -880,9 +1186,13 @@ def read_notebook(
     catalog_name: str,
     schema_name: str,
     notebook_name: str,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    guard: Guard = Depends(get_guard),
 ):
     """Retrieve notebook metadata."""
+    guard.require(
+        Privilege.BROWSE, Securable.notebook(catalog_name, schema_name, notebook_name)
+    )
     try:
         return get_notebook(db, catalog_name, schema_name, notebook_name)
     except ValueError as exc:
@@ -897,10 +1207,19 @@ def rename_notebook(
     body: NotebookUpdate,
     db: Session = Depends(get_db),
     user: dict = Depends(get_current_user),
+    guard: Guard = Depends(get_guard),
 ):
     """Update notebook metadata (rename, change comment or owner)."""
+    guard.require(
+        Privilege.EDIT, Securable.notebook(catalog_name, schema_name, notebook_name)
+    )
     try:
-        return update_notebook(db, catalog_name, schema_name, notebook_name, body, user)
+        updated = update_notebook(db, catalog_name, schema_name, notebook_name, body, user)
+        guard.relocate(
+            Securable.notebook(catalog_name, schema_name, notebook_name),
+            Securable.notebook(catalog_name, schema_name, updated.name),
+        )
+        return updated
     except ValueError as exc:
         if "already exists" in str(exc):
             raise HTTPException(status_code=409, detail=str(exc))
@@ -915,10 +1234,26 @@ async def move_catalog_notebook(
     body: NotebookMove,
     db: Session = Depends(get_db),
     user: dict = Depends(get_current_user),
+    guard: Guard = Depends(get_guard),
 ):
     """Move a notebook to another catalog and/or schema (and optionally rename it)."""
+    # A move is a delete from one schema and a create in another. Requiring
+    # only EDIT would let someone relocate an object into a schema they have
+    # no right to add to, and out of one whose grants were the only thing
+    # protecting it.
+    guard.require(
+        Privilege.MANAGE, Securable.notebook(catalog_name, schema_name, notebook_name)
+    )
+    guard.require(
+        Privilege.CREATE, Securable.schema_(body.target_catalog, body.target_schema)
+    )
     try:
-        return await move_notebook(db, catalog_name, schema_name, notebook_name, body, user)
+        moved = await move_notebook(db, catalog_name, schema_name, notebook_name, body, user)
+        guard.relocate(
+            Securable.notebook(catalog_name, schema_name, notebook_name),
+            Securable.notebook(body.target_catalog, body.target_schema, moved.name),
+        )
+        return moved
     except ValueError as exc:
         if "already exists" in str(exc):
             raise HTTPException(status_code=409, detail=str(exc))
@@ -932,8 +1267,12 @@ async def remove_notebook(
     notebook_name: str,
     db: Session = Depends(get_db),
     user: dict = Depends(get_current_user),
+    guard: Guard = Depends(get_guard),
 ):
     """Delete a notebook registration and its physical file."""
+    guard.require(
+        Privilege.MANAGE, Securable.notebook(catalog_name, schema_name, notebook_name)
+    )
     try:
         await delete_notebook(db, catalog_name, schema_name, notebook_name)
     except ValueError as exc:
@@ -946,13 +1285,19 @@ async def remove_notebook(
 def get_dashboards(
     catalog_name: str,
     schema_name: str,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    guard: Guard = Depends(get_guard),
 ):
     """List dashboards registered under a schema."""
     try:
-        return list_dashboards(db, catalog_name, schema_name)
+        dashboards = list_dashboards(db, catalog_name, schema_name)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
+    return guard.filter(
+        Privilege.BROWSE,
+        dashboards,
+        lambda d: Securable.dashboard(catalog_name, schema_name, d.name),
+    )
 
 
 @router.post("/catalogs/{catalog_name}/schemas/{schema_name}/dashboards", response_model=DashboardRead, status_code=201)
@@ -962,10 +1307,16 @@ async def add_dashboard(
     body: DashboardCreate,
     db: Session = Depends(get_db),
     user: dict = Depends(get_current_user),
+    guard: Guard = Depends(get_guard),
 ):
     """Register and create a new dashboard in a schema."""
+    guard.require(Privilege.CREATE, Securable.schema_(catalog_name, schema_name))
     try:
-        return await create_dashboard(db, catalog_name, schema_name, body, user)
+        dashboard = await create_dashboard(db, catalog_name, schema_name, body, user)
+        guard.claim_ownership(
+            Securable.dashboard(catalog_name, schema_name, dashboard.name)
+        )
+        return dashboard
     except ValueError as exc:
         if "already exists" in str(exc):
             raise HTTPException(status_code=409, detail=str(exc))
@@ -977,9 +1328,13 @@ def read_dashboard(
     catalog_name: str,
     schema_name: str,
     dashboard_name: str,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    guard: Guard = Depends(get_guard),
 ):
     """Retrieve dashboard metadata."""
+    guard.require(
+        Privilege.BROWSE, Securable.dashboard(catalog_name, schema_name, dashboard_name)
+    )
     try:
         return get_dashboard(db, catalog_name, schema_name, dashboard_name)
     except ValueError as exc:
@@ -994,10 +1349,19 @@ def rename_dashboard(
     body: DashboardUpdate,
     db: Session = Depends(get_db),
     user: dict = Depends(get_current_user),
+    guard: Guard = Depends(get_guard),
 ):
     """Update dashboard metadata (rename, change comment or owner)."""
+    guard.require(
+        Privilege.EDIT, Securable.dashboard(catalog_name, schema_name, dashboard_name)
+    )
     try:
-        return update_dashboard(db, catalog_name, schema_name, dashboard_name, body, user)
+        updated = update_dashboard(db, catalog_name, schema_name, dashboard_name, body, user)
+        guard.relocate(
+            Securable.dashboard(catalog_name, schema_name, dashboard_name),
+            Securable.dashboard(catalog_name, schema_name, updated.name),
+        )
+        return updated
     except ValueError as exc:
         if "already exists" in str(exc):
             raise HTTPException(status_code=409, detail=str(exc))
@@ -1012,10 +1376,22 @@ async def move_catalog_dashboard(
     body: DashboardMove,
     db: Session = Depends(get_db),
     user: dict = Depends(get_current_user),
+    guard: Guard = Depends(get_guard),
 ):
     """Move a dashboard to another catalog and/or schema (and optionally rename it)."""
+    guard.require(
+        Privilege.MANAGE, Securable.dashboard(catalog_name, schema_name, dashboard_name)
+    )
+    guard.require(
+        Privilege.CREATE, Securable.schema_(body.target_catalog, body.target_schema)
+    )
     try:
-        return await move_dashboard(db, catalog_name, schema_name, dashboard_name, body, user)
+        moved = await move_dashboard(db, catalog_name, schema_name, dashboard_name, body, user)
+        guard.relocate(
+            Securable.dashboard(catalog_name, schema_name, dashboard_name),
+            Securable.dashboard(body.target_catalog, body.target_schema, moved.name),
+        )
+        return moved
     except ValueError as exc:
         if "already exists" in str(exc):
             raise HTTPException(status_code=409, detail=str(exc))
@@ -1029,8 +1405,12 @@ async def remove_dashboard(
     dashboard_name: str,
     db: Session = Depends(get_db),
     user: dict = Depends(get_current_user),
+    guard: Guard = Depends(get_guard),
 ):
     """Delete a dashboard registration and its system database entry."""
+    guard.require(
+        Privilege.MANAGE, Securable.dashboard(catalog_name, schema_name, dashboard_name)
+    )
     try:
         await delete_dashboard(db, catalog_name, schema_name, dashboard_name)
     except ValueError as exc:
@@ -1043,13 +1423,19 @@ async def remove_dashboard(
 def get_queries(
     catalog_name: str,
     schema_name: str,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    guard: Guard = Depends(get_guard),
 ):
     """List queries registered under a schema."""
     try:
-        return list_queries(db, catalog_name, schema_name)
+        queries = list_queries(db, catalog_name, schema_name)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
+    return guard.filter(
+        Privilege.BROWSE,
+        queries,
+        lambda q: Securable.query(catalog_name, schema_name, q.name),
+    )
 
 
 @router.post("/catalogs/{catalog_name}/schemas/{schema_name}/queries", response_model=QueryRead, status_code=201)
@@ -1059,10 +1445,14 @@ async def add_query(
     body: QueryCreate,
     db: Session = Depends(get_db),
     user: dict = Depends(get_current_user),
+    guard: Guard = Depends(get_guard),
 ):
     """Register and save a new query in a schema."""
+    guard.require(Privilege.CREATE, Securable.schema_(catalog_name, schema_name))
     try:
-        return await create_query(db, catalog_name, schema_name, body, user)
+        query = await create_query(db, catalog_name, schema_name, body, user)
+        guard.claim_ownership(Securable.query(catalog_name, schema_name, query.name))
+        return query
     except ValueError as exc:
         if "already exists" in str(exc):
             raise HTTPException(status_code=409, detail=str(exc))
@@ -1074,9 +1464,15 @@ def read_query(
     catalog_name: str,
     schema_name: str,
     query_name: str,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    guard: Guard = Depends(get_guard),
 ):
     """Retrieve query metadata and SQL content."""
+    # SELECT rather than BROWSE: the response carries the SQL text, which
+    # names tables and encodes business logic beyond what a listing shows.
+    guard.require(
+        Privilege.SELECT, Securable.query(catalog_name, schema_name, query_name)
+    )
     try:
         return get_query(db, catalog_name, schema_name, query_name)
     except ValueError as exc:
@@ -1091,10 +1487,19 @@ def edit_query(
     body: QueryUpdate,
     db: Session = Depends(get_db),
     user: dict = Depends(get_current_user),
+    guard: Guard = Depends(get_guard),
 ):
     """Update query metadata or SQL text."""
+    guard.require(
+        Privilege.EDIT, Securable.query(catalog_name, schema_name, query_name)
+    )
     try:
-        return update_query(db, catalog_name, schema_name, query_name, body, user)
+        updated = update_query(db, catalog_name, schema_name, query_name, body, user)
+        guard.relocate(
+            Securable.query(catalog_name, schema_name, query_name),
+            Securable.query(catalog_name, schema_name, updated.name),
+        )
+        return updated
     except ValueError as exc:
         if "already exists" in str(exc):
             raise HTTPException(status_code=409, detail=str(exc))
@@ -1109,10 +1514,22 @@ async def move_catalog_query(
     body: QueryMove,
     db: Session = Depends(get_db),
     user: dict = Depends(get_current_user),
+    guard: Guard = Depends(get_guard),
 ):
     """Move a query to another catalog and/or schema."""
+    guard.require(
+        Privilege.MANAGE, Securable.query(catalog_name, schema_name, query_name)
+    )
+    guard.require(
+        Privilege.CREATE, Securable.schema_(body.target_catalog, body.target_schema)
+    )
     try:
-        return await move_query(db, catalog_name, schema_name, query_name, body, user)
+        moved = await move_query(db, catalog_name, schema_name, query_name, body, user)
+        guard.relocate(
+            Securable.query(catalog_name, schema_name, query_name),
+            Securable.query(body.target_catalog, body.target_schema, moved.name),
+        )
+        return moved
     except ValueError as exc:
         if "already exists" in str(exc):
             raise HTTPException(status_code=409, detail=str(exc))
@@ -1126,8 +1543,12 @@ async def remove_query(
     query_name: str,
     db: Session = Depends(get_db),
     user: dict = Depends(get_current_user),
+    guard: Guard = Depends(get_guard),
 ):
     """Delete a registered query from the catalog."""
+    guard.require(
+        Privilege.MANAGE, Securable.query(catalog_name, schema_name, query_name)
+    )
     try:
         await delete_query(db, catalog_name, schema_name, query_name)
     except ValueError as exc:
@@ -1140,8 +1561,14 @@ def get_query_version_history(
     schema_name: str,
     query_name: str,
     db: Session = Depends(get_db),
+    guard: Guard = Depends(get_guard),
 ):
     """List all immutable versions for a query."""
+    # Version rows carry the SQL text of every earlier revision, so the
+    # history discloses at least as much as reading the query does.
+    guard.require(
+        Privilege.SELECT, Securable.query(catalog_name, schema_name, query_name)
+    )
     try:
         return list_query_versions(db, catalog_name, schema_name, query_name)
     except ValueError as exc:
@@ -1156,8 +1583,12 @@ def add_query_version(
     body: QueryCreateVersion,
     db: Session = Depends(get_db),
     user: dict = Depends(get_current_user),
+    guard: Guard = Depends(get_guard),
 ):
     """Create a new version for a query."""
+    guard.require(
+        Privilege.EDIT, Securable.query(catalog_name, schema_name, query_name)
+    )
     try:
         return create_query_version(db, catalog_name, schema_name, query_name, body, user)
     except ValueError as exc:
@@ -1171,8 +1602,12 @@ def read_query_version(
     query_name: str,
     version_num: int,
     db: Session = Depends(get_db),
+    guard: Guard = Depends(get_guard),
 ):
     """Get a specific version of a query."""
+    guard.require(
+        Privilege.SELECT, Securable.query(catalog_name, schema_name, query_name)
+    )
     try:
         return get_query_version(db, catalog_name, schema_name, query_name, version_num)
     except ValueError as exc:
@@ -1187,8 +1622,12 @@ def restore_version(
     version_num: int,
     db: Session = Depends(get_db),
     user: dict = Depends(get_current_user),
+    guard: Guard = Depends(get_guard),
 ):
     """Restore query SQL and description from an earlier version."""
+    guard.require(
+        Privilege.EDIT, Securable.query(catalog_name, schema_name, query_name)
+    )
     try:
         return restore_query_version(db, catalog_name, schema_name, query_name, version_num, user)
     except ValueError as exc:
@@ -1203,8 +1642,14 @@ async def run_catalog_notebook(
     notebook_name: str,
     db: Session = Depends(get_db),
     user: dict = Depends(get_current_user),
+    guard: Guard = Depends(get_guard),
 ):
     """Run/Execute a catalog notebook, executing its Python code cells and updating outputs."""
+    # This runs arbitrary Python in the API process, so EXECUTE on the
+    # notebook is the whole of the access control on that code path.
+    guard.require(
+        Privilege.EXECUTE, Securable.notebook(catalog_name, schema_name, notebook_name)
+    )
     import json
     import io
     import sys
@@ -1309,8 +1754,17 @@ async def run_catalog_notebook(
 
 
 @router.post("/admin/import-notebooks", status_code=200)
-def import_notebooks(db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
+def import_notebooks(
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+    guard: Guard = Depends(get_guard),
+):
     """Scan the notebooks storage and register any untracked .ipynb files in the unified catalog under compassx.default."""
+    # A sweep across the whole notebook bucket, creating a catalog and schema
+    # if they are missing. There is no single securable to grant on, so it
+    # sits with the workspace admin.
+    guard.require_workspace_admin("Importing notebooks from storage")
+
     import re
     from services.storage.fs import get_fs
     from app.notebooks.routes.notebook_routes import _NOTEBOOKS_BUCKET, _NOTEBOOKS_PREFIX, _key_to_rel
@@ -1406,6 +1860,7 @@ def trigger_foreign_sync(
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     user: dict = Depends(get_current_user),
+    guard: Guard = Depends(get_guard),
 ):
     """Trigger an asynchronous sync of a foreign Postgres catalog into the
     semantic search index.
@@ -1414,6 +1869,13 @@ def trigger_foreign_sync(
     upserts rows into ``vector_db.assets`` with ``is_foreign=True``.
     Each newly-synced table is enqueued for embedding.
     """
+    # The sync connects out with the connection's stored credentials and
+    # copies every table name it finds into the search index, where it
+    # becomes visible to anyone who can search. That is the connection's
+    # strongest capability, so it takes USE_COMPUTE rather than a read
+    # privilege.
+    guard.require(Privilege.USE_COMPUTE, Securable.connection(str(connection_id)))
+
     from app.database import AccountSessionLocal
 
     user_id = str(user.get("id") or user.get("sub") or "unknown")
@@ -1450,8 +1912,11 @@ def get_foreign_sync_log(
     connection_id: int,
     limit: int = Query(default=20, ge=1, le=100),
     db: Session = Depends(get_db),
+    guard: Guard = Depends(get_guard),
 ):
     """Return recent foreign catalog sync log entries for a connection."""
+    guard.require(Privilege.BROWSE, Securable.connection(str(connection_id)))
+
     from app.catalog.search_models import CatalogSearchForeignSyncLog
 
     rows = (
@@ -1482,12 +1947,18 @@ def search_catalog_assets(
     q: str = Query(..., description="Natural language search query"),
     object_type: str | None = Query(default=None, description="Filter by object type"),
     limit: int = Query(default=10, ge=1, le=25),
+    guard: Guard = Depends(get_guard),
 ):
     """REST endpoint for catalog semantic search.
 
     Embeds *q* and returns the top *limit* catalog assets ranked by
     cosine similarity.  This is a thin HTTP wrapper around the same logic
     used by the ``search_assets`` agent tool.
+
+    Results are filtered to what the caller may BROWSE. Search is the most
+    direct route to enumerating a catalog — a handful of queries against an
+    unfiltered index would name every table in the account — so the filter
+    here is doing more work than on an ordinary list endpoint.
     """
     from app.catalog.embedding_service import get_embedding
     from app.database import account_engine
@@ -1525,12 +1996,17 @@ def search_catalog_assets(
                 {
                     "query_vec": vec_literal,
                     "object_type_filter": object_type,
-                    "limit": limit,
+                    # Over-fetch, because the rows the caller may not see are
+                    # dropped below. Asking the index for exactly *limit* would
+                    # return two results to a user entitled to two of the top
+                    # ten, and the good match ranked eleventh would be lost.
+                    "limit": limit * _SEARCH_OVERFETCH,
                 },
             ).fetchall()
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Search failed: {exc}")
 
+    visible = guard.filter(Privilege.BROWSE, rows, _search_row_securable)[:limit]
     return {
         "query": q,
         "results": [
@@ -1541,9 +2017,9 @@ def search_catalog_assets(
                 "is_foreign": row.is_foreign,
                 "similarity_score": round(float(row.similarity_score), 4),
             }
-            for row in rows
+            for row in visible
         ],
-        "count": len(rows),
+        "count": len(visible),
     }
 
 
@@ -1553,15 +2029,20 @@ async def resolve_volume_credential(
     body: VolumeResolveRequest,
     authorization: str = Header(None),
     db: Session = Depends(get_db),
+    system_db: Session = Depends(get_system_db),
 ):
     """Resolve volume access credentials for notebook kernel.
 
     Validates:
     1. Session token (Bearer JWT from Authorization header)
     2. Volume exists and is visible to workspace
-    3. User has READ privilege on catalog/schema containing volume
+    3. Caller holds SELECT (read) or MODIFY (write) on the volume
 
     Returns scoped credentials (SAS, STS, or presigned URL) for the volume prefix.
+
+    The credential this returns talks to blob storage directly for its whole
+    lifetime, so nothing downstream can re-check the decision — the grant
+    check below is the only one that ever happens for those fifteen minutes.
     """
     import logging
     from app.catalog.storage_context import resolve_catalog_storage
@@ -1629,10 +2110,6 @@ async def resolve_volume_credential(
                 },
             )
 
-        # Check privilege: user must have appropriate access for requested mode
-        from app.catalog.models import CatalogWorkspaceBinding
-        from app.catalog.schemas import CatalogPrivilege
-
         # Validate mode
         if not hasattr(body, "mode") or body.mode is None:
             body_mode = "read"
@@ -1648,40 +2125,38 @@ async def resolve_volume_credential(
                 },
             )
 
-        if workspace_id:
-            binding = db.query(CatalogWorkspaceBinding).filter(
-                CatalogWorkspaceBinding.catalog_id == schema.catalog_id,
-                CatalogWorkspaceBinding.workspace_id == workspace_id,
-            ).first()
+        # No workspace context means no basis for a decision. Previously the
+        # whole privilege check sat behind ``if workspace_id:``, so a request
+        # without one skipped it entirely and was minted a credential.
+        if not workspace_id:
+            return JSONResponse(
+                status_code=403,
+                content={
+                    "error_code": "PERMISSION_DENIED",
+                    "message": "No workspace context for this request.",
+                },
+            )
 
-            if not binding:
-                return JSONResponse(
-                    status_code=403,
-                    content={
-                        "error_code": "PERMISSION_DENIED",
-                        "message": f"No access to '{body.catalog}.{body.schema_name}'",
-                    },
-                )
-
-            # Check privilege based on mode
-            if body_mode in ("write", "readwrite"):
-                if binding.privilege != CatalogPrivilege.READ_WRITE:
-                    return JSONResponse(
-                        status_code=403,
-                        content={
-                            "error_code": "PERMISSION_DENIED",
-                            "message": f"Insufficient privilege for WRITE access to '{body.catalog}.{body.schema_name}'. Required: WRITE.",
-                        },
-                    )
-            elif body_mode == "read":
-                if binding.privilege not in [CatalogPrivilege.READ_ONLY, CatalogPrivilege.READ_WRITE]:
-                    return JSONResponse(
-                        status_code=403,
-                        content={
-                            "error_code": "PERMISSION_DENIED",
-                            "message": f"Insufficient privilege for READ access to '{body.catalog}.{body.schema_name}'. Required: READ.",
-                        },
-                    )
+        securable = Securable.volume(body.catalog, body.schema_name, body.volume)
+        needed = Privilege.SELECT if body_mode == "read" else Privilege.MODIFY
+        kernel = _kernel_principal(principal, system_db, workspace_id)
+        guard = Guard(
+            load_permission_set(system_db, kernel, workspace_id),
+            system_db,
+            kernel,
+            workspace_id,
+        )
+        if not guard.can(needed, securable):
+            return JSONResponse(
+                status_code=403,
+                content={
+                    "error_code": "PERMISSION_DENIED",
+                    "message": (
+                        f"{needed.value} on "
+                        f"{body.catalog}.{body.schema_name}.{body.volume} is required."
+                    ),
+                },
+            )
 
         # Get storage backend for volume
         storage_ctx = resolve_catalog_storage(db, body.catalog, body.schema_name)
@@ -1748,7 +2223,7 @@ async def resolve_volume_credential(
         )
 
 
-from app.database import get_system_db, get_account_db
+from app.database import get_account_db
 from app.sql_warehouse.schemas import NotebookQueryRequest
 from app.sql_warehouse.query.parser import extract_table_references
 from app.sql_warehouse.query.executor import QueryExecutor
@@ -1763,10 +2238,22 @@ async def run_notebook_query(
     data_db: Session = Depends(get_system_db),
     account_db: Session = Depends(get_account_db),
     user=Depends(get_current_user),
+    guard: Guard = Depends(get_guard),
 ):
     workspace_id = getattr(request.state, "workspace", None) and request.state.workspace.workspace_id
     tables = extract_table_references(req.query)
-    
+
+    # The warehouse runs this SQL with its own credentials, so every table the
+    # statement touches has to be authorised here — there is no per-table
+    # check further down. Refuse rather than filter: silently dropping a table
+    # from a join would return a wrong answer that looks right.
+    for table_ref in tables:
+        try:
+            parsed = _parse_table_ref(table_ref)
+        except ValueError:
+            raise HTTPException(400, f"Invalid table reference: {table_ref!r}")
+        guard.require(Privilege.SELECT, Securable.table(*parsed))
+
     engines = set()
     catalog_api = CatalogMetadataAPI(account_db, workspace_id)
     for table_ref in tables:
@@ -1877,6 +2364,7 @@ async def create_table_from_notebook(
     req: NotebookTableCreateRequest,
     db: Session = Depends(get_db),
     user=Depends(get_current_user),
+    guard: Guard = Depends(get_guard),
 ):
     """Create a new catalog table from a DataFrame with immediate registration."""
     import io
@@ -1905,6 +2393,11 @@ async def create_table_from_notebook(
         catalog_name, schema_name, table_name = _parse_table_ref(req.table_ref)
     except ValueError as exc:
         raise HTTPException(400, {"status": "error", "error_type": "invalid_ref", "message": str(exc)})
+
+    # Checked before the schema is auto-created below: without this, naming a
+    # schema that does not exist would create it and land the table there,
+    # sidestepping CREATE on any schema that does.
+    guard.require(Privilege.CREATE, Securable.schema_(catalog_name, schema_name))
 
     # Resolve Catalog
     catalog = db.query(UnifiedCatalog).filter(UnifiedCatalog.name == catalog_name).first()
@@ -1942,6 +2435,12 @@ async def create_table_from_notebook(
                     "message": f"Table '{req.table_ref}' already exists. Use mode='overwrite' to replace.",
                 },
             )
+        # An overwrite destroys someone else's table. CREATE on the schema
+        # says you may add tables to it, not that you may replace the ones
+        # already there.
+        guard.require(
+            Privilege.MODIFY, Securable.table(catalog_name, schema_name, table_name)
+        )
         # Drop existing catalog table record for overwrite
         db.delete(existing)
         db.commit()
@@ -2136,6 +2635,8 @@ async def create_table_from_notebook(
         import logging
         logging.getLogger(__name__).warning("Failed to enqueue embedding for table %s: %s", table.name, exc)
 
+    guard.claim_ownership(Securable.table(catalog.name, schema.name, table.name))
+
     return {
         "status": "ok",
         "id": table.id,
@@ -2151,6 +2652,7 @@ async def write_table_from_notebook(
     req: NotebookTableWriteRequest,
     db: Session = Depends(get_db),
     user=Depends(get_current_user),
+    guard: Guard = Depends(get_guard),
 ):
     """Append data to an existing catalog table with strict schema validation."""
     import io
@@ -2175,6 +2677,10 @@ async def write_table_from_notebook(
         catalog_name, schema_name, table_name = _parse_table_ref(req.table_ref)
     except ValueError as exc:
         raise HTTPException(400, {"status": "error", "error_type": "invalid_ref", "message": str(exc)})
+
+    guard.require(
+        Privilege.MODIFY, Securable.table(catalog_name, schema_name, table_name)
+    )
 
     # Resolve Catalog, Schema, and Table
     catalog = db.query(UnifiedCatalog).filter(UnifiedCatalog.name == catalog_name).first()

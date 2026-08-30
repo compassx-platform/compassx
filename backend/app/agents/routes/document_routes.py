@@ -18,8 +18,10 @@ from typing import List
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Request, UploadFile
 from sqlalchemy.orm import Session
 
+from app.agents.routes._authz import authorized_session
 from app.database import get_system_db as get_db
-from app.dependencies import get_current_user
+from app.governance.dependencies import Guard, get_guard
+from app.governance.privileges import Privilege
 from app.models.agents import Agent, ChatSession, RagDocument, DocumentStatus
 from app.agents.services.document_processor import parse_document, process_document
 from app.agents.services.agent.plan_service import PlanService
@@ -46,15 +48,17 @@ ACCEPTED_MIME_TYPES = {
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-def _get_session_or_404(db: Session, agent_id: int, session_id: int) -> ChatSession:
-    session = (
-        db.query(ChatSession)
-        .filter(ChatSession.id == session_id, ChatSession.agent_id == agent_id)
-        .first()
-    )
-    if not session:
-        raise HTTPException(404, "Session not found")
-    return session
+def _get_session_or_404(
+    db: Session, agent_id: int, session_id: int, guard: Guard, privilege: Privilege
+) -> ChatSession:
+    """Load a session, having authorised the agent that owns it.
+
+    Uploaded files become part of what the agent reads, so they are governed
+    by the agent. The bare id lookup this replaces had no workspace filter at
+    all — session ids are globally unique, so any session's evidence pool was
+    both readable and writable by anyone who could guess an id.
+    """
+    return authorized_session(db, guard, agent_id, session_id, privilege)
 
 
 def _link_doc_to_plan(session_id: int, doc_id: int) -> None:
@@ -82,10 +86,15 @@ async def upload_documents(
     background_tasks: BackgroundTasks,
     files: List[UploadFile] = File(...),
     db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user),
+    guard: Guard = Depends(get_guard),
 ):
-    """Upload one or more documents to the session evidence pool (Part F2)."""
-    _get_session_or_404(db, agent_id, session_id)
+    """Upload one or more documents to the session evidence pool (Part F2).
+
+    EXECUTE: an uploaded file is chunked, embedded, and fed to the agent on
+    the next turn, so this is supplying input to a run rather than storing a
+    file. Whoever may run the agent may give it something to read.
+    """
+    _get_session_or_404(db, agent_id, session_id, guard, Privilege.EXECUTE)
 
     # Resolve accepted types from agent manifest
     agent = db.query(Agent).filter(Agent.id == agent_id).first()
@@ -174,9 +183,14 @@ def list_documents(
     agent_id: int,
     session_id: int,
     db: Session = Depends(get_db),
+    guard: Guard = Depends(get_guard),
 ):
-    """List all documents uploaded in this session."""
-    _get_session_or_404(db, agent_id, session_id)
+    """List all documents uploaded in this session.
+
+    BROWSE: the response carries each file's extracted preview, which is its
+    content.
+    """
+    _get_session_or_404(db, agent_id, session_id, guard, Privilege.BROWSE)
     docs = (
         db.query(RagDocument)
         .filter(RagDocument.session_id == session_id, RagDocument.agent_id == agent_id)
@@ -205,9 +219,14 @@ def delete_document(
     session_id: int,
     doc_id: int,
     db: Session = Depends(get_db),
+    guard: Guard = Depends(get_guard),
 ):
-    """Remove a document from the session evidence pool."""
-    _get_session_or_404(db, agent_id, session_id)
+    """Remove a document from the session evidence pool.
+
+    EXECUTE, the same as adding one: both change what the agent will read on
+    the next turn.
+    """
+    _get_session_or_404(db, agent_id, session_id, guard, Privilege.EXECUTE)
     doc = (
         db.query(RagDocument)
         .filter(RagDocument.id == doc_id, RagDocument.session_id == session_id)

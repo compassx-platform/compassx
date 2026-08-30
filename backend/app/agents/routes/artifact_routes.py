@@ -14,8 +14,10 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 
+from app.agents.routes._authz import authorized_session
 from app.database import get_system_db as get_db
-from app.dependencies import get_current_user
+from app.governance.dependencies import Guard, get_guard
+from app.governance.privileges import Privilege
 from app.models.agents import ChatSession
 from app.agents.services.agent.known_assets_registry import registry as known_assets_registry
 from app.agents.services.agent.change_capture_service import (
@@ -33,15 +35,17 @@ router = APIRouter(prefix="/api/v1/agents/{agent_id}/sessions/{session_id}", tag
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-def _get_session_or_404(db: Session, agent_id: int, session_id: int) -> ChatSession:
-    session = (
-        db.query(ChatSession)
-        .filter(ChatSession.id == session_id, ChatSession.agent_id == agent_id)
-        .first()
-    )
-    if not session:
-        raise HTTPException(404, "Session not found")
-    return session
+def _get_session_or_404(
+    db: Session, agent_id: int, session_id: int, guard: Guard, privilege: Privilege
+) -> ChatSession:
+    """Load a session, having authorised the agent that owns it.
+
+    The bare id lookup this replaces was not scoped to a workspace at all:
+    session ids are globally unique, so any session in the deployment resolved
+    — including its change records, which carry the before and after content
+    of the objects the agent rewrote.
+    """
+    return authorized_session(db, guard, agent_id, session_id, privilege)
 
 
 # ── Known-assets registry ─────────────────────────────────────────────────────
@@ -52,9 +56,14 @@ def list_session_assets(
     agent_id: int,
     session_id: int,
     db: Session = Depends(get_db),
+    guard: Guard = Depends(get_guard),
 ):
-    """Return all assets registered in the known-assets registry for this session (G1)."""
-    _get_session_or_404(db, agent_id, session_id)
+    """Return all assets registered in the known-assets registry for this session (G1).
+
+    BROWSE on the agent — this is a list of the catalog objects the agent
+    touched during the conversation, which is part of the transcript.
+    """
+    _get_session_or_404(db, agent_id, session_id, guard, Privilege.BROWSE)
     entries = known_assets_registry.get_all(session_id)
     if not entries:
         from app.models.agents import ChatMessage, MessageRole
@@ -107,9 +116,10 @@ def list_changes(
     session_id: int,
     step_id: int | None = None,
     db: Session = Depends(get_db),
+    guard: Guard = Depends(get_guard),
 ):
     """Return change records for this session, optionally filtered by plan step (G5)."""
-    _get_session_or_404(db, agent_id, session_id)
+    _get_session_or_404(db, agent_id, session_id, guard, Privilege.BROWSE)
     records = get_changes_for_session(db, session_id, step_id=step_id)
     # Enrich with resolved URL
     for r in records:
@@ -124,9 +134,15 @@ def get_change_endpoint(
     session_id: int,
     change_id: str,
     db: Session = Depends(get_db),
+    guard: Guard = Depends(get_guard),
 ):
-    """Return a single change record with full before/after content (G5)."""
-    _get_session_or_404(db, agent_id, session_id)
+    """Return a single change record with full before/after content (G5).
+
+    The response is the previous and new definition of a catalog object, so a
+    caller who could reach this without BROWSE on the agent would be reading
+    object content through the change log.
+    """
+    _get_session_or_404(db, agent_id, session_id, guard, Privilege.BROWSE)
     record = get_change_record(db, change_id)
     if not record:
         raise HTTPException(404, f"Change {change_id} not found")
@@ -141,10 +157,14 @@ def accept_change_endpoint(
     session_id: int,
     change_id: str,
     db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user),
+    guard: Guard = Depends(get_guard),
 ):
-    """Accept a change record — sets status to 'accepted', no further write (D20)."""
-    _get_session_or_404(db, agent_id, session_id)
+    """Accept a change record — sets status to 'accepted', no further write (D20).
+
+    EXECUTE, not BROWSE: accepting is a review decision that settles what the
+    agent did, and it takes the same privilege as having run the turn.
+    """
+    _get_session_or_404(db, agent_id, session_id, guard, Privilege.EXECUTE)
     result = accept_change(db, change_id)
     if not result.get("ok"):
         raise HTTPException(400, result.get("error", "Accept failed"))
@@ -158,10 +178,14 @@ def reject_change_endpoint(
     session_id: int,
     change_id: str,
     db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user),
+    guard: Guard = Depends(get_guard),
 ):
-    """Reject a change — re-applies before content and creates a new revert record (D20)."""
-    _get_session_or_404(db, agent_id, session_id)
+    """Reject a change — re-applies before content and creates a new revert record (D20).
+
+    EXECUTE: this writes the previous content back to the catalog object, so
+    it is the agent acting again, under the same delegation.
+    """
+    _get_session_or_404(db, agent_id, session_id, guard, Privilege.EXECUTE)
     result = reject_change(db, change_id, session_id)
     if not result.get("ok"):
         raise HTTPException(400, result.get("error", "Reject failed"))
@@ -175,10 +199,10 @@ def bulk_review_endpoint(
     session_id: int,
     body: dict,  # {"action": "accept_all" | "reject_all"}
     db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user),
+    guard: Guard = Depends(get_guard),
 ):
     """Bulk accept or reject all pending changes for a session."""
-    _get_session_or_404(db, agent_id, session_id)
+    _get_session_or_404(db, agent_id, session_id, guard, Privilege.EXECUTE)
     action = body.get("action", "accept_all")
     if action not in ("accept_all", "reject_all"):
         raise HTTPException(400, "action must be 'accept_all' or 'reject_all'")

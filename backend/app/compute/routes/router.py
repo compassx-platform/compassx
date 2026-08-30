@@ -11,6 +11,9 @@ from fastapi.responses import JSONResponse
 
 from app.database import SessionLocal
 from app.database import get_account_db, get_system_db
+from app.governance.dependencies import Guard, get_guard
+from app.governance.privileges import Privilege
+from app.governance.securable import Securable
 from compute.config import compute_settings
 from compassx.lookup import try_resolve_url_container
 from compute.k8s_client import get_k8s_client
@@ -69,7 +72,73 @@ def _error(error_type: str, message: str, code: int) -> JSONResponse:
     )
 
 
-@router.get("/profiles", response_model=list[ComputeProfileInfo])
+def _caller(req_context: Request, guard: Guard) -> tuple[str, str]:
+    """The (user_id, workspace_id) a compute request acts as.
+
+    Both come from the resolved workspace context. These used to arrive as
+    ``user_id`` query parameters, which meant any caller could name any user
+    and operate as them; the resource service scopes its lookups by that id,
+    so supplying someone else's was enough to list, start, and delete their
+    resources.
+    """
+    ctx = getattr(req_context.state, "workspace", None)
+    if ctx is None:
+        raise HTTPException(
+            status_code=400,
+            detail="No workspace context. Address this endpoint under /w/<workspace>.",
+        )
+    return str(guard.principal.id), str(ctx.workspace_id)
+
+
+def _require_compute(guard: Guard, db, resource_id: str, privilege: Privilege) -> None:
+    """Enforce ``privilege`` on a compute resource, excepting the default.
+
+    Every workspace is provisioned with one ``is_default`` compute resource
+    (see ``ensure_workspace_default_resources``), and it is what a notebook
+    attaches to when the user has not chosen anything. Requiring a grant on it
+    would mean no member could open a notebook until an admin granted
+    USE_COMPUTE one principal at a time — so the default is attachable by any
+    member of the workspace, which is what "default" already implied.
+
+    The exception covers attaching only. MANAGE on the default still needs a
+    real grant, so an ordinary member cannot delete the resource the whole
+    workspace depends on.
+    """
+    securable = Securable.compute(resource_id)
+    if privilege in (Privilege.BROWSE, Privilege.USE_COMPUTE) and _is_default_compute(
+        db, resource_id
+    ):
+        return
+    guard.require(privilege, securable)
+
+
+def _is_default_compute(db, resource_id: str) -> bool:
+    from app.models.compute_resources import ComputeResource
+
+    return bool(
+        db.query(ComputeResource.id)
+        .filter(
+            ComputeResource.id == resource_id,
+            ComputeResource.is_default.is_(True),
+        )
+        .first()
+    )
+
+
+#: Applied to the endpoints that report infrastructure state rather than a
+#: governed object. There is no securable to check — a profile list or a
+#: cluster health probe belongs to no one — but the answers describe the
+#: deployment's shape, so they are for members of a workspace rather than for
+#: anyone who can reach the port. Depending on ``get_guard`` is the check:
+#: it raises 401 without an identity and 400 without a workspace.
+_WORKSPACE_MEMBER = [Depends(get_guard)]
+
+
+@router.get(
+    "/profiles",
+    response_model=list[ComputeProfileInfo],
+    dependencies=_WORKSPACE_MEMBER,
+)
 def list_profiles(env: str = Query(default=None)):
     """Return all compute profiles for the current (or specified) environment."""
     target_env = env or compute_settings.COMPASSX_ENV
@@ -87,7 +156,7 @@ def list_profiles(env: str = Query(default=None)):
     ]
 
 
-@router.get("/health")
+@router.get("/health", dependencies=_WORKSPACE_MEMBER)
 def health_check():
     """Check Kubernetes connectivity."""
     def check_kubernetes() -> None:
@@ -125,7 +194,7 @@ def health_check():
 
 
 
-@router.get("/runtime")
+@router.get("/runtime", dependencies=_WORKSPACE_MEMBER)
 def runtime_info(req_context: Request):
     """Return the active platform profile and backend service URL."""
     from compassx.lookup import try_resolve_url
@@ -169,7 +238,11 @@ def _run_service_action_async(service_name: str, action: str, label: str, manage
         logger.exception("compute-service: %s %s failed", service_name, action)
 
 
-@router.get("/services", response_model=list[ComputeServiceInfo])
+@router.get(
+    "/services",
+    response_model=list[ComputeServiceInfo],
+    dependencies=_WORKSPACE_MEMBER,
+)
 def list_compute_services():
     """Return service status for compute dependencies."""
     services = [
@@ -226,7 +299,7 @@ def list_compute_services():
         executor.shutdown(wait=False, cancel_futures=True)
 
 
-@router.get("/services/port-forwards/status")
+@router.get("/services/port-forwards/status", dependencies=_WORKSPACE_MEMBER)
 def port_forward_status():
     """Port-forward lifecycle is now managed by the compassx CLI launcher."""
     return {
@@ -236,7 +309,7 @@ def port_forward_status():
     }
 
 
-@router.post("/services/port-forwards/recover")
+@router.post("/services/port-forwards/recover", dependencies=_WORKSPACE_MEMBER)
 async def recover_port_forwards():
     """Port-forward lifecycle is now managed by the compassx CLI launcher."""
     return {
@@ -246,8 +319,17 @@ async def recover_port_forwards():
 
 
 @router.post("/services/{service_name}/{action}", response_model=ComputeServiceInfo)
-def control_compute_service(service_name: str, action: str):
+def control_compute_service(
+    service_name: str,
+    action: str,
+    guard: Guard = Depends(get_guard),
+):
     """Start, stop, or restart a compute service."""
+    # MinIO, Enterprise Gateway, and Airflow are shared by the whole
+    # deployment; restarting one interrupts every workspace at once. There is
+    # no securable to grant on, so this sits with the workspace admin.
+    guard.require_workspace_admin(f"Controlling the {service_name} service")
+
     managers = {
         "minio": ("MinIO", get_minio_manager()),
         "enterprise-gateway": ("Enterprise Gateway", get_eg_manager()),
@@ -300,47 +382,66 @@ def control_compute_service(service_name: str, action: str):
 def create_compute_resource(
     req_context: Request,
     body: ComputeResourceRequest,
-    user_id: str = Query(...),
-    created_by: str = Query(...),
     db=Depends(get_system_db),
+    guard: Guard = Depends(get_guard),
 ):
     """Create a new compute resource configuration."""
-    workspace_id = getattr(req_context.state, "workspace", None) and req_context.state.workspace.workspace_id
+    user_id, workspace_id = _caller(req_context, guard)
+    # A compute resource has no parent securable to hold CREATE on, and each
+    # one reserves cluster capacity, so creation sits with the workspace
+    # admin rather than being open to every member.
+    guard.require_workspace_admin("Creating a compute resource")
     try:
         service = _service(req_context, db)
-        return service.create_resource(body, user_id, created_by, workspace_id=workspace_id)
+        resource = service.create_resource(
+            body, user_id, user_id, workspace_id=workspace_id
+        )
     except ValueError as exc:
         return _error("InvalidRequest", str(exc), 400)
     except Exception as exc:
         logger.exception("Error creating compute resource")
         return _error("InternalError", str(exc), 500)
 
+    guard.claim_ownership(Securable.compute(resource.id))
+    return resource
+
 
 @router.get("/resources", response_model=list[ComputeResourceStatus])
 def list_compute_resources(
     req_context: Request,
-    user_id: str = Query(...),
-    db=Depends(get_system_db)
+    db=Depends(get_system_db),
+    guard: Guard = Depends(get_guard),
 ):
-    """List all compute resources for a user."""
-    workspace_id = getattr(req_context.state, "workspace", None) and req_context.state.workspace.workspace_id
+    """List the compute resources in this workspace the caller may see."""
+    user_id, workspace_id = _caller(req_context, guard)
     try:
         service = _service(req_context, db)
-        return service.list_resources_with_status(user_id, workspace_id=workspace_id)
+        resources = service.list_resources_with_status(user_id, workspace_id=workspace_id)
     except Exception as exc:
         logger.exception("Error listing compute resources")
         return _error("InternalError", str(exc), 500)
+
+    # The service scopes by workspace, which is not the same as what this
+    # caller may see: resources created by other members are in the same
+    # workspace but are not necessarily theirs to browse. The workspace
+    # default is always listed — see _require_compute.
+    return [
+        r
+        for r in resources
+        if r.is_default or guard.can(Privilege.BROWSE, Securable.compute(r.id))
+    ]
 
 
 @router.get("/resources/{resource_id}", response_model=ComputeResourceStatus)
 def get_compute_resource_status(
     req_context: Request,
     resource_id: str,
-    user_id: str = Query(...),
     db=Depends(get_system_db),
+    guard: Guard = Depends(get_guard),
 ):
     """Get a compute resource with current pod status if running."""
-    workspace_id = getattr(req_context.state, "workspace", None) and req_context.state.workspace.workspace_id
+    user_id, workspace_id = _caller(req_context, guard)
+    _require_compute(guard, db, resource_id, Privilege.BROWSE)
     try:
         service = _service(req_context, db)
         return service.get_resource_with_status(resource_id, user_id, workspace_id=workspace_id)
@@ -355,11 +456,15 @@ def get_compute_resource_status(
 def delete_compute_resource(
     req_context: Request,
     resource_id: str,
-    user_id: str = Query(...),
     db=Depends(get_system_db),
+    guard: Guard = Depends(get_guard),
 ):
     """Delete a compute resource configuration."""
-    workspace_id = getattr(req_context.state, "workspace", None) and req_context.state.workspace.workspace_id
+    user_id, workspace_id = _caller(req_context, guard)
+    # Destroys a resource other notebooks may be attached to, so MANAGE
+    # rather than USE_COMPUTE — being allowed to run on something is not
+    # permission to take it away from everyone else.
+    guard.require(Privilege.MANAGE, Securable.compute(resource_id))
     try:
         service = _service(req_context, db)
         service.delete_resource(resource_id, user_id, workspace_id=workspace_id)
@@ -375,11 +480,12 @@ def delete_compute_resource(
 def start_compute_resource(
     req_context: Request,
     resource_id: str,
-    user_id: str = Query(...),
     db=Depends(get_system_db),
+    guard: Guard = Depends(get_guard),
 ):
     """Start a pod from a compute resource configuration."""
-    workspace_id = getattr(req_context.state, "workspace", None) and req_context.state.workspace.workspace_id
+    user_id, workspace_id = _caller(req_context, guard)
+    _require_compute(guard, db, resource_id, Privilege.USE_COMPUTE)
     try:
         service = _service(req_context, db)
         return service.start_resource(resource_id, user_id, workspace_id=workspace_id)
@@ -394,11 +500,16 @@ def start_compute_resource(
 def stop_compute_resource(
     req_context: Request,
     resource_id: str,
-    user_id: str = Query(...),
     db=Depends(get_system_db),
+    guard: Guard = Depends(get_guard),
 ):
     """Stop the running pod for a compute resource."""
-    workspace_id = getattr(req_context.state, "workspace", None) and req_context.state.workspace.workspace_id
+    user_id, workspace_id = _caller(req_context, guard)
+    # Stopping kills every kernel attached to the pod, including other
+    # people's. USE_COMPUTE is the right bar because anyone entitled to run
+    # here is equally exposed to the restart, and shared resources need to be
+    # recoverable without an admin.
+    _require_compute(guard, db, resource_id, Privilege.USE_COMPUTE)
     try:
         service = _service(req_context, db)
         service.stop_resource_pod(resource_id, user_id, workspace_id=workspace_id)
@@ -414,11 +525,16 @@ def stop_compute_resource(
 async def get_resource_logs(
     req_context: Request,
     resource_id: str,
-    user_id: str = Query(...),
     db=Depends(get_system_db),
+    guard: Guard = Depends(get_guard),
 ):
     """Stream pod logs for the running pod owned by a compute resource."""
-    workspace_id = getattr(req_context.state, "workspace", None) and req_context.state.workspace.workspace_id
+    user_id, workspace_id = _caller(req_context, guard)
+    # Pod logs carry whatever the workloads on it printed — query text, row
+    # samples, stack traces with data in them. That is the content of the
+    # work running there, not just its existence, so USE_COMPUTE rather than
+    # BROWSE.
+    _require_compute(guard, db, resource_id, Privilege.USE_COMPUTE)
     try:
         service = _service(req_context, db)
         resource = service.get_resource_with_status(resource_id, user_id, workspace_id=workspace_id)
@@ -464,14 +580,18 @@ async def get_resource_logs(
 def get_kernel_info(
     req_context: Request,
     resource_id: str,
-    user_id: str = Query(...),
     db=Depends(get_system_db),
+    guard: Guard = Depends(get_guard),
 ):
     """Return notebook kernel connection info for a running compute resource."""
     from kubernetes import stream as k8s_stream
     from kubernetes.client.exceptions import ApiException
 
-    workspace_id = getattr(req_context.state, "workspace", None) and req_context.state.workspace.workspace_id
+    user_id, workspace_id = _caller(req_context, guard)
+    # The response is a connection recipe — pod IP, kernelspec, and the env a
+    # kernel is launched with. Anyone holding it can attach to the pod, so it
+    # takes the same privilege as running there.
+    _require_compute(guard, db, resource_id, Privilege.USE_COMPUTE)
     service = _service(req_context, db)
     try:
         resource = service.get_resource_with_status(resource_id, user_id, workspace_id=workspace_id)
@@ -574,14 +694,15 @@ def get_kernel_info(
 def start_kernel_for_resource(
     req_context: Request,
     resource_id: str,
-    user_id: str = Query(...),
     db=Depends(get_system_db),
+    guard: Guard = Depends(get_guard),
 ):
     """Start an EG kernel for the running pod owned by a compute resource."""
     import httpx
     from services.enterprise_gateway.config import eg_settings
 
-    workspace_id = getattr(req_context.state, "workspace", None) and req_context.state.workspace.workspace_id
+    user_id, workspace_id = _caller(req_context, guard)
+    _require_compute(guard, db, resource_id, Privilege.USE_COMPUTE)
     service = _service(req_context, db)
     try:
         resource = service.get_resource_with_status(resource_id, user_id, workspace_id=workspace_id)

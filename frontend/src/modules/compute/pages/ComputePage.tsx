@@ -67,7 +67,7 @@ export default function ComputePage() {
   const fetchResources = useCallback(async () => {
     try {
 
-      const list = await computeApi.listResources(currentUserId);
+      const list = await computeApi.listResources();
       setResources(list);
 
     } catch (e) {
@@ -108,7 +108,7 @@ export default function ComputePage() {
   const handleCreateResource = useCallback(async (data) => {
     try {
       setLoadingId('creating');
-      await computeApi.createResource(data, currentUserId, 'current-user');
+      await computeApi.createResource(data);
       await fetchResources();
       setShowCreateModal(false);
     } finally {
@@ -119,7 +119,7 @@ export default function ComputePage() {
   const handleStartResource = useCallback(async (resourceId) => {
     try {
       setLoadingId(resourceId);
-      await computeApi.startResource(resourceId, currentUserId);
+      await computeApi.startResource(resourceId);
       await fetchResources();
     } catch (e) {
       console.error('[ComputePage] start resource error:', e);
@@ -131,7 +131,7 @@ export default function ComputePage() {
   const handleStopResource = useCallback(async (resourceId) => {
     try {
       setLoadingId(resourceId);
-      await computeApi.stopResource(resourceId, currentUserId);
+      await computeApi.stopResource(resourceId);
       await fetchResources();
     } catch (e) {
       console.error('[ComputePage] stop resource error:', e);
@@ -143,7 +143,7 @@ export default function ComputePage() {
   const handleDeleteResource = useCallback(async (resourceId) => {
     try {
       setLoadingId(resourceId);
-      await computeApi.deleteResource(resourceId, currentUserId);
+      await computeApi.deleteResource(resourceId);
       await fetchResources();
     } catch (e) {
       console.error('[ComputePage] delete resource error:', e);

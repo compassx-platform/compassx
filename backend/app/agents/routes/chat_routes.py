@@ -11,8 +11,10 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
+from app.agents.routes._authz import authorized_agent, authorized_session
 from app.database import SystemSessionLocal as SessionLocal, get_system_db as get_db
-from app.dependencies import get_current_user
+from app.governance.dependencies import Guard, get_guard
+from app.governance.privileges import Privilege
 from app.models.agents import Agent, ChatMessage, ChatSession
 from app.schemas.agents import (
     ChatMessageResponse,
@@ -41,15 +43,26 @@ def list_sessions(
     request: Request,
     agent_id: int,
     db: Session = Depends(get_db),
+    guard: Guard = Depends(get_guard),
 ):
-    workspace_id = getattr(request.state, "workspace", None) and request.state.workspace.workspace_id
-    _get_agent_or_404(db, agent_id, workspace_id)
-    query = db.query(ChatSession).filter(ChatSession.agent_id == agent_id, ChatSession.archived.is_(False))
-    if workspace_id:
-        query = query.filter(ChatSession.workspace_id == workspace_id)
-    else:
-        query = query.filter(ChatSession.workspace_id == None)
-    sessions = query.order_by(ChatSession.updated_at.desc()).all()
+    """List an agent's chat sessions, with a preview of the last message.
+
+    Sessions belong to the agent rather than to the person who opened them, so
+    BROWSE on the agent is what admits someone to the history. That is the
+    existing product behaviour — a shared workspace for the agent — made
+    explicit rather than changed.
+    """
+    _get_agent_or_404(db, agent_id, guard, Privilege.BROWSE)
+    sessions = (
+        db.query(ChatSession)
+        .filter(
+            ChatSession.agent_id == agent_id,
+            ChatSession.archived.is_(False),
+            ChatSession.workspace_id == guard.workspace_id,
+        )
+        .order_by(ChatSession.updated_at.desc())
+        .all()
+    )
 
     session_ids = [s.id for s in sessions]
     if not session_ids:
@@ -128,10 +141,17 @@ def create_session(
     agent_id: int,
     body: ChatSessionCreate,
     db: Session = Depends(get_db),
+    guard: Guard = Depends(get_guard),
 ):
-    workspace_id = getattr(request.state, "workspace", None) and request.state.workspace.workspace_id
-    _get_agent_or_404(db, agent_id, workspace_id)
-    session = ChatSession(workspace_id=workspace_id, agent_id=agent_id, title=body.title)
+    """Open a conversation with an agent.
+
+    EXECUTE, matching ``stream_chat``: a session exists to be run, and a
+    principal who may not run the agent has no use for an empty one.
+    """
+    _get_agent_or_404(db, agent_id, guard, Privilege.EXECUTE)
+    session = ChatSession(
+        workspace_id=guard.workspace_id, agent_id=agent_id, title=body.title
+    )
     db.add(session)
     db.commit()
     db.refresh(session)
@@ -144,9 +164,14 @@ def archive_session(
     agent_id: int,
     session_id: int,
     db: Session = Depends(get_db),
+    guard: Guard = Depends(get_guard),
 ):
-    workspace_id = getattr(request.state, "workspace", None) and request.state.workspace.workspace_id
-    session = _get_session_or_404(db, agent_id, session_id, workspace_id)
+    """Archive a session, hiding it from the session list.
+
+    EXECUTE: sessions are shared per agent, so whoever may run the agent may
+    tidy up the conversations on it. The history is retained, not deleted.
+    """
+    session = _get_session_or_404(db, agent_id, session_id, guard, Privilege.EXECUTE)
     session.archived = True
     db.commit()
 
@@ -157,9 +182,15 @@ def list_messages(
     agent_id: int,
     session_id: int,
     db: Session = Depends(get_db),
+    guard: Guard = Depends(get_guard),
 ):
-    workspace_id = getattr(request.state, "workspace", None) and request.state.workspace.workspace_id
-    _get_session_or_404(db, agent_id, session_id, workspace_id)
+    """Return a session's transcript.
+
+    Tool output is part of the transcript, so this can contain query results
+    the agent read on someone else's behalf — hence a real check rather than
+    the bare id lookup that used to be here.
+    """
+    _get_session_or_404(db, agent_id, session_id, guard, Privilege.BROWSE)
     return (
         db.query(ChatMessage)
         .filter(ChatMessage.session_id == session_id)
@@ -174,10 +205,15 @@ def get_session_context(
     agent_id: int,
     session_id: int,
     db: Session = Depends(get_db),
+    guard: Guard = Depends(get_guard),
 ):
-    workspace_id = getattr(request.state, "workspace", None) and request.state.workspace.workspace_id
-    agent = _get_agent_or_404(db, agent_id, workspace_id)
-    session = _get_session_or_404(db, agent_id, session_id, workspace_id)
+    """Report how much of the model's context window this session is using.
+
+    The response includes the rolling summary, which is a condensation of the
+    transcript — so it takes the same privilege as reading the transcript.
+    """
+    agent = _get_agent_or_404(db, agent_id, guard, Privilege.BROWSE)
+    session = _get_session_or_404(db, agent_id, session_id, guard, Privilege.BROWSE)
     llm_conn = _resolve_llm_connection(db, agent)
 
     context_window = resolve_model_context_window(llm_conn)
@@ -221,10 +257,10 @@ def list_session_plans(
     agent_id: int,
     session_id: int,
     db: Session = Depends(get_db),
+    guard: Guard = Depends(get_guard),
 ):
     """Return all stored plans for this session directly from PlanService."""
-    workspace_id = getattr(request.state, "workspace", None) and request.state.workspace.workspace_id
-    _get_session_or_404(db, agent_id, session_id, workspace_id)
+    _get_session_or_404(db, agent_id, session_id, guard, Privilege.BROWSE)
     from app.agents.services.agent.plan_service import PlanService
     ps = PlanService()
     plans = ps.get_plans_for_session(session_id)
@@ -237,10 +273,10 @@ def get_latest_session_plan(
     agent_id: int,
     session_id: int,
     db: Session = Depends(get_db),
+    guard: Guard = Depends(get_guard),
 ):
     """Return the most recent plan for this session directly from PlanService."""
-    workspace_id = getattr(request.state, "workspace", None) and request.state.workspace.workspace_id
-    _get_session_or_404(db, agent_id, session_id, workspace_id)
+    _get_session_or_404(db, agent_id, session_id, guard, Privilege.BROWSE)
     from app.agents.services.agent.plan_service import PlanService
     ps = PlanService()
     plan = ps.get_latest_plan_for_session(session_id)
@@ -254,12 +290,25 @@ async def stream_chat(
     session_id: int,
     body: SendMessageRequest,
     db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user),
+    guard: Guard = Depends(get_guard),
 ):
-    workspace_id = getattr(request.state, "workspace", None) and request.state.workspace.workspace_id
-    _get_agent_or_404(db, agent_id, workspace_id)
-    _get_session_or_404(db, agent_id, session_id, workspace_id)
-    user_id = current_user.get("id") or current_user.get("sub") or "default_user"
+    """Run a turn of the agent and stream the result.
+
+    EXECUTE is the consequential privilege in this module. A turn runs tools
+    under the agent's own service identity, so granting it delegates whatever
+    data that identity can reach — it is never inferred from BROWSE.
+
+    The agent's reach is capped by its owner's at resolution time (see
+    ``load_agent_permission_set``), so EXECUTE cannot be used to read through
+    an agent what the person responsible for it could not read.
+    """
+    _get_agent_or_404(db, agent_id, guard, Privilege.EXECUTE)
+    _get_session_or_404(db, agent_id, session_id, guard, Privilege.EXECUTE)
+    workspace_id = guard.workspace_id
+    # The identity the turn runs as comes from the resolved principal, not from
+    # a token payload field that may be absent — "default_user" was a real
+    # fallback, and it is nobody.
+    user_id = str(guard.principal.id)
 
     stream_id = stream_registry.start(
         kind="agent",
@@ -335,25 +384,23 @@ async def stream_chat(
     )
 
 
-def _get_agent_or_404(db: Session, agent_id: int, workspace_id: str | None = None) -> Agent:
-    query = db.query(Agent).filter(Agent.id == agent_id)
-    if workspace_id:
-        query = query.filter(Agent.workspace_id == workspace_id)
-    else:
-        query = query.filter(Agent.workspace_id == None)
-    agent = query.first()
-    if not agent:
-        raise HTTPException(404, "Agent not found")
-    return agent
+def _get_agent_or_404(db: Session, agent_id: int, guard: Guard, privilege: Privilege) -> Agent:
+    """Load an agent the caller holds ``privilege`` on.
+
+    The workspace comes from the guard. The previous version fell back to
+    ``Agent.workspace_id == None`` when no workspace was resolved, so an
+    unscoped request reached the workspace-less agents instead of being
+    refused.
+    """
+    return authorized_agent(db, guard, agent_id, privilege)
 
 
-def _get_session_or_404(db: Session, agent_id: int, session_id: int, workspace_id: str | None = None) -> ChatSession:
-    query = db.query(ChatSession).filter(ChatSession.id == session_id, ChatSession.agent_id == agent_id)
-    if workspace_id:
-        query = query.filter(ChatSession.workspace_id == workspace_id)
-    else:
-        query = query.filter(ChatSession.workspace_id == None)
-    session = query.first()
-    if not session:
-        raise HTTPException(404, "Session not found")
-    return session
+def _get_session_or_404(
+    db: Session, agent_id: int, session_id: int, guard: Guard, privilege: Privilege
+) -> ChatSession:
+    """Load a session, having authorised the agent that owns it.
+
+    Sessions carry no grants of their own: a session is a conversation with an
+    agent, so the agent is the securable.
+    """
+    return authorized_session(db, guard, agent_id, session_id, privilege)

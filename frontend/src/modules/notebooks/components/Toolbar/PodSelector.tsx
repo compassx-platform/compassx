@@ -72,7 +72,7 @@ export default function PodSelector() {
         setError('No authenticated user is available. Please sign in again.');
         return;
       }
-      const list = await computeApi.listResources(currentUserId);
+      const list = await computeApi.listResources();
       const currentResources = (Array.isArray(list) ? list : []) as ResourcePod[];
       setResources(currentResources);
 
@@ -118,7 +118,7 @@ export default function PodSelector() {
     setSelectedPod(startingPod);
 
     try {
-      const kernelResp = await computeApi.startResourceKernel(resource.id, currentUserId) as KernelStartResponse;
+      const kernelResp = await computeApi.startResourceKernel(resource.id) as KernelStartResponse;
       const connectedPod: SelectedPod = {
         ...startingPod,
         kernel_id: kernelResp.id,

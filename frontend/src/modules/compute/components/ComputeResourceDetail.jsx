@@ -145,7 +145,7 @@ export default function ComputeResourceDetail({ resource, onClose }) {
           <div style={{ padding: '24px', flex: 1, display: 'flex', flexDirection: 'column' }}>
             <h2 style={{ margin: '0 0 16px', fontSize: '15px', fontWeight: 600 }}>Pod Logs</h2>
             <div style={{ flex: 1, minHeight: 0 }}>
-              <JobLogViewer resourceId={resource.id} userId={resource.user_id} />
+              <JobLogViewer resourceId={resource.id} />
             </div>
           </div>
         ) : tab === 'logs' ? (

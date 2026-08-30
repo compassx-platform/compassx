@@ -17,6 +17,7 @@ Dashboard routes (prefix: /api/v1/dashboards):
 """
 import csv
 import io
+import re
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
@@ -27,6 +28,9 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.database import get_account_db as get_db, get_system_db
+from app.governance.dependencies import Guard, get_guard
+from app.governance.privileges import Privilege
+from app.governance.securable import Securable
 from app.models.dashboard import Dashboard
 from app.sql_warehouse.models import SqlWarehouse
 from app.sql_warehouse.query.executor import QueryExecutor
@@ -67,17 +71,87 @@ def _to_full(d: Dashboard) -> dict:
     }
 
 
-def _get_or_404(db: Session, dashboard_id: str) -> Dashboard:
+def _securable(db: Session, dashboard_id: str) -> Securable:
+    """The catalog path a dashboard is governed at.
+
+    A ``Dashboard`` row is only the stored document; the governed object is
+    its registration in the catalog, which is what carries the
+    catalog.schema.name path that grants address. A dashboard that has no
+    registration cannot be reasoned about, so it is treated as absent rather
+    than as ungoverned — otherwise the gap in metadata would be the way past
+    the check.
+    """
+    from app.catalog.models import UnifiedCatalogDashboard
+
+    uc = (
+        db.query(UnifiedCatalogDashboard)
+        .filter(UnifiedCatalogDashboard.dashboard_id == dashboard_id)
+        .first()
+    )
+    if not uc:
+        raise HTTPException(status_code=404, detail="Dashboard not found")
+    return Securable.dashboard(uc.catalog_name, uc.schema_name, uc.name)
+
+
+def _authorized_dashboard(
+    db: Session, guard: Guard, dashboard_id: str, privilege: Privilege
+) -> Dashboard:
+    """Load a dashboard the caller holds ``privilege`` on, or raise."""
     d = db.query(Dashboard).filter(Dashboard.id == dashboard_id).first()
     if not d:
         raise HTTPException(status_code=404, detail="Dashboard not found")
+    guard.require(privilege, _securable(db, dashboard_id))
     return d
 
 
-def _find_dataset(d: Dashboard, dataset_id: str) -> dict:
-    for ds in (d.datasets or []):
-        if ds.get("id") == dataset_id:
-            return ds
+def _bind_params(sql: str, params: Dict[str, Any]) -> str:
+    """Substitute ``:name`` placeholders with SQL literals.
+
+    Values are quoted and escaped rather than pasted in raw. The previous
+    ``sql.replace(f":{key}", str(val))`` meant a filter value of
+    ``' OR 1=1 --`` rewrote the dataset's query, so any dashboard viewer could
+    read any table the warehouse could reach.
+
+    Substitution happens here rather than through driver bind parameters
+    because the SQL is sent as text to a warehouse engine that does not accept
+    a parameter list.
+    """
+    for key, val in (params or {}).items():
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", str(key)):
+            raise HTTPException(status_code=400, detail=f"Invalid parameter name: {key}")
+        sql = sql.replace(f":{key}", _sql_literal(val))
+    return sql
+
+
+def _sql_literal(val: Any) -> str:
+    if val is None:
+        return "NULL"
+    if isinstance(val, bool):
+        return "TRUE" if val else "FALSE"
+    if isinstance(val, (int, float)):
+        return repr(val)
+    if isinstance(val, (list, tuple)):
+        return ", ".join(_sql_literal(v) for v in val)
+    return "'" + str(val).replace("'", "''") + "'"
+
+
+def _authorized_dataset(
+    db: Session, guard: Guard, dataset_id: str
+) -> tuple[dict, str]:
+    """Find a dataset by id, in a dashboard the caller may browse.
+
+    Dataset ids are searched across every dashboard, so the search itself is
+    the access decision: without this, quoting any dataset id ran its SQL —
+    and dataset SQL reads warehouse tables. Dashboards the caller cannot
+    BROWSE are skipped rather than refused, so the id of a dashboard they
+    cannot see is indistinguishable from one that does not exist.
+    """
+    for d in db.query(Dashboard).all():
+        for ds in (d.datasets or []):
+            if ds.get("id") != dataset_id:
+                continue
+            guard.require(Privilege.BROWSE, _securable(db, d.id))
+            return ds, d.id
     raise HTTPException(status_code=404, detail="Dataset not found")
 
 
@@ -140,87 +214,134 @@ async def _run_dashboard_sql(
 
 # ── Dashboard CRUD ────────────────────────────────────────────────────────────
 
-def _register_dashboard_in_default_catalog(db: Session, workspace_id: str, dashboard_id: str, name: str, actor: str | None) -> None:
-    from app.catalog.models import UnifiedCatalog, UnifiedCatalogSchema, UnifiedCatalogDashboard, CatalogWorkspaceBinding
-    
-    # 1. Find default catalog bound to this workspace
+def _default_schema(db: Session, guard: Guard, workspace_id: str):
+    """Resolve the catalog schema a new dashboard is registered under.
+
+    Returns the schema, having first checked that the caller may CREATE in
+    it. Provisioning a catalog or schema that does not exist yet is an admin
+    action — a member who may add a dashboard to an existing schema is not
+    thereby entitled to bring new containers into being.
+    """
+    from app.catalog.models import UnifiedCatalog, UnifiedCatalogSchema, CatalogWorkspaceBinding
+
     binding = (
         db.query(CatalogWorkspaceBinding)
         .filter(CatalogWorkspaceBinding.workspace_id == workspace_id)
         .order_by(CatalogWorkspaceBinding.is_default.desc())
         .first()
     )
-    
-    catalog = None
-    if binding:
-        catalog = db.query(UnifiedCatalog).filter(UnifiedCatalog.id == binding.catalog_id).first()
-    else:
-        # Fallback: get any catalog bound to this workspace or available to all
-        binding = (
-            db.query(CatalogWorkspaceBinding)
-            .filter(CatalogWorkspaceBinding.workspace_id == workspace_id)
-            .first()
-        )
-        if binding:
-            catalog = db.query(UnifiedCatalog).filter(UnifiedCatalog.id == binding.catalog_id).first()
-        else:
-            catalog = db.query(UnifiedCatalog).filter(UnifiedCatalog.all_workspaces == True).first()
-            
+    catalog = (
+        db.query(UnifiedCatalog).filter(UnifiedCatalog.id == binding.catalog_id).first()
+        if binding
+        else db.query(UnifiedCatalog).filter(UnifiedCatalog.all_workspaces.is_(True)).first()
+    )
+
     if not catalog:
-        # If no catalog exists at all, create a default workspace catalog
+        guard.require_workspace_admin("Creating the workspace catalog")
         catalog = UnifiedCatalog(
             name=f"workspace_catalog_{workspace_id[:8]}",
             catalog_type="postgres",
             database_name="postgres",
             all_workspaces=False,
-            created_by=actor or "system",
+            created_by=guard.principal.id,
         )
         db.add(catalog)
         db.flush()
-        
-        # Bind it
-        binding = CatalogWorkspaceBinding(
-            catalog_id=catalog.id,
-            workspace_id=workspace_id,
-            is_default=True,
+        db.add(
+            CatalogWorkspaceBinding(
+                catalog_id=catalog.id, workspace_id=workspace_id, is_default=True
+            )
         )
-        db.add(binding)
         db.flush()
-        
-    # 2. Find or create a schema in this catalog
-    schema = db.query(UnifiedCatalogSchema).filter(UnifiedCatalogSchema.catalog_id == catalog.id).first()
+
+    schema = (
+        db.query(UnifiedCatalogSchema)
+        .filter(UnifiedCatalogSchema.catalog_id == catalog.id)
+        .first()
+    )
     if not schema:
+        guard.require_workspace_admin("Creating the default schema")
         schema = UnifiedCatalogSchema(
-            catalog_id=catalog.id,
-            name="default",
-            created_by=actor or "system",
+            catalog_id=catalog.id, name="default", created_by=guard.principal.id
         )
         db.add(schema)
         db.flush()
-        
-    # 3. Create UnifiedCatalogDashboard
-    catalog_dashboard = UnifiedCatalogDashboard(
-        schema_id=schema.id,
-        catalog_name=catalog.name,
-        schema_name=schema.name,
-        name=name,
-        dashboard_id=dashboard_id,
-        owner=actor,
-        created_by=actor or "system",
-        updated_by=actor or "system",
+
+    guard.require(Privilege.CREATE, Securable.schema_(catalog.name, schema.name))
+    return catalog, schema
+
+
+def _rename_registration(
+    db: Session, guard: Guard, dashboard_id: str, new_name: str
+) -> None:
+    """Rename the catalog entry and carry its grants to the new path.
+
+    Grants address a dashboard as catalog.schema.name, so renaming without
+    relocating would silently revoke everyone who had access while still
+    showing their grants in the UI.
+    """
+    from app.catalog.models import UnifiedCatalogDashboard
+
+    uc = (
+        db.query(UnifiedCatalogDashboard)
+        .filter(UnifiedCatalogDashboard.dashboard_id == dashboard_id)
+        .first()
     )
-    db.add(catalog_dashboard)
+    if not uc:
+        return
+    old = Securable.dashboard(uc.catalog_name, uc.schema_name, uc.name)
+    uc.name = new_name
+    uc.updated_by = guard.principal.id
     db.flush()
+    guard.relocate(old, Securable.dashboard(uc.catalog_name, uc.schema_name, new_name))
+
+
+def _register_dashboard(
+    db: Session, catalog, schema, dashboard_id: str, name: str, actor: str
+) -> Securable:
+    from app.catalog.models import UnifiedCatalogDashboard
+
+    db.add(
+        UnifiedCatalogDashboard(
+            schema_id=schema.id,
+            catalog_name=catalog.name,
+            schema_name=schema.name,
+            name=name,
+            dashboard_id=dashboard_id,
+            owner=actor,
+            created_by=actor,
+            updated_by=actor,
+        )
+    )
+    db.flush()
+    return Securable.dashboard(catalog.name, schema.name, name)
 
 
 @router.get("")
-def list_dashboards(request: Request, db: Session = Depends(get_db)):
+def list_dashboards(
+    request: Request,
+    db: Session = Depends(get_db),
+    guard: Guard = Depends(get_guard),
+):
     from app.catalog.models import UnifiedCatalogDashboard
 
     dashboards = db.query(Dashboard).order_by(Dashboard.updated_at.desc()).all()
     uc_dashboards = db.query(UnifiedCatalogDashboard).filter(UnifiedCatalogDashboard.dashboard_id.isnot(None)).all()
     uc_map = {uc.dashboard_id: uc for uc in uc_dashboards}
-    return [_to_meta(d, uc_map.get(d.id)) for d in dashboards]
+    # Unregistered dashboards have no catalog path and therefore no grants;
+    # they are excluded rather than shown to everyone.
+    visible = [
+        d
+        for d in dashboards
+        if d.id in uc_map
+        and guard.can(
+            Privilege.BROWSE,
+            Securable.dashboard(
+                uc_map[d.id].catalog_name, uc_map[d.id].schema_name, uc_map[d.id].name
+            ),
+        )
+    ]
+    return [_to_meta(d, uc_map.get(d.id)) for d in visible]
 
 
 
@@ -231,12 +352,21 @@ class CreateBody(BaseModel):
 
 
 @router.post("", status_code=201)
-def create_dashboard(request: Request, body: CreateBody, db: Session = Depends(get_db)):
+def create_dashboard(
+    request: Request,
+    body: CreateBody,
+    db: Session = Depends(get_db),
+    guard: Guard = Depends(get_guard),
+):
     dash_id = str(uuid.uuid4())
     first_page_id = str(uuid.uuid4())
-    actor = _principal_id(request)
-    workspace_id = _workspace_id(request)
-    
+    actor = guard.principal.id
+    workspace_id = guard.workspace_id
+    # Resolve and authorise the destination schema before writing anything:
+    # a dashboard that cannot be registered has no catalog path, and an
+    # object with no path is one no grant can ever reach.
+    catalog, schema = _default_schema(db, guard, workspace_id)
+
     d = Dashboard(
         id=dash_id,
         name=body.name,
@@ -257,10 +387,10 @@ def create_dashboard(request: Request, body: CreateBody, db: Session = Depends(g
     )
     db.add(d)
     db.flush()
-    
-    if workspace_id:
-        _register_dashboard_in_default_catalog(db, workspace_id, dash_id, body.name, actor)
-        
+
+    securable = _register_dashboard(db, catalog, schema, dash_id, body.name, actor)
+    guard.claim_ownership(securable)
+
     db.commit()
     db.refresh(d)
     return _to_full(d)
@@ -274,31 +404,27 @@ async def query_dataset(
     body: Dict[str, Any] | None = None,
     db: Session = Depends(get_db),
     system_db: Session = Depends(get_system_db),
+    guard: Guard = Depends(get_guard),
 ):
     """Run dataset SQL through the SQL warehouse engine and return rows."""
     payload = body or {}
 
-    # Find the dataset across all dashboards
-    dataset = None
-    dashboard_id = None
-    for d in db.query(Dashboard).all():
-        for ds in (d.datasets or []):
-            if ds.get("id") == dataset_id:
-                dataset = ds
-                dashboard_id = d.id
-                break
-        if dataset:
-            break
+    dataset, dashboard_id = _authorized_dataset(db, guard, dataset_id)
 
-    sql = (payload.get("sql") or (dataset.get("sql") if dataset else "") or "").strip()
-    if not dataset and not sql:
-        raise HTTPException(status_code=404, detail="Dataset not found")
+    # The dataset editor previews SQL before it is saved, so an override is
+    # accepted — but only from someone who could have saved it and run it
+    # anyway. Without this check, a viewer could pass any SQL they liked and
+    # the dataset id was decoration on an open query runner.
+    override = (payload.get("sql") or "").strip()
+    if override:
+        guard.require(Privilege.EDIT, _securable(db, dashboard_id))
+        sql = override
+    else:
+        sql = (dataset.get("sql") or "").strip()
     if not sql:
         raise HTTPException(status_code=400, detail="Dataset has no SQL defined")
 
-    params = payload.get("params", {})
-    for key, val in params.items():
-        sql = sql.replace(f":{key}", str(val) if val is not None else "NULL")
+    sql = _bind_params(sql, payload.get("params", {}))
 
     warehouse_id = payload.get("warehouse_id")
     try:
@@ -321,21 +447,10 @@ async def dataset_schema(
     request: Request,
     db: Session = Depends(get_db),
     system_db: Session = Depends(get_system_db),
+    guard: Guard = Depends(get_guard),
 ):
     """Return column schema for a dataset by running a zero-row warehouse query."""
-    dataset = None
-    dashboard_id = None
-    for d in db.query(Dashboard).all():
-        for ds in (d.datasets or []):
-            if ds.get("id") == dataset_id:
-                dataset = ds
-                dashboard_id = d.id
-                break
-        if dataset:
-            break
-
-    if not dataset:
-        raise HTTPException(status_code=404, detail="Dataset not found")
+    dataset, dashboard_id = _authorized_dataset(db, guard, dataset_id)
 
     if dataset.get("schema"):
         return dataset["schema"]
@@ -365,21 +480,10 @@ async def export_dataset(
     format: str = Query("csv", pattern="^(csv|tsv|excel)$"),
     db: Session = Depends(get_db),
     system_db: Session = Depends(get_system_db),
+    guard: Guard = Depends(get_guard),
 ):
     """Download dataset result as CSV/TSV/Excel using the warehouse engine."""
-    dataset = None
-    dashboard_id = None
-    for d in db.query(Dashboard).all():
-        for ds in (d.datasets or []):
-            if ds.get("id") == dataset_id:
-                dataset = ds
-                dashboard_id = d.id
-                break
-        if dataset:
-            break
-
-    if not dataset:
-        raise HTTPException(status_code=404, detail="Dataset not found")
+    dataset, dashboard_id = _authorized_dataset(db, guard, dataset_id)
 
     sql = dataset.get("sql", "").strip()
     if not sql:
@@ -445,28 +549,21 @@ async def field_values(
     field: str = Query(...),
     db: Session = Depends(get_db),
     system_db: Session = Depends(get_system_db),
+    guard: Guard = Depends(get_guard),
 ):
     """Return distinct values for a field in the dataset."""
-    dataset = None
-    dashboard_id = None
-    for d in db.query(Dashboard).all():
-        for ds in (d.datasets or []):
-            if ds.get("id") == dataset_id:
-                dataset = ds
-                dashboard_id = d.id
-                break
-        if dataset:
-            break
-
-    if not dataset:
-        raise HTTPException(status_code=404, detail="Dataset not found")
+    dataset, dashboard_id = _authorized_dataset(db, guard, dataset_id)
 
     sql = dataset.get("sql", "").strip()
     if not sql:
         return []
 
-    safe_field = field.replace('"', '')
-    distinct_sql = f'SELECT DISTINCT "{safe_field}" FROM ({sql}) _q WHERE "{safe_field}" IS NOT NULL ORDER BY 1 LIMIT 1000'
+    # ``field`` is interpolated into the query as an identifier, so it is
+    # restricted to identifier characters. Stripping double quotes was not
+    # enough: a backslash or a comment sequence still escaped the position.
+    if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_ ]*", field):
+        raise HTTPException(status_code=400, detail="Invalid field name")
+    distinct_sql = f'SELECT DISTINCT "{field}" FROM ({sql}) _q WHERE "{field}" IS NOT NULL ORDER BY 1 LIMIT 1000'
     try:
         result = await _run_dashboard_sql(
             request,
@@ -488,8 +585,12 @@ async def field_values(
 
 
 @router.get("/{dashboard_id}")
-def get_dashboard(dashboard_id: str, db: Session = Depends(get_db)):
-    d = _get_or_404(db, dashboard_id)
+def get_dashboard(
+    dashboard_id: str,
+    db: Session = Depends(get_db),
+    guard: Guard = Depends(get_guard),
+):
+    d = _authorized_dashboard(db, guard, dashboard_id, Privilege.BROWSE)
     return _to_full(d)
 
 
@@ -504,8 +605,15 @@ class SaveBody(BaseModel):
 
 
 @router.put("/{dashboard_id}")
-def save_dashboard(dashboard_id: str, body: SaveBody, db: Session = Depends(get_db)):
-    d = _get_or_404(db, dashboard_id)
+def save_dashboard(
+    dashboard_id: str,
+    body: SaveBody,
+    db: Session = Depends(get_db),
+    guard: Guard = Depends(get_guard),
+):
+    d = _authorized_dashboard(db, guard, dashboard_id, Privilege.EDIT)
+    if body.name is not None and body.name != d.name:
+        _rename_registration(db, guard, dashboard_id, body.name)
     if body.name is not None:
         d.name = body.name
     if body.pages is not None:
@@ -526,8 +634,12 @@ def save_dashboard(dashboard_id: str, body: SaveBody, db: Session = Depends(get_
 
 
 @router.delete("/{dashboard_id}", status_code=204)
-def delete_dashboard(dashboard_id: str, db: Session = Depends(get_db)):
-    d = _get_or_404(db, dashboard_id)
+def delete_dashboard(
+    dashboard_id: str,
+    db: Session = Depends(get_db),
+    guard: Guard = Depends(get_guard),
+):
+    d = _authorized_dashboard(db, guard, dashboard_id, Privilege.MANAGE)
     from app.catalog.models import UnifiedCatalogDashboard
     db.query(UnifiedCatalogDashboard).filter(UnifiedCatalogDashboard.dashboard_id == dashboard_id).delete()
     db.delete(d)
@@ -535,8 +647,12 @@ def delete_dashboard(dashboard_id: str, db: Session = Depends(get_db)):
 
 
 @router.post("/{dashboard_id}/publish")
-def publish_dashboard(dashboard_id: str, db: Session = Depends(get_db)):
-    d = _get_or_404(db, dashboard_id)
+def publish_dashboard(
+    dashboard_id: str,
+    db: Session = Depends(get_db),
+    guard: Guard = Depends(get_guard),
+):
+    d = _authorized_dashboard(db, guard, dashboard_id, Privilege.EDIT)
     d.is_draft = False
     d.published_at = datetime.now(timezone.utc)
     db.commit()
@@ -545,9 +661,13 @@ def publish_dashboard(dashboard_id: str, db: Session = Depends(get_db)):
 
 
 @router.post("/{dashboard_id}/discard")
-def discard_draft(dashboard_id: str, db: Session = Depends(get_db)):
+def discard_draft(
+    dashboard_id: str,
+    db: Session = Depends(get_db),
+    guard: Guard = Depends(get_guard),
+):
     """Discard draft edits — resets is_draft to True (no snapshot store for v1)."""
-    d = _get_or_404(db, dashboard_id)
+    d = _authorized_dashboard(db, guard, dashboard_id, Privilege.EDIT)
     d.is_draft = True
     db.commit()
     db.refresh(d)
@@ -555,11 +675,19 @@ def discard_draft(dashboard_id: str, db: Session = Depends(get_db)):
 
 
 @router.post("/{dashboard_id}/clone")
-def clone_dashboard(request: Request, dashboard_id: str, db: Session = Depends(get_db)):
-    src = _get_or_404(db, dashboard_id)
+def clone_dashboard(
+    request: Request,
+    dashboard_id: str,
+    db: Session = Depends(get_db),
+    guard: Guard = Depends(get_guard),
+):
+    # A clone copies the source's widgets and dataset SQL verbatim into an
+    # object the caller will own, so it discloses everything BROWSE does —
+    # and no more. The destination is authorised separately below.
+    src = _authorized_dashboard(db, guard, dashboard_id, Privilege.BROWSE)
     new_id = str(uuid.uuid4())
-    actor = _principal_id(request)
-    workspace_id = _workspace_id(request)
+    actor = guard.principal.id
+    catalog, schema = _default_schema(db, guard, guard.workspace_id)
 
     import copy
     new_pages = copy.deepcopy(src.pages or [])
@@ -599,8 +727,10 @@ def clone_dashboard(request: Request, dashboard_id: str, db: Session = Depends(g
     db.add(clone)
     db.flush()
 
-    if workspace_id:
-        _register_dashboard_in_default_catalog(db, workspace_id, new_id, f"{src.name} (copy)", actor)
+    securable = _register_dashboard(
+        db, catalog, schema, new_id, f"{src.name} (copy)", actor
+    )
+    guard.claim_ownership(securable)
 
     db.commit()
     db.refresh(clone)
@@ -617,8 +747,9 @@ def update_page_layout(
     page_id: str,
     body: LayoutBody,
     db: Session = Depends(get_db),
+    guard: Guard = Depends(get_guard),
 ):
-    d = _get_or_404(db, dashboard_id)
+    d = _authorized_dashboard(db, guard, dashboard_id, Privilege.EDIT)
     pages = d.pages or []
     found = False
     for page in pages:

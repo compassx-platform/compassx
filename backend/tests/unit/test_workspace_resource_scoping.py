@@ -26,6 +26,22 @@ def _mock_request(workspace_id: str) -> Request:
     return request
 
 
+def _permissive_guard(principal_id: str) -> MagicMock:
+    """A guard that allows everything, acting as ``principal_id``.
+
+    This test is about workspace scoping, not access control — that is
+    covered by the governance suite. Calling the handlers directly bypasses
+    FastAPI's dependency injection, so the guard has to be supplied by hand.
+    """
+    guard = MagicMock()
+    guard.principal.id = principal_id
+    guard.require.return_value = None
+    guard.require_workspace_admin.return_value = None
+    guard.can.return_value = True
+    guard.claim_ownership.return_value = None
+    return guard
+
+
 def test_resource_scoping_isolation(db_session: Session):
     # Setup accounts and principal
     account = Account(id=str(uuid4()), name="Test Account", slug="testaccount")
@@ -121,15 +137,16 @@ def test_resource_scoping_isolation(db_session: Session):
         profile=ComputeProfileId.LOCAL,
         description="Compute resource in WS1",
     )
-    create_compute_resource(req1, body_compute, user_id=principal.id, created_by=principal.id, db=db_session)
+    guard = _permissive_guard(principal.id)
+    create_compute_resource(req1, body_compute, db=db_session, guard=guard)
 
     # List compute under ws1 context
-    ws1_computes = list_compute_resources(req1, user_id=principal.id, db=db_session)
+    ws1_computes = list_compute_resources(req1, db=db_session, guard=guard)
     assert len(ws1_computes) == 1
     assert ws1_computes[0].name == "WS1 Compute"
 
     # List compute under ws2 context
-    ws2_computes = list_compute_resources(req2, user_id=principal.id, db=db_session)
+    ws2_computes = list_compute_resources(req2, db=db_session, guard=guard)
     assert len(ws2_computes) == 0
 
     # 4. Scope SQL Warehouses
