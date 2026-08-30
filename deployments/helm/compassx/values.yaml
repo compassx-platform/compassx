@@ -364,7 +364,7 @@ prometheus:
   image:
     repository: prom/prometheus
     pullPolicy: IfNotPresent
-    tag: "v0.3.0"
+    tag: "v0.4.0"
 
   service:
     type: ClusterIP
