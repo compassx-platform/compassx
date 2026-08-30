@@ -34,6 +34,11 @@ spec:
             - airflow
             - scheduler
           env:
+            - name: PG_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "compassx.postgresSecretName" . }}
+                  key: {{ include "compassx.postgresSecretKey" . }}
             - name: AIRFLOW__CORE__EXECUTOR
               value: "LocalExecutor"
             - name: AIRFLOW__CORE__LOAD_EXAMPLES
@@ -42,11 +47,6 @@ spec:
               value: "false"
             - name: AIRFLOW__DATABASE__SQL_ALCHEMY_CONN
               value: {{ printf "postgresql+psycopg2://%s:$(PG_PASSWORD)@%s:%v/airflow_meta?sslmode=require" (include "compassx.postgresUser" .) (include "compassx.postgresHost" .) (include "compassx.postgresPort" .) | quote }}
-            - name: PG_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: {{ include "compassx.postgresSecretName" . }}
-                  key: {{ include "compassx.postgresSecretKey" . }}
             - name: COMPASSX_SYSTEM_DB_URL
               value: {{ printf "postgresql://%s:$(PG_PASSWORD)@%s:%v/compassx_system?sslmode=require" (include "compassx.postgresUser" .) (include "compassx.postgresHost" .) (include "compassx.postgresPort" .) | quote }}
             - name: COMPASSX_BACKEND_URL
