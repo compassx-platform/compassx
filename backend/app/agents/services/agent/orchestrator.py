@@ -290,8 +290,48 @@ async def orchestrate_stream(
         yield {"type": "error", "message": "Agent not found"}
         return
 
+    # ── Persist user message immediately ──────────────────────────────────────
+    user_msg_id = None
+    if not sandbox:
+        user_msg = ChatMessage(
+            session_id=session_id,
+            role=MessageRole.user,
+            content=user_content,
+            agent_name=None,
+            invocation_depth=0,
+        )
+        db.add(user_msg)
+        db.commit()
+        db.refresh(user_msg)
+        user_msg_id = user_msg.id
+
+    def _record_error(err_text: str) -> int | None:
+        if not sandbox:
+            try:
+                asst_err = ChatMessage(
+                    session_id=session_id,
+                    role=MessageRole.assistant,
+                    content=f"⚠️ **Error**: {err_text}",
+                    agent_name=agent.name if agent else "System",
+                    agent_color=agent.color if agent else None,
+                    invocation_depth=0,
+                )
+                db.add(asst_err)
+                db.commit()
+                return asst_err.id
+            except Exception as dbe:
+                logger.error("Failed to record error message in chat history: %s", dbe)
+                try:
+                    db.rollback()
+                except Exception:
+                    pass
+        return None
+
     if agent.status == "paused":
-        yield {"type": "error", "message": "Agent is paused due to budget exhaustion or admin action."}
+        err_msg = "Agent is paused due to budget exhaustion or admin action."
+        err_id = _record_error(err_msg)
+        yield {"type": "error", "message": err_msg}
+        yield {"type": "done", "usage": {}, "session_id": session_id, "message_id": err_id}
         return
 
     from app.agents.services.budget_service import check_budget, BudgetExceededError
@@ -304,7 +344,10 @@ async def orchestrate_stream(
     try:
         check_budget(db, "agent", str(agent.id), workspace_id)
     except BudgetExceededError as e:
-        yield {"type": "error", "message": str(e)}
+        err_msg = str(e)
+        err_id = _record_error(err_msg)
+        yield {"type": "error", "message": err_msg}
+        yield {"type": "done", "usage": {}, "session_id": session_id, "message_id": err_id}
         return
     except Exception as e:
         logger.error("Budget check failed for agent %s: %s", agent.id, e)
@@ -313,26 +356,26 @@ async def orchestrate_stream(
         except Exception:
             pass
 
-    llm_connection = _resolve_llm_connection(db, agent, llm_connection_id)
+    try:
+        llm_connection = _resolve_llm_connection(db, agent, llm_connection_id)
+    except Exception as exc:
+        err_msg = f"Failed resolving LLM connection: {str(exc)}"
+        err_id = _record_error(err_msg)
+        yield {"type": "error", "message": err_msg}
+        yield {"type": "done", "usage": {}, "session_id": session_id, "message_id": err_id}
+        return
+
     if not llm_connection:
-        yield {"type": "error", "message": "No LLM connection configured"}
+        err_msg = "No LLM connection configured. Please assign a model connection in Agent Settings."
+        err_id = _record_error(err_msg)
+        yield {"type": "error", "message": err_msg}
+        yield {"type": "done", "usage": {}, "session_id": session_id, "message_id": err_id}
         return
 
     # ── Manual Compaction Command Trigger (Spec D9) ───────────────────────────
     is_manual_compact = user_content.strip().lower() in ("/compact", "/compact now", "/compact_history")
     if is_manual_compact:
         assistant_msg_id = None
-        if not sandbox:
-            user_msg = ChatMessage(
-                session_id=session_id,
-                role=MessageRole.user,
-                content=user_content,
-                agent_name=None,
-                invocation_depth=0,
-            )
-            db.add(user_msg)
-            db.commit()
-
         new_summary, retained_turns = await compact_session_history(
             session=session,
             db=db,
@@ -371,30 +414,22 @@ async def orchestrate_stream(
         return
 
     # ── Build system prompt (3-Tier Layered Architecture) ─────────────────────
-    runtime_context = _resolve_runtime_context(context)
-    prompt_res = build_agent_system_prompt(
-        db=db,
-        agent=agent,
-        session_id=session_id,
-        runtime_context=runtime_context,
-    )
-    system_prompt = prompt_res.system_prompt
-    has_attachment_tool_fetch = prompt_res.has_attachment_tool_fetch
-
-    # ── Persist user message ──────────────────────────────────────────────────
-    user_msg_id = None
-    if not sandbox:
-        user_msg = ChatMessage(
+    try:
+        runtime_context = _resolve_runtime_context(context)
+        prompt_res = build_agent_system_prompt(
+            db=db,
+            agent=agent,
             session_id=session_id,
-            role=MessageRole.user,
-            content=user_content,
-            agent_name=None,
-            invocation_depth=0,
+            runtime_context=runtime_context,
         )
-        db.add(user_msg)
-        db.commit()
-        db.refresh(user_msg)
-        user_msg_id = user_msg.id
+        system_prompt = prompt_res.system_prompt
+        has_attachment_tool_fetch = prompt_res.has_attachment_tool_fetch
+    except Exception as exc:
+        err_msg = f"Failed to build agent context: {str(exc)}"
+        err_id = _record_error(err_msg)
+        yield {"type": "error", "message": err_msg}
+        yield {"type": "done", "usage": {}, "session_id": session_id, "message_id": err_id}
+        return
 
     # ── Resolve attached images for multimodal vision in current user turn ──
     image_parts = []

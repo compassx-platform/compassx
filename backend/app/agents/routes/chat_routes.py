@@ -346,6 +346,23 @@ async def stream_chat(
             logger.exception("Orchestrator error in session %s", session_id)
             stream_registry.touch(stream_id, status="error", detail=str(exc))
             stream_registry.publish(stream_id, {"type": "error", "message": str(exc)})
+            try:
+                if not body.sandbox:
+                    err_msg = ChatMessage(
+                        session_id=session_id,
+                        role=MessageRole.assistant,
+                        content=f"⚠️ **Error**: {str(exc)}",
+                        agent_name="System",
+                        invocation_depth=0,
+                    )
+                    bg_db.add(err_msg)
+                    bg_db.commit()
+                    stream_registry.publish(
+                        stream_id,
+                        {"type": "done", "session_id": session_id, "message_id": err_msg.id},
+                    )
+            except Exception as db_err:
+                logger.error("Failed to persist error message to chat history: %s", db_err)
         finally:
             bg_db.close()
             stream_registry.finish(stream_id)

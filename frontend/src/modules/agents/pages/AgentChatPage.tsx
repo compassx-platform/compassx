@@ -585,7 +585,6 @@ export default function AgentChatPage({ initialView }: AgentChatPageProps = {}) 
               const errMsg = ev.message ?? 'Agent encountered an error';
               toast.error(errMsg);
               appendStreamingText(`\n\n> ⚠️ **Error**: ${errMsg}`);
-              setStreaming(false);
               setActiveTool(null);
               qc.invalidateQueries({
                 queryKey: ['agents', agentId, 'sessions', targetSessionId, 'messages'],
@@ -614,8 +613,9 @@ export default function AgentChatPage({ initialView }: AgentChatPageProps = {}) 
     } finally {
       setStreaming(false);
       setActiveTool(null);
-      setOptimisticUserMsg(null);
-      qc.invalidateQueries({ queryKey: ['agents', agentId, 'sessions', targetSessionId, 'messages'] });
+      qc.invalidateQueries({ queryKey: ['agents', agentId, 'sessions', targetSessionId, 'messages'] }).then(() => {
+        setOptimisticUserMsg(null);
+      });
       qc.invalidateQueries({ queryKey: ['agents', agentId, 'sessions', targetSessionId, 'changes'] });
       qc.invalidateQueries({ queryKey: ['agents', agentId, 'sessions', targetSessionId, 'context'] });
       qc.invalidateQueries({ queryKey: ['agents', agentId, 'sessions', targetSessionId, 'plans'] });
