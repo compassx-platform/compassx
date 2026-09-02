@@ -88,6 +88,7 @@ export function useCreateAgent() {
         manifest?: Record<string, any>;
         llm_connection_id?: number;
         tools?: { tool_name: string }[];
+        skills?: { skill_id: number; position: number }[];
       };
     }) => {
       const { data } = await api.post<Agent>("/agents", payload);
@@ -120,6 +121,7 @@ export function useUpdateAgent() {
         manifest?: Record<string, any>;
         llm_connection_id?: number | null;
         tools?: { tool_name: string }[];
+        skills?: { skill_id: number; position: number }[];
       };
     }) => {
       const { data } = await api.put<Agent>(`/agents/${agentId}`, payload);

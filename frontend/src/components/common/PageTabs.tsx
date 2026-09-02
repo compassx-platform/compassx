@@ -8,6 +8,8 @@ type PageTabsProps<TValue extends string> = {
   value: TValue;
   onChange: (value: TValue) => void;
   className?: string;
+  equalWidth?: boolean;
+  style?: React.CSSProperties;
 };
 
 function defaultLabel(value: string) {
@@ -19,15 +21,34 @@ export function PageTabs<TValue extends string>({
   value,
   onChange,
   className,
+  equalWidth,
+  style,
 }: PageTabsProps<TValue>) {
   return (
-    <div className={`page-tabs${className ? ` ${className}` : ''}`}>
+    <div
+      className={`page-tabs${className ? ` ${className}` : ''}`}
+      style={{
+        ...(equalWidth ? { display: 'flex', width: '100%', gap: 0 } : {}),
+        ...style,
+      }}
+    >
       {tabs.map((tab) => (
         <button
           key={tab.value}
           type="button"
           className={value === tab.value ? 'is-active' : undefined}
           onClick={() => onChange(tab.value)}
+          style={
+            equalWidth
+              ? {
+                  flex: 1,
+                  textAlign: 'center',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }
+              : undefined
+          }
         >
           {tab.label ?? defaultLabel(tab.value)}
         </button>
@@ -35,3 +56,4 @@ export function PageTabs<TValue extends string>({
     </div>
   );
 }
+

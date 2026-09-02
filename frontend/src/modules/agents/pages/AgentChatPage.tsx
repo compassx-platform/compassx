@@ -39,12 +39,19 @@ interface AgentChatPageProps {
 
 export default function AgentChatPage({ initialView }: AgentChatPageProps = {}) {
   const { agentId: agentIdStr, sessionId: sessionIdStr } = useParams<{ agentId: string; sessionId?: string }>();
-  const agentId = agentIdStr ? parseInt(agentIdStr, 10) : null;
+  const parsedAgentId = agentIdStr ? parseInt(agentIdStr, 10) : NaN;
+  const agentId = !isNaN(parsedAgentId) ? parsedAgentId : null;
   const urlSessionId = sessionIdStr ? parseInt(sessionIdStr, 10) : null;
 
   const navigate = useScopedNavigate();
   const qc = useQueryClient();
   const toast = useToast();
+
+  useEffect(() => {
+    if (agentIdStr === 'new' || agentIdStr === 'create') {
+      navigate('/agents/new', { replace: true });
+    }
+  }, [agentIdStr, navigate]);
 
   const { data: agent } = useAgent(agentId);
   const { data: sessions = [] } = useChatSessions(agentId);
