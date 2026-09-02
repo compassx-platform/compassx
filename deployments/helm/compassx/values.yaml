@@ -32,7 +32,7 @@ backend:
   image:
     repository: ghcr.io/compassx-platform/backend
     pullPolicy: IfNotPresent
-    tag: "v0.4.0"
+    tag: "v0.5.0"
 
   service:
     type: ClusterIP
@@ -101,7 +101,7 @@ frontend:
   image:
     repository: ghcr.io/compassx-platform/frontend
     pullPolicy: IfNotPresent
-    tag: "v0.4.0"
+    tag: "v0.5.0"
 
   service:
     type: ClusterIP
@@ -139,7 +139,7 @@ enterpriseGateway:
   image:
     repository: ghcr.io/compassx-platform/enterprise-gateway
     pullPolicy: IfNotPresent
-    tag: "v0.4.0"
+    tag: "v0.5.0"
 
   service:
     type: ClusterIP
@@ -370,7 +370,7 @@ prometheus:
   image:
     repository: prom/prometheus
     pullPolicy: IfNotPresent
-    tag: "v0.4.0"
+    tag: "v0.5.0"
 
   service:
     type: ClusterIP
