@@ -43,19 +43,44 @@ export function buildServerSettings(config: JupyterConfig) {
       },
     },
     fetch: (input: RequestInfo | URL, init?: RequestInit) => {
-      let urlStr = typeof input === 'string' ? input : input.toString();
+      let urlStr: string;
+      let requestHeaders: Headers;
+
+      if (typeof input === 'string') {
+        urlStr = input;
+        requestHeaders = new Headers(init?.headers || {});
+      } else if (input instanceof URL) {
+        urlStr = input.toString();
+        requestHeaders = new Headers(init?.headers || {});
+      } else if (typeof Request !== 'undefined' && input instanceof Request) {
+        urlStr = input.url;
+        requestHeaders = new Headers(input.headers);
+        if (init?.headers) {
+          new Headers(init.headers).forEach((v, k) => requestHeaders.set(k, v));
+        }
+      } else if (typeof input === 'object' && input !== null && 'url' in (input as any)) {
+        urlStr = (input as any).url;
+        requestHeaders = new Headers((input as any).headers || init?.headers || {});
+      } else {
+        urlStr = String(input);
+        requestHeaders = new Headers(init?.headers || {});
+      }
+
       if (slug && !urlStr.includes('workspace=')) {
         const sep = urlStr.includes('?') ? '&' : '?';
         urlStr = `${urlStr}${sep}workspace=${encodeURIComponent(slug)}`;
       }
-      const headers = new Headers(init?.headers || {});
-      if (slug && !headers.has('X-Workspace-Slug')) {
-        headers.set('X-Workspace-Slug', slug);
+      if (slug && !requestHeaders.has('X-Workspace-Slug')) {
+        requestHeaders.set('X-Workspace-Slug', slug);
       }
-      if (token && !headers.has('Authorization')) {
-        headers.set('Authorization', `Bearer ${token}`);
+      if (token && !requestHeaders.has('Authorization')) {
+        requestHeaders.set('Authorization', `Bearer ${token}`);
       }
-      return fetch(urlStr, { ...init, headers });
+
+      if (typeof Request !== 'undefined' && input instanceof Request) {
+        return window.fetch(new Request(urlStr, { ...init, headers: requestHeaders }));
+      }
+      return window.fetch(urlStr, { ...init, headers: requestHeaders });
     },
   });
 
