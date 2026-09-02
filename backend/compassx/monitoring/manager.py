@@ -27,6 +27,7 @@ logger = logging.getLogger(__name__)
 _METRICS = {
     "cpu": ("cpu_percent", "%"),
     "memory": ("memory_mb", "MB"),
+    "memory_limit": ("memory_limit_mb", "MB"),
     "network_in": ("network_in_kbps", "KB/s"),
     "network_out": ("network_out_kbps", "KB/s"),
     "disk_read": ("disk_read_kbps", "KB/s"),
@@ -70,7 +71,7 @@ class MonitoringResourceManager:
             collectors.extend([HostCollector(), LocalProcessCollector(profile, repo_root)])
         if ServiceMode.DOCKER in modes:
             try:
-                collectors.append(DockerComposeCollector(profile.compose_project))
+                collectors.extend([HostCollector(), DockerComposeCollector(profile.compose_project)])
             except Exception as exc:
                 logger.warning("Docker monitoring is unavailable: %s", exc)
         if ServiceMode.KUBERNETES in modes:

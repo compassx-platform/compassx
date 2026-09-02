@@ -161,7 +161,11 @@ def health_check():
     """Check Kubernetes connectivity."""
     def check_kubernetes() -> None:
         k8s = get_k8s_client()
-        k8s.core().list_namespace(limit=1, _request_timeout=_STATUS_TIMEOUT_SECONDS)
+        ns = compute_settings.COMPASSX_NAMESPACE or "compassx"
+        try:
+            k8s.core().list_namespaced_pod(namespace=ns, limit=1, _request_timeout=_STATUS_TIMEOUT_SECONDS)
+        except Exception:
+            k8s.core().get_api_resources(_request_timeout=_STATUS_TIMEOUT_SECONDS)
 
     try:
         executor = ThreadPoolExecutor(max_workers=1)
@@ -188,7 +192,7 @@ def health_check():
             content={
                 "status": "degraded",
                 "kubernetes": "unreachable",
-                "message": "Kubernetes not connected. Start minikube.",
+                "message": "Kubernetes not reachable." if compute_settings.is_k8s() else "Kubernetes not connected. Start minikube.",
             },
         )
 

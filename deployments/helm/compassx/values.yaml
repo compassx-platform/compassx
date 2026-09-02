@@ -86,6 +86,12 @@ backend:
       timeoutSeconds: 5
       failureThreshold: 3
 
+  # Automated DB Migrations Job (runs pre-install and pre-upgrade hooks)
+  migrationJob:
+    enabled: true
+    backoffLimit: 3
+    ttlSecondsAfterFinished: 300
+
 # ------------------------------------------------------------------------------
 # Frontend UI (React + Vite + Nginx)
 # ------------------------------------------------------------------------------

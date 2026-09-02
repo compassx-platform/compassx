@@ -517,6 +517,8 @@
   border-radius: 8px;
   padding: 4px 0;
   box-shadow: none;
+  min-height: 380px;
+  width: 100%;
 }
 
 .chart-card-header {

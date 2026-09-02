@@ -122,9 +122,13 @@ export function refreshAccessToken(): Promise<string> {
       return newToken;
     })
     .catch((err) => {
-      clearSession();
-      if (typeof window !== "undefined" && !window.location.pathname.startsWith("/login")) {
-        window.location.href = "/login";
+      const status = err?.response?.status;
+      // Only clear session and redirect if token was explicitly rejected (400, 401, 403)
+      if (status && status >= 400 && status < 500) {
+        clearSession();
+        if (typeof window !== "undefined" && !window.location.pathname.startsWith("/login")) {
+          window.location.href = "/login";
+        }
       }
       throw err;
     })

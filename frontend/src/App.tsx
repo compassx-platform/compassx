@@ -89,12 +89,17 @@ const UMSuspense: React.FC<React.PropsWithChildren> = ({ children }) => (
 );
 
 function RootRedirect() {
-  const { data: workspaces, isLoading, isError } = useMyWorkspaces();
+  const { data: workspaces, isLoading, isError, error } = useMyWorkspaces();
   if (isLoading) return null;
-  if (isError || !workspaces) {
-    return <Navigate to="/login" replace />;
+  if (isError) {
+    const status = (error as any)?.response?.status;
+    if (status === 401 || status === 403) {
+      return <Navigate to="/login" replace />;
+    }
+    // For 500/network errors, fallback to EntryPointGuard to render error screen
+    return <EntryPointGuard />;
   }
-  if (workspaces.length === 0) {
+  if (!workspaces || workspaces.length === 0) {
     return <Navigate to="/no-workspace-access" replace />;
   }
   const lastWs = localStorage.getItem('compassx_last_workspace');
@@ -134,17 +139,22 @@ function EntryPointGuard() {
         navigate('/login', { replace: true });
       }
     } catch (err: any) {
-      if (err?.response?.status === 401 || !isLoggedIn()) {
+      const status = err?.response?.status;
+      // Only redirect to login if explicitly unauthenticated
+      if (status === 401) {
         navigate('/login', { replace: true });
         return;
       }
       // If 404 on UM endpoints (backend running older legacy version without UM routes), fall back to legacy
-      if (err?.response?.status === 404) {
+      if (status === 404) {
         setChecking(false);
         return;
       }
-      // Backend unreachable / network error / 500 error
-      setErrorMsg(err?.message || "Failed to connect to backend server");
+      // Backend unreachable / network error / 500 error: display connection error screen
+      const detailMsg = err?.response?.data?.detail;
+      setErrorMsg(
+        typeof detailMsg === "string" ? detailMsg : (err?.message || "Failed to connect to backend server")
+      );
       setChecking(false);
     }
   }, [navigate]);

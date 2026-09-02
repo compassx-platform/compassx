@@ -5,6 +5,38 @@ All notable changes to the CompassX Platform will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-09-02
+
+### 🚀 Highlights
+
+CompassX `0.5.0` introduces a unified Platform Monitoring & Observability subsystem with Prometheus metric exports, real-time node and pod telemetry dashboards, compute scaling and Kubernetes RBAC automation, an automated pre-install Helm database migration job template, and hardened AI chat session error handling and message persistence.
+
+### ✨ Features & Enhancements
+
+#### Platform Monitoring & Observability
+- **Prometheus Metrics Exporter**: Implemented `/monitoring/metrics` with standard Prometheus metrics formatting for Kubernetes, Docker, and host processes.
+- **Monitoring Manager & Collectors**: Added `MonitoringManager`, `KubernetesCollector`, `DockerCollector`, and `LocalProcessCollector` with automated fallback telemetry pipelines.
+- **Interactive Monitoring Dashboard**: Added full-stack `MonitoringPage` displaying real-time cluster health, node utilization, API request latency breakdowns, and active pod statuses.
+- **Collector Verification**: Added comprehensive unit test coverage for monitoring manager metrics aggregation and collectors.
+
+#### Compute & Kubernetes Driver
+- **Dynamic Compute Scaling**: Enhanced Kubernetes driver with dynamic replica scaling, zero-downtime rolling restart orchestration, and pod status reconciliation.
+- **Runtime Spec Builders**: Standardized container image referencing across DuckDB, Spark, Ray, and Flink compute profiles.
+
+#### Helm & Deployments
+- **Automated Database Migration Hook**: Added Kubernetes Helm `pre-install`/`pre-upgrade` migration job (`migration-job.yaml`) with Alembic system and account database auto-upgrades.
+- **Role & RBAC Hardening**: Granted `deployments/scale` and `pods/exec` RBAC permissions to backend and operator service accounts.
+- **Single-Instance PVC Recreate Strategy**: Updated Airflow and persistent stateful services to use `Recreate` deployment strategy.
+
+#### AI Agents & Interactive Chat
+- **Error Handling & Retry Mechanics**: Hardened stream routes with structured error payloads and token validation recovery.
+- **Message & Turn Persistence**: Enhanced chat session state synchronization and turn execution recovery.
+
+### 🐛 Bug Fixes
+- Fixed Airflow container environment variable ordering in Helm deployment templates.
+- Fixed DuckDB compute runtime container image constant resolution in test suites and spec builders.
+- Bumped platform and component versions to `0.5.0`.
+
 ---
 
 ## [0.4.0] - 2026-08-30

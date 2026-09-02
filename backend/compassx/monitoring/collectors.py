@@ -186,6 +186,7 @@ class DockerComposeCollector(ResourceCollector):
         cpu_percent = 0.0
         memory_percent = 0.0
         memory_mb = 0.0
+        memory_limit_mb = 0.0
         network_in_kbps = 0.0
         network_out_kbps = 0.0
         disk_read_kbps = 0.0
@@ -202,8 +203,13 @@ class DockerComposeCollector(ResourceCollector):
                 usage = max(0, memory.get("usage", 0) - memory.get("stats", {}).get("inactive_file", 0))
                 limit = memory.get("limit", 0)
                 memory_mb = round(usage / 1024**2, 2)
-                memory_limit_mb = round(limit / 1024**2, 2) if limit else 0.0
-                memory_percent = round(usage / limit * 100, 2) if limit else 0.0
+                host_mem_limit = (container.attrs or {}).get("HostConfig", {}).get("Memory", 0)
+                if host_mem_limit and host_mem_limit > 0:
+                    memory_limit_mb = round(host_mem_limit / 1024**2, 2)
+                    memory_percent = round(usage / host_mem_limit * 100, 2)
+                else:
+                    memory_limit_mb = 0.0
+                    memory_percent = round(usage / limit * 100, 2) if limit else 0.0
 
                 elapsed = max(0.1, now_t - prev_t)
                 nets = stats.get("networks") or {}
@@ -257,6 +263,48 @@ class DockerComposeCollector(ResourceCollector):
         return sorted([r for r in results if r is not None], key=lambda item: item.name)
 
 
+def _parse_k8s_cpu_cores(cpu_str: str | None) -> float:
+    """Parse Kubernetes CPU usage string to cores as float."""
+    if not cpu_str:
+        return 0.0
+    cpu_str = str(cpu_str).strip()
+    try:
+        if cpu_str.endswith("n"):
+            return float(cpu_str[:-1]) / 1_000_000_000.0
+        if cpu_str.endswith("u"):
+            return float(cpu_str[:-1]) / 1_000_000.0
+        if cpu_str.endswith("m"):
+            return float(cpu_str[:-1]) / 1_000.0
+        return float(cpu_str)
+    except Exception:
+        return 0.0
+
+
+def _parse_k8s_memory_bytes(mem_str: str | None) -> float:
+    """Parse Kubernetes memory usage/limit string to bytes as float."""
+    if not mem_str:
+        return 0.0
+    mem_str = str(mem_str).strip()
+    try:
+        if mem_str.endswith("Ki"):
+            return float(mem_str[:-2]) * 1024.0
+        if mem_str.endswith("Mi"):
+            return float(mem_str[:-2]) * 1024.0 * 1024.0
+        if mem_str.endswith("Gi"):
+            return float(mem_str[:-2]) * 1024.0 * 1024.0 * 1024.0
+        if mem_str.endswith("Ti"):
+            return float(mem_str[:-2]) * 1024.0 * 1024.0 * 1024.0 * 1024.0
+        if mem_str.endswith("k"):
+            return float(mem_str[:-1]) * 1000.0
+        if mem_str.endswith("M"):
+            return float(mem_str[:-1]) * 1000.0 * 1000.0
+        if mem_str.endswith("G"):
+            return float(mem_str[:-1]) * 1000.0 * 1000.0 * 1000.0
+        return float(mem_str)
+    except Exception:
+        return 0.0
+
+
 class KubernetesCollector(ResourceCollector):
     """Samples pods in the Kubernetes namespace for kubernetes profiles."""
 
@@ -267,6 +315,131 @@ class KubernetesCollector(ResourceCollector):
         self._client = client
         self._namespace = namespace
 
+    def _fetch_pod_metrics(self) -> dict[str, dict[str, float]]:
+        """Fetch live container CPU and Memory usage from metrics.k8s.io."""
+        metrics_by_pod: dict[str, dict[str, float]] = {}
+        try:
+            from kubernetes import client as k8s_client
+            cust = k8s_client.CustomObjectsApi()
+            metrics_list = cust.list_namespaced_custom_object(
+                group="metrics.k8s.io",
+                version="v1beta1",
+                namespace=self._namespace,
+                plural="pods",
+            )
+            for item in metrics_list.get("items", []):
+                pod_name = item.get("metadata", {}).get("name")
+                total_cores = 0.0
+                total_mem_bytes = 0.0
+                for c in item.get("containers", []):
+                    usage = c.get("usage", {})
+                    total_cores += _parse_k8s_cpu_cores(usage.get("cpu"))
+                    total_mem_bytes += _parse_k8s_memory_bytes(usage.get("memory"))
+                metrics_by_pod[pod_name] = {
+                    "cpu_percent": round(total_cores * 100.0, 2),  # 1 core = 100%
+                    "memory_mb": round(total_mem_bytes / (1024.0 * 1024.0), 2),
+                    "memory_bytes": total_mem_bytes,
+                }
+        except Exception as exc:
+            logger.debug("metrics.k8s.io query notice for %s: %s", self._namespace, exc)
+        return metrics_by_pod
+
+    def _fetch_node_metrics(self) -> dict[str, dict[str, float]]:
+        """Fetch live node CPU and Memory usage from metrics.k8s.io."""
+        metrics_by_node: dict[str, dict[str, float]] = {}
+        try:
+            from kubernetes import client as k8s_client
+            cust = k8s_client.CustomObjectsApi()
+            metrics_list = cust.list_cluster_custom_object(
+                group="metrics.k8s.io",
+                version="v1beta1",
+                plural="nodes",
+            )
+            for item in metrics_list.get("items", []):
+                node_name = item.get("metadata", {}).get("name")
+                usage = item.get("usage", {})
+                cores = _parse_k8s_cpu_cores(usage.get("cpu"))
+                mem_bytes = _parse_k8s_memory_bytes(usage.get("memory"))
+                metrics_by_node[node_name] = {
+                    "cpu_percent": round(cores * 100.0, 2),
+                    "memory_mb": round(mem_bytes / (1024.0 * 1024.0), 2),
+                    "memory_bytes": mem_bytes,
+                }
+        except Exception as exc:
+            logger.debug("metrics.k8s.io node query notice: %s", exc)
+        return metrics_by_node
+
+    def _collect_nodes(self) -> list[ObservedResource]:
+        """Collect cluster nodes as kind='node' resources with allocatable memory limits."""
+        nodes_res: list[ObservedResource] = []
+        try:
+            core_v1 = self._client.core()
+            k8s_nodes = core_v1.list_node().items
+        except Exception:
+            return nodes_res
+
+        node_metrics = self._fetch_node_metrics()
+
+        for node in k8s_nodes:
+            node_name = node.metadata.name or ""
+            allocatable = node.status.allocatable or {}
+
+            alloc_mem_bytes = _parse_k8s_memory_bytes(allocatable.get("memory"))
+            alloc_mem_mb = round(alloc_mem_bytes / (1024.0 * 1024.0), 2)
+
+            created = node.metadata.creation_timestamp
+            if created and created.tzinfo is None:
+                created = created.replace(tzinfo=timezone.utc)
+
+            ready_cond = next((c for c in (node.status.conditions or []) if c.type == "Ready"), None)
+            is_ready = bool(ready_cond and ready_cond.status == "True")
+            status = "Ready" if is_ready else "NotReady"
+
+            m = node_metrics.get(node_name, {})
+            cpu_percent = m.get("cpu_percent", 0.0)
+            mem_used_mb = m.get("memory_mb", 0.0)
+            mem_used_bytes = m.get("memory_bytes", 0.0)
+            mem_percent = (
+                round(mem_used_bytes / alloc_mem_bytes * 100.0, 2)
+                if alloc_mem_bytes > 0 and mem_used_bytes > 0
+                else 0.0
+            )
+
+            labels = node.metadata.labels or {}
+            mode = labels.get("kubernetes.azure.com/mode", "").lower()
+            pool_label = labels.get("kubernetes.azure.com/agentpool")
+            if not pool_label:
+                parts = node_name.split("-")
+                pool_label = parts[1] if len(parts) >= 2 else node_name
+
+            is_system = mode == "system" or "system" in pool_label.lower() or "systempool" in node_name.lower()
+            runtime_label = "Kubernetes (System Node)" if is_system else "Kubernetes (User Node)"
+            pool_clean = pool_label.replace("_", " ").title()
+            display_name = f"Node {pool_clean}"
+
+            os_image = node.status.node_info.os_image if node.status.node_info else None
+
+            nodes_res.append(
+                ObservedResource(
+                    id=f"k8s:node:{node_name}",
+                    name=display_name,
+                    kind="node",
+                    status=status,
+                    runtime=runtime_label,
+                    uptime=_uptime(created),
+                    cpu_percent=cpu_percent,
+                    memory_percent=mem_percent,
+                    memory_mb=mem_used_mb,
+                    memory_limit_mb=alloc_mem_mb,
+                    restart_count=0,
+                    health="Healthy" if is_ready else "Degraded",
+                    start_time=created,
+                    container_name=node_name,
+                    image_version=os_image,
+                )
+            )
+        return nodes_res
+
     def collect(self) -> list[ObservedResource]:
         resources = []
         try:
@@ -275,10 +448,29 @@ class KubernetesCollector(ResourceCollector):
         except Exception:
             return resources
 
+        pod_metrics = self._fetch_pod_metrics()
+
         for pod in pods:
             name = pod.metadata.name or ""
             labels = pod.metadata.labels or {}
-            service = labels.get("app.kubernetes.io/name") or labels.get("app") or name
+            
+            # Identify specific service/component name
+            component = labels.get("app.kubernetes.io/component")
+            if not component:
+                runtime_type = labels.get("compassx/runtime-type")
+                runtime_id = labels.get("compassx/runtime-id") or labels.get("compassx/job")
+                if runtime_type or runtime_id:
+                    component = f"{runtime_type or 'compute'}-{runtime_id}"
+                else:
+                    component = labels.get("app.kubernetes.io/name") or labels.get("app") or name
+
+            if component == "compassx":
+                parts = name.split("-")
+                if len(parts) >= 2 and parts[0] == "compassx":
+                    component = parts[1]
+
+            service = component
+
             if name.endswith("-init") or labels.get("job-name"):
                 continue
             phase = pod.status.phase or "Unknown"
@@ -292,6 +484,26 @@ class KubernetesCollector(ResourceCollector):
             health = "Healthy" if (phase == "Running" and all_ready) else phase
             image = container_statuses[0].image if container_statuses else None
 
+            # Calculate metrics
+            m = pod_metrics.get(name, {})
+            cpu_percent = m.get("cpu_percent", 0.0)
+            memory_mb = m.get("memory_mb", 0.0)
+            memory_bytes = m.get("memory_bytes", 0.0)
+
+            # Check memory limits from pod spec
+            total_limit_bytes = 0.0
+            for c_spec in pod.spec.containers:
+                res = c_spec.resources
+                if res and res.limits:
+                    total_limit_bytes += _parse_k8s_memory_bytes(res.limits.get("memory"))
+
+            memory_limit_mb = round(total_limit_bytes / (1024.0 * 1024.0), 2) if total_limit_bytes > 0 else 0.0
+            memory_percent = (
+                round(memory_bytes / total_limit_bytes * 100.0, 2)
+                if total_limit_bytes > 0 and memory_bytes > 0
+                else 0.0
+            )
+
             resources.append(
                 ObservedResource(
                     id=f"k8s:{service}",
@@ -300,9 +512,10 @@ class KubernetesCollector(ResourceCollector):
                     status=phase.title(),
                     runtime="Kubernetes",
                     uptime=_uptime(started),
-                    cpu_percent=0.0,
-                    memory_percent=0.0,
-                    memory_mb=0.0,
+                    cpu_percent=cpu_percent,
+                    memory_percent=memory_percent,
+                    memory_mb=memory_mb,
+                    memory_limit_mb=memory_limit_mb,
                     restart_count=restarts,
                     health=health.title(),
                     start_time=started,
@@ -310,7 +523,8 @@ class KubernetesCollector(ResourceCollector):
                     image_version=image,
                 )
             )
-        return sorted(resources, key=lambda item: item.name)
+        all_items = resources + self._collect_nodes()
+        return sorted(all_items, key=lambda item: (item.kind != "node", item.name))
 
 
 def _parse_datetime(value: str | None) -> datetime | None:

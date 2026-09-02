@@ -44,7 +44,8 @@ type Resource = {
 };
 
 type Overview = {
-  platform_status: string;
+  total_nodes?: number;
+  platform_status?: string;
   running_services: number;
   total_services: number;
   cpu_utilization: number;
@@ -134,6 +135,8 @@ export default function MonitoringPage() {
   const [useLocalTime, setUseLocalTime] = useState(true);
   const [singleSeries, setSingleSeries] = useState<Record<string, SingleSeries>>({});
   const [groupedSeries, setGroupedSeries] = useState<Record<string, GroupedSeries>>({});
+  const [memLimitGrouped, setMemLimitGrouped] = useState<GroupedSeries | null>(null);
+  const [memLimitSingle, setMemLimitSingle] = useState<SingleSeries | null>(null);
 
   const localTz = useMemo(() => {
     try {
@@ -185,36 +188,61 @@ export default function MonitoringPage() {
 
     try {
       if (chartResource === 'ALL') {
-        const results = await Promise.all(
-          CHART_CONFIGS.map((c) =>
-            api
-              .get<GroupedSeries>('/monitoring/timeseries/services', {
-                params: { metric: c.key, start, end, resolution },
-              })
-              .then((res) => [c.key, res.data] as const)
-              .catch(() => [c.key, { unit: c.unit, series: [] }] as const)
-          )
-        );
+        const [results, memLimitRes] = await Promise.all([
+          Promise.all(
+            CHART_CONFIGS.map((c) =>
+              api
+                .get<GroupedSeries>('/monitoring/timeseries/services', {
+                  params: { metric: c.key, start, end, resolution },
+                })
+                .then((res) => [c.key, res.data] as const)
+                .catch(() => [c.key, { unit: c.unit, series: [] }] as const)
+            )
+          ),
+          api
+            .get<GroupedSeries>('/monitoring/timeseries/nodes', {
+              params: { metric: 'memory_limit', start, end, resolution },
+            })
+            .then((res) => res.data)
+            .catch(() => null),
+        ]);
         setGroupedSeries(Object.fromEntries(results));
+        setMemLimitGrouped(memLimitRes);
       } else {
-        const results = await Promise.all(
-          CHART_CONFIGS.map((c) =>
-            api
-              .get<SingleSeries>('/monitoring/timeseries', {
-                params: {
-                  resource_type: 'service',
-                  resource_id: chartResource,
-                  metric: c.key,
-                  start,
-                  end,
-                  resolution,
-                },
-              })
-              .then((res) => [c.key, res.data] as const)
-              .catch(() => [c.key, { unit: c.unit, points: [] }] as const)
-          )
-        );
+        const [results, memLimitRes] = await Promise.all([
+          Promise.all(
+            CHART_CONFIGS.map((c) =>
+              api
+                .get<SingleSeries>('/monitoring/timeseries', {
+                  params: {
+                    resource_type: 'service',
+                    resource_id: chartResource,
+                    metric: c.key,
+                    start,
+                    end,
+                    resolution,
+                  },
+                })
+                .then((res) => [c.key, res.data] as const)
+                .catch(() => [c.key, { unit: c.unit, points: [] }] as const)
+            )
+          ),
+          api
+            .get<SingleSeries>('/monitoring/timeseries', {
+              params: {
+                resource_type: 'service',
+                resource_id: chartResource,
+                metric: 'memory_limit',
+                start,
+                end,
+                resolution,
+              },
+            })
+            .then((res) => res.data)
+            .catch(() => null),
+        ]);
         setSingleSeries(Object.fromEntries(results));
+        setMemLimitSingle(memLimitRes);
       }
     } catch {
       console.warn('Failed to load metric history from Prometheus');
@@ -534,6 +562,21 @@ export default function MonitoringPage() {
             <div className="summary-strip-divider" />
 
             <div className="summary-strip-item">
+              <span className="strip-label">User Nodes</span>
+              <div className="strip-value-row">
+                <Server size={15} style={{ color: '#8b5cf6', alignSelf: 'center' }} />
+                <span className="strip-value-main">
+                  {overview ? (overview.total_nodes || 1) : '--'}
+                </span>
+                <span className="strip-sub">
+                  ({overview ? `${(overview.total_nodes || 1)} Active` : ''})
+                </span>
+              </div>
+            </div>
+
+            <div className="summary-strip-divider" />
+
+            <div className="summary-strip-item">
               <span className="strip-label">Avg CPU</span>
               <div className="strip-value-row">
                 <Cpu size={15} style={{ color: '#2563eb', alignSelf: 'center' }} />
@@ -555,7 +598,32 @@ export default function MonitoringPage() {
                 </span>
                 <span className="strip-unit">%</span>
                 <span className="strip-sub">
-                  ({services.reduce((acc, s) => acc + s.memory_mb, 0).toFixed(0)} MB)
+                  ({services.reduce((acc, s) => acc + s.memory_mb, 0).toFixed(0)} MB / {
+                    (() => {
+                      const userNodes = nodes.filter(
+                        (n) =>
+                          !n.runtime?.toLowerCase().includes('system') &&
+                          !n.name?.toLowerCase().includes('system')
+                      );
+                      const targetNodes = userNodes.length > 0 ? userNodes : nodes;
+                      const totalLimit = targetNodes.reduce(
+                        (acc, n) => acc + (n.memory_limit_mb ?? 0),
+                        0
+                      );
+                      if (totalLimit > 0) {
+                        return `${(totalLimit / 1024).toFixed(1)} GB`;
+                      }
+                      const totalServiceLimit = services.reduce(
+                        (acc, s) => acc + (s.memory_limit_mb || 0),
+                        0
+                      );
+                      if (totalServiceLimit > 0) {
+                        return `${(totalServiceLimit / 1024).toFixed(1)} GB`;
+                      }
+                      const totalUsed = services.reduce((acc, s) => acc + s.memory_mb, 0);
+                      return `${(totalUsed / 1024).toFixed(1)} GB`;
+                    })()
+                  })
                 </span>
               </div>
             </div>
@@ -642,20 +710,19 @@ export default function MonitoringPage() {
                   .replace('spark-worker', 'spark-w');
               };
 
+              // Pure simple bar traces using standard ISO timestamps
               const plotData: Data[] = isStacked
                 ? (groupData?.series || []).map((s, idx) => ({
-                    x: s.points.map((p) => formatPlotlyTimestamp(p.timestamp, useLocalTime)),
-                    y: s.points.map((p) => p.value),
+                    x: (s.points || []).map((p) => p.timestamp),
+                    y: (s.points || []).map((p) => p.value),
                     type: 'bar',
                     name: cleanServiceName(s.name),
                     marker: { color: PALETTE[idx % PALETTE.length] },
-                    hovertemplate: `${s.name.replace(/^docker:/, '').replace(/^compassx-/, '')}: %{y:.2f} ${config.unit}<extra></extra>`,
+                    hovertemplate: `${cleanServiceName(s.name)}: %{y:.2f} ${config.unit}<extra></extra>`,
                   }))
                 : [
                     {
-                      x: (singleData?.points || []).map((p) =>
-                        formatPlotlyTimestamp(p.timestamp, useLocalTime)
-                      ),
+                      x: (singleData?.points || []).map((p) => p.timestamp),
                       y: (singleData?.points || []).map((p) => p.value),
                       type: 'bar',
                       name: services.find((s) => s.id === chartResource)?.name || 'Service',
@@ -664,75 +731,69 @@ export default function MonitoringPage() {
                     },
                   ];
 
-              // Memory limit calculation for memory chart
-              let memLimit = 0;
+              // Memory Limit Line (Only for Memory Usage Chart)
               if (config.key === 'memory') {
-                if (chartResource !== 'ALL') {
-                  const selectedServiceObj = services.find((s) => s.id === chartResource);
-                  if (selectedServiceObj) {
-                    memLimit =
-                      selectedServiceObj.memory_limit_mb ||
-                      (selectedServiceObj.memory_percent > 0
-                        ? (selectedServiceObj.memory_mb / selectedServiceObj.memory_percent) * 100
-                        : 0);
-                  }
-                } else if (services.length > 0) {
-                  const validLimits = services
-                    .map(
-                      (s) =>
-                        s.memory_limit_mb ||
-                        (s.memory_percent > 0 ? (s.memory_mb / s.memory_percent) * 100 : 0)
-                    )
-                    .filter((l) => l > 0);
-                  if (validLimits.length > 0) {
-                    memLimit = Math.max(...validLimits);
-                  }
-                }
-              }
+                if (isStacked) {
+                  const limitSeries = memLimitGrouped?.series || [];
+                  if (limitSeries.length > 0 && (limitSeries[0].points || []).length > 0) {
+                    const primaryLimit = limitSeries[0];
+                    const limitPoints = primaryLimit.points
+                      .map((pt, pIdx) => {
+                        let sum = 0;
+                        for (const s of limitSeries) {
+                          sum += s.points[pIdx]?.value || 0;
+                        }
+                        return { timestamp: pt.timestamp, value: sum };
+                      })
+                      .filter((p) => p.value > 0);
 
-              // Compute maximum Y across points to properly scale Y-axis with limit
-              let maxDataY = 0;
-              if (isStacked) {
-                const seriesList = groupData?.series || [];
-                if (seriesList.length > 0 && seriesList[0].points.length > 0) {
-                  for (let i = 0; i < seriesList[0].points.length; i++) {
-                    let sum = 0;
-                    for (const s of seriesList) {
-                      sum += s.points[i]?.value || 0;
+                    if (limitPoints.length > 0) {
+                      plotData.push({
+                        x: limitPoints.map((p) => p.timestamp),
+                        y: limitPoints.map((p) => p.value),
+                        type: 'scatter',
+                        mode: 'lines',
+                        name: 'Memory Limit',
+                        line: { color: '#ef4444', width: 2, dash: 'dash' },
+                        hovertemplate: 'Memory Limit: %{y:.1f} MB<extra></extra>',
+                      });
                     }
-                    if (sum > maxDataY) maxDataY = sum;
+                  }
+                } else {
+                  const limitPoints = (memLimitSingle?.points || []).filter((p) => p.value > 0);
+                  if (limitPoints.length > 0) {
+                    plotData.push({
+                      x: limitPoints.map((p) => p.timestamp),
+                      y: limitPoints.map((p) => p.value),
+                      type: 'scatter',
+                      mode: 'lines',
+                      name: 'Memory Limit',
+                      line: { color: '#ef4444', width: 2, dash: 'dash' },
+                      hovertemplate: 'Memory Limit: %{y:.1f} MB<extra></extra>',
+                    });
+                  } else {
+                    const selectedServiceObj = services.find((s) => s.id === chartResource);
+                    const staticLimit = selectedServiceObj?.memory_limit_mb || 0;
+                    if (staticLimit > 0 && (singleData?.points || []).length > 0) {
+                      plotData.push({
+                        x: (singleData?.points || []).map((p) => p.timestamp),
+                        y: (singleData?.points || []).map(() => staticLimit),
+                        type: 'scatter',
+                        mode: 'lines',
+                        name: 'Memory Limit',
+                        line: { color: '#ef4444', width: 2, dash: 'dash' },
+                        hovertemplate: `Memory Limit: ${staticLimit} MB<extra></extra>`,
+                      });
+                    }
                   }
                 }
-              } else {
-                const pts = singleData?.points || [];
-                maxDataY = pts.reduce((max, p) => Math.max(max, p.value), 0);
               }
-
-              const yRange =
-                config.key === 'memory' && memLimit > 0
-                  ? [0, Math.max(maxDataY * 1.15, memLimit * 1.08)]
-                  : undefined;
 
               return (
                 <div key={config.key} className="monitoring-chart-card">
                   <div className="chart-card-header">
                     <h3 className="chart-card-title">
                       {config.title} ({config.unit})
-                      {config.key === 'memory' && memLimit > 0 && (
-                        <span
-                          style={{
-                            fontSize: '11px',
-                            fontWeight: 500,
-                            color: '#ef4444',
-                            marginLeft: '8px',
-                          }}
-                        >
-                          • Limit:{' '}
-                          {memLimit >= 1024
-                            ? `${(memLimit / 1024).toFixed(1)} GB`
-                            : `${Math.round(memLimit)} MB`}
-                        </span>
-                      )}
                     </h3>
                   </div>
 
@@ -740,99 +801,25 @@ export default function MonitoringPage() {
                     data={plotData}
                     layout={{
                       autosize: true,
-                      height: 360,
-                      margin: { l: 28, r: 0, t: 10, b: 64 },
-                      paper_bgcolor: 'transparent',
-                      plot_bgcolor: 'transparent',
-                      bargap: 0.25,
+                      height: 320,
+                      margin: { l: 50, r: 20, t: 15, b: 45 },
                       barmode: isStacked ? 'stack' : 'group',
                       showlegend: isStacked,
-                      shapes:
-                        memLimit > 0
-                          ? [
-                              {
-                                type: 'line',
-                                xref: 'paper',
-                                x0: 0,
-                                x1: 1,
-                                yref: 'y',
-                                y0: memLimit,
-                                y1: memLimit,
-                                line: {
-                                  color: '#ef4444',
-                                  width: 1.5,
-                                  dash: 'dash',
-                                },
-                              },
-                            ]
-                          : undefined,
-                      annotations:
-                        memLimit > 0
-                          ? [
-                              {
-                                xref: 'paper',
-                                x: 0.98,
-                                yref: 'y',
-                                y: memLimit,
-                                xanchor: 'right',
-                                yanchor: 'bottom',
-                                text: `Limit: ${
-                                  memLimit >= 1024
-                                    ? `${(memLimit / 1024).toFixed(1)} GB`
-                                    : `${Math.round(memLimit)} MB`
-                                }`,
-                                showarrow: false,
-                                font: { size: 10, color: '#dc2626' },
-                                bgcolor: 'rgba(254, 242, 242, 0.9)',
-                                bordercolor: '#fca5a5',
-                                borderwidth: 1,
-                                borderpad: 3,
-                              },
-                            ]
-                          : undefined,
-                      legend: {
-                        orientation: 'h',
-                        x: -0.06,
-                        xanchor: 'left',
-                        y: -0.28,
-                        yanchor: 'top',
-                        font: { size: 9.5, color: '#334155' },
-                        itemgap: 4,
-                      },
                       xaxis: {
-                        showgrid: false,
-                        showline: true,
-                        linecolor: '#64748b',
-                        linewidth: 1.5,
-                        tickfont: { size: 10, color: '#475569' },
-                        ticks: '',
-                        nticks: 6,
-                        tickformat:
-                          timeRange?.label?.includes('d') || timeRange?.label?.includes('w')
-                            ? '%m/%d %H:%M'
-                            : '%H:%M',
+                        type: 'date',
                       },
                       yaxis: {
-                        showgrid: true,
-                        gridcolor: '#e2e8f0',
-                        gridwidth: 1,
-                        showline: false,
-                        zeroline: true,
-                        zerolinecolor: '#64748b',
-                        zerolinewidth: 1.5,
-                        rangemode: yRange ? undefined : 'tozero',
-                        range: yRange,
-                        tickfont: { size: 10, color: '#64748b' },
+                        title: { text: config.unit, font: { size: 11 } },
+                        rangemode: 'tozero',
                       },
-                      hovermode: 'x unified',
-                      hoverlabel: {
-                        bgcolor: '#1e293b',
-                        bordercolor: '#334155',
-                        font: { color: '#ffffff', size: 11 },
+                      legend: {
+                        orientation: 'h',
+                        y: -0.25,
+                        font: { size: 10 },
                       },
                     }}
-                    config={{ displaylogo: false, responsive: true }}
-                    style={{ width: '100%' }}
+                    config={{ responsive: true, displayModeBar: false }}
+                    style={{ width: '100%', height: '320px' }}
                     useResizeHandler
                   />
                 </div>

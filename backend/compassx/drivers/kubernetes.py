@@ -73,6 +73,14 @@ class KubernetesDriver(ResourceDriver):
         try:
             self._k8s.core().read_namespace(name=self._namespace)
         except self._ApiException as exc:
+            if exc.status in (401, 403):
+                # ServiceAccount has namespaced RBAC (cannot read cluster namespaces)
+                logger.debug(
+                    "K8s: read_namespace returned %s, assuming namespace %s exists",
+                    exc.status,
+                    self._namespace,
+                )
+                return
             if exc.status != 404:
                 raise
             ns = self._m.V1Namespace(

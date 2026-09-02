@@ -4,6 +4,7 @@ from prometheus_client import CollectorRegistry, Gauge, generate_latest
 _FIELDS = {
     "cpu": "cpu_percent",
     "memory": "memory_mb",
+    "memory_limit": "memory_limit_mb",
     "network_in": "network_in_kbps",
     "network_out": "network_out_kbps",
     "disk_read": "disk_read_kbps",

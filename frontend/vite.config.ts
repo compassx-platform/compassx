@@ -122,8 +122,8 @@ export default defineConfig({
     target: "esnext",
     minify: false,
     commonjsOptions: {
-    transformMixedEsModules: true,
-  },
+      transformMixedEsModules: true,
+    },
     rollupOptions: {
       output: {
         manualChunks: {
@@ -133,7 +133,7 @@ export default defineConfig({
     },
     cssCodeSplit: false,
     sourcemap: false,
-    chunkSizeWarningLimit: 1000,
+    chunkSizeWarningLimit: 3000,
   },
   server: {
     proxy: {

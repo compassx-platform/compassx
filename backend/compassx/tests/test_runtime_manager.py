@@ -34,12 +34,15 @@ def test_exposes_resource_manager(setup):
     assert manager.resource_manager.default_driver == "fake"
 
 
+from compassx.runtime.spec_builders import DUCKDB_IMAGE
+
+
 async def test_create_generates_runtime_id(setup):
     manager, driver, _ = setup
     info = await manager.create_runtime("duckdb", user_id="u1")
     assert info.runtime_id.startswith("runtime-")
     spec = driver.runtimes[info.runtime_id]
-    assert spec.container_image == "compassx-compute-duckdb:latest"
+    assert spec.container_image == DUCKDB_IMAGE
     assert spec.command == ["tail", "-f", "/dev/null"]
     assert spec.namespace == "test-ns"
 

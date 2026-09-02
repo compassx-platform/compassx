@@ -1,0 +1,97 @@
+{{- $backend := .Values.backend | default dict -}}
+{{- $migrationJob := $backend.migrationJob | default dict -}}
+{{- if ne ($migrationJob.enabled | toString) "false" }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "compassx.backendFullname" . }}-migration
+  labels:
+    {{- include "compassx.labels" . | nindent 4 }}
+    app.kubernetes.io/component: db-migration
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-delete-policy": before-hook-creation
+    "helm.sh/hook-weight": "-5"
+spec:
+  backoffLimit: {{ $migrationJob.backoffLimit | default 3 }}
+  ttlSecondsAfterFinished: {{ $migrationJob.ttlSecondsAfterFinished | default 300 }}
+  template:
+    metadata:
+      labels:
+        {{- include "compassx.labels" . | nindent 8 }}
+        app.kubernetes.io/component: db-migration
+    spec:
+      restartPolicy: OnFailure
+      serviceAccountName: {{ include "compassx.backendServiceAccountName" . }}
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: db-migration
+          image: "{{ .Values.global.imageRegistry | default "" }}{{ if .Values.global.imageRegistry }}/{{ end }}{{ .Values.backend.image.repository }}:{{ .Values.backend.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.backend.image.pullPolicy }}
+          command:
+            - /bin/bash
+            - -c
+            - |
+              set -e
+              echo "=== Starting CompassX Database Migrations ==="
+              echo "Ensuring application databases exist..."
+              python create_db.py || true
+              echo "Applying Alembic Account (Control Plane) migrations..."
+              alembic -c alembic_account.ini upgrade head
+              echo "Applying Alembic System (Operational Plane) migrations..."
+              alembic -c alembic_system.ini upgrade head
+              echo "=== CompassX Database Migrations Completed Successfully ==="
+          env:
+            - name: COMPASSX_PLATFORM_PROFILE
+              value: {{ .Values.backend.env.COMPASSX_PLATFORM_PROFILE | quote }}
+            - name: COMPASSX_ENV
+              value: {{ .Values.backend.env.COMPASSX_ENV | quote }}
+            - name: COMPASSX_NAMESPACE
+              value: {{ .Release.Namespace | quote }}
+            - name: PG_HOST
+              value: {{ include "compassx.postgresHost" . | quote }}
+            - name: PG_PORT
+              value: {{ include "compassx.postgresPort" . | quote }}
+            - name: PG_USER
+              value: {{ include "compassx.postgresUser" . | quote }}
+            - name: PG_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "compassx.postgresSecretName" . }}
+                  key: {{ include "compassx.postgresSecretKey" . }}
+            - name: PG_DATABASE
+              value: {{ .Values.backend.env.SYSTEM_DB_NAME | default "compassx_account" | quote }}
+            - name: SYSTEM_DB_NAME
+              value: {{ .Values.backend.env.SYSTEM_DB_NAME | quote }}
+            - name: DATA_DB_NAME
+              value: {{ .Values.backend.env.DATA_DB_NAME | quote }}
+            - name: ASSET_DB_NAME
+              value: {{ .Values.backend.env.ASSET_DB_NAME | quote }}
+            - name: SKIP_DB_INIT
+              value: "true"
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "compassx.fullname" . }}-secrets
+                  key: jwt-secret
+            - name: SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "compassx.fullname" . }}-secrets
+                  key: secret-key
+            - name: CATALOG_ENCRYPTION_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "compassx.fullname" . }}-secrets
+                  key: catalog-encryption-key
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+{{- end }}
