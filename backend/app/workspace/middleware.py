@@ -194,6 +194,70 @@ def resolve_workspace_context(
         db.close()
 
 
+def _get_default_workspace_slug_for_token(token: str) -> str | None:
+    """Find the primary active workspace for an authenticated token when no slug is explicitly given."""
+    if AccountSessionLocal is None:
+        return None
+    db = AccountSessionLocal()
+    try:
+        from app.user_manager.auth_utils import decode_access_token
+        from app.user_manager.models.account_models import UmUser
+        from app.workspace.models import Workspace, WorkspaceMembership
+
+        user_id = None
+        try:
+            payload = decode_access_token(token)
+            jwt_sub = payload.get("sub")
+            if jwt_sub:
+                um_user = db.query(UmUser).filter(UmUser.id == jwt_sub, UmUser.status == "active").first()
+                if um_user:
+                    user_id = um_user.id
+        except Exception:
+            pass
+
+        if not user_id:
+            h = _token_hash(token)
+            now = datetime.now(timezone.utc)
+            from app.database import SystemSessionLocal
+            if SystemSessionLocal:
+                data_db = SystemSessionLocal()
+                try:
+                    from app.workspace.data_models import WpSession
+                    session = data_db.query(WpSession).filter(WpSession.token_hash == h, WpSession.expires_at > now).first()
+                    if session:
+                        user_id = session.principal_id
+                finally:
+                    data_db.close()
+
+        if not user_id:
+            return None
+
+        # 1. Look for direct workspace membership
+        mem = (
+            db.query(WorkspaceMembership, Workspace)
+            .join(Workspace, Workspace.id == WorkspaceMembership.workspace_id)
+            .filter(
+                WorkspaceMembership.principal_id == user_id,
+                Workspace.status == "active",
+            )
+            .first()
+        )
+        if mem:
+            return mem[1].slug or str(mem[1].id)
+
+        # 2. Fallback to any active workspace in the account
+        ws = db.query(Workspace).filter(Workspace.status == "active").first()
+        if ws:
+            return ws.slug or str(ws.id)
+
+        return None
+    except Exception as exc:
+        logger.debug("Could not resolve default workspace for token: %s", exc)
+        return None
+    finally:
+        db.close()
+
+
 class WorkspaceMiddleware(BaseHTTPMiddleware):
     """Resolves /w/<slug>/* and /api/w/<slug>/* requests, injects WorkspaceContext into request.state."""
 
@@ -208,14 +272,21 @@ class WorkspaceMiddleware(BaseHTTPMiddleware):
         if slug is None:
             slug = request.query_params.get("workspace_id")
 
+        token = _extract_token(request)
+        inferred_slug = False
+        if slug is None and token:
+            slug = _get_default_workspace_slug_for_token(token)
+            inferred_slug = True
+
         if slug is None:
             return await call_next(request)
 
         try:
             request.state.workspace = resolve_workspace_context(
-                slug, _extract_token(request)
+                slug, token
             )
         except WorkspaceAuthError as exc:
-            return JSONResponse({"error": exc.message}, status_code=exc.status_code)
+            if not inferred_slug:
+                return JSONResponse({"error": exc.message}, status_code=exc.status_code)
 
         return await call_next(request)

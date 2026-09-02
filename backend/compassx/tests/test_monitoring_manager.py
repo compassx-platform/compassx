@@ -89,8 +89,10 @@ def test_manager_builds_platform_health_from_services(tmp_path):
     assert platform.memory_mb == 200
 
 
-def test_build_collectors_local_dev_only_docker(tmp_path):
+def test_build_collectors_local_dev_only_docker(tmp_path, monkeypatch):
+    import unittest.mock as mock
     from compassx.monitoring.collectors import DockerComposeCollector, HostCollector, LocalProcessCollector
+    monkeypatch.setattr("docker.from_env", lambda **kw: mock.MagicMock())
     profile = load_profile("local-dev")
     collectors = MonitoringResourceManager._build_collectors(profile, tmp_path)
     types = [type(c) for c in collectors]

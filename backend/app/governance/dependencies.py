@@ -87,6 +87,27 @@ def get_principal(
 
     ctx = getattr(request.state, "workspace", None)
     if ctx is None:
+        try:
+            from app.workspace.middleware import (
+                _extract_token,
+                resolve_workspace_context,
+                _get_default_workspace_slug_for_token,
+            )
+            token = _extract_token(request)
+            slug = (
+                request.headers.get("x-workspace-slug")
+                or request.query_params.get("workspace")
+                or request.query_params.get("workspace_id")
+            )
+            if not slug and token:
+                slug = _get_default_workspace_slug_for_token(token)
+            if slug and token:
+                ctx = resolve_workspace_context(slug, token)
+                request.state.workspace = ctx
+        except Exception:
+            pass
+
+    if ctx is None:
         # Identity and workspace role are established together by the
         # workspace middleware. Deriving a principal without them would mean
         # guessing at the workspace gate, so refuse instead.

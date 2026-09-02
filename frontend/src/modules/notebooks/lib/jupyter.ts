@@ -29,27 +29,45 @@ export function buildServerSettings(config: JupyterConfig) {
   // `appendToken` puts it in the query string, which is the only way to carry
   // a credential on a browser WebSocket (no custom headers are possible there).
   const token = config.token || getToken() || '';
+  const slug = config.workspaceSlug || '';
 
   const settings = ServerConnection.makeSettings({
     baseUrl,
     wsUrl,
     token,
     appendToken: true,
+    init: {
+      headers: {
+        ...(slug ? { 'X-Workspace-Slug': slug } : {}),
+        ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+      },
+    },
+    fetch: (input: RequestInfo | URL, init?: RequestInit) => {
+      let urlStr = typeof input === 'string' ? input : input.toString();
+      if (slug && !urlStr.includes('workspace=')) {
+        const sep = urlStr.includes('?') ? '&' : '?';
+        urlStr = `${urlStr}${sep}workspace=${encodeURIComponent(slug)}`;
+      }
+      const headers = new Headers(init?.headers || {});
+      if (slug && !headers.has('X-Workspace-Slug')) {
+        headers.set('X-Workspace-Slug', slug);
+      }
+      if (token && !headers.has('Authorization')) {
+        headers.set('Authorization', `Bearer ${token}`);
+      }
+      return fetch(urlStr, { ...init, headers });
+    },
   });
-
-  // The workspace normally rides in the X-Workspace-Slug header, which a
-  // WebSocket cannot send either, so it goes in the query string alongside the
-  // token. WebSocket.__proto__ is not patchable, so wrap the socket factory
-  // @jupyterlab/services uses.
-  const slug = config.workspaceSlug;
-  if (!slug) return settings;
 
   const BaseWebSocket = settings.WebSocket;
   class WorkspaceWebSocket extends BaseWebSocket {
     constructor(url: string | URL, protocols?: string | string[]) {
       const href = typeof url === 'string' ? url : url.toString();
       const sep = href.includes('?') ? '&' : '?';
-      super(`${href}${sep}workspace=${encodeURIComponent(slug)}`, protocols);
+      const wsHref = slug && !href.includes('workspace=')
+        ? `${href}${sep}workspace=${encodeURIComponent(slug)}`
+        : href;
+      super(wsHref, protocols);
     }
   }
   return { ...settings, WebSocket: WorkspaceWebSocket as typeof WebSocket };
