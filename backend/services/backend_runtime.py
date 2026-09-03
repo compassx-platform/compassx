@@ -20,7 +20,7 @@ from compute.k8s_client import get_k8s_client
 logger = logging.getLogger(__name__)
 
 BACKEND_DEPLOYMENT_NAME = "compassx-backend"
-BACKEND_SERVICE_NAME = "compassx-backend-service"
+BACKEND_SERVICE_NAME = "compassx-backend"
 BACKEND_NAMESPACE = compute_settings.COMPASSX_NAMESPACE
 BACKEND_PORT = 8000
 BACKEND_LOCAL_PORT = 18080

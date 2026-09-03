@@ -186,7 +186,7 @@ DEFAULT_K8S_SERVICE_NAMES: dict[str, tuple[str, int]] = {
     "airflow":            ("compassx-airflow",            8080),
     "enterprise-gateway": ("compassx-enterprise-gateway", 8888),
     "jupyter-server":     ("compassx-jupyter-server",     8889),
-    "backend":            ("compassx-backend-service",    8000),
+    "backend":            ("compassx-backend",            8000),
     "prometheus":         ("compassx-prometheus",         9090),
     # frontend: handled specially below (port-forward to ingress-nginx-controller)
 }
@@ -656,7 +656,7 @@ class KubernetesLauncher(Launcher):
         cm = build_kernelspec_configmap(
             self._namespace,
             catalog_api_url=(
-                f"http://compassx-backend-service.{self._namespace}.svc.cluster.local:8000/api/v1/catalog"
+                f"http://compassx-backend.{self._namespace}.svc.cluster.local:8000/api/v1/catalog"
             ),
         )
         k8s = K8sApiClient()

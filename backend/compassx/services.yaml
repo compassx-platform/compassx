@@ -15,12 +15,12 @@ services:
   backend:
     local:      { host: localhost, port: 8000, protocol: http }
     docker:     { host: backend, port: 8000, protocol: http }
-    kubernetes: { host: compassx-backend-service.compassx.svc.cluster.local, port: 8000, protocol: http }
+    kubernetes: { host: compassx-backend.compassx.svc.cluster.local, port: 8000, protocol: http }
 
   frontend:
     local:      { host: localhost, port: 5173, protocol: http }
     docker:     { host: frontend, port: 80, protocol: http }
-    kubernetes: { host: compassx-frontend-service.compassx.svc.cluster.local, port: 80, protocol: http }
+    kubernetes: { host: compassx-frontend.compassx.svc.cluster.local, port: 80, protocol: http }
 
   postgres:
     local:      { host: localhost, port: 5433, protocol: postgresql }
