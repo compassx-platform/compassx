@@ -39,8 +39,11 @@ def extract_slug_from_path(path: str) -> str | None:
 
 def _extract_token(request: Request) -> str | None:
     auth_header = request.headers.get("Authorization")
-    if auth_header and auth_header.startswith("Bearer "):
-        return auth_header[7:].strip()
+    if auth_header:
+        if auth_header.startswith("Bearer "):
+            return auth_header[7:].strip()
+        if auth_header.startswith("token "):
+            return auth_header[6:].strip()
     token = request.query_params.get("token")
     if token:
         return token.strip()

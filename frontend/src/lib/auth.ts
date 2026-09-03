@@ -85,6 +85,7 @@ export function clearPrincipalInfo(): void {
 
 import axios from "axios";
 import { purgeAllClientState } from './queryClient';
+import { resetManagers } from '@/modules/notebooks/lib/jupyter';
 
 const BASE = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.replace(/\/api\/v1\/?$/, "") || "";
 
@@ -97,6 +98,11 @@ export function clearSession(): void {
   clearTokens();
   clearPrincipalInfo();
   purgeAllClientState();
+  try {
+    resetManagers();
+  } catch {
+    // ignore
+  }
 }
 
 // ── Auth state & Refresh ──────────────────────────────────────────────────────

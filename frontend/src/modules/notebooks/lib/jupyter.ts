@@ -66,6 +66,7 @@ export function buildServerSettings(config: JupyterConfig) {
         requestHeaders = new Headers(init?.headers || {});
       }
 
+      const currentToken = getToken() || config.token || '';
       if (slug && !urlStr.includes('workspace=')) {
         const sep = urlStr.includes('?') ? '&' : '?';
         urlStr = `${urlStr}${sep}workspace=${encodeURIComponent(slug)}`;
@@ -73,8 +74,8 @@ export function buildServerSettings(config: JupyterConfig) {
       if (slug && !requestHeaders.has('X-Workspace-Slug')) {
         requestHeaders.set('X-Workspace-Slug', slug);
       }
-      if (token && !requestHeaders.has('Authorization')) {
-        requestHeaders.set('Authorization', `Bearer ${token}`);
+      if (currentToken) {
+        requestHeaders.set('Authorization', `Bearer ${currentToken}`);
       }
 
       if (typeof Request !== 'undefined' && input instanceof Request) {
@@ -87,21 +88,39 @@ export function buildServerSettings(config: JupyterConfig) {
   const BaseWebSocket = settings.WebSocket;
   class WorkspaceWebSocket extends BaseWebSocket {
     constructor(url: string | URL, protocols?: string | string[]) {
-      const href = typeof url === 'string' ? url : url.toString();
-      const sep = href.includes('?') ? '&' : '?';
-      const wsHref = slug && !href.includes('workspace=')
-        ? `${href}${sep}workspace=${encodeURIComponent(slug)}`
-        : href;
-      super(wsHref, protocols);
+      let href = typeof url === 'string' ? url : url.toString();
+      const currentToken = getToken() || config.token || '';
+      const currentSlug = config.workspaceSlug || '';
+      try {
+        const u = new URL(href);
+        if (currentToken) {
+          u.searchParams.set('token', currentToken);
+        }
+        if (currentSlug && !u.searchParams.has('workspace')) {
+          u.searchParams.set('workspace', currentSlug);
+        }
+        href = u.toString();
+      } catch {
+        const sep = href.includes('?') ? '&' : '?';
+        if (currentSlug && !href.includes('workspace=')) {
+          href = `${href}${sep}workspace=${encodeURIComponent(currentSlug)}`;
+        }
+        if (currentToken && !href.includes('token=')) {
+          const s = href.includes('?') ? '&' : '?';
+          href = `${href}${s}token=${encodeURIComponent(currentToken)}`;
+        }
+      }
+      super(href, protocols);
     }
   }
   return { ...settings, WebSocket: WorkspaceWebSocket as typeof WebSocket };
 }
 
 export function getManagers(config: JupyterConfig) {
-  // Rebuild when the workspace or endpoint changes: a manager cached from a
-  // previous workspace would keep sending that workspace's slug.
-  const key = `${config.baseUrl}|${config.wsUrl}|${config.workspaceSlug}`;
+  // Rebuild when the workspace, endpoint, or authentication token changes:
+  // a manager cached with an old token would keep sending that expired credential.
+  const currentToken = getToken() || config.token || '';
+  const key = `${config.baseUrl}|${config.wsUrl}|${config.workspaceSlug}|${currentToken}`;
   if (_kernelManager && _settingsKey !== key) {
     resetManagers();
   }

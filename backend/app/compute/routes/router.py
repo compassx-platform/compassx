@@ -832,7 +832,15 @@ def start_kernel_for_resource(
             timeout=float(eg_settings.EG_KERNEL_LAUNCH_TIMEOUT),
         )
         resp.raise_for_status()
-        return resp.json()
+        data = resp.json()
+        kernel_id = data.get("id")
+        if kernel_id:
+            try:
+                from app.notebooks.routes.jupyter_proxy import register_kernel_resource
+                register_kernel_resource(kernel_id, resource_id)
+            except Exception:
+                pass
+        return data
     except httpx.HTTPStatusError as exc:
         logger.error(
             "EG kernel start failed resource_id=%s status=%s body=%s",

@@ -56,6 +56,8 @@ logger = logging.getLogger(__name__)
 router = APIRouter(
     prefix="/api/v1/notebook/jupyter",
     tags=["jupyter-proxy"],
+)
+http_router = APIRouter(
     dependencies=[Depends(get_guard)],
 )
 
@@ -93,6 +95,14 @@ async def _kernel_models() -> list[dict]:
         return []
 
 
+_KERNEL_TO_RESOURCE: dict[str, str] = {}
+
+
+def register_kernel_resource(kernel_id: str, resource_id: str) -> None:
+    """Track which compute resource owns which EG kernel."""
+    _KERNEL_TO_RESOURCE[kernel_id] = resource_id
+
+
 def _resource_id_of(kernel: dict) -> str | None:
     """The compute resource a kernel is running on, if it is one of ours.
 
@@ -100,6 +110,9 @@ def _resource_id_of(kernel: dict) -> str | None:
     resource id (see ``start_kernel_for_resource``), which is the only link
     between a kernel and anything governable.
     """
+    kernel_id = kernel.get("id")
+    if kernel_id and kernel_id in _KERNEL_TO_RESOURCE:
+        return _KERNEL_TO_RESOURCE[kernel_id]
     env = (kernel.get("metadata") or {}).get("env") or {}
     return env.get("KERNEL_COMPASSX_JOB_ID") or None
 
@@ -142,10 +155,31 @@ def _authorize_resource(guard: Guard, db, resource_id: str | None) -> None:
 
 async def _authorize_kernel(guard: Guard, db, kernel_id: str) -> None:
     """Require access to the compute resource behind ``kernel_id``."""
+    resource_id = _KERNEL_TO_RESOURCE.get(kernel_id)
+    if resource_id:
+        _authorize_resource(guard, db, resource_id)
+        return
+
     for kernel in await _kernel_models():
         if kernel.get("id") == kernel_id:
-            _authorize_resource(guard, db, _resource_id_of(kernel))
-            return
+            res_id = _resource_id_of(kernel)
+            if res_id:
+                _authorize_resource(guard, db, res_id)
+                return
+            # If EG didn't retain metadata, check if workspace has a default compute resource
+            from app.compute.models.compute_resources import ComputeResource
+            default_res = (
+                db.query(ComputeResource)
+                .filter(
+                    ComputeResource.workspace_id == guard.workspace_id,
+                    ComputeResource.is_default == True,
+                )
+                .first()
+            )
+            if default_res:
+                _KERNEL_TO_RESOURCE[kernel_id] = default_res.id
+                _authorize_resource(guard, db, default_res.id)
+                return
     raise HTTPException(status_code=404, detail="kernel not found")
 
 
@@ -162,6 +196,7 @@ async def proxy_kernel_ws(websocket: WebSocket, kernel_id: str) -> None:
     try:
         guard, db = _ws_guard(websocket)
     except _WSDenied as denied:
+        await websocket.accept()
         await websocket.close(code=denied.code, reason=denied.reason)
         return
 
@@ -169,6 +204,7 @@ async def proxy_kernel_ws(websocket: WebSocket, kernel_id: str) -> None:
         try:
             await _authorize_kernel(guard, db, kernel_id)
         except HTTPException:
+            await websocket.accept()
             await websocket.close(code=4403, reason="Not authorized for this kernel")
             return
     finally:
@@ -374,19 +410,19 @@ async def _proxy(method: str, path: str, request: Request) -> Response:
     )
 
 
-@router.get("/api")
+@http_router.get("/api")
 async def proxy_api_info(request: Request) -> Response:
     """EG version banner. Members only, via the router guard."""
     return await _proxy("GET", "api", request)
 
 
-@router.get("/api/kernelspecs")
+@http_router.get("/api/kernelspecs")
 async def proxy_kernelspecs(request: Request) -> Response:
     """The kernel types this deployment offers. Members only."""
     return await _proxy("GET", "api/kernelspecs", request)
 
 
-@router.get("/api/kernels")
+@http_router.get("/api/kernels")
 async def proxy_kernels_list(
     guard: Guard = Depends(get_guard),
     db=Depends(get_system_db),
@@ -410,7 +446,7 @@ async def proxy_kernels_list(
     return Response(content=json.dumps(visible), media_type="application/json")
 
 
-@router.post("/api/kernels")
+@http_router.post("/api/kernels")
 async def proxy_kernels_start(
     request: Request,
     guard: Guard = Depends(get_guard),
@@ -471,7 +507,7 @@ async def proxy_kernels_start(
     )
 
 
-@router.get("/api/kernels/{kernel_id}")
+@http_router.get("/api/kernels/{kernel_id}")
 async def proxy_kernel_get(
     kernel_id: str,
     request: Request,
@@ -482,7 +518,7 @@ async def proxy_kernel_get(
     return await _proxy("GET", f"api/kernels/{kernel_id}", request)
 
 
-@router.delete("/api/kernels/{kernel_id}")
+@http_router.delete("/api/kernels/{kernel_id}")
 async def proxy_kernel_delete(
     kernel_id: str,
     request: Request,
@@ -499,7 +535,7 @@ async def proxy_kernel_delete(
     return await _proxy("DELETE", f"api/kernels/{kernel_id}", request)
 
 
-@router.patch("/api/kernels/{kernel_id}")
+@http_router.patch("/api/kernels/{kernel_id}")
 async def proxy_kernel_restart(
     kernel_id: str,
     request: Request,
@@ -510,7 +546,7 @@ async def proxy_kernel_restart(
     return await _proxy("PATCH", f"api/kernels/{kernel_id}", request)
 
 
-@router.post("/api/kernels/{kernel_id}/restart")
+@http_router.post("/api/kernels/{kernel_id}/restart")
 async def proxy_kernel_restart_post(
     kernel_id: str,
     request: Request,
@@ -524,3 +560,6 @@ async def proxy_kernel_restart_post(
     """
     await _authorize_kernel(guard, db, kernel_id)
     return await _proxy("POST", f"api/kernels/{kernel_id}/restart", request)
+
+
+router.include_router(http_router)
