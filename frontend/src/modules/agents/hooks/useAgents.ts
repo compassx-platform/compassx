@@ -44,11 +44,15 @@ export interface Agent {
   skills?: any[];
 }
 
+import { useWorkspaceContext } from "@/lib/workspaceContext";
+
 // ── Agents ────────────────────────────────────────────────────────────────────
 
 export function useAgents() {
+  const workspace = useWorkspaceContext();
+  const wsKey = workspace?.workspace_id || workspace?.workspace_slug || "";
   return useQuery({
-    queryKey: ["agents"],
+    queryKey: ["agents", wsKey],
     queryFn: async () => {
       const { data } = await api.get<AgentListItem[]>("/agents");
       return data;

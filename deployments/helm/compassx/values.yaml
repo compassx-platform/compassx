@@ -370,7 +370,7 @@ prometheus:
   image:
     repository: prom/prometheus
     pullPolicy: IfNotPresent
-    tag: "v0.5.2"
+    tag: "v2.53.0"
 
   service:
     type: ClusterIP

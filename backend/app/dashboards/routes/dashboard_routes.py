@@ -323,10 +323,28 @@ def list_dashboards(
     db: Session = Depends(get_db),
     guard: Guard = Depends(get_guard),
 ):
-    from app.catalog.models import UnifiedCatalogDashboard
+    from app.catalog.models import (
+        UnifiedCatalogDashboard,
+        CatalogWorkspaceBinding,
+        UnifiedCatalogSchema,
+    )
 
     dashboards = db.query(Dashboard).order_by(Dashboard.updated_at.desc()).all()
-    uc_dashboards = db.query(UnifiedCatalogDashboard).filter(UnifiedCatalogDashboard.dashboard_id.isnot(None)).all()
+    uc_query = db.query(UnifiedCatalogDashboard).filter(UnifiedCatalogDashboard.dashboard_id.isnot(None))
+
+    workspace = getattr(request.state, "workspace", None)
+    workspace_id = workspace.workspace_id if workspace else getattr(guard, "workspace_id", None)
+    if workspace_id:
+        catalog_ids = db.query(CatalogWorkspaceBinding.catalog_id).filter(
+            CatalogWorkspaceBinding.workspace_id == str(workspace_id),
+        )
+        uc_query = uc_query.filter(
+            UnifiedCatalogDashboard.schema.has(
+                UnifiedCatalogSchema.catalog_id.in_(catalog_ids)
+            )
+        )
+
+    uc_dashboards = uc_query.all()
     uc_map = {uc.dashboard_id: uc for uc in uc_dashboards}
     # Unregistered dashboards have no catalog path and therefore no grants;
     # they are excluded rather than shown to everyone.

@@ -17,12 +17,13 @@ from app.sql_warehouse.schemas import WarehouseCreate
 from app.schemas.agents import LLMConnectionCreate, LLMProvider, AgentCreate
 
 
-def _mock_request(workspace_id: str) -> Request:
+def _mock_request(workspace_id: str, workspace_slug: str = "default") -> Request:
     request = MagicMock(spec=Request)
     class MockWorkspaceContext:
-        def __init__(self, ws_id):
+        def __init__(self, ws_id, ws_slug):
             self.workspace_id = ws_id
-    request.state.workspace = MockWorkspaceContext(workspace_id)
+            self.workspace_slug = ws_slug
+    request.state.workspace = MockWorkspaceContext(workspace_id, workspace_slug)
     return request
 
 

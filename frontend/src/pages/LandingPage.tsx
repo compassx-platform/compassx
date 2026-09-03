@@ -53,16 +53,18 @@ export default function LandingPage() {
   const workspace = useWorkspaceContext();
   const { data: me } = useMe();
 
+  const wsKey = workspace?.workspace_id || workspace?.workspace_slug || '';
+
   // Queries
   const { data: agents = [] } = useAgents();
   const { data: dashboards = [] } = useDashboards();
   const { data: jobs = [] } = useQuery({
-    queryKey: ['jobs'],
+    queryKey: ['jobs', wsKey],
     queryFn: () => jobsApi.listJobs(),
     staleTime: 30_000,
   });
   const { data: notebooksData } = useQuery({
-    queryKey: ['notebooks-list'],
+    queryKey: ['notebooks-list', wsKey],
     queryFn: async () => {
       try {
         const res = await api.get<{ notebooks: { path: string; name: string }[] }>('/notebook/list');

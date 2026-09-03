@@ -390,3 +390,62 @@ def sample_catalog_connection(db_session: Session):
         ),
     )
 
+
+@pytest.fixture(autouse=True)
+def mock_compute_runtime_manager(monkeypatch):
+    """Prevent unit tests from launching real Docker containers on the host Docker daemon."""
+    from unittest.mock import AsyncMock, MagicMock
+    from compassx.models import RuntimeInfo, RuntimePhase
+    from datetime import datetime, timezone
+
+    mock_rm = MagicMock()
+    mock_rm.create_runtime = AsyncMock(
+        return_value=RuntimeInfo(
+            runtime_id="mock-rt",
+            phase=RuntimePhase.RUNNING,
+            runtime_type="duckdb",
+            infra_id="mock-infra",
+            created_at=datetime.now(timezone.utc),
+        )
+    )
+    mock_rm.start_runtime = AsyncMock(return_value=None)
+    mock_rm.stop_runtime = AsyncMock(return_value=None)
+    mock_rm.delete_runtime = AsyncMock(return_value=None)
+    mock_rm.get_runtime = AsyncMock(
+        return_value=RuntimeInfo(
+            runtime_id="mock-rt",
+            phase=RuntimePhase.RUNNING,
+            runtime_type="duckdb",
+            infra_id="mock-infra",
+            created_at=datetime.now(timezone.utc),
+        )
+    )
+
+    try:
+        from compassx.drivers.docker import DockerDriver
+        async def fake_create_runtime(self, spec):
+            return "mock-container-id"
+        async def fake_start_runtime(self, runtime_id):
+            pass
+        async def fake_stop_runtime(self, runtime_id):
+            pass
+        async def fake_delete_runtime(self, runtime_id):
+            pass
+
+        monkeypatch.setattr(DockerDriver, "create_runtime", fake_create_runtime)
+        monkeypatch.setattr(DockerDriver, "start_runtime", fake_start_runtime)
+        monkeypatch.setattr(DockerDriver, "stop_runtime", fake_stop_runtime)
+        monkeypatch.setattr(DockerDriver, "delete_runtime", fake_delete_runtime)
+    except Exception:
+        pass
+
+    for mod in ("app.compute.services.resource_service", "compute.resource_service"):
+        try:
+            monkeypatch.setattr(
+                f"{mod}.ComputeResourceService.runtime_manager",
+                property(lambda self: mock_rm),
+            )
+        except Exception:
+            pass
+
+

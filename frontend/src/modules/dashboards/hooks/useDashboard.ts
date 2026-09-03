@@ -1,11 +1,12 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '@/lib/api';
+import { useWorkspaceContext } from '@/lib/workspaceContext';
 import type { Dashboard, DashboardMeta, Dataset } from '@/types/dashboard';
 
 // ── Keys ──────────────────────────────────────────────────────────────────────
 
 const KEYS = {
-  list: ['dashboards'] as const,
+  list: (wsKey?: string) => ['dashboards', wsKey || ''] as const,
   detail: (id: string) => ['dashboards', id] as const,
   datasetQuery: (id: string, params: Record<string, unknown>) => ['dataset-query', id, params] as const,
   datasetSchema: (id: string) => ['dataset-schema', id] as const,
@@ -14,8 +15,10 @@ const KEYS = {
 // ── List ──────────────────────────────────────────────────────────────────────
 
 export function useDashboards() {
+  const workspace = useWorkspaceContext();
+  const wsKey = workspace?.workspace_id || workspace?.workspace_slug || '';
   return useQuery<DashboardMeta[]>({
-    queryKey: KEYS.list,
+    queryKey: KEYS.list(wsKey),
     queryFn: async () => {
       const { data } = await api.get('/dashboards');
       return data;
