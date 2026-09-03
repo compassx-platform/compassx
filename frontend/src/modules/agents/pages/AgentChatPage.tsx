@@ -776,9 +776,7 @@ export default function AgentChatPage({ initialView }: AgentChatPageProps = {}) 
       />
 
       {/* 2. Main Center / Right View */}
-      {mainView === 'customizations' && agentId ? (
-        <AgentCustomizationsView agentId={agentId} onClose={() => setMainView('chat')} />
-      ) : mainView === 'logs' && agentId && activeSessionId ? (
+      {mainView === 'logs' && agentId && activeSessionId ? (
         <SessionLlmLogsView
           agentId={agentId}
           agentName={agent?.name}
@@ -988,6 +986,16 @@ export default function AgentChatPage({ initialView }: AgentChatPageProps = {}) 
           )}
         </div>
       )}
+
+      {/* Slide-over Side Panel Drawer for Agent Customisations */}
+      {mainView === 'customizations' && agentId && (
+        <AgentCustomizationsView
+          isDrawer={true}
+          agentId={agentId}
+          onClose={() => setMainView('chat')}
+        />
+      )}
     </div>
   );
 }
+

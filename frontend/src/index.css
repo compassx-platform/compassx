@@ -3677,4 +3677,26 @@ html {
   gap: 16px !important;
 }
 
+/* ── Global Side Panel Drawer Animations & Overlay ── */
+@keyframes slideInRight {
+  from {
+    transform: translateX(100%);
+    opacity: 0.7;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+
 

@@ -20,6 +20,7 @@ import {
   Wrench,
   ArrowLeft,
   ArrowRight,
+  Bot,
 } from "lucide-react";
 import { useAgent, useCreateAgent, useUpdateAgent, type Agent } from "@/modules/agents/hooks/useAgents";
 import { useLLMConnections } from "@/modules/agents/hooks/useLLMConnections";
@@ -41,6 +42,7 @@ export interface AgentCustomizationsViewProps {
   onClose?: () => void;
   onSaveSuccess?: (agent: Agent) => void;
   isStandalonePage?: boolean;
+  isDrawer?: boolean;
 }
 
 export const CUSTOMIZATION_TABS = [
@@ -58,6 +60,7 @@ export const AgentCustomizationsView: React.FC<AgentCustomizationsViewProps> = (
   onClose,
   onSaveSuccess,
   isStandalonePage = false,
+  isDrawer = false,
 }) => {
   const { agentId: routeAgentIdStr } = useParams<{ agentId?: string }>();
   const parsedRouteId = routeAgentIdStr ? parseInt(routeAgentIdStr, 10) : NaN;
@@ -226,7 +229,7 @@ export const AgentCustomizationsView: React.FC<AgentCustomizationsViewProps> = (
   const handleAddTool = (toolKey: string) => {
     if (!selectedTools.includes(toolKey)) {
       setSelectedTools((prev) => [...prev, toolKey]);
-      setExpandedToolKeys((prev) => ({ ...prev, [toolKey]: true }));
+      setExpandedToolKeys((prev) => ({ ...prev, [toolKey]: false }));
     }
   };
 
@@ -992,6 +995,197 @@ export const AgentCustomizationsView: React.FC<AgentCustomizationsViewProps> = (
     </>
   );
 
+  // Slide-over Side Panel Drawer View (matching chat interface & secondary sidebar style)
+  if (isDrawer) {
+    return (
+      <div
+        style={{
+          position: "fixed",
+          inset: 0,
+          background: "rgba(15, 23, 42, 0.35)",
+          backdropFilter: "blur(2px)",
+          zIndex: 1000,
+          display: "flex",
+          justifyContent: "flex-end",
+          animation: "fadeIn 0.15s ease-out",
+        }}
+        onClick={(e) => {
+          if (e.target === e.currentTarget && onClose) onClose();
+        }}
+      >
+        <aside
+          style={{
+            width: "min(780px, 100vw)",
+            height: "100%",
+            background: "#ffffff",
+            boxShadow: "-4px 0 24px rgba(0, 0, 0, 0.12)",
+            display: "flex",
+            flexDirection: "column",
+            position: "relative",
+            zIndex: 1001,
+            overflow: "hidden",
+            animation: "slideInRight 0.2s cubic-bezier(0.16, 1, 0.3, 1)",
+            borderLeft: "1px solid var(--color-border, #e2e8f0)",
+          }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          {/* Drawer Header matching chat secondary header */}
+          <div
+            style={{
+              padding: "10px 18px",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: 12,
+              background: "#ffffff",
+              flexShrink: 0,
+              minHeight: 46,
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0, flex: 1 }}>
+              <Bot size={16} color="var(--color-primary, #2563eb)" style={{ flexShrink: 0 }} />
+              <h2
+                style={{
+                  margin: 0,
+                  fontSize: "0.92rem",
+                  fontWeight: 600,
+                  color: "#0f172a",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {isCreating ? "New Agent" : (name || agent?.name || "Agent")}
+              </h2>
+            </div>
+
+            <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
+              {onClose && (
+                <button
+                  type="button"
+                  onClick={onClose}
+                  style={{
+                    background: "none",
+                    border: "none",
+                    cursor: "pointer",
+                    padding: "5px",
+                    color: "#64748b",
+                    borderRadius: 6,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    transition: "all 0.15s ease",
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.color = "#0f172a";
+                    e.currentTarget.style.background = "#f1f5f9";
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.color = "#64748b";
+                    e.currentTarget.style.background = "none";
+                  }}
+                  title="Close"
+                >
+                  <X size={16} />
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Page Tabs in Drawer */}
+          <div
+            style={{
+              padding: "0 18px",
+              background: "#ffffff",
+              borderBottom: "1px solid var(--color-border, #e2e8f0)",
+              flexShrink: 0,
+            }}
+          >
+            <PageTabs
+              tabs={CUSTOMIZATION_TABS}
+              value={activeTab}
+              onChange={(val) => setActiveTab(val as CustomizationTab)}
+              style={{ margin: 0, borderBottom: "none", gap: 20 }}
+            />
+          </div>
+
+          {/* Drawer Body (Scrollable) */}
+          <div style={{ flex: 1, overflowY: "auto", padding: "20px 24px 36px" }}>
+            <div style={{ width: "100%" }}>
+              {renderTabContent()}
+            </div>
+          </div>
+
+          {/* Sticky Drawer Footer */}
+          <div
+            style={{
+              padding: "12px 18px",
+              borderTop: "1px solid var(--color-border, #e2e8f0)",
+              background: "#f8fafc",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              flexShrink: 0,
+              zIndex: 10,
+            }}
+          >
+            <div style={{ display: "flex", gap: 8 }}>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => (onClose ? onClose() : navigate("/agents"))}
+                style={{ fontSize: "0.8rem", height: 34, padding: "0 14px", borderRadius: 6 }}
+              >
+                Cancel
+              </button>
+              {tabIndex > 0 && (
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={handlePrevTab}
+                  style={{ fontSize: "0.8rem", height: 34, padding: "0 14px", borderRadius: 6 }}
+                >
+                  <ArrowLeft size={13} /> Back
+                </button>
+              )}
+            </div>
+
+            <div style={{ display: "flex", gap: 8 }}>
+              {tabIndex < CUSTOMIZATION_TABS.length - 1 && (
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={handleNextTab}
+                  style={{ fontSize: "0.8rem", height: 34, padding: "0 14px", borderRadius: 6 }}
+                >
+                  Next <ArrowRight size={13} />
+                </button>
+              )}
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={handleSave}
+                disabled={isSaving || !name.trim()}
+                style={{
+                  fontSize: "0.8rem",
+                  height: 34,
+                  padding: "0 16px",
+                  borderRadius: 6,
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 6,
+                }}
+              >
+                {isSaving ? <Loader2 size={13} className="spin" /> : isCreating ? <Plus size={13} /> : <Save size={13} />}
+                {isSaving ? "Saving…" : isCreating ? "Create & Open Chat" : "Save Changes"}
+              </button>
+            </div>
+          </div>
+        </aside>
+      </div>
+    );
+  }
+
   // Standalone full page view (for /agents/new, /agents/create, /agents/:agentId/builder)
   if (isStandalonePage) {
     return (
@@ -1006,22 +1200,17 @@ export const AgentCustomizationsView: React.FC<AgentCustomizationsViewProps> = (
         {/* Page Header */}
         <div className="page-header" style={{ marginBottom: 20 }}>
           <div>
-            <h1 className="page-title">{isCreating ? "New Agent" : `Edit Agent: ${agent?.name ?? "..."}`}</h1>
-            <p className="page-subtitle">
-              {isCreating
-                ? "Configure your AI agent's instructions, tools, skills, and context."
-                : "Customise instructions, tools, skills, and execution capabilities."}
-            </p>
+            <h1 className="page-title">{isCreating ? "New Agent" : (name || agent?.name || "Agent")}</h1>
           </div>
         </div>
 
-        {/* Page Tabs with equalWidth for consistent tab headers */}
-        <div style={{ marginBottom: 24, width: "100%" }}>
+        {/* Page Tabs */}
+        <div style={{ marginBottom: 24, width: "100%", borderBottom: "1px solid var(--color-border, #e2e8f0)" }}>
           <PageTabs
             tabs={CUSTOMIZATION_TABS}
             value={activeTab}
             onChange={(val) => setActiveTab(val as CustomizationTab)}
-            equalWidth={true}
+            style={{ margin: 0, borderBottom: "none", gap: 20 }}
           />
         </div>
 
@@ -1103,7 +1292,7 @@ export const AgentCustomizationsView: React.FC<AgentCustomizationsViewProps> = (
             tabs={CUSTOMIZATION_TABS}
             value={activeTab}
             onChange={(val) => setActiveTab(val as CustomizationTab)}
-            equalWidth={true}
+            style={{ margin: 0, borderBottom: "none", gap: 20 }}
           />
         </div>
 

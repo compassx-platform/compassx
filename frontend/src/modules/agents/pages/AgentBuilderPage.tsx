@@ -1,8 +1,9 @@
-import { AgentCustomizationsView } from "../components/AgentCustomizationsView";
+import AgentsPage from "./AgentsPage";
 
 export default function AgentBuilderPage() {
-  return <AgentCustomizationsView isStandalonePage={true} />;
+  return <AgentsPage initialDrawerOpen={true} />;
 }
+
 
 
 

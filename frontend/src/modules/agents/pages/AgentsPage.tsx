@@ -46,6 +46,7 @@ import Placeholder from "@tiptap/extension-placeholder";
 import { Bold, Italic, List, ListOrdered, Code, Sparkles, Tags, FileText, ChevronRight } from "lucide-react";
 import { BudgetsTab } from "../components/BudgetsTab";
 import { UsageTab } from "../components/UsageTab";
+import { AgentCustomizationsView } from "../components/AgentCustomizationsView";
 
 type AgentsPageTab = "agents" | "tools" | "skills" | "streams" | "llm_calls" | "budgets" | "usage";
 
@@ -1284,7 +1285,11 @@ const sectionBodyStyle: React.CSSProperties = {
 };
 
 
-export default function AgentsPage() {
+interface AgentsPageProps {
+  initialDrawerOpen?: boolean;
+}
+
+export default function AgentsPage({ initialDrawerOpen = false }: AgentsPageProps = {}) {
   const navigate = useScopedNavigate();
   const { data: agents, isLoading, error } = useAgents();
   const deleteMutation = useDeleteAgent();
@@ -1295,6 +1300,11 @@ export default function AgentsPage() {
   const initialTab: AgentsPageTab = tabParam === "tools" ? "tools" : tabParam === "skills" ? "skills" : tabParam === "streams" ? "streams" : tabParam === "llm_calls" ? "llm_calls" : tabParam === "budgets" ? "budgets" : tabParam === "usage" ? "usage" : "agents";
   const [tab, setTab] = useState<AgentsPageTab>(initialTab);
   const [search, setSearch] = useState("");
+
+  const [drawerState, setDrawerState] = useState<{ open: boolean; agentId: number | null }>({
+    open: initialDrawerOpen || searchParams.get("create") === "true" || searchParams.get("new") === "true" || !!searchParams.get("edit"),
+    agentId: searchParams.get("edit") ? parseInt(searchParams.get("edit")!, 10) : null,
+  });
 
   const filtered = (agents ?? []).filter((a: AgentListItem) => {
     const q = search.trim().toLowerCase();
@@ -1342,7 +1352,10 @@ export default function AgentsPage() {
           <p className="page-subtitle">Create agents and review the tools they can use.</p>
         </div>
         <div style={{ display: "flex", gap: 8 }}>
-          <button className="btn btn-primary" onClick={() => navigate(`/agents/new`)}>
+          <button
+            className="btn btn-primary"
+            onClick={() => setDrawerState({ open: true, agentId: null })}
+          >
             <Plus size={15} /> New Agent
           </button>
         </div>
@@ -1366,9 +1379,9 @@ export default function AgentsPage() {
             agents={filtered}
             isLoading={isLoading}
             error={error}
-            onCreate={() => navigate(`/agents/new`)}
+            onCreate={() => setDrawerState({ open: true, agentId: null })}
             onChat={(agent) => navigate(`/agents/${agent.id}/chat`)}
-            onEdit={(agent) => navigate(`/agents/${agent.id}/edit`)}
+            onEdit={(agent) => setDrawerState({ open: true, agentId: agent.id })}
             onClone={handleClone}
             onDelete={handleDelete}
             clonePending={cloneMutation.isPending}
@@ -1387,7 +1400,30 @@ export default function AgentsPage() {
       ) : (
         <UsageTab agents={agents ?? []} />
       )}
+
+      {/* Side Panel Drawer for Creating and Customising Agents */}
+      {drawerState.open && (
+        <AgentCustomizationsView
+          isDrawer={true}
+          agentId={drawerState.agentId}
+          onClose={() => {
+            setDrawerState({ open: false, agentId: null });
+            if (searchParams.has("create") || searchParams.has("new") || searchParams.has("edit")) {
+              const next = new URLSearchParams(searchParams);
+              next.delete("create");
+              next.delete("new");
+              next.delete("edit");
+              setSearchParams(next);
+            }
+          }}
+          onSaveSuccess={(savedAgent) => {
+            setDrawerState({ open: false, agentId: null });
+            navigate(`/agents/${savedAgent.id}/chat`);
+          }}
+        />
+      )}
     </div>
   );
 }
+
 
