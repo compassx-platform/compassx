@@ -42,8 +42,13 @@ class MonitoringService:
         )
         mem_util = round((total_used_mb / total_limit_mb) * 100.0, 1) if total_limit_mb > 0 else 0.0
 
+        import psutil, os
+        node_cores = sum(int(getattr(n, "cpu_cores", 0)) for n in display_nodes if getattr(n, "cpu_cores", 0) > 0)
+        total_cores = node_cores or psutil.cpu_count(logical=True) or os.cpu_count() or 1
+
         return Overview(
             total_nodes=len(display_nodes),
+            total_cores=int(total_cores),
             total_services=len(services),
             running_services=sum(item.status.lower() in {"healthy", "running"} for item in services),
             cpu_utilization=round(
@@ -76,10 +81,14 @@ class MonitoringService:
         self, metric: str, start: int, end: int, step: int
     ) -> GroupedTimeseriesResponse:
         services = self.resources("service")
+        current_service_map = {s.id: s for s in services}
         unit, grouped = self.resource_manager.timeseries_grouped(metric, start, end, step)
         series = []
+        seen_ids = set()
+
         for resource in services:
             points = grouped.get(resource.id, [])
+            seen_ids.add(resource.id)
             series.append(
                 NamedTimeseries(
                     resource_id=resource.id,
@@ -91,6 +100,25 @@ class MonitoringService:
                     ],
                 )
             )
+
+        # Include historical services/pods present in Prometheus but now stopped
+        for resource_id, points in grouped.items():
+            if resource_id not in seen_ids:
+                if resource_id.startswith("k8s:node:") or resource_id.startswith("platform:"):
+                    continue
+                clean_name = resource_id.replace("docker:", "").replace("k8s:pod:", "").replace("compassx-", "")
+                series.append(
+                    NamedTimeseries(
+                        resource_id=resource_id,
+                        name=f"{clean_name} (Stopped)",
+                        status="Terminated",
+                        points=[
+                            MetricPoint.model_validate(point, from_attributes=True)
+                            for point in points
+                        ],
+                    )
+                )
+
         return GroupedTimeseriesResponse(metric=metric, unit=unit, series=series)
 
     def node_timeseries(

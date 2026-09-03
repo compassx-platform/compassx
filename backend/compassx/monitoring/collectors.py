@@ -66,6 +66,7 @@ class HostCollector(ResourceCollector):
             disk_percent=round(disk.percent, 2), network_in_kbps=round(net_in, 2),
             network_out_kbps=round(net_out, 2), disk_read_kbps=round(disk_read, 2),
             disk_write_kbps=round(disk_write, 2), health="Healthy", start_time=boot,
+            cpu_cores=float(psutil.cpu_count(logical=True) or 1.0),
         )]
 
 
@@ -383,7 +384,7 @@ class KubernetesCollector(ResourceCollector):
         for node in k8s_nodes:
             node_name = node.metadata.name or ""
             allocatable = node.status.allocatable or {}
-
+            alloc_cores = _parse_k8s_cpu_cores(allocatable.get("cpu"))
             alloc_mem_bytes = _parse_k8s_memory_bytes(allocatable.get("memory"))
             alloc_mem_mb = round(alloc_mem_bytes / (1024.0 * 1024.0), 2)
 
@@ -436,6 +437,7 @@ class KubernetesCollector(ResourceCollector):
                     start_time=created,
                     container_name=node_name,
                     image_version=os_image,
+                    cpu_cores=alloc_cores,
                 )
             )
         return nodes_res
