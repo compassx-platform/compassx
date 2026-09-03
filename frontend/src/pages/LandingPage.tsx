@@ -53,7 +53,7 @@ export default function LandingPage() {
   const workspace = useWorkspaceContext();
   const { data: me } = useMe();
 
-  const wsKey = workspace?.workspace_id || workspace?.workspace_slug || '';
+  const wsKey = workspace?.id || workspace?.slug || '';
 
   // Queries
   const { data: agents = [] } = useAgents();

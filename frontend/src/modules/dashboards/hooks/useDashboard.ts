@@ -6,7 +6,7 @@ import type { Dashboard, DashboardMeta, Dataset } from '@/types/dashboard';
 // ── Keys ──────────────────────────────────────────────────────────────────────
 
 const KEYS = {
-  list: (wsKey?: string) => ['dashboards', wsKey || ''] as const,
+  list: ['dashboards'] as const,
   detail: (id: string) => ['dashboards', id] as const,
   datasetQuery: (id: string, params: Record<string, unknown>) => ['dataset-query', id, params] as const,
   datasetSchema: (id: string) => ['dataset-schema', id] as const,
@@ -16,9 +16,9 @@ const KEYS = {
 
 export function useDashboards() {
   const workspace = useWorkspaceContext();
-  const wsKey = workspace?.workspace_id || workspace?.workspace_slug || '';
+  const wsKey = workspace?.id || workspace?.slug || '';
   return useQuery<DashboardMeta[]>({
-    queryKey: KEYS.list(wsKey),
+    queryKey: ['dashboards', wsKey],
     queryFn: async () => {
       const { data } = await api.get('/dashboards');
       return data;

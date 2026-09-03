@@ -50,7 +50,7 @@ import { useWorkspaceContext } from "@/lib/workspaceContext";
 
 export function useAgents() {
   const workspace = useWorkspaceContext();
-  const wsKey = workspace?.workspace_id || workspace?.workspace_slug || "";
+  const wsKey = workspace?.id || workspace?.slug || "";
   return useQuery({
     queryKey: ["agents", wsKey],
     queryFn: async () => {
