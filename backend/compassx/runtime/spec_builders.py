@@ -140,6 +140,15 @@ class BaseSpecBuilder(ABC):
         image = custom_image or self._resolve_image(self.default_image)
 
         env_vars = {**self._minio_env_vars(), **self.runtime_env(options)}
+        if workspace_id:
+            env_vars["WORKSPACE_ID"] = str(workspace_id)
+            env_vars["COMPASSX_WORKSPACE_ID"] = str(workspace_id)
+            env_vars["KERNEL_WORKSPACE_ID"] = str(workspace_id)
+        ws_name = str(options.get("workspace_name") or options.get("workspace_slug") or "").strip()
+        if ws_name:
+            env_vars["WORKSPACE_SLUG"] = ws_name
+            env_vars["COMPASSX_WORKSPACE_SLUG"] = ws_name
+            env_vars["KERNEL_WORKSPACE_SLUG"] = ws_name
         extra_env = options.get("extra_env") or {}
         env_vars.update({str(k): str(v) for k, v in extra_env.items()})
 

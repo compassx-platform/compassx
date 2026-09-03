@@ -71,6 +71,8 @@ class DockerCompassXProcessProxy(CompassXProcessProxy):
         conn_file = f"/tmp/kernel-{self.kernel_id}.json"
         session_token = env.get("KERNEL_NOTEBOOK_SESSION_TOKEN") or env.get("NOTEBOOK_SESSION_TOKEN") or ""
         catalog_url = env.get("KERNEL_CATALOG_API_URL") or env.get("CATALOG_API_URL") or ""
+        workspace_id = env.get("KERNEL_WORKSPACE_ID") or env.get("WORKSPACE_ID") or ""
+        workspace_slug = env.get("KERNEL_WORKSPACE_SLUG") or env.get("WORKSPACE_SLUG") or ""
         if catalog_url.startswith(("http://localhost", "https://localhost", "http://127.0.0.1", "https://127.0.0.1")):
             host_gateway = os.environ.get("COMPASSX_HOST_GATEWAY", "host.docker.internal")
             catalog_url = catalog_url.replace("localhost", host_gateway).replace("127.0.0.1", host_gateway)
@@ -82,6 +84,10 @@ class DockerCompassXProcessProxy(CompassXProcessProxy):
                 f"os.environ['KERNEL_NOTEBOOK_SESSION_TOKEN'] = {session_token!r}; "
                 f"os.environ['CATALOG_API_URL'] = {catalog_url!r}; "
                 f"os.environ['KERNEL_CATALOG_API_URL'] = {catalog_url!r}; "
+                f"os.environ['WORKSPACE_ID'] = {workspace_id!r}; "
+                f"os.environ['KERNEL_WORKSPACE_ID'] = {workspace_id!r}; "
+                f"os.environ['WORKSPACE_SLUG'] = {workspace_slug!r}; "
+                f"os.environ['KERNEL_WORKSPACE_SLUG'] = {workspace_slug!r}; "
                 f"sys.argv = ['ipykernel_launcher', '--ip=0.0.0.0', '--InteractiveShellApp.exec_lines', 'import services.compassx_sql as cx', '--InteractiveShellApp.exec_lines', '%load_ext services.compassx_sql', '-f', '{conn_file}']; "
                 "import services.fsspec_cx; "
                 "from ipykernel import kernelapp; kernelapp.main()"

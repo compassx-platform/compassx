@@ -32,6 +32,10 @@ class S3StorageBackend(BlobStorageBackend):
         self.endpoint_url = endpoint_url
         self._session = aiobotocore.session.get_session()
 
+    @property
+    def container(self) -> str:
+        return self.bucket
+
     def _key(self, path: str) -> str:
         return self.base_path + path.lstrip("/")
 
@@ -109,6 +113,11 @@ class S3StorageBackend(BlobStorageBackend):
         # Build policy statements based on mode
         statements = []
 
+        # Ensure clean object key prefix without bucket name for S3 ARN
+        clean_prefix = prefix.lstrip("/")
+        if clean_prefix.startswith(f"{self.bucket}/"):
+            clean_prefix = clean_prefix[len(f"{self.bucket}/"):].lstrip("/")
+
         # Object-level permissions
         actions = []
         if mode in ("read", "readwrite"):
@@ -120,7 +129,7 @@ class S3StorageBackend(BlobStorageBackend):
             statements.append({
                 "Effect": "Allow",
                 "Action": actions,
-                "Resource": f"arn:aws:s3:::{self.bucket}/{prefix}*",
+                "Resource": f"arn:aws:s3:::{self.bucket}/{clean_prefix}*",
             })
 
         # ListBucket permission for read modes
@@ -131,7 +140,7 @@ class S3StorageBackend(BlobStorageBackend):
                 "Resource": f"arn:aws:s3:::{self.bucket}",
                 "Condition": {
                     "StringLike": {
-                        "s3:prefix": f"{prefix}*",
+                        "s3:prefix": f"{clean_prefix}*",
                     },
                 },
             })

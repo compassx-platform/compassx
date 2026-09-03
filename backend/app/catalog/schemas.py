@@ -366,6 +366,8 @@ class VolumeResolveRequest(BaseModel):
     volume: str
     mode: str = "read"  # "read", "write", or "readwrite"
     path: str | None = None  # Optional, used for prefix validation
+    workspace_id: str | None = None  # Explicit workspace ID
+    workspace_slug: str | None = None  # Explicit workspace slug
 
 
 class VolumeResolveResponse(BaseModel):

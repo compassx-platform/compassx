@@ -821,6 +821,20 @@ def start_kernel_for_resource(
 
     catalog_api_url = _kernel_catalog_api_url()
 
+    ws_id_val = workspace_id
+    if not ws_id_val:
+        try:
+            raw_res = service.get_resource(resource_id)
+            if raw_res and getattr(raw_res, "workspace_id", None):
+                ws_id_val = raw_res.workspace_id
+        except Exception:
+            pass
+
+    ws_id_str = str(ws_id_val) if ws_id_val else ""
+    ws_slug_str = ""
+    if ws_id_val:
+        ws_slug_str = service._resolve_workspace_name(ws_id_val)
+
     try:
         resp = httpx.post(
             f"{eg_url}/api/kernels",
@@ -833,6 +847,10 @@ def start_kernel_for_resource(
                     "KERNEL_NOTEBOOK_SESSION_TOKEN": session_token,
                     "CATALOG_API_URL": catalog_api_url,
                     "NOTEBOOK_SESSION_TOKEN": session_token,
+                    "KERNEL_WORKSPACE_ID": ws_id_str,
+                    "WORKSPACE_ID": ws_id_str,
+                    "KERNEL_WORKSPACE_SLUG": ws_slug_str,
+                    "WORKSPACE_SLUG": ws_slug_str,
                 },
             },
             timeout=float(eg_settings.EG_KERNEL_LAUNCH_TIMEOUT),

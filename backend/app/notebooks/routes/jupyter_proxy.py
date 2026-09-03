@@ -471,12 +471,36 @@ async def proxy_kernels_start(
     if "env" not in payload:
         payload["env"] = {}
 
-    catalog_api_url = _kernel_catalog_api_url()
+    ws_id_str = ""
+    ws_slug_str = ""
+    if hasattr(request.state, "workspace") and request.state.workspace:
+        ws_id_str = str(getattr(request.state.workspace, "workspace_id", "") or "")
+        ws_slug_str = str(getattr(request.state.workspace, "workspace_slug", "") or "")
+    elif request.query_params.get("workspace"):
+        ws_slug_str = request.query_params.get("workspace") or ""
+    elif request.headers.get("x-workspace-slug"):
+        ws_slug_str = request.headers.get("x-workspace-slug") or ""
+
+    if ws_slug_str and not ws_id_str:
+        try:
+            from app.workspace.models import Workspace
+            ws_obj = db.query(Workspace).filter((Workspace.slug == ws_slug_str) | (Workspace.id == ws_slug_str)).first()
+            if ws_obj:
+                ws_id_str = str(ws_obj.id)
+                ws_slug_str = ws_obj.slug
+        except Exception:
+            pass
 
     payload["env"].setdefault("KERNEL_NOTEBOOK_SESSION_TOKEN", session_token)
     payload["env"].setdefault("KERNEL_CATALOG_API_URL", catalog_api_url)
     payload["env"].setdefault("NOTEBOOK_SESSION_TOKEN", session_token)
     payload["env"].setdefault("CATALOG_API_URL", catalog_api_url)
+    if ws_id_str:
+        payload["env"].setdefault("KERNEL_WORKSPACE_ID", ws_id_str)
+        payload["env"].setdefault("WORKSPACE_ID", ws_id_str)
+    if ws_slug_str:
+        payload["env"].setdefault("KERNEL_WORKSPACE_SLUG", ws_slug_str)
+        payload["env"].setdefault("WORKSPACE_SLUG", ws_slug_str)
 
     modified_body = json.dumps(payload).encode("utf-8")
 

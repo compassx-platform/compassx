@@ -159,7 +159,7 @@ def _search_row_securable(row) -> Securable:
     return factory(catalog, schema, asset)
 
 
-def _kernel_principal(principal, system_db: Session, workspace_id: str) -> GovernancePrincipal:
+def _kernel_principal(principal, db: Session, workspace_id: str) -> GovernancePrincipal:
     """Governance identity for a notebook kernel calling back into the API.
 
     Kernel-facing endpoints authenticate their own bearer token rather than
@@ -174,11 +174,12 @@ def _kernel_principal(principal, system_db: Session, workspace_id: str) -> Gover
     try:
         group_ids = tuple(
             str(row[0])
-            for row in system_db.query(UmGroupMember.group_id)
+            for row in db.query(UmGroupMember.group_id)
             .filter(UmGroupMember.user_id == user_id)
             .all()
         )
     except Exception:  # pragma: no cover - identity store unavailable
+        db.rollback()
         logger.exception("Group expansion failed for kernel principal %s", user_id)
         group_ids = ()
 
@@ -944,7 +945,7 @@ async def record_volume_file(
         raise HTTPException(
             status_code=403, detail="No workspace context for this request."
         )
-    kernel = _kernel_principal(principal, system_db, str(ctx.workspace_id))
+    kernel = _kernel_principal(principal, db, str(ctx.workspace_id))
     Guard(
         load_permission_set(system_db, kernel, str(ctx.workspace_id)),
         system_db,
@@ -2064,7 +2065,43 @@ async def resolve_volume_credential(
         token = authorization[7:]  # Remove "Bearer " prefix
         principal = validate_bearer_token(token)
         user_id = principal.id if hasattr(principal, "id") else principal.get("sub")
-        workspace_id = req_context.state.workspace.workspace_id if hasattr(req_context.state, "workspace") else None
+        
+        # Resolve workspace ID: explicit request -> catalog binding -> request context
+        workspace_id = (
+            body.workspace_id
+            or req_context.headers.get("x-workspace-id")
+        )
+        if not workspace_id and (body.workspace_slug or req_context.headers.get("x-workspace-slug")):
+            ws_slug = body.workspace_slug or req_context.headers.get("x-workspace-slug")
+            from app.workspace.models import Workspace
+            ws_obj = db.query(Workspace).filter((Workspace.slug == ws_slug) | (Workspace.id == ws_slug)).first()
+            if ws_obj:
+                workspace_id = str(ws_obj.id)
+
+        if not workspace_id:
+            from app.catalog.models import UnifiedCatalog, CatalogWorkspaceBinding
+            cat_obj = db.query(UnifiedCatalog).filter(UnifiedCatalog.name == body.catalog).first()
+            if cat_obj:
+                binding = db.query(CatalogWorkspaceBinding).filter(
+                    CatalogWorkspaceBinding.catalog_id == cat_obj.id
+                ).first()
+                if binding:
+                    workspace_id = str(binding.workspace_id)
+
+        if not workspace_id:
+            workspace_id = getattr(req_context.state, "workspace", None) and getattr(req_context.state.workspace, "workspace_id", None)
+            if workspace_id:
+                workspace_id = str(workspace_id)
+
+        if not workspace_id:
+            logger.warning("Volume resolve rejected: missing mandatory workspace ID")
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "error_code": "WORKSPACE_REQUIRED",
+                    "message": "Workspace ID is mandatory when resolving volume credentials.",
+                },
+            )
     except Exception as exc:
         logger.warning("Volume resolve: token validation failed: %s", exc)
         return JSONResponse(
@@ -2139,7 +2176,7 @@ async def resolve_volume_credential(
 
         securable = Securable.volume(body.catalog, body.schema_name, body.volume)
         needed = Privilege.SELECT if body_mode == "read" else Privilege.MODIFY
-        kernel = _kernel_principal(principal, system_db, workspace_id)
+        kernel = _kernel_principal(principal, db, workspace_id)
         guard = Guard(
             load_permission_set(system_db, kernel, workspace_id),
             system_db,
@@ -2159,7 +2196,7 @@ async def resolve_volume_credential(
             )
 
         # Get storage backend for volume
-        storage_ctx = resolve_catalog_storage(db, body.catalog, body.schema_name)
+        storage_ctx = resolve_catalog_storage(db, body.catalog, body.schema_name, workspace_id=workspace_id)
         if not storage_ctx:
             logger.error("Volume resolve: storage context not found for schema %s", schema.id)
             return JSONResponse(
@@ -2173,7 +2210,7 @@ async def resolve_volume_credential(
         backend = storage_ctx.backend
 
         # Compute scoped prefix
-        container_name = backend.container
+        container_name = getattr(backend, "container", None) or getattr(backend, "bucket", "")
         backend_base = (storage_ctx.backend_base or "").strip("/")
         
         volume_loc = (volume.storage_location or "").strip("/")
