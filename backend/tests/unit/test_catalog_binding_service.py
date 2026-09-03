@@ -248,8 +248,15 @@ def test_create_workspace_auto_creates_custom_catalog(mock_validate, db_session:
         storage_config={},
     )
 
-    # Call route function (it's async, so run via asyncio.run)
-    ws_out = asyncio.run(create_workspace(body, db_session, principal))
+    import app.database
+    from sqlalchemy.orm import sessionmaker
+    orig_sys = app.database.SystemSessionLocal
+    app.database.SystemSessionLocal = sessionmaker(bind=db_session.bind)
+    try:
+        # Call route function (it's async, so run via asyncio.run)
+        ws_out = asyncio.run(create_workspace(body, db_session, principal))
+    finally:
+        app.database.SystemSessionLocal = orig_sys
 
     # Verify workspace was created
     assert ws_out.slug == "eng-ws-team"
@@ -271,3 +278,30 @@ def test_create_workspace_auto_creates_custom_catalog(mock_validate, db_session:
     assert binding is not None
     assert binding.privilege == "READ_WRITE"
     assert binding.is_default is True
+
+    # Verify default schema was created
+    from app.catalog.models import UnifiedCatalogNotebook, UnifiedCatalogSchema, UnifiedCatalogVolume
+    schema = db_session.query(UnifiedCatalogSchema).filter(
+        UnifiedCatalogSchema.catalog_id == catalog.id,
+        UnifiedCatalogSchema.name == "default",
+    ).first()
+    assert schema is not None
+    assert schema.name == "default"
+
+    # Verify sample_data volume was created
+    volume = db_session.query(UnifiedCatalogVolume).filter(
+        UnifiedCatalogVolume.schema_id == schema.id,
+        UnifiedCatalogVolume.name == "sample_data",
+    ).first()
+    assert volume is not None
+    assert volume.name == "sample_data"
+
+    # Verify getting_started notebook was created
+    nb = db_session.query(UnifiedCatalogNotebook).filter(
+        UnifiedCatalogNotebook.schema_id == schema.id,
+        UnifiedCatalogNotebook.name == "getting_started",
+    ).first()
+    assert nb is not None
+    assert nb.name == "getting_started"
+    assert nb.catalog_name == "engineering_workspace_team_default"
+    assert nb.schema_name == "default"
