@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import threading
 from datetime import datetime, timezone
 from typing import AsyncIterator
@@ -66,8 +67,37 @@ class KubernetesDriver(ResourceDriver):
 
     # ── helpers ──────────────────────────────────────────────────────────
 
-    def _deployment_name(self, runtime_id: str) -> str:
-        return f"compassx-runtime-{runtime_id}"
+    def _deployment_name(self, spec_or_id: RuntimeSpec | str) -> str:
+        if isinstance(spec_or_id, str):
+            return f"compassx-runtime-{spec_or_id}"
+        parts = ["compassx"]
+        ws = (
+            spec_or_id.metadata.get("workspace_name")
+            or spec_or_id.metadata.get("workspace_slug")
+            or spec_or_id.workspace_id
+            or ""
+        ).strip()
+        if ws:
+            ws_slug = re.sub(r"[^a-zA-Z0-9_-]+", "-", ws.lower()).strip("-_")[:15]
+            if ws_slug:
+                parts.append(ws_slug)
+        name = (
+            spec_or_id.metadata.get("resource_name")
+            or spec_or_id.metadata.get("name")
+            or spec_or_id.labels.get("compassx/resource-name")
+            or ""
+        ).strip()
+        if name:
+            name_slug = re.sub(r"[^a-zA-Z0-9_-]+", "-", name.lower()).strip("-_")[:20]
+            if name_slug:
+                parts.append(name_slug)
+        else:
+            parts.append("runtime")
+        parts.append(spec_or_id.runtime_id)
+        joined = "-".join(parts)
+        if len(joined) > 63:
+            joined = f"compassx-runtime-{spec_or_id.runtime_id}"
+        return joined
 
     def _ensure_namespace(self) -> None:
         try:
@@ -173,7 +203,7 @@ class KubernetesDriver(ResourceDriver):
             api_version="apps/v1",
             kind="Deployment",
             metadata=m.V1ObjectMeta(
-                name=self._deployment_name(spec.runtime_id),
+                name=self._deployment_name(spec),
                 namespace=spec.namespace or self._namespace,
                 labels=labels,
                 annotations=spec.annotations or None,
@@ -210,6 +240,12 @@ class KubernetesDriver(ResourceDriver):
 
     def _read_deployment(self, runtime_id: str):
         try:
+            deps = self._k8s.apps().list_namespaced_deployment(
+                namespace=self._namespace,
+                label_selector=f"{RUNTIME_ID_LABEL}={runtime_id}",
+            )
+            if deps.items:
+                return deps.items[0]
             return self._k8s.apps().read_namespaced_deployment(
                 name=self._deployment_name(runtime_id), namespace=self._namespace
             )
@@ -224,7 +260,7 @@ class KubernetesDriver(ResourceDriver):
 
     async def create_runtime(self, spec: RuntimeSpec) -> str:
         deployment = self._build_deployment(spec)
-        name = self._deployment_name(spec.runtime_id)
+        name = self._deployment_name(spec)
 
         def _apply():
             self._ensure_namespace()
@@ -268,9 +304,9 @@ class KubernetesDriver(ResourceDriver):
         await self._scale(runtime_id, 0)
 
     async def _scale(self, runtime_id: str, replicas: int) -> None:
-        name = self._deployment_name(runtime_id)
-
         def _patch():
+            deployment = self._read_deployment(runtime_id)
+            name = deployment.metadata.name
             try:
                 self._k8s.apps().patch_namespaced_deployment_scale(
                     name=name,
@@ -288,9 +324,9 @@ class KubernetesDriver(ResourceDriver):
         logger.info("K8s runtime scaled: runtime_id=%s replicas=%s", runtime_id, replicas)
 
     async def delete_runtime(self, runtime_id: str) -> None:
-        name = self._deployment_name(runtime_id)
-
         def _delete():
+            deployment = self._read_deployment(runtime_id)
+            name = deployment.metadata.name
             try:
                 self._k8s.apps().delete_namespaced_deployment(
                     name=name, namespace=self._namespace

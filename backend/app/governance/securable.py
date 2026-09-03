@@ -25,7 +25,7 @@ from app.governance.privileges import (
 #: securables. The column is NOT NULL and shared with catalog-path grants; a
 #: sentinel that cannot collide with a real catalog name keeps the two families
 #: separable in SQL without a schema change.
-WORKSPACE_SENTINEL = "\x00workspace"
+WORKSPACE_SENTINEL = "__workspace__"
 
 
 @dataclass(frozen=True, slots=True)

@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import io
 import logging
+import re
 import tarfile
 from datetime import datetime
 from pathlib import Path
@@ -114,9 +115,12 @@ class DockerDriver(ResourceDriver):
         message = ""
         if container.status == "exited":
             exit_code = state.get("ExitCode", 0)
-            if exit_code:
+            # Exit codes 0 (clean), 137 (SIGKILL), 143 (SIGTERM), and 130 (SIGINT) are standard stop signals
+            if exit_code not in (0, 137, 143, 130):
                 phase = RuntimePhase.FAILED
                 message = state.get("Error") or f"Container exited with code {exit_code}"
+            else:
+                phase = RuntimePhase.STOPPED
         if state.get("OOMKilled"):
             phase = RuntimePhase.FAILED
             message = "Out of memory. Try a larger compute profile."
@@ -131,6 +135,36 @@ class DockerDriver(ResourceDriver):
             finished_at=_parse_docker_time(state.get("FinishedAt")),
             labels=labels,
         )
+
+    @staticmethod
+    def _build_container_name(spec: RuntimeSpec) -> str:
+        parts = ["compassx"]
+        ws = (
+            spec.metadata.get("workspace_name")
+            or spec.metadata.get("workspace_slug")
+            or spec.workspace_id
+            or ""
+        ).strip()
+        if ws:
+            ws_slug = re.sub(r"[^a-zA-Z0-9_-]+", "-", ws.lower()).strip("-_")[:20]
+            if ws_slug:
+                parts.append(ws_slug)
+
+        name = (
+            spec.metadata.get("resource_name")
+            or spec.metadata.get("name")
+            or spec.labels.get("compassx/resource-name")
+            or ""
+        ).strip()
+        if name:
+            name_slug = re.sub(r"[^a-zA-Z0-9_-]+", "-", name.lower()).strip("-_")[:25]
+            if name_slug:
+                parts.append(name_slug)
+        else:
+            parts.append("runtime")
+
+        parts.append(spec.runtime_id)
+        return "-".join(parts)
 
     # ── lifecycle ────────────────────────────────────────────────────────
 
@@ -167,7 +201,7 @@ class DockerDriver(ResourceDriver):
 
         run_kwargs: dict = {
             "image": spec.container_image,
-            "name": f"compassx-runtime-{spec.runtime_id}",
+            "name": self._build_container_name(spec),
             "detach": True,
             "labels": labels,
             "environment": environment,

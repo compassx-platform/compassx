@@ -13,6 +13,7 @@ No Runtime Manager changes required.
 from __future__ import annotations
 
 import logging
+import re
 from abc import ABC, abstractmethod
 from datetime import datetime, timezone
 from pathlib import Path
@@ -158,6 +159,25 @@ class BaseSpecBuilder(ABC):
                     )
                 )
 
+        resource_name = str(
+            options.get("resource_name") or options.get("name") or ""
+        ).strip()
+        workspace_name = str(
+            options.get("workspace_name") or options.get("workspace_slug") or ""
+        ).strip()
+        deployment_name = str(options.get("deployment_name") or "").strip()
+
+        labels = self._standard_labels(runtime_id, user_id)
+        if resource_name:
+            clean_res = re.sub(r"[^a-zA-Z0-9_-]+", "-", resource_name.lower()).strip("-_")[:63]
+            if clean_res:
+                labels["compassx/resource-name"] = clean_res
+        ws_label_val = workspace_name or workspace_id
+        if ws_label_val:
+            clean_ws = re.sub(r"[^a-zA-Z0-9_-]+", "-", str(ws_label_val).lower()).strip("-_")[:63]
+            if clean_ws:
+                labels["compassx/workspace-id"] = clean_ws
+
         spec = RuntimeSpec(
             runtime_id=runtime_id,
             runtime_type=self.runtime_type,
@@ -167,7 +187,7 @@ class BaseSpecBuilder(ABC):
             env=env_vars,
             ports=self.ports(options),
             volumes=volumes,
-            labels=self._standard_labels(runtime_id, user_id),
+            labels=labels,
             annotations=self._standard_annotations(profile_id, env),
             namespace=namespace,
             user_id=user_id,
@@ -175,6 +195,9 @@ class BaseSpecBuilder(ABC):
             metadata={
                 "profile_id": profile_id,
                 "env": env,
+                "resource_name": resource_name,
+                "workspace_name": workspace_name,
+                "deployment_name": deployment_name,
                 "k8s_extra_limits": {
                     k: v
                     for k, v in (options.get("limits") or {}).items()

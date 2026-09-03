@@ -442,6 +442,8 @@ def create_compute_resource(
 ):
     """Create a new compute resource configuration."""
     user_id, workspace_id = _caller(req_context, guard)
+    ctx = getattr(req_context.state, "workspace", None)
+    workspace_name = (ctx.workspace_slug or ctx.workspace_name) if ctx else None
     # A compute resource has no parent securable to hold CREATE on, and each
     # one reserves cluster capacity, so creation sits with the workspace
     # admin rather than being open to every member.
@@ -449,7 +451,11 @@ def create_compute_resource(
     try:
         service = _service(req_context, db)
         resource = service.create_resource(
-            body, user_id, user_id, workspace_id=workspace_id
+            body,
+            user_id,
+            user_id,
+            workspace_id=workspace_id,
+            workspace_name=workspace_name,
         )
     except ValueError as exc:
         return _error("InvalidRequest", str(exc), 400)
@@ -567,7 +573,7 @@ def stop_compute_resource(
     _require_compute(guard, db, resource_id, Privilege.USE_COMPUTE)
     try:
         service = _service(req_context, db)
-        service.stop_resource_pod(resource_id, user_id, workspace_id=workspace_id)
+        service.stop_resource(resource_id, user_id, workspace_id=workspace_id)
         return {"stopped": True, "resource_id": resource_id}
     except ValueError as exc:
         return _error("NotFound", str(exc), 404)

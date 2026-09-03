@@ -4,6 +4,7 @@ import concurrent.futures
 import json
 import logging
 import os
+import re
 import uuid
 from datetime import datetime
 
@@ -40,6 +41,7 @@ def _run_async(coro):
             return executor.submit(lambda: asyncio.run(coro)).result()
     else:
         return asyncio.run(coro)
+
 
 
 class ComputeResourceService:
@@ -119,18 +121,57 @@ class ComputeResourceService:
         row.updated_at = datetime.utcnow()
         self.db.commit()
 
+    def _resolve_workspace_name(self, workspace_id_or_name: str | None) -> str:
+        if not workspace_id_or_name:
+            return ""
+        val = str(workspace_id_or_name).strip()
+        try:
+            uuid.UUID(val)
+            from app.database import get_account_db
+            from app.workspace.models import Workspace
+            adb = next(get_account_db())
+            ws = adb.query(Workspace).filter(Workspace.id == val).first()
+            if ws:
+                return ws.slug or ws.name
+        except Exception:
+            pass
+        return val
+
     def _runtime_options(self, resource: ComputeResource) -> dict:
         profile = get_profile(resource.profile, compute_settings.COMPASSX_ENV)
+        resolved_ws = self._resolve_workspace_name(resource.workspace_id)
         return {
             "profile_id": profile.id,
             "requests": profile.requests,
             "limits": profile.limits,
             "custom_image": resource.custom_image,
             "extra_env": json.loads(resource.extra_env) if resource.extra_env else {},
+            "resource_name": resource.name,
+            "workspace_id": resource.workspace_id,
+            "workspace_name": resolved_ws,
+            "deployment_name": resource.deployment_name,
         }
 
-    def _deployment_name_for(self, resource_id: str) -> str:
-        return f"compassx-compute-{resource_id}"
+    def _deployment_name_for(
+        self,
+        resource_id: str,
+        resource_name: str | None = None,
+        workspace_id: str | None = None,
+    ) -> str:
+        parts = ["compassx"]
+        resolved_ws = self._resolve_workspace_name(workspace_id)
+        if resolved_ws:
+            ws_slug = re.sub(r"[^a-zA-Z0-9_-]+", "-", resolved_ws.strip().lower()).strip("-_")[:20]
+            if ws_slug:
+                parts.append(ws_slug)
+        if resource_name:
+            res_slug = re.sub(r"[^a-zA-Z0-9_-]+", "-", resource_name.strip().lower()).strip("-_")[:25]
+            if res_slug:
+                parts.append(res_slug)
+        if len(parts) == 1:
+            parts.append("compute")
+        parts.append(resource_id)
+        return "-".join(parts)
 
     def _to_response(self, resource: ComputeResource) -> ComputeResourceResponse:
         return ComputeResourceResponse(
@@ -154,6 +195,7 @@ class ComputeResourceService:
         created_by: str,
         *,
         workspace_id: str | None = None,
+        workspace_name: str | None = None,
         is_default: bool = False,
         auto_start: bool = False,
     ) -> ComputeResourceResponse:
@@ -162,6 +204,8 @@ class ComputeResourceService:
 
         resource_id = uuid.uuid4().hex[:8]
         now = datetime.utcnow()
+
+        resolved_ws = workspace_name or self._resolve_workspace_name(workspace_id)
 
         resource = ComputeResource(
             id=resource_id,
@@ -175,7 +219,9 @@ class ComputeResourceService:
             extra_env=json.dumps(request.extra_env or {}),
             created_at=now,
             description=request.description,
-            deployment_name=self._deployment_name_for(resource_id),
+            deployment_name=self._deployment_name_for(
+                resource_id, request.name, resolved_ws
+            ),
             desired_status="running" if auto_start else "stopped",
             is_default=is_default,
         )
@@ -260,7 +306,9 @@ class ComputeResourceService:
         if not resource:
             raise ValueError(f"Resource not found: {resource_id}")
         if not resource.deployment_name:
-            resource.deployment_name = self._deployment_name_for(resource.id)
+            resource.deployment_name = self._deployment_name_for(
+                resource.id, resource.name, resource.workspace_id
+            )
             self.db.commit()
             self.db.refresh(resource)
         return resource
@@ -364,6 +412,8 @@ class ComputeResourceService:
             message = info.message or None
             if info.phase == RuntimePhase.MISSING and resource.desired_status == "running":
                 message = "Compute runtime is initializing or pending startup."
+            elif resource.desired_status == "stopped" and phase in ("Failed", "Unknown", "Pending", "Stopping"):
+                phase = "Stopped"
         except DriverUnavailableError as exc:
             if resource.desired_status == "stopped":
                 phase = "Stopped"
@@ -549,6 +599,10 @@ class ComputeResourceService:
         resource.pod_name = None
         self.db.commit()
         logger.info("Stopped deployment for resource: %s", resource_id)
+
+    def stop_resource_pod(self, resource_id: str, user_id: str, workspace_id: str | None = None) -> None:
+        """Alias for stop_resource."""
+        return self.stop_resource(resource_id, user_id, workspace_id=workspace_id)
 
     def reconcile_runtime_states(self) -> int:
         """Reconcile running database records with actual infrastructure state.
