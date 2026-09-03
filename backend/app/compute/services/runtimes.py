@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 SPARK_IMAGE = "apache/spark:3.5.0"
 FLINK_IMAGE = "flink:1.18-scala_2.12"
 RAY_IMAGE = "rayproject/ray:2.9.0"
-DUCKDB_IMAGE = "ghcr.io/compassx-platform/compute-duckdb:v0.5.0"
+DUCKDB_IMAGE = "ghcr.io/compassx-platform/compute-duckdb:v0.6.0"
 
 # Runtimes valid only with certain profiles
 DUCKDB_VALID_PROFILES = {"local", "cloud-xs", "cloud-s"}
