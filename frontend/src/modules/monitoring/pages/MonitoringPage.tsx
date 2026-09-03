@@ -11,6 +11,8 @@ import {
   Database,
   HardDrive,
   Layers,
+  Minus,
+  Plus,
   RefreshCw,
   Search,
   Server,
@@ -139,6 +141,8 @@ export default function MonitoringPage() {
   const [memLimitGrouped, setMemLimitGrouped] = useState<GroupedSeries | null>(null);
   const [memLimitSingle, setMemLimitSingle] = useState<SingleSeries | null>(null);
   const [nodeTimeseries, setNodeTimeseries] = useState<GroupedSeries | null>(null);
+  const [expandedLegends, setExpandedLegends] = useState<Record<string, boolean>>({});
+  const [hiddenTraces, setHiddenTraces] = useState<Record<string, boolean>>({});
 
   const localTz = useMemo(() => {
     try {
@@ -950,58 +954,130 @@ export default function MonitoringPage() {
                 }
               }
 
-              return (
-                <div key={config.key} className="monitoring-chart-card">
-                  <div className="chart-card-header">
-                    <h3 className="chart-card-title">
-                      {config.key === 'cpu'
-                        ? `CPU Utilization (% of ${totalCores} Cores)`
-                        : `${config.title} (${config.unit})`}
-                    </h3>
-                  </div>
+                  const visiblePlotData = plotData.map((trace) => ({
+                    ...trace,
+                    visible: hiddenTraces[trace.name as string]
+                      ? ('legendonly' as const)
+                      : true,
+                  }));
 
-                  <Plot
-                    data={plotData}
-                    layout={{
-                      autosize: true,
-                      height: 320,
-                      margin: { l: 50, r: config.key === 'cpu' ? 45 : 20, t: 15, b: 45 },
-                      barmode: isStacked ? 'stack' : 'group',
-                      showlegend: isStacked,
-                      xaxis: {
-                        type: 'date',
-                      },
-                      yaxis: {
-                        title: { text: config.unit, font: { size: 11 } },
-                        rangemode: 'tozero',
-                        autorange: true,
-                      },
-                      ...(config.key === 'cpu'
-                        ? {
-                            yaxis2: {
-                              title: { text: 'Nodes', font: { size: 11, color: '#8b5cf6' } },
-                              overlaying: 'y',
-                              side: 'right',
-                              rangemode: 'tozero',
-                              dtick: 1,
-                              tickformat: 'd',
-                              showgrid: false,
-                              tickfont: { size: 10, color: '#8b5cf6' },
-                            },
-                          }
-                        : {}),
-                      legend: {
-                        orientation: 'h',
-                        y: -0.25,
-                        font: { size: 10 },
-                      },
-                    }}
-                    config={{ responsive: true, displayModeBar: false }}
-                    style={{ width: '100%', height: '320px' }}
-                    useResizeHandler
-                  />
-                </div>
-              );
+                  return (
+                    <div key={config.key} className="monitoring-chart-card">
+                      <div className="chart-card-header">
+                        <h3 className="chart-card-title">
+                          {config.key === 'cpu'
+                            ? `CPU Utilization (% of ${totalCores} Cores)`
+                            : `${config.title} (${config.unit})`}
+                        </h3>
+                      </div>
+
+                      <Plot
+                        data={visiblePlotData}
+                        layout={{
+                          autosize: true,
+                          height: 290,
+                          margin: { l: 50, r: config.key === 'cpu' ? 45 : 20, t: 15, b: 35 },
+                          barmode: isStacked ? 'stack' : 'group',
+                          showlegend: false,
+                          xaxis: {
+                            type: 'date',
+                          },
+                          yaxis: {
+                            title: { text: config.unit, font: { size: 11 } },
+                            rangemode: 'tozero',
+                            autorange: true,
+                          },
+                          ...(config.key === 'cpu'
+                            ? {
+                                yaxis2: {
+                                  title: { text: 'Nodes', font: { size: 11, color: '#8b5cf6' } },
+                                  overlaying: 'y',
+                                  side: 'right',
+                                  rangemode: 'tozero',
+                                  dtick: 1,
+                                  tickformat: 'd',
+                                  showgrid: false,
+                                  tickfont: { size: 10, color: '#8b5cf6' },
+                                },
+                              }
+                            : {}),
+                        }}
+                        config={{ responsive: true, displayModeBar: false }}
+                        style={{ width: '100%', height: '290px' }}
+                        useResizeHandler
+                      />
+
+                      {plotData.length > 0 && (
+                        <div className="chart-legend-container">
+                          <div
+                            className={`chart-legend-items ${
+                              expandedLegends[config.key] ? 'expanded' : 'collapsed'
+                            }`}
+                          >
+                            {plotData.map((trace) => {
+                              const traceName = trace.name as string;
+                              const isHidden = !!hiddenTraces[traceName];
+                              const isLine = trace.type === 'scatter';
+                              const traceObj = trace as Record<string, any>;
+                              const color =
+                                traceObj.marker?.color ||
+                                traceObj.line?.color ||
+                                '#64748b';
+
+                              return (
+                                <div
+                                  key={traceName}
+                                  className={`chart-legend-item ${isHidden ? 'hidden' : ''}`}
+                                  title={`Click to ${isHidden ? 'show' : 'hide'} ${traceName}`}
+                                  onClick={() =>
+                                    setHiddenTraces((prev) => ({
+                                      ...prev,
+                                      [traceName]: !prev[traceName],
+                                    }))
+                                  }
+                                >
+                                  <span
+                                    className={`chart-legend-dot ${isLine ? 'is-line' : ''}`}
+                                    style={{
+                                      backgroundColor: isLine ? undefined : color,
+                                      borderColor: isLine ? color : undefined,
+                                    }}
+                                  />
+                                  <span className="chart-legend-label">{traceName}</span>
+                                </div>
+                              );
+                            })}
+                            {expandedLegends[config.key] && plotData.length > 2 && (
+                              <button
+                                className="chart-legend-toggle-btn inline-end"
+                                onClick={() =>
+                                  setExpandedLegends((prev) => ({
+                                    ...prev,
+                                    [config.key]: false,
+                                  }))
+                                }
+                              >
+                                <Minus size={11} strokeWidth={2.5} /> Show less
+                              </button>
+                            )}
+                          </div>
+                          {!expandedLegends[config.key] && plotData.length > 2 && (
+                            <button
+                              className="chart-legend-toggle-btn"
+                              onClick={() =>
+                                setExpandedLegends((prev) => ({
+                                  ...prev,
+                                  [config.key]: true,
+                                }))
+                              }
+                            >
+                              <Plus size={11} strokeWidth={2.5} /> Show more
+                            </button>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
             })}
           </div>
         </section>
