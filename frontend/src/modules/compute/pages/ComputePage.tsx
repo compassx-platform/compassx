@@ -50,15 +50,18 @@ export default function ComputePage() {
   }, []);
 
   useEffect(() => {
-    fetch('/api/v1/compute/health')
-      .then((r) => r.json())
+    computeApi.getHealth()
       .then((data) => {
         if (data.status !== 'ok') {
-          setK8sWarning(data.message || 'Kubernetes not connected. Start minikube.');
+          setK8sWarning(data.message || 'Compute infrastructure not connected.');
+        } else {
+          setK8sWarning(null);
         }
       })
-      .catch(() => {
-        setK8sWarning('Kubernetes not connected. Start minikube.');
+      .catch((err) => {
+        if (err.response?.status === 503 && err.response?.data?.message) {
+          setK8sWarning(err.response.data.message);
+        }
       });
 
     computeApi.getProfiles().then(setProfiles).catch(() => {});

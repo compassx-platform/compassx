@@ -9,6 +9,11 @@ import { getToken } from '@/lib/auth';
 const BASE_SSE = import.meta.env.VITE_API_BASE_URL || '/api/v1';
 
 export const computeApi = {
+  getHealth: async () => {
+    const res = await api.get('/compute/health');
+    return res.data;
+  },
+
   getProfiles: async (env) => {
     const res = await api.get('/compute/profiles', env ? { params: { env } } : undefined);
     return res.data;

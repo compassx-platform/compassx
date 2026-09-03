@@ -78,7 +78,9 @@ class ComputeResourceService:
         )
         return "Runtime was not found and has been marked stopped. Start the compute to recreate it."
 
-    def _normalize_platform_runtime_driver(self, runtime_id: str) -> None:
+    def _normalize_platform_runtime_driver(
+        self, runtime_id: str, runtime_type: str | None = None
+    ) -> None:
         """Sync platform-runtime driver to match the active profile's default driver.
 
         Prevents routing errors when switching profiles or when records were created
@@ -86,11 +88,18 @@ class ComputeResourceService:
         """
         if not self.runtime_manager:
             return
-        target_driver = getattr(
-            getattr(self.runtime_manager, "resource_manager", None),
-            "default_driver",
-            None,
-        )
+        target_driver = None
+        if runtime_type and hasattr(self.runtime_manager, "driver_policy"):
+            try:
+                target_driver = self.runtime_manager.driver_policy(runtime_type)
+            except Exception:
+                pass
+        if not target_driver:
+            target_driver = getattr(
+                getattr(self.runtime_manager, "resource_manager", None),
+                "default_driver",
+                None,
+            )
         if not target_driver or not isinstance(target_driver, str):
             return
 
@@ -347,7 +356,7 @@ class ComputeResourceService:
         finished_at = None
         message = None
         try:
-            self._normalize_platform_runtime_driver(resource.id)
+            self._normalize_platform_runtime_driver(resource.id, resource.runtime)
             info = _run_async(self.runtime_manager.get_status(resource.id))
             phase = phase_map.get(info.phase, "Unknown")
             started_at = info.started_at
@@ -396,10 +405,10 @@ class ComputeResourceService:
             from compassx.models import DriverUnavailableError, RuntimeNotFoundError
 
             try:
-                self._normalize_platform_runtime_driver(resource.id)
+                self._normalize_platform_runtime_driver(resource.id, resource.runtime)
                 _run_async(self.runtime_manager.delete_runtime(resource.id))
             except DriverUnavailableError:
-                self._normalize_platform_runtime_driver(resource.id)
+                self._normalize_platform_runtime_driver(resource.id, resource.runtime)
                 try:
                     _run_async(self.runtime_manager.delete_runtime(resource.id))
                 except RuntimeNotFoundError:
@@ -422,19 +431,32 @@ class ComputeResourceService:
         resource = self._get_resource_row(resource_id, user_id, workspace_id)
 
         if self._use_platform():
-            from compassx.models import DriverUnavailableError, RuntimeNotFoundError
+            from compassx.models import (
+                DriverUnavailableError,
+                RuntimeAlreadyExistsError,
+                RuntimeNotFoundError,
+                RuntimePhase,
+            )
 
             rm = self.runtime_manager
 
             async def _start():
+                self._normalize_platform_runtime_driver(resource.id, resource.runtime)
                 try:
-                    self._normalize_platform_runtime_driver(resource.id)
                     await rm.start_runtime(resource.id)
                 except (DriverUnavailableError, RuntimeNotFoundError):
-                    self._normalize_platform_runtime_driver(resource.id)
+                    self._normalize_platform_runtime_driver(resource.id, resource.runtime)
+                    # Underlying container or pod does not exist; mark missing in repo if needed
+                    existing = rm._repository.find(resource.id) if hasattr(rm, "_repository") else None
+                    if existing is not None and existing.phase not in (
+                        RuntimePhase.DELETED,
+                        RuntimePhase.FAILED,
+                        RuntimePhase.STOPPED,
+                        RuntimePhase.MISSING,
+                    ):
+                        rm._repository.update(resource.id, phase=RuntimePhase.MISSING, infra_id="")
+
                     try:
-                        await rm.start_runtime(resource.id)
-                    except RuntimeNotFoundError:
                         await rm.create_runtime(
                             resource.runtime,
                             runtime_id=resource.id,
@@ -442,6 +464,9 @@ class ComputeResourceService:
                             workspace_id=workspace_id or "",
                             options=self._runtime_options(resource),
                         )
+                    except RuntimeAlreadyExistsError:
+                        # Driver has the container/pod in stopped state; start it
+                        await rm.start_runtime(resource.id)
 
             _run_async(_start())
             resource.desired_status = "running"
@@ -459,59 +484,64 @@ class ComputeResourceService:
 
         profile = get_profile(resource.profile, compute_settings.COMPASSX_ENV)
         extra_env = json.loads(resource.extra_env) if resource.extra_env else None
-
-        job = self.manager.create_resource_job(
-            resource_id=resource.id,
-            resource_name=resource.name,
+        job_id = self.manager.submit_resource_job(
+            resource.id,
             runtime=resource.runtime,
-            profile=profile,
+            profile=resource.profile,
             user_id=user_id,
             custom_image=resource.custom_image,
             extra_env=extra_env,
-            deployment_name=resource.deployment_name,
         )
-
         resource.desired_status = "running"
         resource.pod_name = None
         self.db.commit()
         self.db.refresh(resource)
-
-        logger.info("Started deployment for resource: %s", resource_id)
+        logger.info("Started deployment for resource: %s (job_id=%s)", resource_id, job_id)
         return {
-            "job_id": job.job_id,
+            "job_id": job_id,
             "runtime_id": resource.id,
             "deployment_name": resource.deployment_name,
-            "pod_name": job.pod_name,
-            "status": job.status,
+            "pod_name": None,
+            "status": "Pending",
         }
 
-    def stop_resource_pod(self, resource_id: str, user_id: str, workspace_id: str | None = None) -> None:
+    def stop_resource(self, resource_id: str, user_id: str, workspace_id: str | None = None) -> None:
         resource = self._get_resource_row(resource_id, user_id, workspace_id)
-
         if self._use_platform():
-            from compassx.models import DriverUnavailableError, RuntimeNotFoundError
+            from compassx.models import RuntimeNotFoundError
 
+            self._normalize_platform_runtime_driver(resource.id, resource.runtime)
             try:
-                self._normalize_platform_runtime_driver(resource.id)
                 _run_async(self.runtime_manager.stop_runtime(resource.id))
-            except DriverUnavailableError:
-                self._normalize_platform_runtime_driver(resource.id)
-                try:
-                    _run_async(self.runtime_manager.stop_runtime(resource.id))
-                except RuntimeNotFoundError:
-                    pass
             except RuntimeNotFoundError:
-                raise ValueError(f"No runtime found for resource: {resource_id}")
+                pass
             resource.desired_status = "stopped"
             resource.pod_name = None
             self.db.commit()
+            self.db.refresh(resource)
             logger.info("Stopped platform runtime for resource: %s", resource_id)
             return
 
-        if not resource.deployment_name:
-            raise ValueError(f"No deployment configured for resource: {resource_id}")
+        stopped = False
+        if resource.deployment_name:
+            try:
+                self.manager.scale_resource_deployment(resource.deployment_name, replicas=0)
+                stopped = True
+            except Exception:
+                logger.warning("Failed scaling deployment for resource: %s", resource_id)
 
-        stopped = self.manager.stop_resource_job(resource.deployment_name)
+        if not stopped and resource.pod_name:
+            try:
+                self.manager.stop_job(resource.pod_name)
+                stopped = True
+            except JobNotFoundError:
+                resource.desired_status = "stopped"
+                resource.pod_name = None
+                self.db.commit()
+                return
+            except Exception:
+                logger.warning("Failed stopping job for resource: %s", resource_id)
+
         if not stopped:
             raise ValueError(f"No deployment found for resource: {resource_id}")
 
@@ -538,7 +568,7 @@ class ComputeResourceService:
                 should_start = False
                 if self._use_platform():
                     try:
-                        self._normalize_platform_runtime_driver(resource.id)
+                        self._normalize_platform_runtime_driver(resource.id, resource.runtime)
                         info = _run_async(self.runtime_manager.get_status(resource.id))
                         if info.phase not in (
                             RuntimePhase.RUNNING,

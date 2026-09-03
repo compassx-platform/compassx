@@ -156,9 +156,58 @@ def list_profiles(env: str = Query(default=None)):
     ]
 
 
+def _active_driver(req_context: Request) -> str:
+    """Return the active compute driver ('docker', 'kubernetes', 'local')."""
+    from app.compute.services.resource_service import platform_enabled
+    from app.dependencies import get_runtime_manager
+
+    if platform_enabled():
+        try:
+            rm = get_runtime_manager(req_context)
+            if rm and hasattr(rm, "resource_manager"):
+                driver = getattr(rm.resource_manager, "default_driver", None)
+                if driver:
+                    return str(driver)
+        except Exception:
+            pass
+    return "kubernetes" if compute_settings.is_k8s() else "docker"
+
+
 @router.get("/health", dependencies=_WORKSPACE_MEMBER)
-def health_check():
-    """Check Kubernetes connectivity."""
+def health_check(req_context: Request):
+    """Check compute infrastructure connectivity (Docker or Kubernetes depending on active profile)."""
+    driver = _active_driver(req_context)
+
+    if driver == "docker":
+        def check_docker() -> None:
+            import docker
+
+            client = docker.from_env()
+            client.ping()
+
+        try:
+            executor = ThreadPoolExecutor(max_workers=1)
+            try:
+                executor.submit(check_docker).result(timeout=_STATUS_TIMEOUT_SECONDS)
+            finally:
+                executor.shutdown(wait=False, cancel_futures=True)
+            logger.debug("Docker: health check passed")
+            return {"status": "ok", "driver": "docker", "docker": "reachable"}
+        except Exception as exc:
+            logger.warning("Docker: health check failed: %s", exc)
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "status": "degraded",
+                    "driver": "docker",
+                    "docker": "unreachable",
+                    "message": "Docker daemon not reachable. Ensure Docker Desktop is running.",
+                },
+            )
+
+    if driver == "local":
+        return {"status": "ok", "driver": "local"}
+
     def check_kubernetes() -> None:
         k8s = get_k8s_client()
         ns = compute_settings.COMPASSX_NAMESPACE or "compassx"
@@ -174,13 +223,14 @@ def health_check():
         finally:
             executor.shutdown(wait=False, cancel_futures=True)
         logger.debug("K8s: health check passed")
-        return {"status": "ok", "kubernetes": "reachable"}
+        return {"status": "ok", "driver": "kubernetes", "kubernetes": "reachable"}
     except FutureTimeoutError:
         logger.warning("K8s: health check timed out")
         return JSONResponse(
             status_code=503,
             content={
                 "status": "degraded",
+                "driver": "kubernetes",
                 "kubernetes": "unreachable",
                 "message": "Kubernetes health check timed out.",
             },
@@ -191,6 +241,7 @@ def health_check():
             status_code=503,
             content={
                 "status": "degraded",
+                "driver": "kubernetes",
                 "kubernetes": "unreachable",
                 "message": "Kubernetes not reachable." if compute_settings.is_k8s() else "Kubernetes not connected. Start minikube.",
             },
