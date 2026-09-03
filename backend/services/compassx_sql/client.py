@@ -15,7 +15,7 @@ class CompassXSchemaError(CompassXQueryError):
         self.details = details or {}
 
 
-def _get_auth_and_url() -> tuple[str, str]:
+def _get_auth_and_url() -> tuple[str, str, dict[str, str]]:
     token = (
         os.environ.get("NOTEBOOK_SESSION_TOKEN")
         or os.environ.get("KERNEL_NOTEBOOK_SESSION_TOKEN")
@@ -23,14 +23,35 @@ def _get_auth_and_url() -> tuple[str, str]:
         or "dev-session-token"
     )
     api_url = os.environ.get("KERNEL_CATALOG_API_URL") or os.environ.get("CATALOG_API_URL") or "http://127.0.0.1:8000/api/v1/catalog"
-    return token, api_url.rstrip("/")
+    if (os.path.exists("/.dockerenv") or os.environ.get("CONTAINER") == "true") and api_url.startswith(("http://localhost", "https://localhost", "http://127.0.0.1", "https://127.0.0.1")):
+        try:
+            from compassx.lookup import try_resolve_url_container
+            api_url = try_resolve_url_container("backend", "http://localhost:8000") + "/api/v1/catalog"
+        except Exception:
+            pass
+        if api_url.startswith(("http://localhost", "https://localhost", "http://127.0.0.1", "https://127.0.0.1")):
+            host_gateway = os.environ.get("COMPASSX_HOST_GATEWAY", "host.docker.internal")
+            api_url = api_url.replace("localhost", host_gateway).replace("127.0.0.1", host_gateway)
+
+    ws_id = os.environ.get("WORKSPACE_ID") or os.environ.get("KERNEL_WORKSPACE_ID") or os.environ.get("COMPASSX_WORKSPACE_ID")
+    ws_slug = os.environ.get("WORKSPACE_SLUG") or os.environ.get("KERNEL_WORKSPACE_SLUG") or os.environ.get("COMPASSX_WORKSPACE_SLUG")
+
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json",
+    }
+    if ws_id:
+        headers["x-workspace-id"] = ws_id
+    if ws_slug:
+        headers["x-workspace-slug"] = ws_slug
+
+    return token, api_url.rstrip("/"), headers
 
 
 def sql(query: str, *, warehouse: str | None = None, timeout: int = 120) -> pd.DataFrame:
-    token, api_url = _get_auth_and_url()
+    token, api_url, headers = _get_auth_and_url()
     url = f"{api_url}/query"
 
-    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
     payload = {
         "query": query,
         "warehouse": warehouse,
@@ -143,8 +164,7 @@ def write_table(
     if mode not in {"overwrite", "replace", "append"}:
         raise ValueError("mode must be 'overwrite' or 'append'")
 
-    token, api_url = _get_auth_and_url()
-    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+    token, api_url, headers = _get_auth_and_url()
 
     records, inferred_schema = _serialize_dataframe(df)
 

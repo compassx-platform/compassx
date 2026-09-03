@@ -96,6 +96,7 @@ def get_principal(
             token = _extract_token(request)
             slug = (
                 request.headers.get("x-workspace-slug")
+                or request.headers.get("x-workspace-id")
                 or request.query_params.get("workspace")
                 or request.query_params.get("workspace_id")
             )
