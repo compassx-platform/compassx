@@ -50,6 +50,29 @@ export const ChatComposer: React.FC<ChatComposerProps> = ({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  React.useLayoutEffect(() => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+
+    if (!input) {
+      textarea.style.height = 'auto';
+      textarea.style.overflowY = 'hidden';
+    } else {
+      textarea.style.height = 'auto';
+      const newHeight = Math.min(textarea.scrollHeight, 160);
+      textarea.style.height = `${newHeight}px`;
+      textarea.style.overflowY = textarea.scrollHeight > 160 ? 'auto' : 'hidden';
+    }
+  }, [input]);
+
+  const handleSend = (override?: string) => {
+    if (textareaRef.current) {
+      textareaRef.current.style.height = 'auto';
+      textareaRef.current.style.overflowY = 'hidden';
+    }
+    onSend(override);
+  };
+
   const handlePaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
     const items = e.clipboardData?.items;
     if (!items) return;
@@ -213,15 +236,11 @@ export const ChatComposer: React.FC<ChatComposerProps> = ({
             placeholder="Message the agent… (Enter to send, Shift+Enter for newline)"
             value={input}
             onPaste={handlePaste}
-            onChange={(e) => {
-              onInputChange(e.target.value);
-              e.target.style.height = 'auto';
-              e.target.style.height = `${Math.min(e.target.scrollHeight, 160)}px`;
-            }}
+            onChange={(e) => onInputChange(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
-                onSend();
+                handleSend();
               }
             }}
             disabled={isStreaming}
@@ -264,7 +283,7 @@ export const ChatComposer: React.FC<ChatComposerProps> = ({
                 <ContextUsageBadge
                   agentId={agentId}
                   sessionId={sessionId}
-                  onCompact={() => onSend('/compact')}
+                  onCompact={() => handleSend('/compact')}
                   isCompactLoading={isStreaming}
                 />
               )}
@@ -297,7 +316,7 @@ export const ChatComposer: React.FC<ChatComposerProps> = ({
 
               <button
                 type="button"
-                onClick={() => onSend()}
+                onClick={() => handleSend()}
                 disabled={!input.trim() || isStreaming}
                 style={{
                   width: 28,
