@@ -771,7 +771,9 @@ export default function MonitoringPage() {
                     });
 
                     return {
-                      x: (s.points || []).map((p) => p.timestamp),
+                      x: (s.points || []).map((p) =>
+                        formatPlotlyTimestamp(p.timestamp, useLocalTime)
+                      ),
                       y: yValues,
                       type: 'bar',
                       name: cleanServiceName(s.name),
@@ -813,7 +815,9 @@ export default function MonitoringPage() {
                       });
 
                       return {
-                        x: (singleData?.points || []).map((p) => p.timestamp),
+                        x: (singleData?.points || []).map((p) =>
+                          formatPlotlyTimestamp(p.timestamp, useLocalTime)
+                        ),
                         y: yValues,
                         type: 'bar',
                         name: selectedServiceObj?.name || 'Service',
@@ -863,7 +867,9 @@ export default function MonitoringPage() {
 
                   if (limitPoints.length > 0) {
                     plotData.push({
-                      x: limitPoints.map((p) => p.timestamp),
+                      x: limitPoints.map((p) =>
+                        formatPlotlyTimestamp(p.timestamp, useLocalTime)
+                      ),
                       y: limitPoints.map((p) => p.value),
                       type: 'scatter',
                       mode: 'lines',
@@ -880,7 +886,9 @@ export default function MonitoringPage() {
 
                   if (limitPoints.length > 0) {
                     plotData.push({
-                      x: limitPoints.map((p) => p.timestamp),
+                      x: limitPoints.map((p) =>
+                        formatPlotlyTimestamp(p.timestamp, useLocalTime)
+                      ),
                       y: limitPoints.map((p) => p.value),
                       type: 'scatter',
                       mode: 'lines',
@@ -890,7 +898,9 @@ export default function MonitoringPage() {
                     });
                   } else if (staticLimit > 0 && (singleData?.points || []).length > 0) {
                     plotData.push({
-                      x: (singleData?.points || []).map((p) => p.timestamp),
+                      x: (singleData?.points || []).map((p) =>
+                        formatPlotlyTimestamp(p.timestamp, useLocalTime)
+                      ),
                       y: (singleData?.points || []).map(() => staticLimit),
                       type: 'scatter',
                       mode: 'lines',
@@ -926,7 +936,9 @@ export default function MonitoringPage() {
 
                 if (nodePoints.length > 0) {
                   plotData.push({
-                    x: nodePoints.map((p) => p.timestamp),
+                    x: nodePoints.map((p) =>
+                      formatPlotlyTimestamp(p.timestamp, useLocalTime)
+                    ),
                     y: nodePoints.map((p) => p.value),
                     type: 'scatter',
                     mode: 'lines',
