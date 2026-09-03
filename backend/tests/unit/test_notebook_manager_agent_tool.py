@@ -453,3 +453,36 @@ def test_read_notebook_with_fqn_resolving(monkeypatch):
     assert result["ok"] is True
     assert result["data"]["notebook_path"] == "solar_ecg.scada.generate_scada_synthetic"
     assert result["data"]["cells"][0]["source"] == "print('hello')"
+
+
+def test_run_cell_skips_markdown_cells(monkeypatch):
+    executed_code = []
+
+    async def fake_execute_code(kernel_id, code):
+        executed_code.append(code)
+        return [{"output_type": "stream", "text": "executed"}]
+
+    monkeypatch.setattr(
+        "app.nova.services.notebook_tools.execute_code_on_kernel",
+        fake_execute_code,
+    )
+
+    tool = notebook_tools.StartKernelAndRunCellTool()
+    result = tool.execute(
+        {"run_all": True},
+        context={
+            "kernel_id": "kernel-123",
+            "cells": [
+                {"cell_type": "markdown", "source": "# Title markdown", "index": 0},
+                {"cell_type": "code", "source": "x = 10\nprint(x)", "index": 1},
+                {"cell_type": "raw", "source": "raw text", "index": 2},
+            ],
+        },
+    )
+
+    assert result.ok is True
+    assert result.result["status"] == "success"
+    # Only code cell was sent to kernel, markdown and raw were skipped
+    assert len(executed_code) == 1
+    assert "x = 10" in executed_code[0]
+

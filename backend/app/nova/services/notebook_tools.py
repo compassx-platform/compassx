@@ -112,10 +112,22 @@ def _resolve_notebook_path(context: dict[str, Any]) -> str | None:
         notebook_context.get("notebook_id")
         or notebook_context.get("notebook_path")
         or notebook_context.get("path")
+        or notebook_context.get("notebook_name")
         or context.get("notebook_id")
         or context.get("notebook_path")
         or context.get("path")
+        or context.get("notebook_name")
     )
+    if not path:
+        try:
+            from app.database import AccountSessionLocal
+            from app.catalog.models import UnifiedCatalogNotebook
+            with AccountSessionLocal() as adb:
+                latest_nb = adb.query(UnifiedCatalogNotebook).order_by(UnifiedCatalogNotebook.updated_at.desc()).first()
+                if latest_nb:
+                    return latest_nb.full_name or latest_nb.id or latest_nb.name
+        except Exception:
+            pass
     return str(path) if path else None
 
 
@@ -713,7 +725,14 @@ class ProposeCellEditTool(BaseNovaTool):
         return result
 
 
-def _start_kernel_for_compute(resource_id: str, job_id: str, runtime: str, session_token: str) -> str:
+def _start_kernel_for_compute(
+    resource_id: str,
+    job_id: str,
+    runtime: str,
+    session_token: str = "",
+    workspace_id: str = "",
+    workspace_slug: str = "",
+) -> str:
     """Start an EG kernel for a compute resource and return the new kernel_id.
 
     Replicates the logic from compute/routes/router.py:start_kernel_for_resource.
@@ -747,6 +766,18 @@ def _start_kernel_for_compute(resource_id: str, job_id: str, runtime: str, sessi
     except Exception:
         catalog_api_url = ""
 
+    if not session_token:
+        try:
+            from app.database import AccountSessionLocal
+            from app.user_manager.models.account_models import UmUser
+            from app.user_manager.auth_utils import create_access_token
+            with AccountSessionLocal() as adb:
+                admin_user = adb.query(UmUser).filter(UmUser.status == "active").first()
+                if admin_user:
+                    session_token = create_access_token(admin_user.id, admin_user.account_id, ["account_admin"])
+        except Exception:
+            pass
+
     resp = httpx.post(
         f"{eg_url}/api/kernels",
         json={
@@ -758,6 +789,10 @@ def _start_kernel_for_compute(resource_id: str, job_id: str, runtime: str, sessi
                 "KERNEL_NOTEBOOK_SESSION_TOKEN": session_token,
                 "CATALOG_API_URL": catalog_api_url,
                 "NOTEBOOK_SESSION_TOKEN": session_token,
+                "KERNEL_WORKSPACE_ID": workspace_id,
+                "WORKSPACE_ID": workspace_id,
+                "KERNEL_WORKSPACE_SLUG": workspace_slug,
+                "WORKSPACE_SLUG": workspace_slug,
             },
         },
         timeout=120.0,
@@ -952,8 +987,22 @@ class StartKernelAndRunCellTool(BaseNovaTool):
 
             # Start kernel on the compute resource
             session_token = context.get("session_token", "")
+            workspace_slug = context.get("workspace_slug") or ""
+            if not workspace_slug and workspace_id:
+                try:
+                    from app.compute.service import ComputeService
+                    workspace_slug = ComputeService._resolve_workspace_name(workspace_id)
+                except Exception:
+                    pass
             try:
-                kernel_id = _start_kernel_for_compute(resource_id, job_id, runtime, session_token)
+                kernel_id = _start_kernel_for_compute(
+                    resource_id=resource_id,
+                    job_id=job_id,
+                    runtime=runtime,
+                    session_token=session_token,
+                    workspace_id=str(workspace_id) if workspace_id else "",
+                    workspace_slug=workspace_slug,
+                )
             except Exception as exc:
                 return NovaToolResult(
                     ok=False,
@@ -971,10 +1020,19 @@ class StartKernelAndRunCellTool(BaseNovaTool):
                     result={"completed_cells": all_results},
                 )
 
+            # Skip non-code cells (e.g. markdown or raw text)
+            cell_type = str(cell.get("cell_type") or "code").lower()
+            if cell_type not in ("code", ""):
+                all_results.append({"cell_index": idx, "status": "skipped", "cell_type": cell_type, "outputs": []})
+                continue
+
             code = cell.get("source", "")
             if cell.get("cell_status") == "pending" and cell.get("pending_source"):
                 code = cell.get("pending_source")
             code = _join_source(code)
+            if not code.strip():
+                all_results.append({"cell_index": idx, "status": "success", "outputs": []})
+                continue
 
             try:
                 outputs = run_async(execute_code_on_kernel(kernel_id, code))

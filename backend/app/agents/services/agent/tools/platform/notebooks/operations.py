@@ -30,12 +30,17 @@ def execute_notebook_manager_operation(
     if tool is None:
         raise ValueError(f"Unsupported notebook_manager operation: {operation}")
 
-    result = tool.execute(payload, context or {})
+    ctx = dict(context or {})
+    for k in ("notebook_id", "notebook_path", "path", "notebook_name"):
+        if k in payload and k not in ctx:
+            ctx[k] = payload[k]
+
+    result = tool.execute(payload, ctx)
     return {
         "ok": result.ok,
         "operation": operation,
         "resource_type": "notebook",
-        "resource_id": _resource_id(context),
+        "resource_id": _resource_id(ctx),
         "data": result.result if result.ok else None,
         "message": None,
         "error": result.error,
