@@ -84,7 +84,7 @@ async def upload_documents(
     agent_id: int,
     session_id: int,
     background_tasks: BackgroundTasks,
-    files: List[UploadFile] = File(...),
+    files: List[UploadFile] = File(default=[]),
     db: Session = Depends(get_db),
     guard: Guard = Depends(get_guard),
 ):
@@ -95,6 +95,19 @@ async def upload_documents(
     file. Whoever may run the agent may give it something to read.
     """
     _get_session_or_404(db, agent_id, session_id, guard, Privilege.EXECUTE)
+
+    all_uploads: list[UploadFile] = list(files or [])
+    try:
+        form = await request.form()
+        for field in ("file", "files"):
+            for item in form.getlist(field):
+                if isinstance(item, UploadFile) and item not in all_uploads:
+                    all_uploads.append(item)
+    except Exception:
+        pass
+
+    if not all_uploads:
+        raise HTTPException(400, "No files uploaded")
 
     # Resolve accepted types from agent manifest
     agent = db.query(Agent).filter(Agent.id == agent_id).first()
@@ -110,7 +123,7 @@ async def upload_documents(
             pass
 
     results = []
-    for upload in files:
+    for upload in all_uploads:
         ext = (upload.filename or "").rsplit(".", 1)[-1].lower() if "." in (upload.filename or "") else ""
         if ext not in accepted_exts:
             results.append({"filename": upload.filename, "error": f"File type '{ext}' not accepted", "ok": False})

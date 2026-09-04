@@ -167,14 +167,20 @@ export default function AgentChatPage({ initialView }: AgentChatPageProps = {}) 
 
     for (const file of filesToUpload) {
       const formData = new FormData();
-      formData.append('file', file);
+      formData.append('files', file);
       try {
         const res = await api.post(
-          `/api/v1/agents/${agentId}/sessions/${activeSessionId}/documents`,
+          `/agents/${agentId}/sessions/${activeSessionId}/documents`,
           formData,
           { headers: { 'Content-Type': 'multipart/form-data' } }
         );
-        if (res.data?.id) {
+        const uploaded = res.data?.uploaded;
+        if (Array.isArray(uploaded)) {
+          const ids = uploaded.filter((u: any) => u.ok && u.doc_id).map((u: any) => u.doc_id);
+          if (ids.length > 0) {
+            setUploadedDocIds((prev) => [...prev, ...ids]);
+          }
+        } else if (res.data?.id) {
           setUploadedDocIds((prev) => [...prev, res.data.id]);
         }
       } catch (err) {
