@@ -133,7 +133,7 @@ services:
       start_period: 30s
 
   backend:
-    image: ghcr.io/compassx-platform/backend:v0.6.0
+    image: ghcr.io/compassx-platform/backend:v0.6.1
     depends_on:
       postgres:
         condition: service_healthy
@@ -170,7 +170,7 @@ services:
       start_period: 30s
 
   frontend:
-    image: ghcr.io/compassx-platform/frontend:v0.6.0
+    image: ghcr.io/compassx-platform/frontend:v0.6.1
     depends_on:
       backend:
         condition: service_started
