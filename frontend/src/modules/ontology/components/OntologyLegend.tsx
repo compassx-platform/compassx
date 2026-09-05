@@ -5,7 +5,7 @@ export const OntologyLegend: React.FC = () => {
   const [isExpanded, setIsExpanded] = useState(false);
 
   return (
-    <div className="ontology-legend-container absolute bottom-4 right-4 z-20 rounded-2xl bg-[#121624]/90 backdrop-blur-md border border-[#262e45]/80 shadow-2xl text-[#cbd5e1] overflow-hidden text-xs transition-all">
+    <div className="ontology-legend-container absolute bottom-4 right-4 z-30 rounded-2xl bg-[#121624]/90 backdrop-blur-md border border-[#262e45]/80 shadow-2xl text-[#cbd5e1] overflow-hidden text-xs transition-all">
       <button
         onClick={() => setIsExpanded(prev => !prev)}
         className="w-full flex items-center justify-between gap-3 px-3.5 py-2.5 hover:bg-[#1a2033] transition-colors"

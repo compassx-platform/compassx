@@ -204,8 +204,31 @@ export default function OntologyPage() {
       className="ontology-page-root relative w-full h-full flex flex-col overflow-hidden select-none"
       data-theme={themeMode}
     >
+      {/* Verbatim Ported TopologyMapV2 Canvas Engine */}
+      <div className="flex-1 w-full h-full min-h-0 relative">
+        <TopologyMapV2
+          nodes={nodes}
+          edges={edges}
+          focus={{ selectedSlug: selectedNodeId }}
+          fitViewToken={fitViewToken}
+          relayoutToken={relayoutToken}
+          onSelect={handleSelectNode}
+          onHoverEdge={handleHoverEdge}
+          onPaneClick={() => handleSelectNode(null)}
+          expandedParents={expandedParents}
+          onToggleCluster={handleToggleCluster}
+          view3d={view3d}
+          mapArrangement={mapArrangement}
+          visitedTrail={visitedTrail}
+          walkNoticeLabel="No further connection in this direction"
+          canvasLabel="Ontology Architecture Map"
+          canvasBackground="dot"
+          theme={themeMode}
+        />
+      </div>
+
       {/* Top Left Title & Breadcrumbs Trail Pill */}
-      <div className="ontology-header-pills absolute top-4 left-4 z-20 flex items-center gap-3">
+      <div className="ontology-header-pills absolute top-4 left-4 z-30 flex items-center gap-3 pointer-events-auto">
         <div className="ontology-pill flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-[#131722]/85 backdrop-blur-md border border-[#2b334a]/80 shadow-xl text-white">
           <Sparkles size={14} className="text-[#fbbf24]" />
           <span className="text-xs font-bold tracking-tight">Ontology Topology Map</span>
@@ -230,7 +253,7 @@ export default function OntologyPage() {
         )}
       </div>
 
-      {/* Top Floating Toolbar */}
+      {/* Top Center Floating Toolbar */}
       <OntologyToolbar
         expandedAll={expandedAll}
         onToggleExpandAll={handleToggleExpandAll}
@@ -245,29 +268,6 @@ export default function OntologyPage() {
         themeMode={themeMode}
         onToggleTheme={handleToggleTheme}
       />
-
-      {/* Verbatim Ported TopologyMapV2 Canvas Engine */}
-      <div className="flex-1 w-full h-full min-h-0 relative">
-        <TopologyMapV2
-          nodes={nodes}
-          edges={edges}
-          focus={{ selectedSlug: selectedNodeId }}
-          fitViewToken={fitViewToken}
-          relayoutToken={relayoutToken}
-          onSelect={handleSelectNode}
-          onHoverEdge={handleHoverEdge}
-          onPaneClick={() => handleSelectNode(null)}
-          expandedParents={expandedParents}
-          onToggleCluster={handleToggleCluster}
-          view3d={view3d}
-          mapArrangement={mapArrangement}
-          visitedTrail={visitedTrail}
-          walkNoticeLabel="No further connection in this direction"
-          canvasLabel="Ontology Architecture Map"
-          canvasBackground="dot"
-          theme={themeMode}
-        />
-      </div>
 
       {/* Edge Hover Microcard Tooltip */}
       {hoverEdgeCard && (

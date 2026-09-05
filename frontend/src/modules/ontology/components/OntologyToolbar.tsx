@@ -43,7 +43,7 @@ export const OntologyToolbar: React.FC<OntologyToolbarProps> = ({
   onToggleTheme,
 }) => {
   return (
-    <div className="ontology-toolbar-container absolute top-4 left-1/2 -translate-x-1/2 z-20 flex items-center gap-1.5 p-1.5 rounded-full bg-[#131722]/85 backdrop-blur-md border border-[#2b334a]/80 shadow-2xl text-[#cbd5e1]">
+    <div className="ontology-toolbar-container absolute top-4 left-1/2 -translate-x-1/2 z-30 flex items-center gap-1.5 p-1.5 rounded-full bg-[#131722]/90 backdrop-blur-md border border-[#2b334a]/80 shadow-2xl text-[#cbd5e1] pointer-events-auto">
       {/* Expand / Collapse All */}
       <button
         onClick={onToggleExpandAll}
