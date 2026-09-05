@@ -606,7 +606,9 @@ function resolveCollisionPair(
   radii: LayoutRadii,
   padding: number,
 ): void {
-  const minDist = radii[a.kind] + radii[b.kind] + padding;
+  const rA = radii[a.kind] ?? radii.element ?? 8;
+  const rB = radii[b.kind] ?? radii.element ?? 8;
+  const minDist = rA + rB + padding;
   let dx = b.point.x - a.point.x;
   let dy = b.point.y - a.point.y;
   // Conservative squared-distance fast-reject: only skips pairs whose squared
@@ -781,7 +783,7 @@ function relaxGrid(
       if (neighbors.length === 0) continue;
       neighbors.sort((a, b) => a - b);
       const a = items[i];
-      const ar = radii[a.kind];
+      const ar = radii[a.kind] ?? radii.element ?? 8;
       for (let k = 0; k < neighbors.length; k += 1) {
         const b = items[neighbors[k]];
         // Inline conservative fast-reject (same guard as resolveCollisionPair's,
@@ -790,7 +792,8 @@ function relaxGrid(
         // overlaps fall through to the shared push routine — byte-identical.
         const dx = b.point.x - a.point.x;
         const dy = b.point.y - a.point.y;
-        const minDistPlus = ar + radii[b.kind] + padding + 1;
+        const br = radii[b.kind] ?? radii.element ?? 8;
+        const minDistPlus = ar + br + padding + 1;
         if (dx * dx + dy * dy >= minDistPlus * minDistPlus) continue;
         resolveCollisionPair(a, b, radii, padding);
       }

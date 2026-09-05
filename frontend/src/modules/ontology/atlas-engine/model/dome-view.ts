@@ -270,9 +270,10 @@ export function clampOrbitReleaseVelocity(velRadPerMs: number): number {
  */
 export function domeFacingYaws(model: DomeModel, kind: DomeViewKind = "domain"): number[] {
   const out: number[] = [];
-  const planeR = DOME_PLANE[kind].r;
+  const plane = DOME_PLANE[kind] ?? DOME_PLANE.domain;
+  const planeR = plane.r;
   for (const coord of model.coords.values()) {
-    if (Math.abs(coord.py - DOME_PLANE[kind].y) > 1e-6) continue;
+    if (Math.abs(coord.py - plane.y) > 1e-6) continue;
     if (planeR <= 0) continue;
     const theta = Math.atan2(coord.pz, coord.px);
     out.push(-Math.PI / 2 - theta);
@@ -738,8 +739,9 @@ function layoutConeTree(nodes: readonly DomeInputNode[]): { coords: Map<string, 
   for (const n of nodes) {
     if (coords.has(n.id)) continue;
     const a = domeHash01(n.id) * TAU;
-    const r = DOME_PLANE[n.kind].r;
-    coords.set(n.id, { px: Math.cos(a) * r, py: DOME_PLANE[n.kind].y, pz: Math.sin(a) * r });
+    const plane = DOME_PLANE[n.kind] ?? DOME_PLANE.element;
+    const r = plane.r;
+    coords.set(n.id, { px: Math.cos(a) * r, py: plane.y, pz: Math.sin(a) * r });
   }
   return { coords, circles };
 }
@@ -904,7 +906,7 @@ function createCouplingCloudRelaxer(
   const collideR = new Float64Array(n);
   for (let i = 0; i < n; i += 1) {
     const kind = kindOf.get(ids[i]) ?? "element";
-    collideR[i] = DOME_NODE_R[kind] * 2.1 * CLOUD_COLLIDE_RADIUS_SCALE;
+    collideR[i] = (DOME_NODE_R[kind] ?? DOME_NODE_R.element) * 2.1 * CLOUD_COLLIDE_RADIUS_SCALE;
   }
 
   const fx = new Float64Array(n);
@@ -1728,8 +1730,8 @@ export function updateDomeFrame(
       frame.delete(node.id);
       continue;
     }
-    const [cy, sy] = trig[node.kind];
-    const r = ramp[node.kind];
+    const [cy, sy] = trig[node.kind] ?? trig.element ?? [1, 0];
+    const r = ramp[node.kind] ?? ramp.element ?? 1;
     // A tier at r=0 skips projection — offset 0 (not −0), factor 1, identical to 2D.
     const p = r > 0 ? projectWithTrig(model, coordFor(node.id, coord), cy, sy, cp, sp) : null;
     const dx = p === null ? 0 : (p.wx - node.x) * r;
@@ -1737,7 +1739,7 @@ export function updateDomeFrame(
     let s = 1;
     if (p !== null) {
       const baseR = baseRadiusFor(node);
-      const domeR = DOME_NODE_R[node.kind] * 2.1 * model.unit * p.s;
+      const domeR = (DOME_NODE_R[node.kind] ?? DOME_NODE_R.element) * 2.1 * model.unit * p.s;
       // Clamp the project apex glyph (the compass cross) so it never exceeds the 2D
       // radius — the hero's apex is "a slightly bigger dot", not a cross spanning the
       // screen.

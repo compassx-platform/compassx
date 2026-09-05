@@ -400,7 +400,7 @@ function resolveNodeVisual(
   focusRamp: number,
 ): NodeVisual {
   const freshness = resolveFreshnessVisual({ fresh: node.fresh, stale: node.stale, hub: node.isHub }, reducedMotion);
-  const lineWidth = LINE_WIDTH_BY_KIND[node.kind];
+  const lineWidth = LINE_WIDTH_BY_KIND[node.kind] ?? 1;
   const dash = freshness.dash;
 
   // --- Normal (no-focus) target: the look a node holds when nothing is
@@ -1875,7 +1875,7 @@ export function drawTopologyFrame(params: FrameDrawParams): void {
       !isEmphasizedNeighbor;
     if (visualCacheable) {
       const cacheKey =
-        KIND_CACHE_INDEX[node.kind] * 4 + (node.fresh && !node.stale ? 2 : 0) + (node.stale ? 1 : 0);
+        (KIND_CACHE_INDEX[node.kind] ?? 3) * 4 + (node.fresh && !node.stale ? 2 : 0) + (node.stale ? 1 : 0);
       const cached = nodeVisualCache[cacheKey];
       if (cached !== undefined) {
         visual = cached;

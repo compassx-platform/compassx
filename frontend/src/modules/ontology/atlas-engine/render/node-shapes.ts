@@ -373,6 +373,7 @@ function resolveBodyFill(
   sheenTop: string,
 ): string | CanvasGradient {
   if (r <= SHEEN_MIN_RADIUS || farT >= SHEEN_MAX_FAR_T) return fill;
+  if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(r) || r <= 0) return fill;
   // When the far-side detail factor has converged sheenTop onto fill (identical
   // string), both stops are the same colour — return the flat fill early instead
   // of building that gradient. Pixel-identical.

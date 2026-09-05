@@ -122,8 +122,10 @@ export function renderOntologyGraph(
   // 6. Draw Nodes
   // Sort nodes so elements draw first, then capabilities, then domains, then project on top
   const sortedNodes = [...nodes].sort((a, b) => {
-    const rank: Record<OntologyKind, number> = { element: 1, capability: 2, domain: 3, project: 4 };
-    return rank[a.kind] - rank[b.kind];
+    const rank: Record<string, number> = { element: 1, capability: 2, subdomain: 2, domain: 3, project: 4, org: 4 };
+    const rA = rank[a.kind] ?? 1;
+    const rB = rank[b.kind] ?? 1;
+    return rA - rB;
   });
 
   for (const node of sortedNodes) {
