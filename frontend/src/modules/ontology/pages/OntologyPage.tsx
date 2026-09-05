@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Sparkles, X, Target } from 'lucide-react';
+import { Sparkles, X, Target, Settings } from 'lucide-react';
 import {
   TopologyMapV2,
   type TopologyV2Node,
@@ -14,8 +14,8 @@ import {
 } from '../lib/ontologyParser';
 import {
   fetchOntologyTypes,
+  fetchTypeRelations,
   fetchActiveKnowledgeGraph,
-  resetDefaultKnowledgeGraph,
   addGraphNode,
   updateGraphNode,
   deleteGraphNode,
@@ -27,6 +27,9 @@ import {
   loadKindsConfig,
   saveKindsConfig,
   type KindConfig,
+  loadTypeRelations,
+  saveTypeRelations,
+  type TypeRelationConfig,
 } from '../config';
 import { OntologyToolbar } from '../components/OntologyToolbar';
 import { OntologySideDrawer } from '../components/OntologySideDrawer';
@@ -74,6 +77,24 @@ export default function OntologyPage() {
   // Focus & Trail & Edge Hover
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [visitedTrail, setVisitedTrail] = useState<string[]>([]);
+
+  // Unified Side Drawer State: 'config' | 'node' | null
+  const [drawerMode, setDrawerMode] = useState<'config' | 'node' | null>(null);
+
+  const handleToggleConfig = useCallback(() => {
+    setDrawerMode(prev => (prev === 'config' ? null : 'config'));
+  }, []);
+
+  const handleCloseDrawer = useCallback(() => {
+    setDrawerMode(null);
+    setSelectedNodeId(null);
+    setSearchParams(prev => {
+      const next = new URLSearchParams(prev);
+      next.delete('focus');
+      return next;
+    }, { replace: true });
+  }, [setSearchParams]);
+
   const [hoverEdge, setHoverEdge] = useState<{
     edge: { sourceId: string; targetId: string; relationType: string; declaredBySlug: string | null };
     x: number;
@@ -115,15 +136,24 @@ export default function OntologyPage() {
     setFitViewToken(t => t + 1);
   }, []);
 
+  // Dynamic Type Relationships (Metamodel Schema)
+  const [typeRelations, setTypeRelations] = useState<TypeRelationConfig[]>(() => loadTypeRelations());
+
+  const handleUpdateTypeRelations = useCallback((newRelations: TypeRelationConfig[]) => {
+    setTypeRelations(newRelations);
+    saveTypeRelations(newRelations);
+  }, []);
+
   // Convert Knowledge Graph dataset to exact TopologyMapV2 engine nodes and edges
   const { nodes, edges } = useMemo(() => {
     return toTopologyV2Format(dataset, kindsConfig);
   }, [dataset, kindsConfig]);
 
-  // Handle Node Selection / 1-Hop Ego Focus
+  // Handle Node Selection / 1-Hop Ego Focus & Switch Drawer to Node Details
   const handleSelectNode = useCallback((nodeId: string | null) => {
     setSelectedNodeId(nodeId);
     if (nodeId) {
+      setDrawerMode('node');
       setVisitedTrail(prev => (prev.includes(nodeId) ? prev : [...prev.slice(-6), nodeId]));
       setSearchParams(prev => {
         const next = new URLSearchParams(prev);
@@ -131,6 +161,7 @@ export default function OntologyPage() {
         return next;
       }, { replace: true });
     } else {
+      setDrawerMode(prev => (prev === 'node' ? null : prev));
       setSearchParams(prev => {
         const next = new URLSearchParams(prev);
         next.delete('focus');
@@ -150,6 +181,13 @@ export default function OntologyPage() {
         if (remoteTypes && remoteTypes.length > 0 && isMounted) {
           setKindsConfig(remoteTypes);
           saveKindsConfig(remoteTypes);
+        }
+
+        // Load type relations from metamodel DB
+        const remoteRelations = await fetchTypeRelations().catch(() => null);
+        if (remoteRelations && remoteRelations.length > 0 && isMounted) {
+          setTypeRelations(remoteRelations);
+          saveTypeRelations(remoteRelations);
         }
 
         // Load active Knowledge Graph from DB
@@ -177,6 +215,7 @@ export default function OntologyPage() {
       const match = nodes.find(n => n.id === focusParam || n.id.endsWith(focusParam));
       if (match) {
         setSelectedNodeId(match.id);
+        setDrawerMode('node');
         setVisitedTrail([match.id]);
       }
     }
@@ -238,26 +277,6 @@ export default function OntologyPage() {
   const handleToggleArrangement = () => {
     setMapArrangement(prev => (prev === 'ownership' ? 'coupling' : 'ownership'));
   };
-
-  // Reset to default factory dataset in Database
-  const handleResetDefaultData = useCallback(async () => {
-    try {
-      const resetData = await resetDefaultKnowledgeGraph().catch(() => null);
-      if (resetData && resetData.nodes && resetData.nodes.length > 0) {
-        const processed = processRawOntologyData(resetData);
-        setDataset(processed);
-      } else {
-        setDataset(getDefaultDataset());
-      }
-    } catch {
-      setDataset(getDefaultDataset());
-    }
-    setSelectedNodeId(null);
-    setVisitedTrail([]);
-    setExpandedParents(new Set());
-    setRelayoutToken(t => t + 1);
-    setFitViewToken(t => t + 1);
-  }, []);
 
   // Add a new node (Entity) into the active Knowledge Graph DB
   const handleAddNode = async (nodeData: {
@@ -392,24 +411,49 @@ export default function OntologyPage() {
         onToggleTheme={handleToggleTheme}
       />
 
-      {/* Top Right Floating Configuration Button & Panel (Isolated Subsystem) */}
-      <OntologyConfigPanel
-        kindsConfig={kindsConfig}
-        onUpdateKindsConfig={handleUpdateKindsConfig}
-        themeMode={themeMode}
-        onToggleTheme={handleToggleTheme}
-        view3d={view3d}
-        onToggle3D={handleToggle3D}
-        mapArrangement={mapArrangement}
-        onToggleArrangement={handleToggleArrangement}
-        expandedAll={expandedAll}
-        onToggleExpandAll={handleToggleExpandAll}
-        onAutoArrange={handleAutoArrange}
-        onFitView={handleFitView}
-        onResetDefaultData={handleResetDefaultData}
-        nodeCount={nodes.length}
-        edgeCount={edges.length}
-      />
+      {/* Top Right Configure Trigger Button */}
+      <div className={`cx-ontology-config-trigger ${drawerMode === 'config' ? 'is-active' : ''}`}>
+        <button
+          type="button"
+          onClick={handleToggleConfig}
+          className="cx-ontology-config-trigger-btn"
+          title="Toggle Configuration Panel"
+        >
+          <Settings
+            size={13}
+            style={{
+              transition: 'transform 0.25s ease',
+              transform: drawerMode === 'config' ? 'rotate(90deg)' : 'none',
+            }}
+          />
+          <span>Configure</span>
+        </button>
+      </div>
+
+      {/* Unified Side Drawer: Configuration Mode */}
+      {drawerMode === 'config' && (
+        <OntologyConfigPanel
+          isOpen={true}
+          hideTrigger={true}
+          onClose={handleCloseDrawer}
+          kindsConfig={kindsConfig}
+          onUpdateKindsConfig={handleUpdateKindsConfig}
+          typeRelations={typeRelations}
+          onUpdateTypeRelations={handleUpdateTypeRelations}
+          themeMode={themeMode}
+          onToggleTheme={handleToggleTheme}
+          view3d={view3d}
+          onToggle3D={handleToggle3D}
+          mapArrangement={mapArrangement}
+          onToggleArrangement={handleToggleArrangement}
+          expandedAll={expandedAll}
+          onToggleExpandAll={handleToggleExpandAll}
+          onAutoArrange={handleAutoArrange}
+          onFitView={handleFitView}
+          nodeCount={nodes.length}
+          edgeCount={edges.length}
+        />
+      )}
 
       {/* Edge Hover Microcard Tooltip */}
       {hoverEdgeCard && (
@@ -429,18 +473,20 @@ export default function OntologyPage() {
         </div>
       )}
 
-      {/* Side Inspector Drawer */}
-      <OntologySideDrawer
-        node={focusedNode as any}
-        onClose={() => handleSelectNode(null)}
-        onSelectNode={handleSelectNode}
-        onIsolateArea={handleSelectNode}
-        onUpdateNode={handleUpdateNode}
-        onDeleteNode={handleDeleteNode}
-        onAddEdge={handleAddEdge}
-        kindsConfig={kindsConfig}
-        allNodes={dataset.nodes as any}
-      />
+      {/* Unified Side Drawer: Node Details Mode */}
+      {drawerMode === 'node' && focusedNode && (
+        <OntologySideDrawer
+          node={focusedNode as any}
+          onClose={handleCloseDrawer}
+          onSelectNode={handleSelectNode}
+          onIsolateArea={handleSelectNode}
+          onUpdateNode={handleUpdateNode}
+          onDeleteNode={handleDeleteNode}
+          onAddEdge={handleAddEdge}
+          kindsConfig={kindsConfig}
+          allNodes={dataset.nodes as any}
+        />
+      )}
 
       {/* Floating Bottom-Right Grammar Legend */}
       <OntologyLegend />

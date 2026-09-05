@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   X,
   Check,
@@ -20,6 +20,7 @@ import {
 } from 'lucide-react';
 import { LayoutNode, OntologyKind, OntologyNode } from '../types/ontology';
 import type { KindConfig } from '../config/types';
+import '../config/config.css';
 import './entity-ui.css';
 
 interface OntologySideDrawerProps {
@@ -80,6 +81,67 @@ export const OntologySideDrawer: React.FC<OntologySideDrawerProps> = ({
       setEdgeError(null);
     }
   }, [node]);
+
+  // Drawer width state with left-border drag resizing matching OntologyConfigPanel
+  const [panelWidth, setPanelWidth] = useState(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('cx_ontology_drawer_width') || localStorage.getItem('cx_ontology_config_panel_width');
+      if (saved) {
+        const num = parseInt(saved, 10);
+        if (!isNaN(num)) return Math.max(340, Math.min(window.innerWidth - 24, num));
+      }
+      return Math.min(560, window.innerWidth - 40);
+    }
+    return 500;
+  });
+  const [isDragging, setIsDragging] = useState(false);
+  const isDraggingRef = useRef(false);
+  const panelRef = useRef<HTMLDivElement>(null);
+
+  // Resize handler by dragging left border
+  const handleMouseDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    isDraggingRef.current = true;
+    setIsDragging(true);
+    document.body.style.userSelect = 'none';
+    document.body.style.cursor = 'ew-resize';
+
+    const handleMouseMove = (moveEvent: MouseEvent) => {
+      if (!isDraggingRef.current) return;
+      const rightEdge = window.innerWidth - 10;
+      const newWidth = rightEdge - moveEvent.clientX;
+      const minWidth = 340;
+      const maxWidth = window.innerWidth - 24;
+      setPanelWidth(Math.max(minWidth, Math.min(maxWidth, newWidth)));
+    };
+
+    const handleMouseUp = () => {
+      isDraggingRef.current = false;
+      setIsDragging(false);
+      document.body.style.userSelect = '';
+      document.body.style.cursor = '';
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+      if (panelRef.current) {
+        const currentWidth = panelRef.current.offsetWidth;
+        localStorage.setItem('cx_ontology_drawer_width', String(currentWidth));
+      }
+    };
+
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+  }, []);
+
+  // Close on Escape key
+  useEffect(() => {
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') {
+        onClose();
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [onClose]);
 
   if (!node) return null;
 
@@ -165,39 +227,42 @@ ${node.description || ''}
   const getKindBadge = (kind: OntologyKind) => {
     switch (kind) {
       case 'org':
-        return (
-          <span className="cx-kg-kind-badge cx-kg-kind-org">
-            <Hexagon size={12} /> Org Root
-          </span>
-        );
       case 'project':
         return (
-          <span className="cx-kg-kind-badge cx-kg-kind-project">
-            <Hexagon size={12} /> Project Root
+          <span className="cx-kg-kind-badge cx-kg-kind-org">
+            <Hexagon size={12} /> Organization
           </span>
         );
       case 'domain':
         return (
           <span className="cx-kg-kind-badge cx-kg-kind-domain">
-            <Square size={12} /> Domain Chip
+            <Square size={12} /> Domain
           </span>
         );
       case 'subdomain':
-        return (
-          <span className="cx-kg-kind-badge cx-kg-kind-subdomain">
-            <Circle size={12} /> Subdomain Disc
-          </span>
-        );
       case 'capability':
         return (
-          <span className="cx-kg-kind-badge cx-kg-kind-capability">
-            <Circle size={12} /> Capability Disc
+          <span className="cx-kg-kind-badge cx-kg-kind-subdomain">
+            <Circle size={12} /> Subdomain
           </span>
         );
       case 'element':
         return (
           <span className="cx-kg-kind-badge cx-kg-kind-element">
-            <Hash size={12} /> Element Pad
+            <svg
+              width={12}
+              height={12}
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <rect width="18" height="18" x="3" y="3" rx="2" />
+              <circle cx="12" cy="12" r="4" />
+            </svg>
+            Element
           </span>
         );
       default:
@@ -210,9 +275,20 @@ ${node.description || ''}
   };
 
   return (
-    <div className="cx-kg-drawer">
+    <div
+      ref={panelRef}
+      className="cx-ontology-config-panel cx-kg-drawer-standard"
+      style={{ width: `${panelWidth}px`, maxWidth: 'calc(100vw - 20px)' }}
+    >
+      {/* Left-edge Drag Resize Handle */}
+      <div
+        onMouseDown={handleMouseDown}
+        className={`cx-ontology-config-resize-handle ${isDragging ? 'is-dragging' : ''}`}
+        title="Drag to resize panel width"
+      />
+
       {/* Header */}
-      <div className="cx-kg-drawer-header">
+      <div className="cx-ontology-config-header cx-kg-drawer-header-standard">
         <div className="cx-kg-drawer-header-left">
           <div className="cx-kg-drawer-badges-row">
             {getKindBadge(node.kind)}
@@ -248,26 +324,26 @@ ${node.description || ''}
             <button
               type="button"
               onClick={() => setIsEditing(true)}
-              className="cx-kg-drawer-icon-btn"
+              className="cx-ontology-config-close-btn"
               title="Edit entity"
             >
-              <Edit2 size={15} />
+              <Edit2 size={14} />
             </button>
           )}
 
           <button
             type="button"
             onClick={onClose}
-            className="cx-kg-drawer-icon-btn"
+            className="cx-ontology-config-close-btn"
             title="Close drawer"
           >
-            <X size={16} />
+            <X size={15} />
           </button>
         </div>
       </div>
 
       {/* Body Content */}
-      <div className="cx-kg-drawer-body cx-kg-scrollbar">
+      <div className="cx-ontology-config-body cx-kg-drawer-body-standard cx-kg-scrollbar">
         {editError && (
           <div className="cx-kg-alert-error">
             <AlertCircle size={14} style={{ flexShrink: 0, marginTop: 1 }} />

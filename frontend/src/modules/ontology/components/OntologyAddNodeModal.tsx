@@ -201,7 +201,7 @@ export const OntologyAddNodeModal: React.FC<OntologyAddNodeModalProps> = ({
               >
                 {kindsConfig.map(k => (
                   <option key={k.id} value={k.id}>
-                    {k.label} ({k.id})
+                    {k.label || (k.id === 'org' ? 'Organization' : k.id === 'domain' ? 'Domain' : k.id === 'subdomain' ? 'Subdomain' : k.id === 'element' ? 'Element' : k.id)}
                   </option>
                 ))}
               </select>

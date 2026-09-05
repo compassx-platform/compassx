@@ -19,6 +19,7 @@ from app.ontology.schemas.ontology import (
     TypeDefinitionCreate,
     TypeDefinitionUpdate,
     TypeRelationCreate,
+    TypeRelationUpdate,
     GraphNodeInstance,
     GraphEdgeInstance,
     KnowledgeGraphDataset,
@@ -238,6 +239,63 @@ class OntologyService:
             description=data.description,
         )
         db.add(record)
+        db.commit()
+        db.refresh(record)
+        return record
+
+    @classmethod
+    def update_type_relation(cls, db: Session, rel_id: int, data: TypeRelationUpdate) -> OntologyTypeRelation:
+        record = db.query(OntologyTypeRelation).filter_by(id=rel_id).first()
+        if not record:
+            raise KeyError(f"Relationship rule with ID '{rel_id}' not found.")
+
+        # Determine target values
+        new_source = data.source_type_id if data.source_type_id is not None else record.source_type_id
+        new_target = data.target_type_id if data.target_type_id is not None else record.target_type_id
+        new_rel_type = (data.relation_type.strip().lower().replace(" ", "_")) if data.relation_type is not None else record.relation_type
+
+        if record.is_system:
+            raise ValueError("System relationship rule is protected and cannot be edited.")
+
+        if data.source_type_id is not None:
+            src = db.query(OntologyType).filter_by(id=new_source).first()
+            if not src:
+                raise ValueError(f"Source entity type '{new_source}' does not exist.")
+
+        if data.target_type_id is not None:
+            tgt = db.query(OntologyType).filter_by(id=new_target).first()
+            if not tgt:
+                raise ValueError(f"Target entity type '{new_target}' does not exist.")
+
+        # Check uniqueness constraint if signature is changing
+        if (
+            new_source != record.source_type_id
+            or new_rel_type != record.relation_type
+            or new_target != record.target_type_id
+        ):
+            dup = (
+                db.query(OntologyTypeRelation)
+                .filter(
+                    OntologyTypeRelation.id != rel_id,
+                    OntologyTypeRelation.source_type_id == new_source,
+                    OntologyTypeRelation.relation_type == new_rel_type,
+                    OntologyTypeRelation.target_type_id == new_target,
+                )
+                .first()
+            )
+            if dup:
+                raise ValueError(
+                    f"Relationship rule '{new_source} --[{new_rel_type}]--> {new_target}' already exists."
+                )
+
+        record.source_type_id = new_source
+        record.relation_type = new_rel_type
+        record.target_type_id = new_target
+        if data.is_hierarchical is not None:
+            record.is_hierarchical = data.is_hierarchical or (new_rel_type == "contains")
+        if data.description is not None:
+            record.description = data.description
+
         db.commit()
         db.refresh(record)
         return record
@@ -533,21 +591,6 @@ class OntologyService:
         # Persist to database
         cls._persist_dataset(db, dataset, raw_yaml=raw_yaml_str)
         return cls.get_active_graph(db, graph_id=dataset.id or "default")
-
-    @classmethod
-    def reset_to_default(cls, db: Session) -> KnowledgeGraphDataset:
-        """Factory reset all types, metamodel relations, and graph to original default seed."""
-        # 1. Clear existing
-        db.query(OntologyEdge).delete()
-        db.query(OntologyNode).delete()
-        db.query(OntologyGraph).delete()
-        db.query(OntologyTypeRelation).delete()
-        db.query(OntologyType).delete()
-        db.commit()
-
-        # 2. Re-seed
-        cls.ensure_default_seed(db)
-        return cls.get_active_graph(db, graph_id="default")
 
     # ─── Granular Node & Edge CRUD ───────────────────────────────────────────
 

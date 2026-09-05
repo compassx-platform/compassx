@@ -3,8 +3,8 @@
 DEFAULT_SEED_TYPES = [
     {
         "id": "org",
-        "label": "Org Root",
-        "description": "Root platform & organization architecture",
+        "label": "Organization",
+        "description": "Root enterprise organization architecture",
         "shape": "hexagon",
         "base_radius": 30,
         "tier": 0,
@@ -12,7 +12,7 @@ DEFAULT_SEED_TYPES = [
     },
     {
         "id": "domain",
-        "label": "Domain Chip",
+        "label": "Domain",
         "description": "Primary architectural functional domains",
         "shape": "chip",
         "base_radius": 17,
@@ -21,7 +21,7 @@ DEFAULT_SEED_TYPES = [
     },
     {
         "id": "subdomain",
-        "label": "Subdomain Disc",
+        "label": "Subdomain",
         "description": "System functional areas and subdomains",
         "shape": "circle",
         "base_radius": 11,
@@ -30,7 +30,7 @@ DEFAULT_SEED_TYPES = [
     },
     {
         "id": "element",
-        "label": "Element Pad",
+        "label": "Element",
         "description": "Atomic components, algorithms & service pads",
         "shape": "pad",
         "base_radius": 7,

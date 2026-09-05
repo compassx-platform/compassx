@@ -93,6 +93,18 @@ export async function createTypeRelation(data: TypeRelationConfig): Promise<Type
   return res.data;
 }
 
+export async function updateTypeRelation(relationId: number, data: Partial<TypeRelationConfig>): Promise<TypeRelationConfig> {
+  const payload: Record<string, any> = {};
+  if (data.source_type_id !== undefined) payload.source_type_id = data.source_type_id;
+  if (data.relation_type !== undefined) payload.relation_type = data.relation_type;
+  if (data.target_type_id !== undefined) payload.target_type_id = data.target_type_id;
+  if (data.is_hierarchical !== undefined) payload.is_hierarchical = data.is_hierarchical;
+  if (data.description !== undefined) payload.description = data.description;
+
+  const res = await api.put<TypeRelationConfig>(`/ontology/schema/relations/${relationId}`, payload);
+  return res.data;
+}
+
 export async function deleteTypeRelation(relationId: number): Promise<void> {
   await api.delete(`/ontology/schema/relations/${relationId}`);
 }
@@ -145,37 +157,6 @@ export async function importYamlKnowledgeGraph(payload: {
   name?: string;
 }): Promise<OntologyDataset> {
   const res = await api.post<any>('/ontology/graph/import-yaml', payload);
-  return {
-    name: res.data.name,
-    version: res.data.version,
-    description: res.data.description,
-    yaml_content: res.data.yaml_content,
-    nodes: (res.data.nodes || []).map((n: any) => ({
-      id: n.id,
-      kind: n.kind,
-      uid: n.uid,
-      title: n.title,
-      description: n.description,
-      parentId: n.parentId || n.parent_id || null,
-      domainId: n.domainId || n.domain_id || null,
-      path: n.path,
-      tags: n.tags || [],
-      status: n.status || 'active',
-      ...n.properties,
-    })),
-    edges: (res.data.edges || []).map((e: any) => ({
-      id: e.id,
-      source: e.source || e.source_id,
-      target: e.target || e.target_id,
-      type: e.type || e.relation_type,
-      description: e.description,
-      ...e.properties,
-    })),
-  };
-}
-
-export async function resetDefaultKnowledgeGraph(): Promise<OntologyDataset> {
-  const res = await api.post<any>('/ontology/graph/reset-default');
   return {
     name: res.data.name,
     version: res.data.version,

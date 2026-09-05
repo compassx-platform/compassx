@@ -40,6 +40,10 @@ export interface GraphValidationResult {
 }
 
 export interface OntologyConfigPanelProps {
+  isOpen?: boolean;
+  onClose?: () => void;
+  onToggleOpen?: () => void;
+  hideTrigger?: boolean;
   kindsConfig?: KindConfig[];
   onUpdateKindsConfig?: (newKinds: KindConfig[]) => void;
   typeRelations?: TypeRelationConfig[];
@@ -54,7 +58,6 @@ export interface OntologyConfigPanelProps {
   onToggleExpandAll?: () => void;
   onAutoArrange?: () => void;
   onFitView?: () => void;
-  onResetDefaultData?: () => void;
   nodeCount?: number;
   edgeCount?: number;
 }

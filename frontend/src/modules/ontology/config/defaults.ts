@@ -6,7 +6,7 @@ export const ONTOLOGY_RELATIONS_STORAGE_KEY = 'ontology_relations_config';
 export const DEFAULT_KINDS_CONFIG: KindConfig[] = [
   {
     id: 'org',
-    label: 'Org Root',
+    label: 'Organization',
     description: 'Root enterprise organization apex',
     shape: 'hexagon',
     baseRadius: 30,
@@ -15,7 +15,7 @@ export const DEFAULT_KINDS_CONFIG: KindConfig[] = [
   },
   {
     id: 'domain',
-    label: 'Domain Chip',
+    label: 'Domain',
     description: 'Primary architectural functional domains',
     shape: 'chip',
     baseRadius: 17,
@@ -24,7 +24,7 @@ export const DEFAULT_KINDS_CONFIG: KindConfig[] = [
   },
   {
     id: 'subdomain',
-    label: 'Subdomain Disc',
+    label: 'Subdomain',
     description: 'Core functional subdomains & service boundaries',
     shape: 'circle',
     baseRadius: 11,
@@ -33,7 +33,7 @@ export const DEFAULT_KINDS_CONFIG: KindConfig[] = [
   },
   {
     id: 'element',
-    label: 'Element Pad',
+    label: 'Element',
     description: 'Underlying components, algorithms & via pads',
     shape: 'pad',
     baseRadius: 7,

@@ -61,6 +61,14 @@ class TypeRelationCreate(TypeRelationBase):
     pass
 
 
+class TypeRelationUpdate(BaseModel):
+    source_type_id: Optional[str] = Field(None, description="Source entity type ID")
+    relation_type: Optional[str] = Field(None, min_length=1, max_length=100, description="Relation slug e.g. 'contains', 'depends_on'")
+    target_type_id: Optional[str] = Field(None, description="Target entity type ID")
+    is_hierarchical: Optional[bool] = Field(None, description="True for parent-child tree hierarchy")
+    description: Optional[str] = Field(None, description="Explanation of allowed relationship")
+
+
 class TypeRelationResponse(TypeRelationBase):
     id: int
     created_at: Optional[datetime] = None

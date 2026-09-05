@@ -324,6 +324,24 @@
    3. Side Inspector Drawer (.cx-kg-drawer-*)
    ========================================================================== */
 
+.cx-kg-drawer-standard {
+  /* Inherits position, surface, borders, resize handle from .cx-ontology-config-panel */
+}
+
+.cx-kg-drawer-header-standard {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+}
+
+.cx-kg-drawer-body-standard {
+  padding: 14px;
+  overflow-y: auto;
+  flex: 1;
+}
+
 .cx-kg-drawer {
   position: absolute;
   right: 12px;

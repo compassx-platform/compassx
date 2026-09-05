@@ -251,6 +251,40 @@
   background: var(--color-surface-hover);
 }
 
+/* Sticky Action Container at the bottom of the list */
+.cx-ontology-config-sticky-footer {
+  position: sticky;
+  bottom: -16px;
+  margin-top: 4px;
+  padding: 8px 0 16px;
+  background: var(--color-surface);
+  z-index: 5;
+}
+
+/* Dotted Add Type Box at end of list */
+.cx-ontology-config-add-box {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border-radius: var(--radius-lg, 8px);
+  border: 1px dashed var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-text-muted);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  width: 100%;
+  transition: all 0.15s ease;
+}
+
+.cx-ontology-config-add-box:hover {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+  background: var(--color-primary-bg, rgba(34, 114, 180, 0.05));
+}
+
 .cx-ontology-config-card-icon-box {
   width: 32px;
   height: 32px;
@@ -297,12 +331,11 @@
 .cx-ontology-type-chip {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  padding: 3px 8px;
-  border-radius: var(--radius, 4px);
-  background: var(--color-bg);
-  border: 1px solid var(--color-border);
-  font-size: 12px;
+  gap: 6px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  font-size: 13px;
   font-weight: 600;
   color: var(--color-text);
 }
@@ -317,13 +350,12 @@
 
 .cx-ontology-rel-badge {
   font-family: var(--cx-font-mono, monospace);
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 600;
-  padding: 2px 7px;
-  border-radius: 4px;
-  background: var(--color-primary-bg);
   color: var(--color-primary);
-  border: 1px solid rgba(27, 110, 243, 0.25);
+  background: transparent;
+  border: none;
+  padding: 0;
 }
 
 .cx-ontology-hier-badge {
@@ -334,6 +366,138 @@
   border-radius: 3px;
   background: var(--color-success-bg);
   color: var(--color-success);
+}
+
+/* Grouped Type Pair Card */
+.cx-ontology-pair-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: var(--radius, 6px);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  transition: border-color 0.15s ease, background-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.cx-ontology-pair-card:hover {
+  border-color: var(--color-border-strong);
+}
+
+.cx-ontology-pair-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+}
+
+.cx-ontology-pair-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.cx-ontology-pair-arrow {
+  color: var(--color-text-muted);
+  display: inline-flex;
+  align-items: center;
+}
+
+/* Relation Pills in Grouped Card */
+.cx-ontology-pair-relations {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.cx-ontology-relation-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  font-family: var(--cx-font-mono, monospace);
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--color-text);
+  transition: all 0.12s ease;
+}
+
+.cx-ontology-relation-pill:hover {
+  border-color: var(--color-border-strong);
+}
+
+.cx-ontology-relation-pill.is-hierarchical {
+  border-color: rgba(16, 185, 129, 0.35);
+  background: rgba(16, 185, 129, 0.06);
+}
+
+.cx-ontology-relation-pill-del {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  border: none;
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  padding: 0;
+  margin-left: 2px;
+  transition: all 0.12s ease;
+}
+
+.cx-ontology-relation-pill-del:hover {
+  background: var(--color-danger-bg, #fee2e2);
+  color: var(--color-danger, #ef4444);
+}
+
+/* Inline Add Relation Button & Input */
+.cx-ontology-add-rel-inline-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 7px;
+  border-radius: 4px;
+  border: 1px dashed var(--color-border);
+  background: transparent;
+  color: var(--color-text-muted);
+  font-size: 10px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.12s ease;
+}
+
+.cx-ontology-add-rel-inline-btn:hover {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+  background: var(--color-primary-bg, rgba(34, 114, 180, 0.05));
+}
+
+.cx-ontology-add-rel-inline-form {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.cx-ontology-add-rel-inline-input {
+  height: 22px;
+  padding: 1px 6px;
+  font-size: 11px;
+  border-radius: 3px;
+  border: 1px solid var(--color-primary);
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--cx-font-mono, monospace);
+  outline: none;
+  width: 110px;
 }
 
 /* Action Icon Buttons inside cards */

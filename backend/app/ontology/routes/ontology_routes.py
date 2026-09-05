@@ -13,6 +13,7 @@ from app.ontology.schemas.ontology import (
     TypeDefinitionUpdate,
     TypeDefinitionResponse,
     TypeRelationCreate,
+    TypeRelationUpdate,
     TypeRelationResponse,
     KnowledgeGraphDataset,
     GraphValidationRequest,
@@ -80,6 +81,17 @@ def create_type_relation(data: TypeRelationCreate, db: Session = Depends(get_acc
     """Define a new allowed relationship rule in the metamodel schema."""
     try:
         return OntologyService.create_type_relation(db, data)
+    except ValueError as err:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(err))
+
+
+@router.put("/schema/relations/{relation_id}", response_model=TypeRelationResponse)
+def update_type_relation(relation_id: int, data: TypeRelationUpdate, db: Session = Depends(get_account_db)):
+    """Update an existing allowed relationship rule in the metamodel schema."""
+    try:
+        return OntologyService.update_type_relation(db, relation_id, data)
+    except KeyError as err:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(err))
     except ValueError as err:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(err))
 
@@ -199,12 +211,3 @@ def delete_graph_edge(edge_id: str, graph_id: str = "default", db: Session = Dep
         logger.error("Failed to delete edge: %s", err)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(err))
 
-
-@router.post("/graph/reset-default", response_model=KnowledgeGraphDataset)
-def reset_default_graph(db: Session = Depends(get_account_db)):
-    """Reset the ontology metamodel and active graph to the default factory state."""
-    try:
-        return OntologyService.reset_to_default(db)
-    except Exception as err:
-        logger.error("Failed to reset ontology to default: %s", err)
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(err))

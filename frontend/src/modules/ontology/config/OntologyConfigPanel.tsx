@@ -1,10 +1,9 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import {
   Settings,
   X,
   Plus,
   Trash2,
-  RotateCcw,
   Hexagon,
   Square,
   Circle,
@@ -28,18 +27,42 @@ import {
   updateOntologyType,
   deleteOntologyType,
   createTypeRelation,
+  updateTypeRelation,
   deleteTypeRelation,
 } from '../api/ontologyApi';
 import './config.css';
 
 export const OntologyConfigPanel: React.FC<OntologyConfigPanelProps> = ({
+  isOpen: controlledIsOpen,
+  onClose: controlledOnClose,
+  onToggleOpen: controlledOnToggleOpen,
+  hideTrigger = false,
   kindsConfig = DEFAULT_KINDS_CONFIG,
   onUpdateKindsConfig,
   typeRelations = DEFAULT_TYPE_RELATIONS,
   onUpdateTypeRelations,
-  onResetDefaultData,
 }) => {
-  const [isOpen, setIsOpen] = useState(false);
+  const [internalIsOpen, setInternalIsOpen] = useState(false);
+  const isOpen = controlledIsOpen !== undefined ? controlledIsOpen : internalIsOpen;
+
+  const handleToggle = () => {
+    if (controlledOnToggleOpen) {
+      controlledOnToggleOpen();
+    } else if (controlledOnClose && isOpen) {
+      controlledOnClose();
+    } else {
+      setInternalIsOpen(prev => !prev);
+    }
+  };
+
+  const handleClose = () => {
+    if (controlledOnClose) {
+      controlledOnClose();
+    } else {
+      setInternalIsOpen(false);
+    }
+  };
+
   const [activeTab, setActiveTab] = useState<ConfigTab>('kinds');
 
   // ─── Semantic Kinds Form State ──────────────────────────────────────────────
@@ -56,6 +79,8 @@ export const OntologyConfigPanel: React.FC<OntologyConfigPanelProps> = ({
   const [editKindForm, setEditKindForm] = useState<KindConfig | null>(null);
 
   // ─── Type Relations Form State ──────────────────────────────────────────────
+  const [inlineAddPairKey, setInlineAddPairKey] = useState<string | null>(null);
+  const [inlineRelationName, setInlineRelationName] = useState('');
   const [isAddingNewRelation, setIsAddingNewRelation] = useState(false);
   const [newRelation, setNewRelation] = useState<TypeRelationConfig>({
     source_type_id: kindsConfig[0]?.id || 'org',
@@ -65,9 +90,46 @@ export const OntologyConfigPanel: React.FC<OntologyConfigPanelProps> = ({
     description: '',
   });
 
+  // Group relations by Type Pair (Source -> Target)
+  const groupedPairs = useMemo(() => {
+    const map = new Map<
+      string,
+      {
+        pairKey: string;
+        source_type_id: string;
+        target_type_id: string;
+        relations: TypeRelationConfig[];
+        hasSystemRelation: boolean;
+      }
+    >();
+    for (const rel of typeRelations) {
+      const key = `${rel.source_type_id}->${rel.target_type_id}`;
+      if (!map.has(key)) {
+        map.set(key, {
+          pairKey: key,
+          source_type_id: rel.source_type_id,
+          target_type_id: rel.target_type_id,
+          relations: [],
+          hasSystemRelation: false,
+        });
+      }
+      const entry = map.get(key)!;
+      entry.relations.push(rel);
+      if (rel.is_system) {
+        entry.hasSystemRelation = true;
+      }
+    }
+    return Array.from(map.values());
+  }, [typeRelations]);
+
   // Default to a wide panel, adjustable via left-border dragging
   const [panelWidth, setPanelWidth] = useState(() => {
     if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('cx_ontology_drawer_width') || localStorage.getItem('cx_ontology_config_panel_width');
+      if (saved) {
+        const num = parseInt(saved, 10);
+        if (!isNaN(num)) return Math.max(340, Math.min(window.innerWidth - 24, num));
+      }
       return Math.min(560, window.innerWidth - 40);
     }
     return 500;
@@ -100,6 +162,10 @@ export const OntologyConfigPanel: React.FC<OntologyConfigPanelProps> = ({
       document.body.style.cursor = '';
       window.removeEventListener('mousemove', handleMouseMove);
       window.removeEventListener('mouseup', handleMouseUp);
+      if (panelRef.current) {
+        const currentWidth = panelRef.current.offsetWidth;
+        localStorage.setItem('cx_ontology_drawer_width', String(currentWidth));
+      }
     };
 
     window.addEventListener('mousemove', handleMouseMove);
@@ -110,17 +176,17 @@ export const OntologyConfigPanel: React.FC<OntologyConfigPanelProps> = ({
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
       if (event.key === 'Escape' && isOpen) {
-        setIsOpen(false);
+        handleClose();
       }
     }
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isOpen]);
+  }, [isOpen, handleClose]);
 
   const CONFIG_PAGE_TABS = [
-    { value: 'kinds', label: 'Semantic Types' },
-    { value: 'relations', label: 'Type Relationships' },
-  ] as const;
+    { value: 'kinds' as const, label: `Entity Types (${kindsConfig.length})` },
+    { value: 'relations' as const, label: `Relationships (${groupedPairs.length})` },
+  ];
 
   const getShapeIcon = (shape: NodeShapeType) => {
     const size = 14;
@@ -132,7 +198,21 @@ export const OntologyConfigPanel: React.FC<OntologyConfigPanelProps> = ({
       case 'circle':
         return <Circle size={size} />;
       case 'pad':
-        return <Hash size={size} />;
+        return (
+          <svg
+            width={size}
+            height={size}
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <rect width="18" height="18" x="3" y="3" rx="2" />
+            <circle cx="12" cy="12" r="4" />
+          </svg>
+        );
       default:
         return <Circle size={size} />;
     }
@@ -160,15 +240,21 @@ export const OntologyConfigPanel: React.FC<OntologyConfigPanelProps> = ({
   };
 
   const handleAddNewKind = async () => {
-    if (!newKind.id.trim() || !newKind.label.trim()) return;
-    const cleanId = newKind.id.toLowerCase().trim().replace(/[^a-z0-9_-]/g, '-');
+    const rawLabel = newKind.label.trim();
+    if (!rawLabel) return;
+    const cleanId = rawLabel.toLowerCase().replace(/[^a-z0-9_-]/g, '_');
     if (kindsConfig.some(k => k.id === cleanId)) {
-      alert(`An entity type with ID "${cleanId}" already exists.`);
+      alert(`An entity type with name "${rawLabel}" already exists.`);
       return;
     }
     const created: KindConfig = {
-      ...newKind,
       id: cleanId,
+      label: rawLabel,
+      description: newKind.description?.trim() || '',
+      shape: 'circle',
+      baseRadius: 11,
+      tier: 2,
+      is_system: false,
     };
     if (onUpdateKindsConfig) {
       onUpdateKindsConfig([...kindsConfig, created]);
@@ -178,7 +264,7 @@ export const OntologyConfigPanel: React.FC<OntologyConfigPanelProps> = ({
       label: '',
       description: '',
       shape: 'circle',
-      baseRadius: 12,
+      baseRadius: 11,
       tier: 2,
     });
     setIsAddingNewKind(false);
@@ -214,20 +300,91 @@ export const OntologyConfigPanel: React.FC<OntologyConfigPanelProps> = ({
     }
   };
 
-  const handleResetKinds = () => {
-    if (window.confirm('Reset all entity types back to default system types (Org, Domain, Subdomain, Element)?')) {
-      if (onUpdateKindsConfig) {
-        onUpdateKindsConfig(DEFAULT_KINDS_CONFIG);
+  // ─── Relations Handlers ─────────────────────────────────────────────────────
+
+  const handleInlineAddRelation = async (sourceId: string, targetId: string) => {
+    const cleanRel = inlineRelationName.trim().toLowerCase().replace(/\s+/g, '_');
+    if (!cleanRel) return;
+
+    const exists = typeRelations.some(
+      r => r.source_type_id === sourceId && r.target_type_id === targetId && r.relation_type.toLowerCase() === cleanRel
+    );
+    if (exists) {
+      alert(`Relationship "${sourceId} --[${cleanRel}]--> ${targetId}" already exists.`);
+      return;
+    }
+
+    const created: TypeRelationConfig = {
+      source_type_id: sourceId,
+      relation_type: cleanRel,
+      target_type_id: targetId,
+      is_hierarchical: cleanRel === 'contains',
+      description: '',
+    };
+
+    const next = [...typeRelations, created];
+    if (onUpdateTypeRelations) {
+      onUpdateTypeRelations(next);
+    }
+    setInlineAddPairKey(null);
+    setInlineRelationName('');
+
+    try {
+      const saved = await createTypeRelation(created);
+      if (saved.id && onUpdateTypeRelations) {
+        onUpdateTypeRelations(next.map(r => (r === created ? saved : r)));
       }
-      setEditingKindId(null);
-      setIsAddingNewKind(false);
-      if (onResetDefaultData) {
-        onResetDefaultData();
+    } catch (err) {
+      console.warn('Backend create relation failed (offline fallback active):', err);
+    }
+  };
+
+  const handleDeleteSingleRelation = async (rel: TypeRelationConfig) => {
+    if (rel.is_system) {
+      alert(`System rule "${rel.source_type_id} --[${rel.relation_type}]--> ${rel.target_type_id}" is protected and cannot be deleted.`);
+      return;
+    }
+
+    if (window.confirm(`Delete relationship "${rel.source_type_id} --[${rel.relation_type}]--> ${rel.target_type_id}"?`)) {
+      const next = typeRelations.filter(r => r !== rel && !(r.id && rel.id && r.id === rel.id));
+      if (onUpdateTypeRelations) {
+        onUpdateTypeRelations(next);
+      }
+
+      if (rel.id) {
+        try {
+          await deleteTypeRelation(rel.id);
+        } catch (err) {
+          console.warn('Backend delete relation failed (offline fallback active):', err);
+        }
       }
     }
   };
 
-  // ─── Relations Handlers ─────────────────────────────────────────────────────
+  const handleDeletePair = async (pair: { source_type_id: string; target_type_id: string; relations: TypeRelationConfig[]; hasSystemRelation: boolean }) => {
+    if (pair.hasSystemRelation) {
+      alert(`This entity pair contains protected system rules and cannot be deleted.`);
+      return;
+    }
+
+    if (window.confirm(`Delete all relationship rules between "${pair.source_type_id}" and "${pair.target_type_id}"?`)) {
+      const relsToDelete = pair.relations;
+      const next = typeRelations.filter(r => r.source_type_id !== pair.source_type_id || r.target_type_id !== pair.target_type_id);
+      if (onUpdateTypeRelations) {
+        onUpdateTypeRelations(next);
+      }
+
+      for (const rel of relsToDelete) {
+        if (rel.id) {
+          try {
+            await deleteTypeRelation(rel.id);
+          } catch (err) {
+            console.warn('Backend delete relation failed (offline fallback active):', err);
+          }
+        }
+      }
+    }
+  };
 
   const handleAddNewRelation = async () => {
     const cleanRel = newRelation.relation_type.trim().toLowerCase().replace(/\s+/g, '_');
@@ -251,8 +408,9 @@ export const OntologyConfigPanel: React.FC<OntologyConfigPanelProps> = ({
       is_hierarchical: newRelation.is_hierarchical || cleanRel === 'contains',
     };
 
+    const next = [...typeRelations, created];
     if (onUpdateTypeRelations) {
-      onUpdateTypeRelations([...typeRelations, created]);
+      onUpdateTypeRelations(next);
     }
 
     setIsAddingNewRelation(false);
@@ -267,69 +425,35 @@ export const OntologyConfigPanel: React.FC<OntologyConfigPanelProps> = ({
     try {
       const saved = await createTypeRelation(created);
       if (saved.id && onUpdateTypeRelations) {
-        onUpdateTypeRelations([...typeRelations, saved]);
+        onUpdateTypeRelations(next.map(r => (r === created ? saved : r)));
       }
     } catch (err) {
       console.warn('Backend create relation failed (offline fallback active):', err);
     }
   };
 
-  const handleDeleteRelation = async (index: number, relId?: number) => {
-    if (!onUpdateTypeRelations) return;
-    const item = typeRelations[index];
-    if (!item) return;
-
-    if (item.is_system) {
-      alert(`System containment rule "${item.source_type_id} --[${item.relation_type}]--> ${item.target_type_id}" is protected and cannot be deleted.`);
-      return;
-    }
-
-    if (window.confirm(`Delete relationship rule "${item.source_type_id} --[${item.relation_type}]--> ${item.target_type_id}"?`)) {
-      const next = typeRelations.filter((_, i) => i !== index);
-      onUpdateTypeRelations(next);
-
-      if (relId) {
-        try {
-          await deleteTypeRelation(relId);
-        } catch (err) {
-          console.warn('Backend delete relation failed (offline fallback active):', err);
-        }
-      }
-    }
-  };
-
-  const handleResetRelations = () => {
-    if (window.confirm('Reset all metamodel relationship rules back to system defaults?')) {
-      if (onUpdateTypeRelations) {
-        onUpdateTypeRelations(DEFAULT_TYPE_RELATIONS);
-      }
-      setIsAddingNewRelation(false);
-      if (onResetDefaultData) {
-        onResetDefaultData();
-      }
-    }
-  };
-
   return (
     <>
-      {/* Top Right Configure Trigger Button */}
-      <div className={`cx-ontology-config-trigger ${isOpen ? 'is-active' : ''}`}>
-        <button
-          type="button"
-          onClick={() => setIsOpen(prev => !prev)}
-          className="cx-ontology-config-trigger-btn"
-          title="Toggle Configuration Panel"
-        >
-          <Settings
-            size={13}
-            style={{
-              transition: 'transform 0.25s ease',
-              transform: isOpen ? 'rotate(90deg)' : 'none',
-            }}
-          />
-          <span>Configure</span>
-        </button>
-      </div>
+      {/* Top Right Configure Trigger Button (rendered if not hidden by parent) */}
+      {!hideTrigger && (
+        <div className={`cx-ontology-config-trigger ${isOpen ? 'is-active' : ''}`}>
+          <button
+            type="button"
+            onClick={handleToggle}
+            className="cx-ontology-config-trigger-btn"
+            title="Toggle Configuration Panel"
+          >
+            <Settings
+              size={13}
+              style={{
+                transition: 'transform 0.25s ease',
+                transform: isOpen ? 'rotate(90deg)' : 'none',
+              }}
+            />
+            <span>Configure</span>
+          </button>
+        </div>
+      )}
 
       {/* Drag-resizable Configuration Panel Styled with App Design System */}
       {isOpen && (
@@ -357,7 +481,7 @@ export const OntologyConfigPanel: React.FC<OntologyConfigPanelProps> = ({
             {/* Close Button */}
             <button
               type="button"
-              onClick={() => setIsOpen(false)}
+              onClick={handleClose}
               className="cx-ontology-config-close-btn"
               title="Close panel"
             >
@@ -369,142 +493,10 @@ export const OntologyConfigPanel: React.FC<OntologyConfigPanelProps> = ({
           <div className="cx-ontology-config-body">
             {/* ─── TAB 1: Semantic Entity Types ─────────────────────────────── */}
             {activeTab === 'kinds' && (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-                {/* Header & Add Button */}
-                <div className="cx-ontology-config-section-head">
-                  <div>
-                    <div className="cx-ontology-config-title">
-                      Configured Entity Types ({kindsConfig.length})
-                    </div>
-                    <div className="cx-ontology-config-subtitle">
-                      Shapes, base radii, and concentric layout tiers for graph entities.
-                    </div>
-                  </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <button
-                      type="button"
-                      onClick={() => setIsAddingNewKind(prev => !prev)}
-                      className="btn-primary"
-                      style={{ fontSize: '0.75rem', padding: '0.3rem 0.65rem' }}
-                    >
-                      <Plus size={12} />
-                      <span>Add Type</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={handleResetKinds}
-                      className="cx-ontology-config-icon-btn"
-                      title="Reset entity types to defaults"
-                    >
-                      <RotateCcw size={13} />
-                    </button>
-                  </div>
-                </div>
-
-                {/* Add New Type Form */}
-                {isAddingNewKind && (
-                  <div className="cx-ontology-config-form">
-                    <div className="cx-ontology-config-form-title">
-                      Create New Entity Type
-                    </div>
-                    <div className="cx-ontology-config-form-grid">
-                      <div className="cx-ontology-config-field">
-                        <label className="cx-ontology-config-label">
-                          Type ID / Slug
-                        </label>
-                        <input
-                          type="text"
-                          placeholder="e.g. microservice"
-                          value={newKind.id}
-                          onChange={e => setNewKind(prev => ({ ...prev, id: e.target.value }))}
-                          className="form-input"
-                        />
-                      </div>
-                      <div className="cx-ontology-config-field">
-                        <label className="cx-ontology-config-label">
-                          Display Label
-                        </label>
-                        <input
-                          type="text"
-                          placeholder="e.g. Microservice"
-                          value={newKind.label}
-                          onChange={e => setNewKind(prev => ({ ...prev, label: e.target.value }))}
-                          className="form-input"
-                        />
-                      </div>
-                    </div>
-
-                    <div className="cx-ontology-config-form-grid-3">
-                      <div className="cx-ontology-config-field">
-                        <label className="cx-ontology-config-label">
-                          Shape
-                        </label>
-                        <select
-                          value={newKind.shape}
-                          onChange={e => setNewKind(prev => ({ ...prev, shape: e.target.value as NodeShapeType }))}
-                          className="form-input"
-                        >
-                          <option value="hexagon">Hexagon (Plate)</option>
-                          <option value="chip">Square (Chip)</option>
-                          <option value="circle">Circle (Disc)</option>
-                          <option value="pad">Pad (Via Hole)</option>
-                        </select>
-                      </div>
-                      <div className="cx-ontology-config-field">
-                        <label className="cx-ontology-config-label">
-                          Radius (px)
-                        </label>
-                        <input
-                          type="number"
-                          min="5"
-                          max="60"
-                          value={newKind.baseRadius}
-                          onChange={e => setNewKind(prev => ({ ...prev, baseRadius: parseInt(e.target.value, 10) || 10 }))}
-                          className="form-input"
-                        />
-                      </div>
-                      <div className="cx-ontology-config-field">
-                        <label className="cx-ontology-config-label">
-                          Hierarchy Tier
-                        </label>
-                        <select
-                          value={newKind.tier}
-                          onChange={e => setNewKind(prev => ({ ...prev, tier: parseInt(e.target.value, 10) }))}
-                          className="form-input"
-                        >
-                          <option value="0">Tier 0 (Root Apex)</option>
-                          <option value="1">Tier 1 (Inner Ring)</option>
-                          <option value="2">Tier 2 (Mid Ring)</option>
-                          <option value="3">Tier 3 (Outer Clusters)</option>
-                        </select>
-                      </div>
-                    </div>
-
-                    <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 4 }}>
-                      <button
-                        type="button"
-                        onClick={() => setIsAddingNewKind(false)}
-                        className="btn-outline"
-                        style={{ fontSize: '0.75rem', padding: '0.3rem 0.65rem' }}
-                      >
-                        Cancel
-                      </button>
-                      <button
-                        type="button"
-                        onClick={handleAddNewKind}
-                        className="btn-primary"
-                        style={{ fontSize: '0.75rem', padding: '0.3rem 0.65rem' }}
-                      >
-                        Create Type
-                      </button>
-                    </div>
-                  </div>
-                )}
-
-                {/* Types List Cards */}
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                  {kindsConfig.map(k => {
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {kindsConfig.map(k => {
                     const isEditing = editingKindId === k.id;
+                    const cleanLabel = k.id === 'org' ? 'Organization' : k.id === 'domain' ? 'Domain' : k.id === 'subdomain' ? 'Subdomain' : k.id === 'element' ? 'Element' : k.label;
 
                     if (isEditing && editKindForm) {
                       return (
@@ -540,10 +532,10 @@ export const OntologyConfigPanel: React.FC<OntologyConfigPanelProps> = ({
                             </div>
                           </div>
 
-                          <div className="cx-ontology-config-form-grid-3">
+                          <div className="cx-ontology-config-form-grid" style={{ marginTop: 8 }}>
                             <div className="cx-ontology-config-field">
                               <label className="cx-ontology-config-label">
-                                Label
+                                Display Name
                               </label>
                               <input
                                 type="text"
@@ -554,29 +546,12 @@ export const OntologyConfigPanel: React.FC<OntologyConfigPanelProps> = ({
                             </div>
                             <div className="cx-ontology-config-field">
                               <label className="cx-ontology-config-label">
-                                Shape
-                              </label>
-                              <select
-                                value={editKindForm.shape}
-                                onChange={e => setEditKindForm(prev => prev ? { ...prev, shape: e.target.value as NodeShapeType } : null)}
-                                className="form-input"
-                              >
-                                <option value="hexagon">Hexagon</option>
-                                <option value="chip">Square Chip</option>
-                                <option value="circle">Circle</option>
-                                <option value="pad">Via Pad</option>
-                              </select>
-                            </div>
-                            <div className="cx-ontology-config-field">
-                              <label className="cx-ontology-config-label">
-                                Radius (px)
+                                Description
                               </label>
                               <input
-                                type="number"
-                                min="5"
-                                max="60"
-                                value={editKindForm.baseRadius}
-                                onChange={e => setEditKindForm(prev => prev ? { ...prev, baseRadius: parseInt(e.target.value, 10) || 10 } : null)}
+                                type="text"
+                                value={editKindForm.description || ''}
+                                onChange={e => setEditKindForm(prev => prev ? { ...prev, description: e.target.value } : null)}
                                 className="form-input"
                               />
                             </div>
@@ -587,269 +562,382 @@ export const OntologyConfigPanel: React.FC<OntologyConfigPanelProps> = ({
 
                     return (
                       <div key={k.id} className="cx-ontology-config-card">
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
-                          <div className="cx-ontology-config-card-icon-box">
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+                          <span style={{ color: 'var(--color-primary)', display: 'inline-flex', alignItems: 'center', flexShrink: 0 }}>
                             {getShapeIcon(k.shape)}
-                          </div>
-                          <div style={{ minWidth: 0 }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                              <span style={{ fontSize: '0.8125rem', fontWeight: 600, color: 'var(--color-text)' }}>
-                                {k.label}
-                              </span>
-                              <span className="cx-ontology-config-slug-badge">
-                                {k.id}
-                              </span>
-                              {k.is_system && (
-                                <span style={{ fontSize: '9px', fontWeight: 600, color: 'var(--color-primary, #2272b4)', background: 'var(--color-primary-bg, rgba(34, 114, 180, 0.1))', padding: '2px 6px', borderRadius: 4, textTransform: 'uppercase' }}>
-                                  System Type (Protected)
-                                </span>
-                              )}
-                            </div>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 3 }}>
-                              <span className="cx-ontology-config-meta-item">
-                                Shape: <strong className="cx-ontology-config-meta-val">{k.shape}</strong>
-                              </span>
-                              <span className="cx-ontology-config-meta-item">
-                                Radius: <strong className="cx-ontology-config-meta-val">{k.baseRadius}px</strong>
-                              </span>
-                              <span className="cx-ontology-config-meta-item">
-                                Tier: <strong className="cx-ontology-config-meta-val">{k.tier}</strong>
-                              </span>
-                            </div>
-                          </div>
+                          </span>
+                          <span style={{ fontSize: '0.875rem', fontWeight: 600, color: 'var(--color-text)' }}>
+                            {cleanLabel}
+                          </span>
                         </div>
 
                         <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                          <button
-                            type="button"
-                            onClick={() => startEditKind(k)}
-                            className="cx-ontology-config-icon-btn"
-                            title="Edit type"
-                          >
-                            <Edit2 size={13} />
-                          </button>
-                          {!k.is_system && kindsConfig.length > 1 && (
-                            <button
-                              type="button"
-                              onClick={() => handleDeleteKind(k.id)}
-                              className="cx-ontology-config-icon-btn is-danger"
-                              title="Delete type"
-                            >
-                              <Trash2 size={13} />
-                            </button>
+                          {!k.is_system && (
+                            <>
+                              <button
+                                type="button"
+                                onClick={() => startEditKind(k)}
+                                className="cx-ontology-config-icon-btn"
+                                title="Edit type"
+                              >
+                                <Edit2 size={13} />
+                              </button>
+                              {kindsConfig.length > 1 && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleDeleteKind(k.id)}
+                                  className="cx-ontology-config-icon-btn is-danger"
+                                  title="Delete type"
+                                >
+                                  <Trash2 size={13} />
+                                </button>
+                              )}
+                            </>
                           )}
                         </div>
                       </div>
                     );
                   })}
+
+                  {/* Dotted Add Type Box / Inline Form sticky at the bottom */}
+                  <div className="cx-ontology-config-sticky-footer">
+                    {isAddingNewKind ? (
+                      <div className="cx-ontology-config-form" style={{ marginTop: 2 }}>
+                        <div className="cx-ontology-config-form-title">
+                          Create Entity Type
+                        </div>
+                        <div className="cx-ontology-config-field">
+                          <label className="cx-ontology-config-label">
+                            Type Name <span style={{ color: 'var(--color-danger, #ef4444)' }}>*</span>
+                          </label>
+                          <input
+                            type="text"
+                            placeholder="e.g. Microservice"
+                            value={newKind.label}
+                            onChange={e => setNewKind(prev => ({ ...prev, label: e.target.value }))}
+                            className="form-input"
+                            autoFocus
+                            onKeyDown={e => {
+                              if (e.key === 'Enter') {
+                                e.preventDefault();
+                                handleAddNewKind();
+                              }
+                            }}
+                          />
+                        </div>
+
+                        <div className="cx-ontology-config-field" style={{ marginTop: 8 }}>
+                          <label className="cx-ontology-config-label">
+                            Description (Optional)
+                          </label>
+                          <input
+                            type="text"
+                            placeholder="e.g. Independent deployment service unit"
+                            value={newKind.description || ''}
+                            onChange={e => setNewKind(prev => ({ ...prev, description: e.target.value }))}
+                            className="form-input"
+                            onKeyDown={e => {
+                              if (e.key === 'Enter') {
+                                e.preventDefault();
+                                handleAddNewKind();
+                              }
+                            }}
+                          />
+                        </div>
+
+                        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 10 }}>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setIsAddingNewKind(false);
+                              setNewKind({
+                                id: '',
+                                label: '',
+                                description: '',
+                                shape: 'circle',
+                                baseRadius: 11,
+                                tier: 2,
+                              });
+                            }}
+                            className="btn-outline"
+                            style={{ fontSize: '0.75rem', padding: '0.3rem 0.65rem' }}
+                          >
+                            Cancel
+                          </button>
+                          <button
+                            type="button"
+                            onClick={handleAddNewKind}
+                            className="btn-primary"
+                            style={{ fontSize: '0.75rem', padding: '0.3rem 0.65rem' }}
+                          >
+                            Create Type
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => setIsAddingNewKind(true)}
+                        className="cx-ontology-config-add-box"
+                        title="Add a new entity type"
+                      >
+                        <Plus size={14} />
+                        <span>Add Type</span>
+                      </button>
+                    )}
+                  </div>
                 </div>
-              </div>
-            )}
+              )}
 
             {/* ─── TAB 2: Type Relationships (Metamodel) ──────────────────── */}
             {activeTab === 'relations' && (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-                {/* Header & Add Button */}
-                <div className="cx-ontology-config-section-head">
-                  <div>
-                    <div className="cx-ontology-config-title">
-                      Allowed Relationships ({typeRelations.length})
-                    </div>
-                    <div className="cx-ontology-config-subtitle">
-                      Metamodel rules defining valid relationships between entity types.
-                    </div>
-                  </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <button
-                      type="button"
-                      onClick={() => setIsAddingNewRelation(prev => !prev)}
-                      className="btn-primary"
-                      style={{ fontSize: '0.75rem', padding: '0.3rem 0.65rem' }}
-                    >
-                      <Plus size={12} />
-                      <span>Add Rule</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={handleResetRelations}
-                      className="cx-ontology-config-icon-btn"
-                      title="Reset metamodel rules to defaults"
-                    >
-                      <RotateCcw size={13} />
-                    </button>
-                  </div>
-                </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {groupedPairs.map(pair => {
+                  const srcKind = kindsConfig.find(k => k.id === pair.source_type_id);
+                  const tgtKind = kindsConfig.find(k => k.id === pair.target_type_id);
+                  const isAddingInline = inlineAddPairKey === pair.pairKey;
 
-                {/* Add New Relation Rule Form */}
-                {isAddingNewRelation && (
-                  <div className="cx-ontology-config-form">
-                    <div className="cx-ontology-config-form-title">
-                      Define Allowed Type Relationship
-                    </div>
-                    <div className="cx-ontology-config-form-grid-3">
-                      <div className="cx-ontology-config-field">
-                        <label className="cx-ontology-config-label">
-                          Source Type
-                        </label>
-                        <select
-                          value={newRelation.source_type_id}
-                          onChange={e => setNewRelation(prev => ({ ...prev, source_type_id: e.target.value }))}
-                          className="form-input"
-                        >
-                          {kindsConfig.map(k => (
-                            <option key={k.id} value={k.id}>
-                              {k.label} ({k.id})
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-
-                      <div className="cx-ontology-config-field">
-                        <label className="cx-ontology-config-label">
-                          Relation Name
-                        </label>
-                        <input
-                          type="text"
-                          placeholder="e.g. contains, depends_on"
-                          value={newRelation.relation_type}
-                          onChange={e => {
-                            const val = e.target.value;
-                            setNewRelation(prev => ({
-                              ...prev,
-                              relation_type: val,
-                              is_hierarchical: val === 'contains' || prev.is_hierarchical,
-                            }));
-                          }}
-                          className="form-input"
-                        />
-                      </div>
-
-                      <div className="cx-ontology-config-field">
-                        <label className="cx-ontology-config-label">
-                          Target Type
-                        </label>
-                        <select
-                          value={newRelation.target_type_id}
-                          onChange={e => setNewRelation(prev => ({ ...prev, target_type_id: e.target.value }))}
-                          className="form-input"
-                        >
-                          {kindsConfig.map(k => (
-                            <option key={k.id} value={k.id}>
-                              {k.label} ({k.id})
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-                    </div>
-
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 4 }}>
-                      <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.8rem', cursor: 'pointer', color: 'var(--color-text)' }}>
-                        <input
-                          type="checkbox"
-                          checked={newRelation.is_hierarchical || newRelation.relation_type === 'contains'}
-                          onChange={e => setNewRelation(prev => ({ ...prev, is_hierarchical: e.target.checked }))}
-                        />
-                        <span>Hierarchical Tree Containment (allows <code>parentId</code> linkage)</span>
-                      </label>
-                    </div>
-
-                    <div className="cx-ontology-config-field">
-                      <label className="cx-ontology-config-label">
-                        Rule Description (Optional)
-                      </label>
-                      <input
-                        type="text"
-                        placeholder="e.g. Domain contains capabilities in architectural hierarchy"
-                        value={newRelation.description || ''}
-                        onChange={e => setNewRelation(prev => ({ ...prev, description: e.target.value }))}
-                        className="form-input"
-                      />
-                    </div>
-
-                    <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 4 }}>
-                      <button
-                        type="button"
-                        onClick={() => setIsAddingNewRelation(false)}
-                        className="btn-outline"
-                        style={{ fontSize: '0.75rem', padding: '0.3rem 0.65rem' }}
-                      >
-                        Cancel
-                      </button>
-                      <button
-                        type="button"
-                        onClick={handleAddNewRelation}
-                        className="btn-primary"
-                        style={{ fontSize: '0.75rem', padding: '0.3rem 0.65rem' }}
-                      >
-                        Add Rule
-                      </button>
-                    </div>
-                  </div>
-                )}
-
-                {/* Relationships List */}
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                  {typeRelations.map((rel, index) => {
-                    const srcKind = kindsConfig.find(k => k.id === rel.source_type_id);
-                    const tgtKind = kindsConfig.find(k => k.id === rel.target_type_id);
-
-                    return (
-                      <div key={`${rel.source_type_id}-${rel.relation_type}-${rel.target_type_id}-${index}`} className="cx-ontology-config-card">
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0, flex: 1 }}>
-                          <div className="cx-ontology-relation-flow">
-                            <span className="cx-ontology-type-chip">
+                  return (
+                    <div key={pair.pairKey} className="cx-ontology-pair-card">
+                      <div className="cx-ontology-pair-header">
+                        <div className="cx-ontology-pair-title">
+                          <span className="cx-ontology-type-chip">
+                            <span style={{ color: 'var(--color-primary)', display: 'inline-flex', alignItems: 'center' }}>
                               {srcKind && getShapeIcon(srcKind.shape)}
-                              <span>{srcKind?.label || rel.source_type_id}</span>
                             </span>
+                            <span>{srcKind?.label || pair.source_type_id}</span>
+                          </span>
 
-                            <span className="cx-ontology-rel-arrow">
-                              <ArrowRight size={12} />
-                              <span className="cx-ontology-rel-badge">
-                                {rel.relation_type}
-                              </span>
-                              <ArrowRight size={12} />
-                            </span>
+                          <span className="cx-ontology-pair-arrow">
+                            <ArrowRight size={13} />
+                          </span>
 
-                            <span className="cx-ontology-type-chip">
+                          <span className="cx-ontology-type-chip">
+                            <span style={{ color: 'var(--color-primary)', display: 'inline-flex', alignItems: 'center' }}>
                               {tgtKind && getShapeIcon(tgtKind.shape)}
-                              <span>{tgtKind?.label || rel.target_type_id}</span>
                             </span>
+                            <span>{tgtKind?.label || pair.target_type_id}</span>
+                          </span>
+                        </div>
 
+                        {!pair.hasSystemRelation && (
+                          <button
+                            type="button"
+                            onClick={() => handleDeletePair(pair)}
+                            className="cx-ontology-config-icon-btn is-danger"
+                            title="Delete all relations for this pair"
+                          >
+                            <Trash2 size={13} />
+                          </button>
+                        )}
+                      </div>
+
+                      <div className="cx-ontology-pair-relations">
+                        {pair.relations.map(rel => (
+                          <span
+                            key={`${rel.source_type_id}-${rel.relation_type}-${rel.target_type_id}`}
+                            className={`cx-ontology-relation-pill ${rel.is_hierarchical ? 'is-hierarchical' : ''}`}
+                            title={rel.description || undefined}
+                          >
+                            <span>{rel.relation_type}</span>
                             {rel.is_hierarchical && (
-                              <span className="cx-ontology-hier-badge">
+                              <span className="cx-ontology-hier-badge" style={{ fontSize: '8px', padding: '0 3px' }}>
                                 Hierarchy
                               </span>
                             )}
-
-                            {rel.is_system && (
-                              <span style={{ fontSize: '9px', fontWeight: 600, color: 'var(--color-primary, #2272b4)', background: 'var(--color-primary-bg, rgba(34, 114, 180, 0.1))', padding: '2px 6px', borderRadius: 4, textTransform: 'uppercase' }}>
-                                System Rule (Protected)
-                              </span>
+                            {!rel.is_system && (
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteSingleRelation(rel)}
+                                className="cx-ontology-relation-pill-del"
+                                title={`Remove ${rel.relation_type} relation`}
+                              >
+                                <X size={10} />
+                              </button>
                             )}
-                          </div>
+                          </span>
+                        ))}
 
-                          {rel.description && (
-                            <div style={{ fontSize: '11px', color: 'var(--color-text-muted)', marginTop: 2 }}>
-                              {rel.description}
-                            </div>
-                          )}
-                        </div>
-
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginLeft: 8 }}>
-                          {!rel.is_system && (
+                        {/* Inline Quick Add Relation */}
+                        {isAddingInline ? (
+                          <form
+                            onSubmit={e => {
+                              e.preventDefault();
+                              handleInlineAddRelation(pair.source_type_id, pair.target_type_id);
+                            }}
+                            className="cx-ontology-add-rel-inline-form"
+                          >
+                            <input
+                              type="text"
+                              placeholder="e.g. calls"
+                              value={inlineRelationName}
+                              onChange={e => setInlineRelationName(e.target.value)}
+                              className="cx-ontology-add-rel-inline-input"
+                              autoFocus
+                              onKeyDown={e => {
+                                if (e.key === 'Escape') {
+                                  setInlineAddPairKey(null);
+                                  setInlineRelationName('');
+                                }
+                              }}
+                            />
+                            <button
+                              type="submit"
+                              className="cx-ontology-config-icon-btn"
+                              style={{ width: 20, height: 20, color: 'var(--color-primary)' }}
+                              title="Add relation"
+                            >
+                              <Check size={11} />
+                            </button>
                             <button
                               type="button"
-                              onClick={() => handleDeleteRelation(index, rel.id)}
-                              className="cx-ontology-config-icon-btn is-danger"
-                              title="Delete relationship rule"
+                              onClick={() => {
+                                setInlineAddPairKey(null);
+                                setInlineRelationName('');
+                              }}
+                              className="cx-ontology-config-icon-btn"
+                              style={{ width: 20, height: 20 }}
+                              title="Cancel"
                             >
-                              <Trash2 size={13} />
+                              <X size={11} />
                             </button>
-                          )}
+                          </form>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setInlineAddPairKey(pair.pairKey);
+                              setInlineRelationName('');
+                            }}
+                            className="cx-ontology-add-rel-inline-btn"
+                            title="Add relationship type to this pair"
+                          >
+                            <Plus size={11} />
+                            <span>Add Relation</span>
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+
+                {/* Dotted Add Rule Box / Inline Form sticky at the bottom */}
+                <div className="cx-ontology-config-sticky-footer">
+                  {isAddingNewRelation ? (
+                    <div className="cx-ontology-config-form" style={{ marginTop: 2 }}>
+                      <div className="cx-ontology-config-form-title">
+                        Define Allowed Type Relationship
+                      </div>
+                      <div className="cx-ontology-config-form-grid-3">
+                        <div className="cx-ontology-config-field">
+                          <label className="cx-ontology-config-label">
+                            Source Type
+                          </label>
+                          <select
+                            value={newRelation.source_type_id}
+                            onChange={e => setNewRelation(prev => ({ ...prev, source_type_id: e.target.value }))}
+                            className="form-input"
+                          >
+                            {kindsConfig.map(k => (
+                              <option key={k.id} value={k.id}>
+                                {k.label || k.id}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+
+                        <div className="cx-ontology-config-field">
+                          <label className="cx-ontology-config-label">
+                            Relation Name
+                          </label>
+                          <input
+                            type="text"
+                            placeholder="e.g. contains, depends_on"
+                            value={newRelation.relation_type}
+                            onChange={e => {
+                              const val = e.target.value;
+                              setNewRelation(prev => ({
+                                ...prev,
+                                relation_type: val,
+                                is_hierarchical: val === 'contains' || prev.is_hierarchical,
+                              }));
+                            }}
+                            className="form-input"
+                          />
+                        </div>
+
+                        <div className="cx-ontology-config-field">
+                          <label className="cx-ontology-config-label">
+                            Target Type
+                          </label>
+                          <select
+                            value={newRelation.target_type_id}
+                            onChange={e => setNewRelation(prev => ({ ...prev, target_type_id: e.target.value }))}
+                            className="form-input"
+                          >
+                            {kindsConfig.map(k => (
+                              <option key={k.id} value={k.id}>
+                                {k.label || k.id}
+                              </option>
+                            ))}
+                          </select>
                         </div>
                       </div>
-                    );
-                  })}
+
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 4 }}>
+                        <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.8rem', cursor: 'pointer', color: 'var(--color-text)' }}>
+                          <input
+                            type="checkbox"
+                            checked={newRelation.is_hierarchical || newRelation.relation_type === 'contains'}
+                            onChange={e => setNewRelation(prev => ({ ...prev, is_hierarchical: e.target.checked }))}
+                          />
+                          <span>Hierarchical Tree Containment (allows <code>parentId</code> linkage)</span>
+                        </label>
+                      </div>
+
+                      <div className="cx-ontology-config-field" style={{ marginTop: 6 }}>
+                        <label className="cx-ontology-config-label">
+                          Rule Description (Optional)
+                        </label>
+                        <input
+                          type="text"
+                          placeholder="e.g. Domain contains subdomains in architectural hierarchy"
+                          value={newRelation.description || ''}
+                          onChange={e => setNewRelation(prev => ({ ...prev, description: e.target.value }))}
+                          className="form-input"
+                        />
+                      </div>
+
+                      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 8 }}>
+                        <button
+                          type="button"
+                          onClick={() => setIsAddingNewRelation(false)}
+                          className="btn-outline"
+                          style={{ fontSize: '0.75rem', padding: '0.3rem 0.65rem' }}
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleAddNewRelation}
+                          className="btn-primary"
+                          style={{ fontSize: '0.75rem', padding: '0.3rem 0.65rem' }}
+                        >
+                          Add Rule
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => setIsAddingNewRelation(true)}
+                      className="cx-ontology-config-add-box"
+                      title="Add a new relationship rule"
+                    >
+                      <Plus size={14} />
+                      <span>Add Rule</span>
+                    </button>
+                  )}
                 </div>
               </div>
             )}

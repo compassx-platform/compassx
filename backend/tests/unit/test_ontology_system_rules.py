@@ -10,7 +10,7 @@ from app.ontology.models.ontology import (
     OntologyEdge,
 )
 from app.ontology.services.ontology_service import OntologyService
-from app.ontology.schemas.ontology import TypeDefinitionCreate, TypeDefinitionUpdate, TypeRelationCreate
+from app.ontology.schemas.ontology import TypeDefinitionCreate, TypeDefinitionUpdate, TypeRelationCreate, TypeRelationUpdate
 
 
 @pytest.fixture
@@ -128,3 +128,55 @@ def test_custom_types_and_relations_work_normally(db_session):
     # User can delete custom relation and type
     assert OntologyService.delete_type_relation(db_session, custom_rel.id) is True
     assert OntologyService.delete_type(db_session, "service") is True
+
+
+def test_update_type_relation_custom_and_system(db_session):
+    OntologyService.ensure_default_seed(db_session)
+
+    # 1. Updating custom relation works
+    custom_type = OntologyService.create_type(
+        db_session,
+        TypeDefinitionCreate(
+            id="service",
+            label="Microservice",
+            shape="circle",
+            baseRadius=14,
+            tier=2,
+            is_system=False,
+        ),
+    )
+    custom_rel = OntologyService.create_type_relation(
+        db_session,
+        TypeRelationCreate(
+            source_type_id="service",
+            relation_type="calls",
+            target_type_id="element",
+            is_hierarchical=False,
+            is_system=False,
+            description="Initial description",
+        ),
+    )
+
+    updated = OntologyService.update_type_relation(
+        db_session,
+        custom_rel.id,
+        TypeRelationUpdate(
+            relation_type="invokes",
+            description="Updated description",
+        ),
+    )
+    assert updated.relation_type == "invokes"
+    assert updated.description == "Updated description"
+
+    # 2. Updating system rule raises error
+    relations = OntologyService.list_type_relations(db_session)
+    org_contains_domain = next(
+        r for r in relations if r.source_type_id == "org" and r.target_type_id == "domain"
+    )
+    with pytest.raises(ValueError, match="protected and cannot be edited"):
+        OntologyService.update_type_relation(
+            db_session,
+            org_contains_domain.id,
+            TypeRelationUpdate(description="Custom explanation of org containment"),
+        )
+

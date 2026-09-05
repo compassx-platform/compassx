@@ -27,7 +27,7 @@ export const OntologyLegend: React.FC = () => {
             <div className="space-y-1.5">
               <div className="flex items-center gap-2">
                 <Hexagon size={13} className="text-[#fbbf24]" />
-                <span className="font-medium text-white">Org:</span>
+                <span className="font-medium text-white">Organization:</span>
                 <span className="text-[#94a3b8]">Hexagonal Plate</span>
               </div>
               <div className="flex items-center gap-2">
@@ -41,7 +41,20 @@ export const OntologyLegend: React.FC = () => {
                 <span className="text-[#94a3b8]">Smooth Disc</span>
               </div>
               <div className="flex items-center gap-2">
-                <Hash size={13} className="text-[#94a3b8]" />
+                <svg
+                  width={13}
+                  height={13}
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  className="text-[#94a3b8]"
+                >
+                  <rect width="18" height="18" x="3" y="3" rx="2" />
+                  <circle cx="12" cy="12" r="4" />
+                </svg>
                 <span className="font-medium text-white">Element:</span>
                 <span className="text-[#94a3b8]">Via Pad (center hole)</span>
               </div>
