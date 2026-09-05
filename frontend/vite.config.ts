@@ -1,5 +1,6 @@
 import path from "path";
 import react from "@vitejs/plugin-react";
+import tailwindcss from "@tailwindcss/vite";
 import { defineConfig, type Plugin } from "vite";
 import federation from '@originjs/vite-plugin-federation';
 import { nodePolyfills } from 'vite-plugin-node-polyfills';
@@ -66,6 +67,7 @@ export default defineConfig({
     __APP_VERSION__: JSON.stringify(process.env.VITE_APP_VERSION || pkg.version || "0.4.0"),
   },
   plugins: [
+    tailwindcss(),
     nodePolyfills({ include: ['buffer', 'stream', 'util'] }),
     react(),
     federation({
@@ -89,9 +91,6 @@ export default defineConfig({
     }),
     patchExposeChunkReact(),
   ],
-  css: {
-    postcss: "./postcss.config.js",
-  },
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),

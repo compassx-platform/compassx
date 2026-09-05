@@ -1,0 +1,564 @@
+import { OntologyDataset } from '../types/ontology';
+
+export const DEFAULT_ONTOLOGY_YAML = `name: "CompassX & Ontology Atlas"
+version: "1.0.0"
+description: "Local-first enterprise semantic meaning graph and platform topology"
+
+nodes:
+  # ==========================================
+  # 1. TOP LEVEL PROJECT (Hexagonal Plate, R=30)
+  # ==========================================
+  - id: "ontology-atlas"
+    uid: "8c48b61f-1f75-448e-87a5-6ea2a7b02cf8"
+    kind: "project"
+    title: "Ontology Atlas"
+    description: "A local-first codebase ontology workbench that records what a codebase builds, why it is structured that way, and what a change will affect."
+    path: "README.md"
+    tags: ["platform", "root", "meaning-layer"]
+
+  # ==========================================
+  # 2. DOMAINS (IC Chip with corner legs, R=17)
+  # ==========================================
+  - id: "domains/topology-navigation"
+    kind: "domain"
+    title: "Topology Map Navigation"
+    description: "Multi-altitude semantic zoom, radial layout, continuous shape morphing, and interactive topology map exploration."
+    parentId: "ontology-atlas"
+    path: "docs/ontology/domains/topology-navigation.md"
+    tags: ["visualization", "canvas", "navigation"]
+
+  - id: "domains/agent-integration"
+    kind: "domain"
+    title: "AI Agent Integration"
+    description: "ACP agent runtime, MCP server integration, live tool execution, and contextual coding agent handoff."
+    parentId: "ontology-atlas"
+    path: "docs/ontology/domains/agent-integration.md"
+    tags: ["ai", "mcp", "acp", "agent"]
+
+  - id: "domains/codebase-architecture"
+    kind: "domain"
+    title: "Codebase Architecture"
+    description: "Architecture-guided development, conformance governance, living blueprints, and dependency boundaries."
+    parentId: "ontology-atlas"
+    path: "docs/ontology/domains/codebase-architecture.md"
+    tags: ["architecture", "governance", "blueprints"]
+
+  - id: "domains/design-system"
+    kind: "domain"
+    title: "Design System & Enforcement"
+    description: "Design-build handoff, design token ramps, strict token contract gates, and visual design councils."
+    parentId: "ontology-atlas"
+    path: "docs/ontology/domains/design-system.md"
+    tags: ["design-system", "tokens", "ui"]
+
+  - id: "domains/graph-modeling"
+    kind: "domain"
+    title: "Graph Modeling & Ontology"
+    description: "Semantic taxonomy, deterministic graph compilation, summary freshness metrics, and reviewed markdown ontology."
+    parentId: "ontology-atlas"
+    path: "docs/ontology/domains/graph-modeling.md"
+    tags: ["graph", "taxonomy", "compiler"]
+
+  - id: "domains/local-vault-management"
+    kind: "domain"
+    title: "Local Vault & Data Sources"
+    description: "Native filesystem access, git snapshot workbench, data-source mode routing, and local-first persistence."
+    parentId: "ontology-atlas"
+    path: "docs/ontology/domains/local-vault-management.md"
+    tags: ["storage", "fs", "git"]
+
+  - id: "domains/onboarding-and-shell"
+    kind: "domain"
+    title: "Onboarding, Distribution & App"
+    description: "First-run starter modules, interactive guided tours, locale switching, and desktop distribution decisions."
+    parentId: "ontology-atlas"
+    path: "docs/ontology/domains/onboarding-and-shell.md"
+    tags: ["onboarding", "desktop", "distribution"]
+
+  - id: "domains/project-portfolio"
+    kind: "domain"
+    title: "Project Portfolio Management"
+    description: "Construction review gates, multi-project workspace switching, quick edits, and source evidence receipts."
+    parentId: "ontology-atlas"
+    path: "docs/ontology/domains/project-portfolio.md"
+    tags: ["portfolio", "projects", "governance"]
+
+  # ==========================================
+  # 3. CAPABILITIES (Smooth Circles / Discs, R=11)
+  # ==========================================
+  - id: "capabilities/topology-rendering"
+    kind: "capability"
+    title: "Topology Map Rendering & Search"
+    description: "Hardware-accelerated 2D Canvas rendering, starfield particles, continuous shape morphing, and Ctrl+K search."
+    parentId: "domains/topology-navigation"
+    tags: ["canvas", "webgl", "renderer"]
+
+  - id: "capabilities/topology-map-v2"
+    kind: "capability"
+    title: "Topology Map Navigation"
+    description: "Concentric ring layout, 1-hop ego focus, and +N child cluster folding."
+    parentId: "domains/topology-navigation"
+    tags: ["layout", "focus", "clusters"]
+
+  - id: "capabilities/in-app-agent-runtime"
+    kind: "capability"
+    title: "In-App Coding Agent Runtime"
+    description: "Interactive terminal-free agent communication and live activity stream."
+    parentId: "domains/topology-navigation"
+    tags: ["runtime", "agent"]
+
+  - id: "capabilities/mcp-server"
+    kind: "capability"
+    title: "MCP Server Protocol"
+    description: "Model Context Protocol JSON-RPC server exposing graph queries and guarded markdown writes."
+    parentId: "domains/agent-integration"
+    tags: ["mcp", "protocol", "json-rpc"]
+
+  - id: "capabilities/agents-destination"
+    kind: "capability"
+    title: "Agents Destination"
+    description: "Dedicated workspace agent hub for managing connected Claude Code and Codex sessions."
+    parentId: "domains/agent-integration"
+    tags: ["agents", "hub"]
+
+  - id: "capabilities/cli-developer-entry"
+    kind: "capability"
+    title: "CLI Developer Entry"
+    description: "58-command developer CLI for terminal graph queries and commit validation preflights."
+    parentId: "domains/agent-integration"
+    tags: ["cli", "developer"]
+
+  - id: "capabilities/architecture-guided-dev"
+    kind: "capability"
+    title: "Architecture-Guided Development"
+    description: "Living blueprint governance and automatic import conformance verification."
+    parentId: "domains/codebase-architecture"
+    tags: ["architecture", "conformance"]
+
+  - id: "capabilities/architecture-profile"
+    kind: "capability"
+    title: "Architecture Profile Contract"
+    description: "v1 schema defining pattern axes, implementation roles, and dependency constraints."
+    parentId: "domains/codebase-architecture"
+    tags: ["contracts", "schema"]
+
+  - id: "capabilities/architecture-workbench"
+    kind: "capability"
+    title: "Architecture Workbench"
+    description: "Visual living blueprint editor for mapping components and observing real import flows."
+    parentId: "domains/codebase-architecture"
+    tags: ["workbench", "blueprint"]
+
+  - id: "capabilities/design-build-handoff"
+    kind: "capability"
+    title: "Design Build Handoff"
+    description: "Formal handoff workflows bridging design specifications to implementation."
+    parentId: "domains/design-system"
+    tags: ["handoff", "workflow"]
+
+  - id: "capabilities/design-token-ramps"
+    kind: "capability"
+    title: "Design Token Ramps"
+    description: "Color token contrast ramps and typography scales with automated lint rules."
+    parentId: "domains/design-system"
+    tags: ["tokens", "styling"]
+
+  - id: "capabilities/design-gate-ratchets"
+    kind: "capability"
+    title: "Design Gate Ratchets"
+    description: "Automated regression gates preventing inline hex colors and design anti-patterns."
+    parentId: "domains/design-system"
+    tags: ["gates", "quality"]
+
+  - id: "capabilities/reviewed-ontology-writing"
+    kind: "capability"
+    title: "Reviewed Ontology Writing"
+    description: "Guarded atomic write operations with optimistic mtime locking."
+    parentId: "domains/graph-modeling"
+    tags: ["writes", "safety"]
+
+  - id: "capabilities/summary-freshness"
+    kind: "capability"
+    title: "Summary Freshness"
+    description: "Automated tracking of concept git mtimes and stale evidence detection."
+    parentId: "domains/graph-modeling"
+    tags: ["freshness", "git"]
+
+  - id: "capabilities/graph-compilation"
+    kind: "capability"
+    title: "Deterministic Graph Compiler"
+    description: "In-memory compiler generating reproducible semantic graph hashes and query indices."
+    parentId: "domains/graph-modeling"
+    tags: ["compiler", "indexer"]
+
+  - id: "capabilities/data-source-mode"
+    kind: "capability"
+    title: "Data Source Mode Routing"
+    description: "Dynamic routing between local vault, desktop native FS, and static demo modes."
+    parentId: "domains/local-vault-management"
+    tags: ["fs", "routing"]
+
+  - id: "capabilities/vault-git-history"
+    kind: "capability"
+    title: "Vault Git History Workbench"
+    description: "Local git snapshot and diff visualizer for ontology frontmatter revisions."
+    parentId: "domains/local-vault-management"
+    tags: ["git", "snapshots"]
+
+  - id: "capabilities/first-run-starter"
+    kind: "capability"
+    title: "First Run Starter Module"
+    description: "Interactive zero-install starter experience for immediate map exploration."
+    parentId: "domains/onboarding-and-shell"
+    tags: ["onboarding", "welcome"]
+
+  - id: "capabilities/guided-tour"
+    kind: "capability"
+    title: "Guided Interactive Tour"
+    description: "Spotlight walkthrough highlighting key controls, legend grammar, and ego focus."
+    parentId: "domains/onboarding-and-shell"
+    tags: ["tour", "tutorial"]
+
+  - id: "capabilities/construction-review"
+    kind: "capability"
+    title: "Construction Review Gates"
+    description: "Competency evaluation framework measuring scope completeness and evidence validity."
+    parentId: "domains/project-portfolio"
+    tags: ["review", "competency"]
+
+  - id: "capabilities/project-source-evidence"
+    kind: "capability"
+    title: "Project Source Evidence Receipts"
+    description: "Cryptographic binding of ontology claims to verified source code line numbers."
+    parentId: "domains/project-portfolio"
+    tags: ["evidence", "verification"]
+
+  # ==========================================
+  # 4. ELEMENTS (Copper Pads with Via Holes, R=7)
+  # ==========================================
+  - id: "elements/canvas-depth-shader"
+    kind: "element"
+    title: "Canvas Depth Shader"
+    description: "Top-left directional gradient shader providing tactile volume to circular discs."
+    parentId: "capabilities/topology-rendering"
+    tags: ["canvas", "shader"]
+
+  - id: "elements/node-shapes-geometry"
+    kind: "element"
+    title: "Node Shapes Geometry Engine"
+    description: "Mathematical polygon paths for flat-top hexagons, IC chips, and drilled copper via pads."
+    parentId: "capabilities/topology-rendering"
+    tags: ["math", "geometry"]
+
+  - id: "elements/tapered-line-engine"
+    kind: "element"
+    title: "Tapered Edge Line Engine"
+    description: "Quadratic bezier stroke renderer tapering directed dependencies from thick to thin."
+    parentId: "capabilities/topology-rendering"
+    tags: ["rendering", "edges"]
+
+  - id: "elements/ego-focus-filter"
+    kind: "element"
+    title: "1-Hop Ego Focus Filter"
+    description: "Alpha dimmer calculating direct 1-hop reachability adjacency sets."
+    parentId: "capabilities/topology-map-v2"
+    tags: ["graph", "filter"]
+
+  - id: "elements/cluster-chip-folding"
+    kind: "element"
+    title: "Dynamic +N Cluster Chip"
+    description: "Phyllotaxis seed spiral distribution for expanding collapsed child nodes."
+    parentId: "capabilities/topology-map-v2"
+    tags: ["clusters", "spiral"]
+
+  - id: "elements/mcp-json-rpc-framing"
+    kind: "element"
+    title: "MCP JSON-RPC Framing"
+    description: "Stdio message parser and dispatcher conforming to Model Context Protocol v0.13."
+    parentId: "capabilities/mcp-server"
+    tags: ["rpc", "parser"]
+
+  - id: "elements/agent-focus-heartbeat"
+    kind: "element"
+    title: "Agent Focus Heartbeat"
+    description: "Amber glowing ring indicating active agent reading/writing target node."
+    parentId: "capabilities/in-app-agent-runtime"
+    tags: ["agent", "heartbeat"]
+
+  - id: "elements/architecture-conformance-check"
+    kind: "element"
+    title: "Import Conformance Checker"
+    description: "Static analyzer checking source code AST imports against declared role rules."
+    parentId: "capabilities/architecture-guided-dev"
+    tags: ["ast", "analysis"]
+
+  - id: "elements/design-token-ramp-validator"
+    kind: "element"
+    title: "Design Token Ramp Validator"
+    description: "WCAG APCA luminance contrast checker for semantic dark/light color ramps."
+    parentId: "capabilities/design-token-ramps"
+    tags: ["contrast", "a11y"]
+
+  - id: "elements/semantic-graph-hash"
+    kind: "element"
+    title: "Semantic Graph Hash Generator"
+    description: "SHA-256 fingerprinting of stable graph topology and frontmatter semantics."
+    parentId: "capabilities/graph-compilation"
+    tags: ["crypto", "hash"]
+
+  - id: "elements/recent-node-row"
+    kind: "element"
+    title: "Recent Node Row Indicator"
+    description: "Amber rotating dashed outline highlighting nodes modified in recent commits."
+    parentId: "capabilities/summary-freshness"
+    tags: ["ui", "freshness"]
+
+edges:
+  - id: "e-proj-topnav"
+    source: "ontology-atlas"
+    target: "domains/topology-navigation"
+    type: "contains"
+
+  - id: "e-proj-agent"
+    source: "ontology-atlas"
+    target: "domains/agent-integration"
+    type: "contains"
+
+  - id: "e-proj-arch"
+    source: "ontology-atlas"
+    target: "domains/codebase-architecture"
+    type: "contains"
+
+  - id: "e-proj-design"
+    source: "ontology-atlas"
+    target: "domains/design-system"
+    type: "contains"
+
+  - id: "e-proj-graph"
+    source: "ontology-atlas"
+    target: "domains/graph-modeling"
+    type: "contains"
+
+  - id: "e-proj-vault"
+    source: "ontology-atlas"
+    target: "domains/local-vault-management"
+    type: "contains"
+
+  - id: "e-proj-shell"
+    source: "ontology-atlas"
+    target: "domains/onboarding-and-shell"
+    type: "contains"
+
+  - id: "e-proj-portfolio"
+    source: "ontology-atlas"
+    target: "domains/project-portfolio"
+    type: "contains"
+
+  - id: "e-dom-top-c1"
+    source: "domains/topology-navigation"
+    target: "capabilities/topology-rendering"
+    type: "contains"
+
+  - id: "e-dom-top-c2"
+    source: "domains/topology-navigation"
+    target: "capabilities/topology-map-v2"
+    type: "contains"
+
+  - id: "e-dom-top-c3"
+    source: "domains/topology-navigation"
+    target: "capabilities/in-app-agent-runtime"
+    type: "contains"
+
+  - id: "e-dom-agent-c1"
+    source: "domains/agent-integration"
+    target: "capabilities/mcp-server"
+    type: "contains"
+
+  - id: "e-dom-agent-c2"
+    source: "domains/agent-integration"
+    target: "capabilities/agents-destination"
+    type: "contains"
+
+  - id: "e-dom-agent-c3"
+    source: "domains/agent-integration"
+    target: "capabilities/cli-developer-entry"
+    type: "contains"
+
+  - id: "e-dom-arch-c1"
+    source: "domains/codebase-architecture"
+    target: "capabilities/architecture-guided-dev"
+    type: "contains"
+
+  - id: "e-dom-arch-c2"
+    source: "domains/codebase-architecture"
+    target: "capabilities/architecture-profile"
+    type: "contains"
+
+  - id: "e-dom-arch-c3"
+    source: "domains/codebase-architecture"
+    target: "capabilities/architecture-workbench"
+    type: "contains"
+
+  - id: "e-dom-design-c1"
+    source: "domains/design-system"
+    target: "capabilities/design-build-handoff"
+    type: "contains"
+
+  - id: "e-dom-design-c2"
+    source: "domains/design-system"
+    target: "capabilities/design-token-ramps"
+    type: "contains"
+
+  - id: "e-dom-design-c3"
+    source: "domains/design-system"
+    target: "capabilities/design-gate-ratchets"
+    type: "contains"
+
+  - id: "e-dom-graph-c1"
+    source: "domains/graph-modeling"
+    target: "capabilities/reviewed-ontology-writing"
+    type: "contains"
+
+  - id: "e-dom-graph-c2"
+    source: "domains/graph-modeling"
+    target: "capabilities/summary-freshness"
+    type: "contains"
+
+  - id: "e-dom-graph-c3"
+    source: "domains/graph-modeling"
+    target: "capabilities/graph-compilation"
+    type: "contains"
+
+  - id: "e-dom-vault-c1"
+    source: "domains/local-vault-management"
+    target: "capabilities/data-source-mode"
+    type: "contains"
+
+  - id: "e-dom-vault-c2"
+    source: "domains/local-vault-management"
+    target: "capabilities/vault-git-history"
+    type: "contains"
+
+  - id: "e-dom-shell-c1"
+    source: "domains/onboarding-and-shell"
+    target: "capabilities/first-run-starter"
+    type: "contains"
+
+  - id: "e-dom-shell-c2"
+    source: "domains/onboarding-and-shell"
+    target: "capabilities/guided-tour"
+    type: "contains"
+
+  - id: "e-dom-port-c1"
+    source: "domains/project-portfolio"
+    target: "capabilities/construction-review"
+    type: "contains"
+
+  - id: "e-dom-port-c2"
+    source: "domains/project-portfolio"
+    target: "capabilities/project-source-evidence"
+    type: "contains"
+
+  - id: "e-cap-render-el1"
+    source: "capabilities/topology-rendering"
+    target: "elements/canvas-depth-shader"
+    type: "contains"
+
+  - id: "e-cap-render-el2"
+    source: "capabilities/topology-rendering"
+    target: "elements/node-shapes-geometry"
+    type: "contains"
+
+  - id: "e-cap-render-el3"
+    source: "capabilities/topology-rendering"
+    target: "elements/tapered-line-engine"
+    type: "contains"
+
+  - id: "e-cap-mapv2-el1"
+    source: "capabilities/topology-map-v2"
+    target: "elements/ego-focus-filter"
+    type: "contains"
+
+  - id: "e-cap-mapv2-el2"
+    source: "capabilities/topology-map-v2"
+    target: "elements/cluster-chip-folding"
+    type: "contains"
+
+  - id: "e-cap-mcp-el1"
+    source: "capabilities/mcp-server"
+    target: "elements/mcp-json-rpc-framing"
+    type: "contains"
+
+  - id: "e-cap-agent-el1"
+    source: "capabilities/in-app-agent-runtime"
+    target: "elements/agent-focus-heartbeat"
+    type: "contains"
+
+  - id: "e-cap-arch-el1"
+    source: "capabilities/architecture-guided-dev"
+    target: "elements/architecture-conformance-check"
+    type: "contains"
+
+  - id: "e-cap-tok-el1"
+    source: "capabilities/design-token-ramps"
+    target: "elements/design-token-ramp-validator"
+    type: "contains"
+
+  - id: "e-cap-comp-el1"
+    source: "capabilities/graph-compilation"
+    target: "elements/semantic-graph-hash"
+    type: "contains"
+
+  - id: "e-cap-fresh-el1"
+    source: "capabilities/summary-freshness"
+    target: "elements/recent-node-row"
+    type: "contains"
+
+  - id: "dep-top-mcp"
+    source: "capabilities/in-app-agent-runtime"
+    target: "capabilities/mcp-server"
+    type: "depends_on"
+    description: "Runtime connects through MCP JSON-RPC protocol"
+
+  - id: "dep-top-render"
+    source: "capabilities/topology-rendering"
+    target: "capabilities/topology-map-v2"
+    type: "depends_on"
+    description: "Rendering engine pulls layout and cluster geometry from V2 model"
+
+  - id: "dep-arch-graph"
+    source: "capabilities/architecture-guided-dev"
+    target: "capabilities/graph-compilation"
+    type: "depends_on"
+    description: "Architecture rules evaluate against compiled graph indexes"
+
+  - id: "dep-mcp-graph"
+    source: "capabilities/mcp-server"
+    target: "capabilities/graph-compilation"
+    type: "depends_on"
+    description: "MCP tools query deterministic graph index"
+
+  - id: "dep-port-vault"
+    source: "capabilities/construction-review"
+    target: "capabilities/vault-git-history"
+    type: "depends_on"
+    description: "Reviews verify competency against git history evidence"
+
+  - id: "dep-render-tokens"
+    source: "capabilities/topology-rendering"
+    target: "capabilities/design-token-ramps"
+    type: "depends_on"
+    description: "Map renderer consumes design token color ramps and metrics"
+
+  - id: "sym-mcp-cli"
+    source: "capabilities/mcp-server"
+    target: "capabilities/cli-developer-entry"
+    type: "is_similar_to"
+    description: "Both expose identical 58 graph operations over vault"
+
+  - id: "sym-arch-bench"
+    source: "capabilities/architecture-guided-dev"
+    target: "capabilities/architecture-workbench"
+    type: "relates"
+    description: "Workbench visualizes guided architecture models"
+`;

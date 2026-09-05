@@ -1,6 +1,6 @@
 import { useCallback, type ElementType } from 'react';
 import { useLocation, useNavigate, useParams, type NavigateOptions, type To } from 'react-router-dom';
-import { Briefcase, Code2, Layers, Zap, LayoutDashboard, FileText, Database, GitBranch, Cable, BookOpen, ServerCog, History, Activity, Home, Sparkles } from 'lucide-react';
+import { Briefcase, Code2, Layers, Zap, LayoutDashboard, FileText, Database, GitBranch, Cable, BookOpen, ServerCog, History, Activity, Home, Sparkles, Network } from 'lucide-react';
 
 export const APP_IDS = ['platform', 'apps', 'business_center'] as const;
 export type AppId = (typeof APP_IDS)[number];
@@ -53,9 +53,10 @@ const PLATFORM_NAV_GROUPS: NavGroup[] = [
     ],
   },
   {
-    title: 'AI',
+    title: 'AI & Meaning',
     items: [
       { to: '/agents', icon: Layers, label: 'Agents', end: false },
+      { to: '/ontology', icon: Network, label: 'Ontology', end: false },
       { to: '/connections', icon: Cable, label: 'Connections', end: false },
     ],
   },
@@ -92,7 +93,7 @@ export const APP_DEFINITIONS: Record<AppId, AppDefinition> = {
     defaultPath: '/home',
     navGroups: PLATFORM_NAV_GROUPS,
     navItems: PLATFORM_NAV_GROUPS.flatMap((g) => g.items),
-    allowedPrefixes: ['/home', '/jobs', '/notebooks', '/agents', '/data-catalog', '/sql-warehouse', '/connections', '/ingestion', '/compute', '/monitoring', '/dashboards', '/apps_development', '/icons', '/logo', '/brand-logo', '/design-system'],
+    allowedPrefixes: ['/home', '/jobs', '/notebooks', '/agents', '/ontology', '/data-catalog', '/sql-warehouse', '/connections', '/ingestion', '/compute', '/monitoring', '/dashboards', '/apps_development', '/icons', '/logo', '/brand-logo', '/design-system'],
   },
   apps: {
     id: 'apps',

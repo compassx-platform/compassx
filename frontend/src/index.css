@@ -676,13 +676,15 @@ textarea.form-input { resize: vertical; min-height: 80px; }
   flex-direction: column;
 }
 
-/* Zero padding for full-height / full-bleed pages (e.g. Chat Page, Monitoring, Landing Page) */
+/* Zero padding for full-height / full-bleed pages (e.g. Chat Page, Monitoring, Landing Page, Ontology Map) */
 .page-content:has(> [style*="height: 100%"]),
 .page-content:has(> [style*="calc(100vh"]),
 .page-content:has(.monitoring-root),
-.page-content:has(.landing-page-root) {
+.page-content:has(.landing-page-root),
+.page-content:has(.ontology-page-root) {
   padding: 0;
-  overflow-y: auto;
+  overflow: hidden;
+  height: 100%;
 }
 
 .app-workspace {
@@ -3697,6 +3699,202 @@ html {
     opacity: 1;
   }
 }
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Ontology Atlas Topology Map V2 Tokens
+   ────────────────────────────────────────────────────────────────────────── */
+:root {
+  /* Font weights */
+  --font-weight-signature: 510;
+  --font-weight-emphasis: 560;
+  --font-weight-strong: 650;
+
+  /* Icon sizes */
+  --icon-sm: 12px;
+  --icon-md: 14px;
+  --icon-lg: 16px;
+
+  /* Brand / Palette Colors */
+  --color-indigo-brand: #5e6ad2;
+  --color-indigo-brand-hover: #4e5ac0;
+  --color-indigo-accent: #7170ff;
+  --color-indigo-focus-ring: rgba(94, 106, 210, 0.7);
+  --color-indigo-text-soft: rgba(188, 195, 255, 0.92);
+  --color-indigo-a14: rgba(94, 106, 210, 0.14);
+  --color-indigo-a24: rgba(94, 106, 210, 0.24);
+  --color-indigo-a55: rgba(94, 106, 210, 0.55);
+  --color-canvas: #0a0a0d;
+  --color-text-primary: #f7f8f8;
+  --color-text-secondary: #d0d6e0;
+  --color-text-tertiary: #8a8f98;
+  --color-text-quaternary: #82828a;
+  --color-text-on-accent: #ffffff;
+  --color-overlay-1: rgba(255, 255, 255, 0.04);
+  --color-overlay-2: rgba(255, 255, 255, 0.08);
+  --color-status-warning: #e8a838;
+  --color-danger-text: #f07070;
+  --color-success-text-a94: rgba(80, 210, 150, 0.94);
+  --color-footprint-trail: #e8c47a;
+  --color-footprint-trail-indigo: #c8d2ff;
+
+  /* Topology V2 Panel Tokens */
+  --topology-v2-panel-surface: #17171c;
+  --topology-v2-panel-border: rgba(255, 255, 255, 0.08);
+  --topology-v2-panel-divider: rgba(255, 255, 255, 0.06);
+  --topology-v2-panel-shadow: 0 8px 32px rgba(0, 0, 0, 0.45);
+  --topology-v2-panel-radius: 8px;
+  --topology-v2-panel-row-radius: 6px;
+  --topology-v2-panel-row-hover: rgba(255, 255, 255, 0.06);
+  --topology-v2-panel-text-primary: #ececf0;
+  --topology-v2-panel-text-secondary: #a3a3ac;
+  --topology-v2-panel-text-tertiary: #868690;
+  --topology-v2-panel-text-quaternary: #82828a;
+
+  /* Motion */
+  --motion-fast: 120ms;
+  --motion-base: 220ms;
+  --motion-ease: cubic-bezier(0.16, 1, 0.3, 1);
+  --topology-motion-ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --radius-chip: 6px;
+  --radius-micro: 4px;
+  --radius-card: 8px;
+
+  /* 2.1 Node surface */
+  --topology-v2-node-fill-project: #1c1c22;
+  --topology-v2-node-fill-domain: #191920;
+  --topology-v2-node-fill-capability: #17171d;
+  --topology-v2-node-fill-element: #15151a;
+  --topology-v2-ink-depth-leaf: #7a7a86;
+  --topology-v2-ink-depth-mid: #80808c;
+  --topology-v2-ink-depth-top: #8a8a96;
+  --topology-v2-node-stroke-project: #9898a3;
+  --topology-v2-node-stroke-domain: var(--topology-v2-ink-depth-top);
+  --topology-v2-node-stroke-capability: var(--topology-v2-ink-depth-mid);
+  --topology-v2-node-stroke-element: var(--topology-v2-ink-depth-leaf);
+  --topology-v2-node-fill-dim: #1e1e24;
+  --topology-v2-node-stroke-dim: #6a6a74;
+  --topology-v2-spotlight-rest-alpha: 0.65;
+  --topology-v2-spotlight-ring-speed: 0.012;
+  --topology-v2-node-fill-stale: #141418;
+  --topology-v2-node-stroke-stale: #454549;
+  --topology-v2-node-hole-fill: #0c0c10;
+  --topology-v2-indigo: var(--color-indigo-brand);
+  --topology-v2-indigo-bright: #8890e0;
+  --topology-v2-amber-hub: #d4b478;
+  --topology-v2-recent-change: #3fbfae;
+  --topology-v2-numeral-shadow: #08080a;
+  --topology-v2-numeral-face: #8c8c94;
+  --topology-v2-cluster-chip-border-rest: #5c5c65;
+  --topology-v2-cluster-chip-ink-rest: #5f5f65;
+  --topology-v2-node-sheen-tint: #232329;
+  --topology-v2-node-sheen-blend: 0.6;
+  --topology-v2-project-hairline-inner: rgba(212, 180, 120, 0.35);
+  --topology-v2-project-pin-tick: rgba(212, 180, 120, 0.5);
+  --topology-v2-selection-ring-indigo: var(--topology-v2-indigo-bright);
+  --topology-v2-selection-ring-hairline: rgba(94, 106, 210, 0.45);
+  --topology-v2-hover-ring: var(--color-indigo-a55);
+  --topology-v2-hover-shimmer-seg: 0.16;
+  --topology-v2-hover-shimmer-period-ms: 2400;
+
+  /* 2.2 Edge, Label, Background */
+  --topology-v2-edge-contains: var(--topology-v2-ink-depth-mid);
+  --topology-v2-edge-contains-l0: var(--topology-v2-ink-depth-top);
+  --topology-v2-edge-contains-l2: var(--topology-v2-ink-depth-leaf);
+  --topology-v2-edge-passthrough-alpha: 0.3;
+  --topology-v2-node-min-separation-ratio: 1.35;
+  --topology-v2-radius-magnitude-k: 0.45;
+  --topology-v2-edge-selected: rgba(200, 210, 255, 0.66);
+  --topology-v2-expanded-cohort: rgba(146, 156, 194, 0.72);
+  --topology-v2-dust-parallax-min: 0.15;
+  --topology-v2-dust-parallax-max: 0.45;
+  --topology-v2-canvas-bg-parallax: 0.82;
+  --topology-v2-edge-depends: #666685;
+  --topology-v2-edge-dim: #1e1e22;
+  --topology-v2-hull-stroke: #3a3a42;
+  --topology-v2-label-project: #d4b478;
+  --topology-v2-label-domain: #b8b8c1;
+  --topology-v2-label-capability: #84848c;
+  --topology-v2-label-element: #6a6a73;
+  --topology-v2-label-max-width: 168;
+  --topology-v2-canvas-bg-near: #0a0a0d;
+  --topology-v2-canvas-bg-far: #050507;
+  --topology-v2-grid-minor: #0e0e13;
+  --topology-v2-grid-major: #121218;
+  --topology-v2-vignette-base-alpha: 0.32;
+  --topology-v2-vignette-far-alpha: 0.18;
+  --topology-v2-dome-ring: #43434f;
+  --canvas-bg-ink-max: 0.08;
+  --canvas-bg-particle-rgb: 150, 165, 220;
+
+  /* 2.3 Geometry */
+  --topology-v2-radius-project: 30;
+  --topology-v2-radius-domain: 17;
+  --topology-v2-radius-capability: 11;
+  --topology-v2-radius-element: 7;
+  --topology-v2-layout-ring-domain: 250;
+  --topology-v2-layout-ring-capability: 145;
+  --topology-v2-layout-ring-element: 90;
+  --topology-v2-realm-fill-radius-1: 130;
+  --topology-v2-realm-fill-radius-2: 190;
+  --topology-v2-realm-fill-radius-3: 250;
+  --topology-v2-edge-bow-contains: 70;
+  --topology-v2-edge-bow-depends: 92;
+  --topology-v2-edge-blend-contains: 0.46;
+  --topology-v2-edge-blend-depends: 0.62;
+  --topology-v2-star-count: 4;
+  --topology-v2-dust-area-per-point: 5200;
+
+  /* 2.4 Motion & Camera */
+  --topology-v2-camera-spring-angfreq-interactive: 15;
+  --topology-v2-camera-spring-angfreq-transition: 4.7;
+  --topology-v2-camera-damping-default: 1.0;
+  --topology-v2-camera-damping-flick: 0.82;
+  --topology-v2-camera-momentum-decay: 0.998;
+  --topology-v2-camera-release-velocity-window-ms: 80;
+  --topology-v2-camera-flick-min-speed: 0.05;
+  --topology-v2-camera-scale-min: 0.24;
+  --topology-v2-camera-scale-max: 2.6;
+  --topology-v2-camera-small-graph-scale-max: 1.3;
+  --topology-v2-camera-max-zoom-ratio: 3.2;
+  --topology-v2-camera-min-zoom-ratio: 0.5;
+  --topology-v2-camera-focus-pan-margin: 180;
+  --topology-v2-camera-pan-leash: 0;
+  --topology-v2-altitude-far-high-ratio: 0.92;
+  --topology-v2-altitude-far-low-ratio: 0.62;
+  --topology-v2-overview-entry-ratio: 0.95;
+  --topology-v2-focus-fit-max-scale: 1.9;
+  --topology-v2-focus-bbox-margin: 1.15;
+  --topology-v2-focus-max-zoom-ratio: 1.8;
+  --topology-v2-hysteresis-px: 7;
+  --topology-v2-emphasis-rise-tau: 0.09;
+  --topology-v2-emphasis-decay-tau: 0.15;
+  --topology-v2-focus-dim-tau: 0.16;
+  --topology-v2-cluster-reveal-tau: 0.17;
+  --topology-v2-ripple-stagger-ms: 55;
+  --topology-v2-breathe-amplitude: 0.04;
+  --topology-v2-breathe-freq-rad: 1.15;
+  --topology-v2-pulse-duration-ms: 420;
+  --topology-v2-select-pulse-duration-ms: 180;
+  --topology-v2-tip-fade-ms: 120;
+  --topology-v2-edge-pulse-speed: 0.075;
+  --topology-v2-select-pulse-scale-delta: 0.28;
+  --topology-v2-node-release-settle-ms: 900;
+  --topology-v2-node-home-spring-angfreq: 7.5;
+  --topology-v2-ego-reveal-rise-tau: 0.22;
+  --topology-v2-ego-reveal-decay-tau: 0.12;
+  --topology-v2-ripple-stagger-max-ms: 180;
+  --topology-v2-edge-pulse-speed-ego: 0.2;
+  --topology-v2-drag-tug-1hop: 0.45;
+  --topology-v2-drag-tug-2hop: 0.15;
+  --topology-v2-drag-tug-radius: 600;
+
+  /* 2.5 Safe Insets (px) */
+  --topology-v2-safe-inset-left: 0;
+  --topology-v2-safe-inset-right: 0;
+  --topology-v2-safe-inset-top: 50;
+  --topology-v2-safe-inset-bottom: 20;
+}
+
 
 
 

@@ -34,6 +34,7 @@ import AgentsPage from '@/modules/agents/pages/AgentsPage';
 import AgentToolDetailPage from '@/modules/agents/pages/AgentToolDetailPage';
 import AgentBuilderPage from '@/modules/agents/pages/AgentBuilderPage';
 import AgentChatPage from '@/modules/agents/pages/AgentChatPage';
+import OntologyPage from '@/modules/ontology/pages/OntologyPage';
 import ConnectionsPage from '@/modules/agents/pages/ConnectionsPage';
 import CreateConnectionPage from '@/modules/agents/pages/CreateConnectionPage';
 import LLMConnectionsPage from '@/modules/agents/pages/LLMConnectionsPage';
@@ -302,6 +303,8 @@ export default function App() {
               <Route path="/account"             element={<UMSuspense><AccountConsolePage /></UMSuspense>} />
               <Route path="/account/workspaces/:workspaceId/members" element={<UMSuspense><WorkspaceMembersPage /></UMSuspense>} />
               <Route path="/design-system"        element={<DesignSystemShowcasePage />} />
+              <Route path="/ontology"             element={<OntologyPage />} />
+              <Route path="/topology"             element={<OntologyPage />} />
               {/* Root: try new entry-point resolution, fall back to legacy workspace routing */}
               <Route path="/" element={<EntryPointGuard />} />
               <Route path="workspace/create" element={<CreateWorkspacePage />} />
@@ -335,6 +338,8 @@ export default function App() {
                   <Route path="agents/:agentId/customizations" element={<AgentChatPage initialView="customizations" />} />
                   <Route path="agents/:agentId/chat" element={<AgentChatPage />} />
                   <Route path="agents/:agentId/chat/:sessionId" element={<AgentChatPage />} />
+                  <Route path="ontology" element={<OntologyPage />} />
+                  <Route path="topology" element={<OntologyPage />} />
                   <Route path="connections" element={<ConnectionsPage />} />
                   <Route path="connections/create" element={<CreateConnectionPage />} />
                   <Route path="connections/new" element={<CreateConnectionPage />} />

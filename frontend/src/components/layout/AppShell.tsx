@@ -199,6 +199,7 @@ export default function AppShell() {
     if (scopedPathname.startsWith('/icons')) return 'Custom Icons';
     if (scopedPathname.startsWith('/logo') || scopedPathname.startsWith('/brand-logo')) return 'Logo Showcase';
     if (scopedPathname.startsWith('/design-system')) return 'Design System';
+    if (scopedPathname.startsWith('/ontology') || scopedPathname.startsWith('/topology')) return 'Ontology';
     return 'CompassX';
 
   }, [scopedPathname]);
