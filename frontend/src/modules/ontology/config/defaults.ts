@@ -1,15 +1,17 @@
-import type { KindConfig } from './types';
+import type { KindConfig, TypeRelationConfig } from './types';
 
 export const ONTOLOGY_KINDS_STORAGE_KEY = 'ontology_kinds_config';
+export const ONTOLOGY_RELATIONS_STORAGE_KEY = 'ontology_relations_config';
 
 export const DEFAULT_KINDS_CONFIG: KindConfig[] = [
   {
-    id: 'project',
-    label: 'Project Root',
-    description: 'Root platform & system architectures',
+    id: 'org',
+    label: 'Org Root',
+    description: 'Root enterprise organization apex',
     shape: 'hexagon',
     baseRadius: 30,
     tier: 0,
+    is_system: true,
   },
   {
     id: 'domain',
@@ -18,14 +20,16 @@ export const DEFAULT_KINDS_CONFIG: KindConfig[] = [
     shape: 'chip',
     baseRadius: 17,
     tier: 1,
+    is_system: true,
   },
   {
-    id: 'capability',
-    label: 'Capability Disc',
-    description: 'System modules, capabilities & features',
+    id: 'subdomain',
+    label: 'Subdomain Disc',
+    description: 'Core functional subdomains & service boundaries',
     shape: 'circle',
     baseRadius: 11,
     tier: 2,
+    is_system: true,
   },
   {
     id: 'element',
@@ -34,5 +38,121 @@ export const DEFAULT_KINDS_CONFIG: KindConfig[] = [
     shape: 'pad',
     baseRadius: 7,
     tier: 3,
+    is_system: true,
+  },
+];
+
+export const DEFAULT_TYPE_RELATIONS: TypeRelationConfig[] = [
+  {
+    source_type_id: 'org',
+    relation_type: 'contains',
+    target_type_id: 'domain',
+    is_hierarchical: true,
+    is_system: true,
+    description: 'Organization apex root contains functional domains',
+  },
+  {
+    source_type_id: 'domain',
+    relation_type: 'contains',
+    target_type_id: 'subdomain',
+    is_hierarchical: true,
+    is_system: true,
+    description: 'Domain boundary contains functional subdomains',
+  },
+  {
+    source_type_id: 'subdomain',
+    relation_type: 'contains',
+    target_type_id: 'element',
+    is_hierarchical: true,
+    is_system: true,
+    description: 'Subdomain contains atomic elements / leaf components',
+  },
+  {
+    source_type_id: 'domain',
+    relation_type: 'depends_on',
+    target_type_id: 'domain',
+    is_hierarchical: false,
+    is_system: false,
+    description: 'Cross-domain architectural dependency',
+  },
+  {
+    source_type_id: 'domain',
+    relation_type: 'relates',
+    target_type_id: 'domain',
+    is_hierarchical: false,
+    is_system: false,
+    description: 'General domain association',
+  },
+  {
+    source_type_id: 'subdomain',
+    relation_type: 'depends_on',
+    target_type_id: 'subdomain',
+    is_hierarchical: false,
+    is_system: false,
+    description: 'Subdomain depends on another subdomain',
+  },
+  {
+    source_type_id: 'subdomain',
+    relation_type: 'relies_on',
+    target_type_id: 'subdomain',
+    is_hierarchical: false,
+    is_system: false,
+    description: 'Subdomain relies on another subdomain',
+  },
+  {
+    source_type_id: 'subdomain',
+    relation_type: 'reads',
+    target_type_id: 'subdomain',
+    is_hierarchical: false,
+    is_system: false,
+    description: 'Subdomain reads state or events from subdomain',
+  },
+  {
+    source_type_id: 'subdomain',
+    relation_type: 'is_similar_to',
+    target_type_id: 'subdomain',
+    is_hierarchical: false,
+    is_system: false,
+    description: 'Semantic similarity between subdomains',
+  },
+  {
+    source_type_id: 'subdomain',
+    relation_type: 'relates',
+    target_type_id: 'subdomain',
+    is_hierarchical: false,
+    is_system: false,
+    description: 'General subdomain association',
+  },
+  {
+    source_type_id: 'element',
+    relation_type: 'depends_on',
+    target_type_id: 'element',
+    is_hierarchical: false,
+    is_system: false,
+    description: 'Atomic leaf dependency',
+  },
+  {
+    source_type_id: 'element',
+    relation_type: 'relies_on',
+    target_type_id: 'element',
+    is_hierarchical: false,
+    is_system: false,
+    description: 'Atomic leaf reliance',
+  },
+  {
+    source_type_id: 'element',
+    relation_type: 'reads',
+    target_type_id: 'element',
+    is_hierarchical: false,
+    is_system: false,
+    description: 'Atomic leaf data read',
+  },
+  {
+    source_type_id: 'element',
+    relation_type: 'relates',
+    target_type_id: 'element',
+    is_hierarchical: false,
+    is_system: false,
+    description: 'General element association',
   },
 ];

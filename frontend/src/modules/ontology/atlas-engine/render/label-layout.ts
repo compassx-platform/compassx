@@ -98,7 +98,7 @@ export interface SafeRectProtectionInput {
 export function isSafeRectProtectedLabel(input: SafeRectProtectionInput): boolean {
   if (input.egoState === "center" || input.egoState === "neighbor") return true;
   if (input.isHovered || input.trailKept) return true;
-  return input.kind === "project" || input.isHub;
+  return input.kind === "org" || input.kind === "project" || input.isHub;
 }
 
 /** Standard AABB overlap (touching edges do NOT count as overlap). */
@@ -123,7 +123,7 @@ export interface LabelCandidate<T> {
 }
 
 export interface LabelPriorityInput {
-  kind: "project" | "domain" | "capability" | "element";
+  kind: "org" | "project" | "domain" | "subdomain" | "capability" | "element" | string;
   isSelected: boolean;
   isHovered: boolean;
   isHub: boolean;
@@ -139,9 +139,9 @@ export interface LabelPriorityInput {
 export function resolveLabelPriority(input: LabelPriorityInput): number {
   if (input.isSelected) return 0;
   if (input.isHovered) return 1;
-  if (input.kind === "project" || input.isHub) return 2;
+  if (input.kind === "org" || input.kind === "project" || input.isHub) return 2;
   if (input.kind === "domain") return 3;
-  if (input.kind === "capability") return 4;
+  if (input.kind === "subdomain" || input.kind === "capability") return 4;
   return 5;
 }
 

@@ -16,7 +16,7 @@ import { fireflySeed } from "../render/edge-fireflies";
 import type { TopologyV2Tokens } from "../tokens/read-topology-v2-tokens";
 import type { TopologyV2Edge, TopologyV2Node } from "./TopologyMapV2";
 
-export type WorldNodeKind = "project" | "domain" | "capability" | "element";
+export type WorldNodeKind = "org" | "project" | "domain" | "subdomain" | "capability" | "element" | string;
 
 export interface WorldNode {
   id: string;
@@ -96,15 +96,16 @@ export interface WorldEdge {
 }
 
 /**
- * S2 part 2 — magnitude-proportional node size. The domain/capability radius is
- * interpolated by the √ scale of the **direct child count**:
- * `1 + k×(√childCount − 1)/√maxChildCount`, clamped at +40% (1.4). With
- * childCount ≤ 1 it is base (1.0) — never below base, unlike the old logarithmic
- * compression, which shrank below-median nodes under base. element and project are
- * unchanged (1). The √ compresses large gaps while keeping the rank cue (this is
- * not a bar chart — Shneiderman overview-first). A different channel from the badge
- * number (descendantCount): size is the pre-attentive "where is it big?", the badge
- * is for reading.
+ * Magnitude scale factor ($S_2$) — √-scales the drawn radius over direct child count.
+ *
+ * $S_2 = \min\left(1.4,\, 1 + k \cdot \frac{\sqrt{c} - 1}{\sqrt{c_{\max}}}\right)$
+ *
+ * Contract (`docs/TOPOLOGY-V2-DESIGN.md` §2.3.2):
+ * - Direct children only (`childCount`), not total descendants.
+ * - Monotonic in `childCount`, continuous, strictly in $[1.0, 1.4]$ (pre-attentive,
+ *   not a bar chart — Shneiderman overview-first). A different channel from the badge
+ *   number (descendantCount): size is the pre-attentive "where is it big?", the badge
+ *   is for reading.
  */
 export function computeMagnitudeScale(
   kind: WorldNodeKind,
@@ -112,7 +113,7 @@ export function computeMagnitudeScale(
   maxChildCount: number,
   k: number,
 ): number {
-  if (kind !== "domain" && kind !== "capability") return 1;
+  if (kind !== "domain" && kind !== "subdomain" && kind !== "capability") return 1;
   if (maxChildCount <= 0 || childCount <= 0 || k <= 0) return 1;
   const raw = 1 + (k * (Math.sqrt(childCount) - 1)) / Math.sqrt(maxChildCount);
   return Math.min(1.4, Math.max(1, raw));
@@ -120,7 +121,7 @@ export function computeMagnitudeScale(
 
 /** P3a — derive the containment ink level from the two endpoint kinds. */
 export function containmentLevelFor(aKind: WorldNodeKind, bKind: WorldNodeKind): 0 | 1 | 2 {
-  if (aKind === "project" || bKind === "project") return 0;
+  if (aKind === "org" || bKind === "org" || aKind === "project" || bKind === "project") return 0;
   if (aKind === "domain" || bKind === "domain") return 1;
   return 2;
 }
@@ -132,41 +133,30 @@ export interface Bounds {
   maxY: number;
 }
 
-/**
- * Density gate slice (fable's design) — per-parent cluster chip placement metadata.
- * `angle` is the layout fan's direction (derived from the home coordinates,
- * static); `ring` is the child-ring radius the chip sits on. The chip's actual
- * world anchor is recomputed every frame from the parent's *live* position plus
- * this static direction (`topology-cluster-state.ts`).
- */
-export interface ClusterParentMeta {
-  angle: number;
-  ring: number;
-}
-
-export interface TopologyWorld {
+export interface World {
   nodes: readonly WorldNode[];
+  edges: readonly WorldEdge[];
   nodeById: ReadonlyMap<string, WorldNode>;
-  edges: WorldEdge[];
-  neighborMap: ReadonlyMap<string, ReadonlySet<string>>;
-  /** contains parent id → array of direct child ids (the density gate's input, static). */
+  neighborsById: ReadonlyMap<string, ReadonlySet<string>>;
   childrenByParent: ReadonlyMap<string, readonly string[]>;
-  /** Density gate chip placement metadata (parents with children only, static). */
-  clusterMetaByParent: ReadonlyMap<string, ClusterParentMeta>;
   /**
-   * node id → indices into `edges` of every edge touching that node (both
-   * directions). Static: `edges` is never structurally mutated after the build
-   * (only its per-frame geometry / comet phase fields are). Exists so a frame
-   * that moved ~30 nodes can refresh ~60 edges instead of all ~3000
-   * (`recomputeWorldGeometry`'s `movedIds` path).
+   * Density gate (2026-07-31): high-child-count parents that collapse their
+   * element children into a summary disc.
    */
-  edgeIndexByNode: ReadonlyMap<string, readonly number[]>;
-  /** Top `starCount` nodes by magnitude — get the far-field diffraction-spike overlay. */
+  densityGate: Set<string>;
+  /**
+   * Per-collapsed-parent geometry for the disc hull, cluster chip hit box, and
+   * count numeral. Empty for parents not in `densityGate`.
+   */
+  clusterMetaByParent: ReadonlyMap<string, DensityGateParentGeometry>;
+  /**
+   * Hub IDs identified by degree analysis — the top 10% highest-degree nodes.
+   * `focus-state.ts` promotes hubs to full visibility when their realm is active.
+   */
   brightStarIds: ReadonlySet<string>;
-  /** Bbox of ALL nodes — used for pan clamping and focus-mode context. */
   bounds: Bounds;
   /**
-   * Bbox of just the level-0 SPINE (project + domain + hub) — what the overview
+   * Bounding box of the "spine" nodes (project, domain, hub) — what the overview
    * camera fits to. The overview only DRAWS the spine (tier gating in
    * `model/tier-visibility.ts`), so fitting the full `bounds` — which the
    * de-pileup deliberately spreads wide across all 295 nodes — zooms the ~8
@@ -177,9 +167,9 @@ export interface TopologyWorld {
 }
 
 export function radiusForKind(kind: WorldNodeKind, tokens: TopologyV2Tokens): number {
-  if (kind === "project") return tokens.radiusProject;
+  if (kind === "org" || kind === "project") return tokens.radiusProject;
   if (kind === "domain") return tokens.radiusDomain;
-  if (kind === "capability") return tokens.radiusCapability;
+  if (kind === "subdomain" || kind === "capability") return tokens.radiusCapability;
   return tokens.radiusElement;
 }
 
@@ -192,7 +182,7 @@ const FALLBACK_BOUNDS: Bounds = { minX: -100, minY: -100, maxX: 100, maxY: 100 }
  * that gate changes, this must too, or the fit and the visible set drift apart.
  */
 export function isSpineNode(node: Pick<WorldNode, "kind" | "isHub">): boolean {
-  return node.isHub || node.kind === "project" || node.kind === "domain";
+  return node.isHub || node.kind === "org" || node.kind === "project" || node.kind === "domain";
 }
 
 /**
@@ -433,8 +423,10 @@ export function buildTopologyWorld(
   const pointById = new Map(
     computeConcentricLayout(layoutInput, rings, {
       radii: {
+        org: tokens.radiusProject,
         project: tokens.radiusProject,
         domain: tokens.radiusDomain,
+        subdomain: tokens.radiusCapability,
         capability: tokens.radiusCapability,
         element: tokens.radiusElement,
       },
@@ -501,7 +493,7 @@ export function buildTopologyWorld(
     const angle = Math.atan2(parent.homeY - gy, parent.homeX - gx);
     const firstChild = nodeById.get(childIds[0]);
     const ring =
-      firstChild?.kind === "capability" ? tokens.layoutRingCapability : tokens.layoutRingElement;
+      (firstChild?.kind === "subdomain" || firstChild?.kind === "capability") ? tokens.layoutRingCapability : tokens.layoutRingElement;
     clusterMetaByParent.set(parentId, { angle, ring });
   }
 
@@ -513,7 +505,7 @@ export function buildTopologyWorld(
     const childCountOf = (id: string) => childrenByParent.get(id)?.length ?? 0;
     let maxChildCount = 0;
     for (const node of worldNodes) {
-      if (node.kind === "domain" || node.kind === "capability") {
+      if (node.kind === "domain" || node.kind === "subdomain" || node.kind === "capability") {
         maxChildCount = Math.max(maxChildCount, childCountOf(node.id));
       }
     }

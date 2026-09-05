@@ -38,7 +38,7 @@ import type { ExpandStructure } from "@/modules/ontology/shared/appearance-prefe
 import { DENSITY_GATE_THRESHOLD } from "./density-gate";
 import { rankEgoNeighborsByDOI } from "./focus-state";
 
-export type LayoutNodeKind = "project" | "domain" | "capability" | "element";
+export type LayoutNodeKind = "org" | "project" | "domain" | "subdomain" | "capability" | "element" | string;
 
 export interface LayoutGraphNode {
   id: string;
@@ -64,10 +64,13 @@ export interface LayoutPoint {
 
 /** Per-kind collision radius for the deterministic de-pileup pass. Defaults mirror the §2.3 node radius tokens. */
 export interface LayoutRadii {
+  org?: number;
   project: number;
   domain: number;
+  subdomain?: number;
   capability: number;
   element: number;
+  [key: string]: number | undefined;
 }
 
 export interface LayoutOptions {
@@ -120,7 +123,7 @@ export interface LayoutOptions {
   expandStructure?: ExpandStructure;
 }
 
-const DEFAULT_RADII: LayoutRadii = { project: 25, domain: 17, capability: 11, element: 7 };
+const DEFAULT_RADII: LayoutRadii = { org: 25, project: 25, domain: 17, subdomain: 11, capability: 11, element: 7 };
 const DEFAULT_RELAX_ITERATIONS = 60;
 const DEFAULT_RELAX_PADDING = 6;
 
@@ -206,7 +209,7 @@ export function computeConcentricLayout(
     ).map((id) => byId.get(id) as LayoutGraphNode);
   };
 
-  const project = nodes.find((n) => n.kind === "project");
+  const project = nodes.find((n) => n.kind === "org" || n.kind === "project" || n.parentId === null);
   if (project) {
     placed.set(project.id, { x: 0, y: 0, angle: 0 });
   }
@@ -224,7 +227,7 @@ export function computeConcentricLayout(
   domainNodes.forEach((domain) => {
     const domainPoint = placed.get(domain.id);
     if (!domainPoint) return;
-    const caps = nodes.filter((n) => n.kind === "capability" && n.parentId === domain.id);
+    const caps = nodes.filter((n) => (n.kind === "subdomain" || n.kind === "capability") && n.parentId === domain.id);
     // Vaults where a domain holds elements directly (no capability in between)
     // exist. Leaving them out stacks them at (0,0), and live physics then drags
     // the stack toward the hub — the "blob" defect the owner reported in 2026-07.
@@ -248,7 +251,7 @@ export function computeConcentricLayout(
     fan.forEach((child, i) => {
       const t = fan.length === 1 ? 0 : i / (fan.length - 1) - 0.5;
       const angle = domainPoint.angle + t * spread;
-      const r = child.kind === "capability" ? capR : elR;
+      const r = (child.kind === "subdomain" || child.kind === "capability") ? capR : elR;
       placed.set(child.id, {
         x: domainPoint.x + Math.cos(angle) * r,
         y: domainPoint.y + Math.sin(angle) * r,
@@ -257,7 +260,7 @@ export function computeConcentricLayout(
     });
   });
 
-  const capabilityNodes = nodes.filter((n) => n.kind === "capability");
+  const capabilityNodes = nodes.filter((n) => n.kind === "subdomain" || n.kind === "capability");
   capabilityNodes.forEach((cap) => {
     const capPoint = placed.get(cap.id);
     if (!capPoint) return;
@@ -663,7 +666,7 @@ function relaxCollisions(
     if (scope !== undefined && !scope.has(n.id)) continue;
     const point = placed.get(n.id);
     if (point === undefined) continue;
-    items.push({ id: n.id, kind: n.kind, point, pinned: n.kind === "project" });
+    items.push({ id: n.id, kind: n.kind, point, pinned: n.kind === "org" || n.kind === "project" || n.parentId === null });
   }
 
   if (items.length < 2) return;

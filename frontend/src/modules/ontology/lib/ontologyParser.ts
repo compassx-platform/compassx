@@ -1,18 +1,14 @@
-import { load } from 'js-yaml';
-import { OntologyDataset, OntologyNode, OntologyEdge, OntologyKind, KindConfig, DEFAULT_KINDS_CONFIG } from '../types/ontology';
-import { DEFAULT_ONTOLOGY_YAML } from '../data/defaultOntologyData';
+import { OntologyDataset, OntologyNode, OntologyEdge, KindConfig, DEFAULT_KINDS_CONFIG } from '../types/ontology';
 
-export function parseOntologyYaml(yamlContent: string): OntologyDataset {
-  let raw: any;
-  try {
-    raw = load(yamlContent);
-  } catch (err) {
-    console.error('Failed to parse YAML ontology string:', err);
-    throw new Error('Invalid YAML format: ' + (err as Error).message);
-  }
-
+export function processRawOntologyData(raw: any): OntologyDataset {
   if (!raw || typeof raw !== 'object') {
-    throw new Error('YAML must contain a top-level object with nodes and edges');
+    return {
+      name: 'CompassX & Ontology Atlas',
+      version: '1.0.0',
+      description: 'Platform Meaning Layer',
+      nodes: [],
+      edges: [],
+    };
   }
 
   const nodes: OntologyNode[] = Array.isArray(raw.nodes) ? raw.nodes : [];
@@ -98,7 +94,7 @@ export function parseOntologyYaml(yamlContent: string): OntologyDataset {
   });
 
   return {
-    name: raw.name || 'Ontology Map',
+    name: raw.name || 'CompassX & Ontology Atlas',
     version: raw.version || '1.0.0',
     description: raw.description || '',
     nodes: processedNodes,
@@ -128,9 +124,12 @@ export function toTopologyV2Format(
     kindSizeMap.set(k.id, k.baseRadius);
   }
 
-  // Root tier 0 kinds are hubs (default project or configured tier 0)
+  // Root tier 0 kinds are hubs (default org or configured tier 0)
   const rootKindIds = new Set(kindsConfig.filter(k => k.tier === 0).map(k => k.id));
-  if (rootKindIds.size === 0) rootKindIds.add('project');
+  if (rootKindIds.size === 0) {
+    rootKindIds.add('org');
+    rootKindIds.add('project');
+  }
 
   const nodes = dataset.nodes.map(node => {
     const deg = degreeMap.get(node.id) || 0;
@@ -169,25 +168,13 @@ export function toTopologyV2Format(
 }
 
 export function getDefaultDataset(): OntologyDataset {
-  try {
-    return parseOntologyYaml(DEFAULT_ONTOLOGY_YAML);
-  } catch (err) {
-    console.error('Error in getDefaultDataset, using fallback:', err);
-    return {
-      name: 'CompassX Ontology',
-      version: '1.0.0',
-      description: 'Platform Meaning Layer',
-      nodes: [
-        { id: 'ontology-atlas', kind: 'project', title: 'Ontology Atlas', description: 'Root Meaning Layer' },
-        { id: 'domains/agent-integration', kind: 'domain', title: 'AI Agent Integration', parentId: 'ontology-atlas' },
-        { id: 'domains/codebase-architecture', kind: 'domain', title: 'Codebase Architecture', parentId: 'ontology-atlas' },
-      ],
-      edges: [
-        { id: 'e1', source: 'ontology-atlas', target: 'domains/agent-integration', type: 'contains' },
-        { id: 'e2', source: 'ontology-atlas', target: 'domains/codebase-architecture', type: 'contains' },
-      ],
-    };
-  }
+  return {
+    name: 'CompassX & Ontology Atlas',
+    version: '1.0.0',
+    description: 'Platform Meaning Layer',
+    nodes: [],
+    edges: [],
+  };
 }
 
 

@@ -52,7 +52,7 @@
  * `realm-transition.ts` precedent: the values govern feel (geometry, timing), not
  * a theme surface.
  */
-export type DomeViewKind = "project" | "domain" | "capability" | "element";
+export type DomeViewKind = "org" | "project" | "domain" | "subdomain" | "capability" | "element" | string;
 
 const TAU = Math.PI * 2;
 
@@ -61,9 +61,11 @@ const TAU = Math.PI * 2;
  * bottom ring). The spine order from `docs/ONTOLOGY-ATLAS-SPEC.md` §2 — this
  * table is the typed fact that height carries.
  */
-export const KIND_DEPTH: Readonly<Record<DomeViewKind, number>> = {
+export const KIND_DEPTH: Readonly<Record<string, number>> = {
+  org: 0,
   project: 0,
   domain: 1,
+  subdomain: 2,
   capability: 2,
   element: 3,
 };
@@ -347,9 +349,11 @@ const ORBIT_VEL_EPS = 0.000005;
  * table unchanged, in its 620-unit world. `DomeModel.unit` scales it to actual
  * world units.
  */
-export const DOME_PLANE: Readonly<Record<DomeViewKind, { y: number; r: number }>> = {
+export const DOME_PLANE: Readonly<Record<string, { y: number; r: number }>> = {
+  org: { y: 148, r: 0 },
   project: { y: 148, r: 0 },
   domain: { y: 56, r: 148 },
+  subdomain: { y: -48, r: 192 },
   capability: { y: -48, r: 192 },
   element: { y: -150, r: 224 },
 };
@@ -481,9 +485,11 @@ export function domeDetailFactor(u: number): number {
  * numbered chips (owner judgment: the feel of the hero). Screen radius is
  * `× 2.1 × unit × perspective s`, the hero's ratio.
  */
-export const DOME_NODE_R: Readonly<Record<DomeViewKind, number>> = {
+export const DOME_NODE_R: Readonly<Record<string, number>> = {
+  org: 10.5,
   project: 10.5,
   domain: 4.6,
+  subdomain: 3.1,
   capability: 3.1,
   element: 2.05,
 };
@@ -589,18 +595,18 @@ export interface DomeModel {
  * are untouched: y is still one value per kind, which is what `solveDomePlanePoint`
  * relies on.
  */
-const CONE_SPACING: Readonly<Record<DomeViewKind, number>> = {
+const CONE_SPACING: Readonly<Record<string, number>> = {
+  org: 0,
   project: 0,
   domain: 0,
-  // Capability disc ≈ 6.5 dome units radius → 13 diameter; 16 leaves a hairline gap.
+  subdomain: 16,
   capability: 16,
-  // Element disc ≈ 4.3 radius → 8.6 diameter.
   element: 10,
 };
 /** Smallest base radius that still reads as a circle rather than a smear (dome units). */
-const CONE_MIN_R: Readonly<Record<DomeViewKind, number>> = { project: 0, domain: 0, capability: 10, element: 6 };
+const CONE_MIN_R: Readonly<Record<string, number>> = { org: 0, project: 0, domain: 0, subdomain: 10, capability: 10, element: 6 };
 /** Largest base radius per tier — a giant domain must not swallow its neighbours' room. */
-const CONE_MAX_R: Readonly<Record<DomeViewKind, number>> = { project: 0, domain: 0, capability: 64, element: 26 };
+const CONE_MAX_R: Readonly<Record<string, number>> = { org: 0, project: 0, domain: 0, subdomain: 64, capability: 64, element: 26 };
 /** Fraction of the available room a cone base may take — the rest is the gap between sibling cones. */
 const CONE_ROOM_FILL = 0.82;
 /** Above this many children on one base, alternate two radii. */
@@ -637,13 +643,13 @@ function layoutConeTree(nodes: readonly DomeInputNode[]): { coords: Map<string, 
     return w;
   };
 
-  const projects = nodes.filter((n) => n.kind === "project").sort(byIdAsc);
+  const projects = nodes.filter((n) => n.kind === "org" || n.kind === "project").sort(byIdAsc);
   projects.forEach((p, i) => {
     if (projects.length === 1) {
-      coords.set(p.id, { px: 0, py: DOME_PLANE.project.y, pz: 0 });
+      coords.set(p.id, { px: 0, py: DOME_PLANE.org?.y ?? DOME_PLANE.project.y, pz: 0 });
     } else {
       const a = (i / projects.length) * TAU - Math.PI / 2;
-      coords.set(p.id, { px: Math.cos(a) * 26, py: DOME_PLANE.project.y, pz: Math.sin(a) * 26 });
+      coords.set(p.id, { px: Math.cos(a) * 26, py: DOME_PLANE.org?.y ?? DOME_PLANE.project.y, pz: Math.sin(a) * 26 });
     }
   });
 
@@ -687,14 +693,14 @@ function layoutConeTree(nodes: readonly DomeInputNode[]): { coords: Map<string, 
       const slot = i === 0 ? 0 : i % 2 ? (i + 1) / 2 : -(i / 2);
       const a = outward + (slot / n) * TAU;
       const ri = n > CONE_STAGGER_FROM ? r * (i % 2 ? CONE_STAGGER_OUT : CONE_STAGGER_IN) : r;
-      coords.set(k.id, { px: parent.px + Math.cos(a) * ri, py: DOME_PLANE[k.kind].y, pz: parent.pz + Math.sin(a) * ri });
+      coords.set(k.id, { px: parent.px + Math.cos(a) * ri, py: DOME_PLANE[k.kind]?.y ?? 0, pz: parent.pz + Math.sin(a) * ri });
     });
   };
   /** Base radius for `count` children of tier `tier` inside `room` — 0 for a single child (a stalk). */
   const baseRadius = (count: number, tier: DomeViewKind, room: number): number => {
     if (count <= 1) return 0;
-    const cap = Math.min(CONE_MAX_R[tier], room * CONE_ROOM_FILL);
-    const wanted = Math.max(CONE_MIN_R[tier], (count * CONE_SPACING[tier]) / TAU);
+    const cap = Math.min(CONE_MAX_R[tier] ?? 30, room * CONE_ROOM_FILL);
+    const wanted = Math.max(CONE_MIN_R[tier] ?? 10, (count * (CONE_SPACING[tier] ?? 12)) / TAU);
     return Math.max(0, Math.min(cap, wanted));
   };
 
@@ -713,7 +719,7 @@ function layoutConeTree(nodes: readonly DomeInputNode[]): { coords: Map<string, 
     for (const c of children) capRoom.set(c.id, childRoom);
   }
 
-  const capabilities = nodes.filter((n) => n.kind === "capability").sort(byIdAsc);
+  const capabilities = nodes.filter((n) => n.kind === "subdomain" || n.kind === "capability").sort(byIdAsc);
   for (const c of capabilities) {
     const at = coords.get(c.id);
     if (!at) continue;
@@ -1451,9 +1457,11 @@ function projectWithTrig(
  * in no single projection — but torsion only lives during the drag and for a few
  * hundred ms after, decaying to 0.
  */
-export const DOME_TIER_LAG: Readonly<Record<DomeViewKind, number>> = {
+export const DOME_TIER_LAG: Readonly<Record<string, number>> = {
+  org: 0,
   project: 0,
   domain: -0.1,
+  subdomain: -0.2,
   capability: -0.2,
   element: -0.3,
 };
@@ -1494,12 +1502,14 @@ export const DOME_POSE_LAG_SCALE = 0.55;
  * `scale` is the per-cause push strength: 1 for the hand (1:1 direct manipulation),
  * `DOME_POSE_LAG_SCALE` for the much faster programmatic move.
  */
-export function chargeTierLag(lag: Record<DomeViewKind, number>, deltaYaw: number, scale = 1): void {
+export function chargeTierLag(lag: Record<string, number>, deltaYaw: number, scale = 1): void {
   const d = deltaYaw * scale;
-  lag.project += d * DOME_TIER_LAG.project;
-  lag.domain += d * DOME_TIER_LAG.domain;
-  lag.capability += d * DOME_TIER_LAG.capability;
-  lag.element += d * DOME_TIER_LAG.element;
+  if (lag.org !== undefined) lag.org += d * (DOME_TIER_LAG.org ?? 0);
+  lag.project += d * (DOME_TIER_LAG.project ?? 0);
+  lag.domain += d * (DOME_TIER_LAG.domain ?? -0.1);
+  if (lag.subdomain !== undefined) lag.subdomain += d * (DOME_TIER_LAG.subdomain ?? -0.2);
+  lag.capability += d * (DOME_TIER_LAG.capability ?? -0.2);
+  lag.element += d * (DOME_TIER_LAG.element ?? -0.3);
 }
 
 /**
@@ -1507,9 +1517,11 @@ export function chargeTierLag(lag: Record<DomeViewKind, number>, deltaYaw: numbe
  * project spine (the hero's tierDelay unchanged). Switching off replays the same
  * clock backwards, settling from the leaves down.
  */
-const DOME_TIER_DELAY_MS: Readonly<Record<DomeViewKind, number>> = {
+const DOME_TIER_DELAY_MS: Readonly<Record<string, number>> = {
+  org: 0,
   project: 0,
   domain: 180,
+  subdomain: 380,
   capability: 380,
   element: 600,
 };
@@ -1685,13 +1697,15 @@ export function updateDomeFrame(
   runtime.drawSinYaw = Math.sin(runtime.drawYaw);
   runtime.drawCosPitch = cp;
   runtime.drawSinPitch = sp;
-  const trig: Record<DomeViewKind, [number, number]> = {
+  const trig: Record<string, [number, number]> = {
+    org: [0, 0],
     project: [0, 0],
     domain: [0, 0],
+    subdomain: [0, 0],
     capability: [0, 0],
     element: [0, 0],
   };
-  const ramp: Record<DomeViewKind, number> = { project: 0, domain: 0, capability: 0, element: 0 };
+  const ramp: Record<string, number> = { org: 0, project: 0, domain: 0, subdomain: 0, capability: 0, element: 0 };
   for (const kind of DOME_KINDS) {
     const yawK = runtime.yaw + runtime.lag[kind] + drawYawOffset;
     trig[kind] = [Math.cos(yawK), Math.sin(yawK)];
@@ -1728,7 +1742,7 @@ export function updateDomeFrame(
       // radius — the hero's apex is "a slightly bigger dot", not a cross spanning the
       // screen.
       let target = baseR > 0 ? domeR / baseR : 1;
-      if (node.kind === "project") target = Math.min(target, 1.1);
+      if (node.kind === "org" || node.kind === "project") target = Math.min(target, 1.1);
       // The cloud needs smaller dots for density to read (doc-block above).
       if (model.arrangement === "coupling") target *= CLOUD_NODE_SCALE;
       s = 1 + (target - 1) * r;
@@ -1834,7 +1848,7 @@ export function updateDomeFrame(
   runtime.frameEpoch++;
 }
 
-const DOME_KINDS: readonly DomeViewKind[] = ["project", "domain", "capability", "element"];
+const DOME_KINDS: readonly DomeViewKind[] = ["org", "project", "domain", "subdomain", "capability", "element"];
 
 /** Scratch coordinate for ring sampling — one object per module, never per sample. */
 const ringCoord: DomeCoord = { px: 0, py: 0, pz: 0 };
@@ -1888,8 +1902,10 @@ export function settleDomeRuntimeOffscreen(runtime: DomeRuntime): void {
   runtime.orbiting = false;
   runtime.drag = null;
   runtime.entryArmed = false;
+  if (runtime.lag.org !== undefined) runtime.lag.org = 0;
   runtime.lag.project = 0;
   runtime.lag.domain = 0;
+  if (runtime.lag.subdomain !== undefined) runtime.lag.subdomain = 0;
   runtime.lag.capability = 0;
   runtime.lag.element = 0;
   runtime.pitch = clampDomePitch(runtime.pitch);
@@ -2352,7 +2368,7 @@ export function createDomeRuntime(model: DomeModel): DomeRuntime {
     drawSinYaw: 0,
     drawCosPitch: Math.cos(DOME_PITCH_DEFAULT),
     drawSinPitch: Math.sin(DOME_PITCH_DEFAULT),
-    lag: { project: 0, domain: 0, capability: 0, element: 0 },
+    lag: { org: 0, project: 0, domain: 0, subdomain: 0, capability: 0, element: 0 },
     rampClock: 0,
     active: false,
     orbiting: false,

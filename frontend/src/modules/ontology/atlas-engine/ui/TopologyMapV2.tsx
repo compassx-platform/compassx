@@ -46,7 +46,7 @@ import { transientSurface } from "@/modules/ontology/shared/transient-surface";
 export interface TopologyV2Node {
   id: string;
   label: string;
-  kind: "project" | "domain" | "capability" | "element";
+  kind: "org" | "project" | "domain" | "subdomain" | "capability" | "element" | string;
   size: number;
   x: number;
   y: number;

@@ -100,7 +100,7 @@ export function interpolateCornerRadius(minRadius: number, fullRadius: number, f
 }
 
 export interface NodeShapeDrawState {
-  kind: "project" | "domain" | "capability" | "element";
+  kind: "org" | "project" | "domain" | "subdomain" | "capability" | "element" | string;
   screenX: number;
   screenY: number;
   /** Screen-space draw radius (world radius × camera.scale × breathe). */
@@ -447,7 +447,7 @@ function drawEngraved(
  * check internal consistency, not parity across the two gateways.
  */
 export function bodyPoints(kind: NodeShapeDrawState["kind"], x: number, y: number, r: number): readonly Point[] | null {
-  if (kind === "project") return hexPoints(x, y, r);
+  if (kind === "org" || kind === "project") return hexPoints(x, y, r);
   if (kind === "domain") return squarePoints(x, y, r * DOMAIN_HALF_EXTENT_RATIO);
   if (kind === "element") return squarePoints(x, y, r * 0.92);
   return null;
@@ -490,7 +490,7 @@ function squarePointsScratch(cx: number, cy: number, s: number): readonly Point[
 }
 
 function bodyPointsScratch(kind: NodeShapeDrawState["kind"], x: number, y: number, r: number): readonly Point[] | null {
-  if (kind === "project") return hexPointsScratch(x, y, r);
+  if (kind === "org" || kind === "project") return hexPointsScratch(x, y, r);
   if (kind === "domain") return squarePointsScratch(x, y, r * DOMAIN_HALF_EXTENT_RATIO);
   if (kind === "element") return squarePointsScratch(x, y, r * 0.92);
   return null;
@@ -508,7 +508,7 @@ function bodyPointsScratch(kind: NodeShapeDrawState["kind"], x: number, y: numbe
  * original purpose, now expressed at the correct end of the scale).
  */
 function minCornerRadius(kind: NodeShapeDrawState["kind"], r: number): number {
-  if (kind === "project") return Math.max(0.5, r * 0.14);
+  if (kind === "org" || kind === "project") return Math.max(0.5, r * 0.14);
   if (kind === "domain") return Math.max(0.5, r * 0.86 * 0.22);
   return Math.max(0.5, r * 0.92 * 0.3);
 }
@@ -806,10 +806,10 @@ export function draw(ctx: CanvasRenderingContext2D, state: NodeShapeDrawState, t
   // `topology-frame-draw.ts#resolveNodeVisual` for kind==="project", not
   // here) — this block only adds the inner offset hairline + the 4-direction
   // chassis pin ticks, both fading out toward far field like domain's pins.
-  if (kind === "project" && egoState !== "dim") {
+  if ((kind === "org" || kind === "project") && egoState !== "dim") {
     if (r > PROJECT_DECOR_MIN_RADIUS && farT < PROJECT_DECOR_MAX_FAR_T) {
       const decorAlpha = 1 - smoothstep(0.55, 0.9, farT);
-      strokeKindOutline(ctx, "project", x, y, r * PROJECT_HAIRLINE_INNER_RATIO, farT, tokens.projectHairlineInner, 1, decorAlpha);
+      strokeKindOutline(ctx, kind, x, y, r * PROJECT_HAIRLINE_INNER_RATIO, farT, tokens.projectHairlineInner, 1, decorAlpha);
       ctx.globalAlpha = entryAlpha * decorAlpha;
       ctx.strokeStyle = tokens.projectPinTick;
       ctx.lineWidth = 1;
@@ -883,7 +883,7 @@ export function draw(ctx: CanvasRenderingContext2D, state: NodeShapeDrawState, t
     // Project's engraved count reads amber, not neutral gray — the same
     // Layer-0-container tint as its body stroke (design.md), so the numeral
     // doesn't look like a leftover from the generic domain/capability treatment.
-    const numeralTokens = kind === "project" ? { ...tokens, numeralFace: tokens.amberHub } : tokens;
+    const numeralTokens = (kind === "org" || kind === "project") ? { ...tokens, numeralFace: tokens.amberHub } : tokens;
     drawEngraved(ctx, countLabel, x, y + r * 0.52, Math.max(8, Math.min(11, r * 0.4)), 1 - smoothstep(0.5, 0.9, farT), numeralTokens);
   }
 }

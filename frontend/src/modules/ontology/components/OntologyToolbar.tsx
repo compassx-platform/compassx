@@ -5,11 +5,11 @@ import {
   Minimize2,
   RotateCcw,
   Box,
-  FileCode,
   Scan,
   Layers,
   Sun,
   Moon,
+  Plus,
 } from 'lucide-react';
 import type { MapArrangement } from '../shared/appearance-preferences';
 
@@ -17,7 +17,7 @@ interface OntologyToolbarProps {
   expandedAll: boolean;
   onToggleExpandAll: () => void;
   onOpenSearch: () => void;
-  onOpenYamlEditor: () => void;
+  onOpenAddNode?: () => void;
   onAutoArrange: () => void;
   onFitView: () => void;
   view3d: boolean;
@@ -32,7 +32,7 @@ export const OntologyToolbar: React.FC<OntologyToolbarProps> = ({
   expandedAll,
   onToggleExpandAll,
   onOpenSearch,
-  onOpenYamlEditor,
+  onOpenAddNode,
   onAutoArrange,
   onFitView,
   view3d,
@@ -121,17 +121,20 @@ export const OntologyToolbar: React.FC<OntologyToolbarProps> = ({
         </kbd>
       </button>
 
-      <div className="ontology-toolbar-divider w-[1px] h-4 bg-[#2e374f]" />
+      {onOpenAddNode && (
+        <>
+          <div className="ontology-toolbar-divider w-[1px] h-4 bg-[#2e374f]" />
+          <button
+            onClick={onOpenAddNode}
+            className="ontology-toolbar-btn flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-[#6366f1]/15 hover:bg-[#6366f1]/30 text-[#a5b4fc] border border-[#6366f1]/40 transition-colors"
+            title="Add a new node to the knowledge graph"
+          >
+            <Plus size={13} className="text-[#818cf8]" />
+            <span>Add Entity</span>
+          </button>
+        </>
+      )}
 
-      {/* YAML Source Editor */}
-      <button
-        onClick={onOpenYamlEditor}
-        className="ontology-toolbar-btn flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium hover:bg-[#20273c] hover:text-white transition-colors"
-        title="View or upload custom YAML ontology"
-      >
-        <FileCode size={13} className="text-[#a5b4fc]" />
-        <span>YAML</span>
-      </button>
 
       {onToggleTheme && (
         <>

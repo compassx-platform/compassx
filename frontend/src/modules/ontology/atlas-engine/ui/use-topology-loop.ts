@@ -2349,7 +2349,7 @@ export function useTopologyLoop(args: UseTopologyLoopArgs): UseTopologyLoopResul
     const world = worldRef.current;
     if (!world || world.nodes.length === 0) return;
     // Origin = the project node's home, falling back to the spine bbox centre.
-    const projectNode = world.nodes.find((n) => n.kind === "project");
+    const projectNode = world.nodes.find((n) => n.kind === "org" || n.kind === "project");
     const cx = projectNode?.homeX ?? (world.spineBounds.minX + world.spineBounds.maxX) / 2;
     const cy = projectNode?.homeY ?? (world.spineBounds.minY + world.spineBounds.maxY) / 2;
     const tokens = readTopologyV2TokensOrNull();
@@ -4790,8 +4790,10 @@ export function useTopologyLoop(args: UseTopologyLoopArgs): UseTopologyLoopResul
             alreadyPlaced,
             {
               radii: {
+                org: tokens.radiusProject,
                 project: tokens.radiusProject,
                 domain: tokens.radiusDomain,
+                subdomain: tokens.radiusCapability,
                 capability: tokens.radiusCapability,
                 element: tokens.radiusElement,
               },

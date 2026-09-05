@@ -14,13 +14,36 @@ export interface KindConfig {
   shape: NodeShapeType;
   baseRadius: number; // radius in px (e.g. 7 to 40)
   tier: number; // 0 = root, 1 = inner, 2 = mid, 3 = outer cluster
+  color?: string;
+  icon?: string;
+  is_system?: boolean;
 }
 
-export type ConfigTab = 'kinds';
+export interface TypeRelationConfig {
+  id?: number;
+  source_type_id: string;
+  relation_type: string;
+  target_type_id: string;
+  is_hierarchical?: boolean;
+  description?: string;
+  is_system?: boolean;
+}
+
+export type ConfigTab = 'kinds' | 'relations';
+
+export interface GraphValidationResult {
+  valid: boolean;
+  errors: string[];
+  warnings: string[];
+  node_count: number;
+  edge_count: number;
+}
 
 export interface OntologyConfigPanelProps {
   kindsConfig?: KindConfig[];
   onUpdateKindsConfig?: (newKinds: KindConfig[]) => void;
+  typeRelations?: TypeRelationConfig[];
+  onUpdateTypeRelations?: (newRelations: TypeRelationConfig[]) => void;
   themeMode?: 'dark' | 'light';
   onToggleTheme?: () => void;
   view3d?: boolean;
@@ -31,7 +54,6 @@ export interface OntologyConfigPanelProps {
   onToggleExpandAll?: () => void;
   onAutoArrange?: () => void;
   onFitView?: () => void;
-  onOpenYamlEditor?: () => void;
   onResetDefaultData?: () => void;
   nodeCount?: number;
   edgeCount?: number;

@@ -17,7 +17,7 @@ export function prepareRevealHome(
   tokens: TopologyV2Tokens,
   origin: { x: number; y: number },
 ): RevealHomeResult {
-  const projectId = world.nodes.find((node) => node.kind === "project")?.id ?? null;
+  const projectId = world.nodes.find((node) => node.kind === "org" || node.kind === "project")?.id ?? null;
   const nodes = world.nodes.map((node) => ({
     ...node,
     x: node.id === projectId ? node.x : origin.x,

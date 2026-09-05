@@ -234,7 +234,7 @@
   color: var(--color-text-muted);
 }
 
-/* Kinds List Cards */
+/* Cards (Types & Relations) */
 .cx-ontology-config-card {
   display: flex;
   align-items: center;
@@ -284,6 +284,56 @@
   color: var(--color-text);
   font-weight: 500;
   text-transform: capitalize;
+}
+
+/* Type Relationship Flow Visualizer */
+.cx-ontology-relation-flow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.cx-ontology-type-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px;
+  border-radius: var(--radius, 4px);
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.cx-ontology-rel-arrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--color-text-muted);
+}
+
+.cx-ontology-rel-badge {
+  font-family: var(--cx-font-mono, monospace);
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 7px;
+  border-radius: 4px;
+  background: var(--color-primary-bg);
+  color: var(--color-primary);
+  border: 1px solid rgba(27, 110, 243, 0.25);
+}
+
+.cx-ontology-hier-badge {
+  font-size: 9px;
+  font-weight: 600;
+  text-transform: uppercase;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: var(--color-success-bg);
+  color: var(--color-success);
 }
 
 /* Action Icon Buttons inside cards */

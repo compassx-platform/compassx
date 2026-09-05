@@ -121,7 +121,7 @@ function relationTypeWeight(relationType: string | undefined): number {
  * outranks relation type.
  */
 export function rankEgoNeighborsByDOI(neighbors: readonly EgoNeighborRankEntry[]): string[] {
-  const weight = (kind: string): number => (kind === "domain" ? 3 : kind === "capability" ? 2 : 1);
+  const weight = (kind: string): number => (kind === "org" || kind === "project" ? 4 : kind === "domain" ? 3 : kind === "subdomain" || kind === "capability" ? 2 : 1);
   return [...neighbors]
     .sort(
       (a, b) =>

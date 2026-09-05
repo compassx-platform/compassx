@@ -94,8 +94,8 @@ export function nodeTierAlpha(
   zoomRatio: number,
   config: TierRevealConfig,
 ): number {
-  if (isHub || kind === "project" || kind === "domain") return 1;
-  if (kind === "capability") return revealAlpha(zoomRatio, config.capability);
+  if (isHub || kind === "org" || kind === "project" || kind === "domain") return 1;
+  if (kind === "subdomain" || kind === "capability") return revealAlpha(zoomRatio, config.capability);
   return revealAlpha(zoomRatio, config.element);
 }
 

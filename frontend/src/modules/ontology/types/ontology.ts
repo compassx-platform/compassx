@@ -36,6 +36,7 @@ export interface OntologyDataset {
   name: string;
   version?: string;
   description?: string;
+  yaml_content?: string;
   nodes: OntologyNode[];
   edges: OntologyEdge[];
 }

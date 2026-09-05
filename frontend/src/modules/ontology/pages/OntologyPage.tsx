@@ -7,8 +7,21 @@ import {
   type TopologyV2Edge,
 } from '../atlas-engine';
 import { clearTopologyV2TokensCache } from '../atlas-engine/tokens/read-topology-v2-tokens';
-import { parseOntologyYaml, toTopologyV2Format, getDefaultDataset } from '../lib/ontologyParser';
-import { DEFAULT_ONTOLOGY_YAML } from '../data/defaultOntologyData';
+import {
+  processRawOntologyData,
+  toTopologyV2Format,
+  getDefaultDataset,
+} from '../lib/ontologyParser';
+import {
+  fetchOntologyTypes,
+  fetchActiveKnowledgeGraph,
+  resetDefaultKnowledgeGraph,
+  addGraphNode,
+  updateGraphNode,
+  deleteGraphNode,
+  addGraphEdge,
+  deleteGraphEdge,
+} from '../api/ontologyApi';
 import {
   OntologyConfigPanel,
   loadKindsConfig,
@@ -18,15 +31,15 @@ import {
 import { OntologyToolbar } from '../components/OntologyToolbar';
 import { OntologySideDrawer } from '../components/OntologySideDrawer';
 import { OntologySearchModal } from '../components/OntologySearchModal';
-import { OntologyYamlEditorModal } from '../components/OntologyYamlEditorModal';
+import { OntologyAddNodeModal } from '../components/OntologyAddNodeModal';
 import { OntologyLegend } from '../components/OntologyLegend';
 import type { MapArrangement } from '../shared/appearance-preferences';
 import '../ontology.css';
 
 export default function OntologyPage() {
   const [searchParams, setSearchParams] = useSearchParams();
-  const [yamlContent, setYamlContent] = useState<string>(DEFAULT_ONTOLOGY_YAML);
   const [dataset, setDataset] = useState(() => getDefaultDataset());
+  const [addNodeOpen, setAddNodeOpen] = useState(false);
 
   // Light / Dark Theme Mode
   const [themeMode, setThemeMode] = useState<'dark' | 'light'>(() => {
@@ -57,7 +70,6 @@ export default function OntologyPage() {
   const [expandedParents, setExpandedParents] = useState<ReadonlySet<string>>(new Set());
   const [expandedAll, setExpandedAll] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
-  const [yamlEditorOpen, setYamlEditorOpen] = useState(false);
 
   // Focus & Trail & Edge Hover
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
@@ -103,7 +115,7 @@ export default function OntologyPage() {
     setFitViewToken(t => t + 1);
   }, []);
 
-  // Convert YAML dataset to exact TopologyMapV2 engine nodes and edges
+  // Convert Knowledge Graph dataset to exact TopologyMapV2 engine nodes and edges
   const { nodes, edges } = useMemo(() => {
     return toTopologyV2Format(dataset, kindsConfig);
   }, [dataset, kindsConfig]);
@@ -126,6 +138,37 @@ export default function OntologyPage() {
       }, { replace: true });
     }
   }, [setSearchParams]);
+
+  // Initial load from Database (Metamodel Types + Active Knowledge Graph)
+  useEffect(() => {
+    let isMounted = true;
+
+    async function loadInitialData() {
+      try {
+        // Load entity types from metamodel DB
+        const remoteTypes = await fetchOntologyTypes().catch(() => null);
+        if (remoteTypes && remoteTypes.length > 0 && isMounted) {
+          setKindsConfig(remoteTypes);
+          saveKindsConfig(remoteTypes);
+        }
+
+        // Load active Knowledge Graph from DB
+        const remoteGraph = await fetchActiveKnowledgeGraph().catch(() => null);
+        if (remoteGraph && remoteGraph.nodes && remoteGraph.nodes.length > 0 && isMounted) {
+          const processed = processRawOntologyData(remoteGraph);
+          setDataset(processed);
+        }
+      } catch (err) {
+        console.warn('Could not load ontology from DB, using fallback dataset:', err);
+      }
+    }
+
+    loadInitialData();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   // Read initial query param focus on initial mount only
   useEffect(() => {
@@ -163,7 +206,7 @@ export default function OntologyPage() {
           if (n.parentId) {
             allParentIds.add(n.parentId);
           }
-          if (n.kind === 'project' || n.kind === 'domain' || n.kind === 'capability') {
+          if (n.kind === 'org' || n.kind === 'project' || n.kind === 'domain' || n.kind === 'subdomain' || n.kind === 'capability') {
             allParentIds.add(n.id);
           }
         }
@@ -196,30 +239,82 @@ export default function OntologyPage() {
     setMapArrangement(prev => (prev === 'ownership' ? 'coupling' : 'ownership'));
   };
 
-  // Apply new YAML content
-  const handleApplyYaml = (newYaml: string): boolean => {
-    const parsed = parseOntologyYaml(newYaml);
-    setYamlContent(newYaml);
-    setDataset(parsed);
-    setSelectedNodeId(null);
-    setVisitedTrail([]);
-    setExpandedParents(new Set());
-    setRelayoutToken(t => t + 1);
-    setFitViewToken(t => t + 1);
-    return true;
-  };
-
-  // Reset to default YAML dataset
-  const handleResetDefaultData = useCallback(() => {
-    const defaultData = getDefaultDataset();
-    setYamlContent(DEFAULT_ONTOLOGY_YAML);
-    setDataset(defaultData);
+  // Reset to default factory dataset in Database
+  const handleResetDefaultData = useCallback(async () => {
+    try {
+      const resetData = await resetDefaultKnowledgeGraph().catch(() => null);
+      if (resetData && resetData.nodes && resetData.nodes.length > 0) {
+        const processed = processRawOntologyData(resetData);
+        setDataset(processed);
+      } else {
+        setDataset(getDefaultDataset());
+      }
+    } catch {
+      setDataset(getDefaultDataset());
+    }
     setSelectedNodeId(null);
     setVisitedTrail([]);
     setExpandedParents(new Set());
     setRelayoutToken(t => t + 1);
     setFitViewToken(t => t + 1);
   }, []);
+
+  // Add a new node (Entity) into the active Knowledge Graph DB
+  const handleAddNode = async (nodeData: {
+    id: string;
+    kind: string;
+    title: string;
+    description?: string;
+    parentId?: string | null;
+    tags?: string[];
+    status?: string;
+  }): Promise<boolean> => {
+    const updatedGraph = await addGraphNode(nodeData);
+    const processed = processRawOntologyData(updatedGraph);
+    setDataset(processed);
+    setSelectedNodeId(nodeData.id);
+    setRelayoutToken(t => t + 1);
+    setFitViewToken(t => t + 1);
+    return true;
+  };
+
+  // Update an existing node in the active Knowledge Graph DB
+  const handleUpdateNode = async (
+    nodeId: string,
+    updates: { title?: string; description?: string; tags?: string[]; status?: string }
+  ): Promise<boolean> => {
+    const updatedGraph = await updateGraphNode(nodeId, updates);
+    const processed = processRawOntologyData(updatedGraph);
+    setDataset(processed);
+    return true;
+  };
+
+  // Delete a node from the active Knowledge Graph DB
+  const handleDeleteNode = async (nodeId: string): Promise<boolean> => {
+    const updatedGraph = await deleteGraphNode(nodeId);
+    const processed = processRawOntologyData(updatedGraph);
+    setDataset(processed);
+    if (selectedNodeId === nodeId) {
+      setSelectedNodeId(null);
+    }
+    setRelayoutToken(t => t + 1);
+    setFitViewToken(t => t + 1);
+    return true;
+  };
+
+  // Add a new relationship edge into the active Knowledge Graph DB
+  const handleAddEdge = async (edgeData: {
+    source: string;
+    target: string;
+    type: string;
+    description?: string;
+  }): Promise<boolean> => {
+    const updatedGraph = await addGraphEdge(edgeData);
+    const processed = processRawOntologyData(updatedGraph);
+    setDataset(processed);
+    setRelayoutToken(t => t + 1);
+    return true;
+  };
 
   // Currently focused node object for drawer
   const focusedNode = useMemo(() => {
@@ -286,7 +381,7 @@ export default function OntologyPage() {
         expandedAll={expandedAll}
         onToggleExpandAll={handleToggleExpandAll}
         onOpenSearch={() => setSearchOpen(true)}
-        onOpenYamlEditor={() => setYamlEditorOpen(true)}
+        onOpenAddNode={() => setAddNodeOpen(true)}
         onAutoArrange={handleAutoArrange}
         onFitView={handleFitView}
         view3d={view3d}
@@ -311,7 +406,6 @@ export default function OntologyPage() {
         onToggleExpandAll={handleToggleExpandAll}
         onAutoArrange={handleAutoArrange}
         onFitView={handleFitView}
-        onOpenYamlEditor={() => setYamlEditorOpen(true)}
         onResetDefaultData={handleResetDefaultData}
         nodeCount={nodes.length}
         edgeCount={edges.length}
@@ -341,6 +435,11 @@ export default function OntologyPage() {
         onClose={() => handleSelectNode(null)}
         onSelectNode={handleSelectNode}
         onIsolateArea={handleSelectNode}
+        onUpdateNode={handleUpdateNode}
+        onDeleteNode={handleDeleteNode}
+        onAddEdge={handleAddEdge}
+        kindsConfig={kindsConfig}
+        allNodes={dataset.nodes as any}
       />
 
       {/* Floating Bottom-Right Grammar Legend */}
@@ -354,12 +453,13 @@ export default function OntologyPage() {
         onSelectNode={handleSelectNode}
       />
 
-      {/* YAML Editor & Uploader Modal */}
-      <OntologyYamlEditorModal
-        isOpen={yamlEditorOpen}
-        onClose={() => setYamlEditorOpen(false)}
-        yamlContent={yamlContent}
-        onApplyYaml={handleApplyYaml}
+      {/* Add Entity Modal */}
+      <OntologyAddNodeModal
+        isOpen={addNodeOpen}
+        onClose={() => setAddNodeOpen(false)}
+        kindsConfig={kindsConfig}
+        existingNodes={dataset.nodes}
+        onAddNode={handleAddNode}
       />
     </div>
   );

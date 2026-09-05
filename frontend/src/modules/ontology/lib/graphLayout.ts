@@ -1,13 +1,20 @@
 import { OntologyDataset, LayoutNode, LayoutEdge, OntologyKind } from '../types/ontology';
 
 export const BASE_RADII: Record<OntologyKind, number> = {
+  org: 30,
   project: 30,
   domain: 17,
+  subdomain: 11,
   capability: 11,
   element: 7,
 };
 
 export const KIND_COLORS: Record<OntologyKind, { fill: string; stroke: string; glow?: string }> = {
+  org: {
+    fill: '#1c1b18',
+    stroke: '#f59e0b', // Amber machined bezel
+    glow: 'rgba(245, 158, 11, 0.25)',
+  },
   project: {
     fill: '#1c1b18',
     stroke: '#f59e0b', // Amber machined bezel
@@ -17,6 +24,10 @@ export const KIND_COLORS: Record<OntologyKind, { fill: string; stroke: string; g
     fill: '#161926',
     stroke: '#475569',
     glow: 'rgba(100, 116, 139, 0.2)',
+  },
+  subdomain: {
+    fill: '#1e2235',
+    stroke: '#64748b',
   },
   capability: {
     fill: '#1e2235',
@@ -28,8 +39,9 @@ export const KIND_COLORS: Record<OntologyKind, { fill: string; stroke: string; g
   },
 };
 
-export const RING_RADII = {
+export const RING_RADII: Record<string, number> = {
   domain: 270,
+  subdomain: 160,
   capability: 160,
   element: 95,
 };
@@ -39,7 +51,7 @@ export function computeLayout(dataset: OntologyDataset): { nodes: LayoutNode[]; 
   const childrenMap = new Map<string, string[]>();
 
   // Find project root
-  let projectNode = dataset.nodes.find(n => n.kind === 'project');
+  let projectNode = dataset.nodes.find(n => n.kind === 'org' || n.kind === 'project');
   if (!projectNode && dataset.nodes.length > 0) {
     projectNode = dataset.nodes[0];
   }
@@ -60,9 +72,9 @@ export function computeLayout(dataset: OntologyDataset): { nodes: LayoutNode[]; 
     const baseR = BASE_RADII[node.kind] || 10;
     const directCount = node.directChildCount || 0;
     
-    // Scale only domain and capability, capped at 1.4x
+    // Scale only domain and capability/subdomain, capped at 1.4x
     let scale = 1.0;
-    if (node.kind === 'domain' || node.kind === 'capability') {
+    if (node.kind === 'domain' || node.kind === 'subdomain' || node.kind === 'capability') {
       scale = Math.min(1.4, 1.0 + directCount * 0.04);
     }
     const renderRadius = Math.round(baseR * scale);
@@ -111,7 +123,7 @@ export function computeLayout(dataset: OntologyDataset): { nodes: LayoutNode[]; 
     dNode.targetX = dx;
     dNode.targetY = dy;
 
-    // 2. Arrange capabilities around this domain
+    // 2. Arrange capabilities/subdomains around this domain
     const capIds = childrenMap.get(dId) || [];
     const capCount = capIds.length;
     if (capCount > 0) {
@@ -124,9 +136,10 @@ export function computeLayout(dataset: OntologyDataset): { nodes: LayoutNode[]; 
         const cNode = nodeMap.get(cId);
         if (!cNode) return;
 
+        const ringR = RING_RADII[cNode.kind] || RING_RADII.capability;
         const cAngle = capCount === 1 ? angle : startAngle + cIdx * step;
-        const cx = dx + Math.cos(cAngle) * RING_RADII.capability;
-        const cy = dy + Math.sin(cAngle) * RING_RADII.capability;
+        const cx = dx + Math.cos(cAngle) * ringR;
+        const cy = dy + Math.sin(cAngle) * ringR;
 
         cNode.x = cx;
         cNode.y = cy;
@@ -166,7 +179,7 @@ export function computeLayout(dataset: OntologyDataset): { nodes: LayoutNode[]; 
       for (let j = i + 1; j < nodesList.length; j++) {
         const n1 = nodesList[i];
         const n2 = nodesList[j];
-        if (n1.kind === 'project' || n2.kind === 'project') continue; // keep root pinned
+        if (n1.kind === 'org' || n1.kind === 'project' || n2.kind === 'org' || n2.kind === 'project') continue; // keep root pinned
 
         const dx = n2.x - n1.x;
         const dy = n2.y - n1.y;

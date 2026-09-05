@@ -1,27 +1,37 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   X,
-  Copy,
   Check,
-  ExternalLink,
-  Layers,
   Hexagon,
   Square,
   Circle,
   Hash,
   ArrowDownLeft,
   ArrowUpRight,
-  FileText,
   Tag,
   Sparkles,
+  Edit2,
+  Trash2,
+  Save,
+  Link,
+  Plus,
+  AlertCircle,
+  Loader2,
 } from 'lucide-react';
-import { LayoutNode, OntologyKind } from '../types/ontology';
+import { LayoutNode, OntologyKind, OntologyNode } from '../types/ontology';
+import type { KindConfig } from '../config/types';
+import './entity-ui.css';
 
 interface OntologySideDrawerProps {
   node: LayoutNode | null;
   onClose: () => void;
   onSelectNode: (nodeId: string) => void;
   onIsolateArea: (nodeId: string) => void;
+  onUpdateNode?: (nodeId: string, updates: { title?: string; description?: string; tags?: string[]; status?: string }) => Promise<boolean>;
+  onDeleteNode?: (nodeId: string) => Promise<boolean>;
+  onAddEdge?: (edge: { source: string; target: string; type: string; description?: string }) => Promise<boolean>;
+  kindsConfig?: KindConfig[];
+  allNodes?: OntologyNode[];
 }
 
 export const OntologySideDrawer: React.FC<OntologySideDrawerProps> = ({
@@ -29,8 +39,47 @@ export const OntologySideDrawer: React.FC<OntologySideDrawerProps> = ({
   onClose,
   onSelectNode,
   onIsolateArea,
+  onUpdateNode,
+  onDeleteNode,
+  onAddEdge,
+  kindsConfig = [],
+  allNodes = [],
 }) => {
   const [copied, setCopied] = useState(false);
+
+  // Edit Mode state
+  const [isEditing, setIsEditing] = useState(false);
+  const [editTitle, setEditTitle] = useState('');
+  const [editDescription, setEditDescription] = useState('');
+  const [editTags, setEditTags] = useState('');
+  const [editStatus, setEditStatus] = useState('active');
+  const [isSaving, setIsSaving] = useState(false);
+  const [editError, setEditError] = useState<string | null>(null);
+
+  // Add Edge Mode state
+  const [isAddingEdge, setIsAddingEdge] = useState(false);
+  const [targetNodeId, setTargetNodeId] = useState('');
+  const [relationType, setRelationType] = useState('depends_on');
+  const [isSavingEdge, setIsSavingEdge] = useState(false);
+  const [edgeError, setEdgeError] = useState<string | null>(null);
+
+  // Delete Confirmation state
+  const [isConfirmingDelete, setIsConfirmingDelete] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+
+  useEffect(() => {
+    if (node) {
+      setEditTitle(node.title || '');
+      setEditDescription(node.description || '');
+      setEditTags((node.tags || []).join(', '));
+      setEditStatus(node.status || 'active');
+      setIsEditing(false);
+      setIsAddingEdge(false);
+      setIsConfirmingDelete(false);
+      setEditError(null);
+      setEdgeError(null);
+    }
+  }, [node]);
 
   if (!node) return null;
 
@@ -54,207 +103,500 @@ ${node.description || ''}
     setTimeout(() => setCopied(false), 2000);
   };
 
+  const handleSaveNode = async () => {
+    if (!onUpdateNode) return;
+    setEditError(null);
+    setIsSaving(true);
+    try {
+      const tags = editTags.split(',').map(t => t.trim()).filter(Boolean);
+      const ok = await onUpdateNode(node.id, {
+        title: editTitle.trim() || node.title,
+        description: editDescription.trim(),
+        tags,
+        status: editStatus,
+      });
+      if (ok) {
+        setIsEditing(false);
+      }
+    } catch (err: any) {
+      setEditError(err?.response?.data?.detail || err.message || 'Failed to update node');
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleDelete = async () => {
+    if (!onDeleteNode) return;
+    setIsDeleting(true);
+    try {
+      const ok = await onDeleteNode(node.id);
+      if (ok) {
+        onClose();
+      }
+    } catch (err: any) {
+      alert(err?.response?.data?.detail || err.message || 'Failed to delete node');
+    } finally {
+      setIsDeleting(false);
+      setIsConfirmingDelete(false);
+    }
+  };
+
+  const handleSaveEdge = async () => {
+    if (!onAddEdge || !targetNodeId) return;
+    setEdgeError(null);
+    setIsSavingEdge(true);
+    try {
+      const ok = await onAddEdge({
+        source: node.id,
+        target: targetNodeId,
+        type: relationType,
+      });
+      if (ok) {
+        setIsAddingEdge(false);
+        setTargetNodeId('');
+      }
+    } catch (err: any) {
+      setEdgeError(err?.response?.data?.detail || err.message || 'Failed to create connection');
+    } finally {
+      setIsSavingEdge(false);
+    }
+  };
+
   const getKindBadge = (kind: OntologyKind) => {
     switch (kind) {
+      case 'org':
+        return (
+          <span className="cx-kg-kind-badge cx-kg-kind-org">
+            <Hexagon size={12} /> Org Root
+          </span>
+        );
       case 'project':
         return (
-          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-[#f59e0b]/15 text-[#fbbf24] border border-[#f59e0b]/30">
+          <span className="cx-kg-kind-badge cx-kg-kind-project">
             <Hexagon size={12} /> Project Root
           </span>
         );
       case 'domain':
         return (
-          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-[#6366f1]/15 text-[#a5b4fc] border border-[#6366f1]/30">
+          <span className="cx-kg-kind-badge cx-kg-kind-domain">
             <Square size={12} /> Domain Chip
+          </span>
+        );
+      case 'subdomain':
+        return (
+          <span className="cx-kg-kind-badge cx-kg-kind-subdomain">
+            <Circle size={12} /> Subdomain Disc
           </span>
         );
       case 'capability':
         return (
-          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-[#38bdf8]/15 text-[#7dd3fc] border border-[#38bdf8]/30">
+          <span className="cx-kg-kind-badge cx-kg-kind-capability">
             <Circle size={12} /> Capability Disc
           </span>
         );
       case 'element':
         return (
-          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-[#94a3b8]/15 text-[#cbd5e1] border border-[#94a3b8]/30">
+          <span className="cx-kg-kind-badge cx-kg-kind-element">
             <Hash size={12} /> Element Pad
+          </span>
+        );
+      default:
+        return (
+          <span className="cx-kg-kind-badge cx-kg-kind-custom">
+            <Sparkles size={12} /> {kind}
           </span>
         );
     }
   };
 
   return (
-    <div className="ontology-side-drawer absolute right-2.5 top-10 bottom-2.5 w-96 max-w-[calc(100vw-2rem)] z-30 flex flex-col rounded-2xl bg-[#0f121d]/90 backdrop-blur-xl border border-[#23293d] shadow-2xl overflow-hidden text-[#e2e8f0]">
+    <div className="cx-kg-drawer">
       {/* Header */}
-      <div className="p-5 border-b border-[#23293d] flex items-start justify-between gap-3 bg-[#141827]/60">
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 mb-2">
+      <div className="cx-kg-drawer-header">
+        <div className="cx-kg-drawer-header-left">
+          <div className="cx-kg-drawer-badges-row">
             {getKindBadge(node.kind)}
-            {node.status && (
-              <span className="text-[10px] font-mono uppercase px-2 py-0.5 rounded bg-[#1e2438] text-[#94a3b8]">
+            {node.status && !isEditing && (
+              <span className="cx-kg-status-badge">
                 {node.status}
               </span>
             )}
           </div>
-          <h2 className="text-lg font-bold text-white tracking-tight leading-snug break-words">
-            {node.title}
-          </h2>
-          <p className="text-xs font-mono text-[#64748b] mt-0.5 truncate">
+
+          {isEditing ? (
+            <input
+              type="text"
+              value={editTitle}
+              onChange={e => setEditTitle(e.target.value)}
+              className="cx-kg-input"
+              style={{ fontWeight: 600, fontSize: 14 }}
+              autoFocus
+            />
+          ) : (
+            <h2 className="cx-kg-drawer-title">
+              {node.title}
+            </h2>
+          )}
+
+          <p className="cx-kg-drawer-id" title={node.id}>
             {node.id}
           </p>
         </div>
-        <button
-          onClick={onClose}
-          className="p-1.5 rounded-lg hover:bg-[#20273c] text-[#94a3b8] hover:text-white transition-colors"
-          title="Close drawer"
-        >
-          <X size={16} />
-        </button>
+
+        <div className="cx-kg-drawer-header-actions">
+          {onUpdateNode && !isEditing && (
+            <button
+              type="button"
+              onClick={() => setIsEditing(true)}
+              className="cx-kg-drawer-icon-btn"
+              title="Edit entity"
+            >
+              <Edit2 size={15} />
+            </button>
+          )}
+
+          <button
+            type="button"
+            onClick={onClose}
+            className="cx-kg-drawer-icon-btn"
+            title="Close drawer"
+          >
+            <X size={16} />
+          </button>
+        </div>
       </div>
 
       {/* Body Content */}
-      <div className="flex-1 overflow-y-auto p-5 space-y-5 text-sm custom-scrollbar">
-        {/* Description */}
-        {node.description && (
-          <div>
-            <h4 className="text-xs font-semibold uppercase tracking-wider text-[#94a3b8] mb-1.5">
-              Description
-            </h4>
-            <p className="text-[#cbd5e1] leading-relaxed text-[13px] bg-[#141724] p-3 rounded-xl border border-[#20263c]">
-              {node.description}
-            </p>
+      <div className="cx-kg-drawer-body cx-kg-scrollbar">
+        {editError && (
+          <div className="cx-kg-alert-error">
+            <AlertCircle size={14} style={{ flexShrink: 0, marginTop: 1 }} />
+            <span>{editError}</span>
           </div>
         )}
 
-        {/* Dual Channel Metrics Cards */}
-        <div className="grid grid-cols-2 gap-2.5">
-          <div className="p-3 rounded-xl bg-[#141724] border border-[#20263c]">
-            <div className="text-[11px] font-medium text-[#94a3b8] mb-1 flex items-center justify-between">
-              <span>Direct Children</span>
-              <span className="text-[9px] text-[#64748b]">Glance (Size)</span>
+        {/* Edit Form or Read View */}
+        {isEditing ? (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+            <div className="cx-kg-modal-field">
+              <label className="cx-kg-modal-label">Description</label>
+              <textarea
+                value={editDescription}
+                onChange={e => setEditDescription(e.target.value)}
+                rows={3}
+                className="cx-kg-textarea"
+                placeholder="Entity description..."
+              />
             </div>
-            <div className="text-xl font-bold text-[#818cf8]">
-              {node.directChildCount || 0}
-            </div>
-          </div>
-          <div className="p-3 rounded-xl bg-[#141724] border border-[#20263c]">
-            <div className="text-[11px] font-medium text-[#94a3b8] mb-1 flex items-center justify-between">
-              <span>Descendants</span>
-              <span className="text-[9px] text-[#64748b]">Depth (Number)</span>
-            </div>
-            <div className="text-xl font-bold text-[#fbbf24]">
-              {node.totalDescendantCount || 0}
-            </div>
-          </div>
-        </div>
 
-        {/* Inbound & Outbound Connections */}
-        <div className="space-y-3">
-          {/* Outbound Needs */}
-          <div>
-            <div className="flex items-center justify-between text-xs font-semibold uppercase tracking-wider text-[#94a3b8] mb-2">
-              <span className="flex items-center gap-1">
-                <ArrowUpRight size={13} className="text-[#818cf8]" /> Needs (Requires)
-              </span>
-              <span className="font-mono text-[11px] text-[#64748b]">
-                {(node.outboundDependencies || []).length}
-              </span>
+            <div className="cx-kg-modal-field">
+              <label className="cx-kg-modal-label">Tags (comma separated)</label>
+              <input
+                type="text"
+                value={editTags}
+                onChange={e => setEditTags(e.target.value)}
+                className="cx-kg-input"
+                placeholder="tag1, tag2"
+              />
             </div>
-            {(node.outboundDependencies || []).length === 0 ? (
-              <p className="text-xs text-[#64748b] italic">No direct outbound requirements.</p>
-            ) : (
-              <div className="flex flex-wrap gap-1.5">
-                {(node.outboundDependencies || []).map(depId => (
-                  <button
-                    key={depId}
-                    onClick={() => onSelectNode(depId)}
-                    className="px-2.5 py-1 text-xs rounded-lg bg-[#181d2e] hover:bg-[#252d47] text-[#93c5fd] border border-[#283250] transition-colors truncate max-w-full"
-                  >
-                    {depId.split('/').pop()}
-                  </button>
-                ))}
+
+            <div className="cx-kg-modal-field">
+              <label className="cx-kg-modal-label">Status</label>
+              <select
+                value={editStatus}
+                onChange={e => setEditStatus(e.target.value)}
+                className="cx-kg-select"
+              >
+                <option value="active">Active</option>
+                <option value="draft">Draft</option>
+                <option value="deprecated">Deprecated</option>
+                <option value="archived">Archived</option>
+              </select>
+            </div>
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, paddingTop: 4 }}>
+              <button
+                type="button"
+                onClick={handleSaveNode}
+                disabled={isSaving}
+                className="cx-kg-btn cx-kg-btn-primary"
+                style={{ flex: 1 }}
+              >
+                {isSaving ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />}
+                <span>{isSaving ? 'Saving...' : 'Save Changes'}</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setIsEditing(false)}
+                className="cx-kg-btn cx-kg-btn-secondary"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        ) : (
+          <>
+            {/* Description */}
+            {node.description && (
+              <div>
+                <div className="cx-kg-drawer-section-title">Description</div>
+                <div className="cx-kg-drawer-card">
+                  <p className="cx-kg-drawer-description">
+                    {node.description}
+                  </p>
+                </div>
               </div>
             )}
-          </div>
 
-          {/* Inbound Uses */}
-          <div>
-            <div className="flex items-center justify-between text-xs font-semibold uppercase tracking-wider text-[#94a3b8] mb-2">
-              <span className="flex items-center gap-1">
-                <ArrowDownLeft size={13} className="text-[#38bdf8]" /> Uses (Depended On By)
-              </span>
-              <span className="font-mono text-[11px] text-[#64748b]">
-                {(node.inboundDependencies || []).length}
-              </span>
-            </div>
-            {(node.inboundDependencies || []).length === 0 ? (
-              <p className="text-xs text-[#64748b] italic">No inbound dependents recorded.</p>
-            ) : (
-              <div className="flex flex-wrap gap-1.5">
-                {(node.inboundDependencies || []).map(depId => (
-                  <button
-                    key={depId}
-                    onClick={() => onSelectNode(depId)}
-                    className="px-2.5 py-1 text-xs rounded-lg bg-[#181d2e] hover:bg-[#252d47] text-[#a5b4fc] border border-[#283250] transition-colors truncate max-w-full"
-                  >
-                    {depId.split('/').pop()}
-                  </button>
-                ))}
+            {/* Dual Channel Metrics Cards */}
+            <div className="cx-kg-drawer-metrics-grid">
+              <div className="cx-kg-drawer-metric-card">
+                <div className="cx-kg-drawer-metric-header">
+                  <span>Direct Children</span>
+                  <span className="cx-kg-drawer-metric-hint">Glance</span>
+                </div>
+                <div className="cx-kg-drawer-metric-val">
+                  {node.directChildCount || 0}
+                </div>
               </div>
-            )}
-          </div>
-        </div>
-
-        {/* Source File Link */}
-        {node.path && (
-          <div>
-            <h4 className="text-xs font-semibold uppercase tracking-wider text-[#94a3b8] mb-1.5 flex items-center gap-1">
-              <FileText size={13} /> Source Document
-            </h4>
-            <div className="text-xs font-mono text-[#cbd5e1] bg-[#141724] p-2.5 rounded-xl border border-[#20263c] flex items-center justify-between">
-              <span className="truncate">{node.path}</span>
+              <div className="cx-kg-drawer-metric-card">
+                <div className="cx-kg-drawer-metric-header">
+                  <span>Descendants</span>
+                  <span className="cx-kg-drawer-metric-hint">Depth</span>
+                </div>
+                <div className="cx-kg-drawer-metric-val is-amber">
+                  {node.totalDescendantCount || 0}
+                </div>
+              </div>
             </div>
-          </div>
-        )}
 
-        {/* Tags */}
-        {node.tags && node.tags.length > 0 && (
-          <div>
-            <h4 className="text-xs font-semibold uppercase tracking-wider text-[#94a3b8] mb-1.5 flex items-center gap-1">
-              <Tag size={13} /> Semantic Tags
-            </h4>
-            <div className="flex flex-wrap gap-1.5">
-              {node.tags.map(t => (
-                <span
-                  key={t}
-                  className="px-2 py-0.5 text-[11px] rounded-md bg-[#1b2133] text-[#94a3b8] border border-[#28304a]"
+            {/* Inbound & Outbound Connections */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+              {/* Outbound Needs */}
+              <div className="cx-kg-drawer-conn-section">
+                <div className="cx-kg-drawer-conn-head">
+                  <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                    <ArrowUpRight size={13} style={{ color: 'var(--color-primary)' }} /> Needs (Requires)
+                  </span>
+                  <span className="cx-kg-drawer-conn-count">
+                    {(node.outboundDependencies || []).length}
+                  </span>
+                </div>
+                {(node.outboundDependencies || []).length === 0 ? (
+                  <p className="cx-kg-drawer-empty-text">No direct outbound requirements.</p>
+                ) : (
+                  <div className="cx-kg-drawer-conn-chips">
+                    {(node.outboundDependencies || []).map(depId => (
+                      <button
+                        key={depId}
+                        type="button"
+                        onClick={() => onSelectNode(depId)}
+                        className="cx-kg-drawer-conn-chip"
+                        title={depId}
+                      >
+                        {depId.split('/').pop()}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Inbound Uses */}
+              <div className="cx-kg-drawer-conn-section">
+                <div className="cx-kg-drawer-conn-head">
+                  <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                    <ArrowDownLeft size={13} style={{ color: 'var(--color-info-text)' }} /> Uses (Depended On By)
+                  </span>
+                  <span className="cx-kg-drawer-conn-count">
+                    {(node.inboundDependencies || []).length}
+                  </span>
+                </div>
+                {(node.inboundDependencies || []).length === 0 ? (
+                  <p className="cx-kg-drawer-empty-text">No inbound dependents recorded.</p>
+                ) : (
+                  <div className="cx-kg-drawer-conn-chips">
+                    {(node.inboundDependencies || []).map(depId => (
+                      <button
+                        key={depId}
+                        type="button"
+                        onClick={() => onSelectNode(depId)}
+                        className="cx-kg-drawer-conn-chip"
+                        title={depId}
+                      >
+                        {depId.split('/').pop()}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Quick Add Relationship Form */}
+            {isAddingEdge ? (
+              <div className="cx-kg-drawer-rel-box">
+                <div className="cx-kg-drawer-rel-box-head">
+                  <span style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--color-primary)' }}>
+                    <Link size={13} /> Add Relationship
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setIsAddingEdge(false)}
+                    className="cx-kg-drawer-icon-btn"
+                    style={{ width: 24, height: 24 }}
+                  >
+                    <X size={13} />
+                  </button>
+                </div>
+
+                {edgeError && (
+                  <div className="cx-kg-alert-error" style={{ padding: '6px 10px', fontSize: 11 }}>
+                    {edgeError}
+                  </div>
+                )}
+
+                <div className="cx-kg-modal-field">
+                  <label className="cx-kg-modal-label">Relation Type</label>
+                  <select
+                    value={relationType}
+                    onChange={e => setRelationType(e.target.value)}
+                    className="cx-kg-select"
+                  >
+                    <option value="depends_on">depends_on</option>
+                    <option value="relies_on">relies_on</option>
+                    <option value="reads">reads</option>
+                    <option value="relates">relates</option>
+                    <option value="contains">contains</option>
+                  </select>
+                </div>
+
+                <div className="cx-kg-modal-field">
+                  <label className="cx-kg-modal-label">Target Entity</label>
+                  <select
+                    value={targetNodeId}
+                    onChange={e => setTargetNodeId(e.target.value)}
+                    className="cx-kg-select"
+                  >
+                    <option value="">Select target node...</option>
+                    {allNodes
+                      .filter(n => n.id !== node.id)
+                      .map(n => (
+                        <option key={n.id} value={n.id}>
+                          {n.title} ({n.kind})
+                        </option>
+                      ))}
+                  </select>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={handleSaveEdge}
+                  disabled={isSavingEdge || !targetNodeId}
+                  className="cx-kg-btn cx-kg-btn-primary"
+                  style={{ width: '100%' }}
                 >
-                  #{t}
-                </span>
-              ))}
-            </div>
-          </div>
+                  {isSavingEdge ? <Loader2 size={12} className="animate-spin" /> : <Plus size={12} />}
+                  <span>Save Relationship</span>
+                </button>
+              </div>
+            ) : onAddEdge && (
+              <button
+                type="button"
+                onClick={() => setIsAddingEdge(true)}
+                className="cx-kg-btn cx-kg-btn-secondary"
+                style={{ width: '100%', justifyContent: 'center' }}
+              >
+                <Plus size={13} />
+                <span>Add Relationship Connection</span>
+              </button>
+            )}
+
+            {/* Tags */}
+            {node.tags && node.tags.length > 0 && (
+              <div>
+                <div className="cx-kg-drawer-section-title">
+                  <span style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                    <Tag size={12} /> Semantic Tags
+                  </span>
+                </div>
+                <div className="cx-kg-drawer-tags-wrap">
+                  {node.tags.map(t => (
+                    <span key={t} className="cx-kg-drawer-tag">
+                      #{t}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+          </>
         )}
       </div>
+
+      {/* Delete Confirmation Box */}
+      {isConfirmingDelete && (
+        <div className="cx-kg-drawer-delete-confirm">
+          <div className="cx-kg-drawer-delete-title">
+            Delete "{node.title}" from Knowledge Graph?
+          </div>
+          <p className="cx-kg-drawer-delete-desc">
+            This will permanently remove this node and all its connected relationships from the database.
+          </p>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, paddingTop: 4 }}>
+            <button
+              type="button"
+              onClick={handleDelete}
+              disabled={isDeleting}
+              className="cx-kg-btn cx-kg-btn-danger"
+              style={{ flex: 1 }}
+            >
+              {isDeleting ? 'Deleting...' : 'Confirm Delete'}
+            </button>
+            <button
+              type="button"
+              onClick={() => setIsConfirmingDelete(false)}
+              className="cx-kg-btn cx-kg-btn-secondary"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Footer Actions */}
-      <div className="p-4 border-t border-[#23293d] bg-[#141827]/70 flex items-center gap-2">
-        <button
-          onClick={handleCopyPrompt}
-          className="flex-1 flex items-center justify-center gap-2 px-3 py-2 rounded-xl bg-[#6366f1] hover:bg-[#4f46e5] text-white text-xs font-semibold shadow-lg shadow-indigo-500/20 transition-all active:scale-[0.98]"
-        >
-          {copied ? <Check size={14} /> : <Sparkles size={14} />}
-          <span>{copied ? 'Copied AI Context!' : 'Copy for AI Agent'}</span>
-        </button>
+      {!isConfirmingDelete && (
+        <div className="cx-kg-drawer-footer">
+          <button
+            type="button"
+            onClick={handleCopyPrompt}
+            className="cx-kg-btn cx-kg-btn-primary"
+            style={{ flex: 1 }}
+          >
+            {copied ? <Check size={14} /> : <Sparkles size={14} />}
+            <span>{copied ? 'Copied AI Context!' : 'Copy for AI'}</span>
+          </button>
 
-        <button
-          onClick={() => onIsolateArea(node.id)}
-          className="px-3 py-2 rounded-xl bg-[#1e2438] hover:bg-[#2a334d] text-[#cbd5e1] text-xs font-medium border border-[#333d5c] transition-colors"
-          title="Isolate and view only this subtree"
-        >
-          View Area
-        </button>
-      </div>
+          <button
+            type="button"
+            onClick={() => onIsolateArea(node.id)}
+            className="cx-kg-btn cx-kg-btn-secondary"
+            title="Isolate this subtree"
+          >
+            Isolate
+          </button>
+
+          {onDeleteNode && (
+            <button
+              type="button"
+              onClick={() => setIsConfirmingDelete(true)}
+              className="cx-kg-btn cx-kg-btn-secondary"
+              style={{ padding: '8px 10px' }}
+              title="Delete node from database"
+            >
+              <Trash2 size={14} />
+            </button>
+          )}
+        </div>
+      )}
     </div>
   );
 };
+

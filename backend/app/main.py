@@ -53,6 +53,7 @@ from app.workspace import data_models as workspace_data_models  # noqa: E402, F4
 from app.catalog import search_models as catalog_search_models  # noqa: E402, F401  (catalog_search_*)
 from app.apps.models import apps as apps_models  # noqa: E402, F401
 from app.ingestion import models as ingestion_models  # noqa: E402, F401
+from app.ontology.models import ontology as ontology_models  # noqa: E402, F401
 from app.monitoring import routes as monitoring_routes  # noqa: E402
 
 # User Manager v1 models (registers tables with AccountBase / SystemBase)
@@ -278,6 +279,28 @@ async def lifespan(app: FastAPI):
     except Exception as _um_err:
         logger.warning("User Manager startup warning (non-fatal): %s", _um_err)
 
+    # Initialize Ontology & Knowledge Graph tables and default seed
+    try:
+        from app.database import AccountBase, account_engine, AccountSessionLocal
+        from app.ontology.services import OntologyService
+        from app.config import settings as _settings
+        if not _settings.SKIP_DB_INIT and account_engine is not None and AccountSessionLocal is not None:
+            AccountBase.metadata.create_all(bind=account_engine, tables=[
+                ontology_models.OntologyType.__table__,
+                ontology_models.OntologyTypeRelation.__table__,
+                ontology_models.OntologyGraph.__table__,
+                ontology_models.OntologyNode.__table__,
+                ontology_models.OntologyEdge.__table__,
+            ])
+            _ont_db = AccountSessionLocal()
+            try:
+                OntologyService.ensure_default_seed(_ont_db)
+                logger.info("Ontology tables and default seed verified/created")
+            finally:
+                _ont_db.close()
+    except Exception as _ont_init_err:
+        logger.warning("Ontology startup warning (non-fatal): %s", _ont_init_err)
+
     # Start catalog embedding worker (daemon thread — exits with the process)
     try:
         from app.catalog.embedding_worker import start_embedding_worker
@@ -461,6 +484,9 @@ app.include_router(jobs_internal_router)
 
 from app.ingestion.routes import router as ingestion_router  # noqa: E402
 app.include_router(ingestion_router)
+
+from app.ontology.routes import router as ontology_router  # noqa: E402
+app.include_router(ontology_router)
 
 from services.enterprise_gateway.router import router as eg_router  # noqa: E402
 from services.airflow.router import router as airflow_router  # noqa: E402

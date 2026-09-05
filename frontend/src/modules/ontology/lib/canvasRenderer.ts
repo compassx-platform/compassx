@@ -95,7 +95,7 @@ export function renderOntologyGraph(
     // Check visibility based on zoom
     if (s.kind === 'element' || t.kind === 'element') {
       if (elementAlpha <= 0.05 && !hasEgo) continue;
-    } else if (s.kind === 'capability' || t.kind === 'capability') {
+    } else if (s.kind === 'subdomain' || s.kind === 'capability' || t.kind === 'subdomain' || t.kind === 'capability') {
       if (capabilityAlpha <= 0.1 && !hasEgo) continue;
     }
 
@@ -317,9 +317,9 @@ function drawNode(
   }
 
   // 2. Specific Geometry per Kind
-  if (kind === 'project') {
+  if (kind === 'org' || kind === 'project') {
     // ==========================================
-    // PROJECT: Hexagonal Plate (R=30)
+    // ORG / PROJECT: Hexagonal Plate (R=30)
     // ==========================================
     const hex = getHexPoints(x, y, r);
 
@@ -429,9 +429,9 @@ function drawNode(
       ctx.fillStyle = '#cbd5e1';
       ctx.fillText(String(node.totalDescendantCount), x, y);
     }
-  } else if (kind === 'capability') {
+  } else if (kind === 'subdomain' || kind === 'capability') {
     // ==========================================
-    // CAPABILITY: Smooth Circle / Disc (R=11)
+    // SUBDOMAIN / CAPABILITY: Smooth Circle / Disc (R=11)
     // ==========================================
     ctx.beginPath();
     ctx.arc(x, y, r, 0, Math.PI * 2);
@@ -477,11 +477,11 @@ function drawNode(
   if (showLabels) {
     let shouldRenderLabel = true;
     if (kind === 'element' && zoom < 1.9) shouldRenderLabel = false;
-    if (kind === 'capability' && zoom < 1.2) shouldRenderLabel = false;
+    if ((kind === 'subdomain' || kind === 'capability') && zoom < 1.2) shouldRenderLabel = false;
 
     if (shouldRenderLabel) {
       const labelY = y + r + 13;
-      ctx.font = kind === 'project'
+      ctx.font = (kind === 'org' || kind === 'project')
         ? 'bold 13px system-ui, -apple-system, sans-serif'
         : kind === 'domain'
         ? '600 11px system-ui, -apple-system, sans-serif'
@@ -490,9 +490,9 @@ function drawNode(
       ctx.textAlign = 'center';
       ctx.textBaseline = 'top';
 
-      // Truncate long labels for capabilities/elements
+      // Truncate long labels for subdomains/capabilities/elements
       let labelText = node.title;
-      if (kind === 'capability' && labelText.length > 28) {
+      if ((kind === 'subdomain' || kind === 'capability') && labelText.length > 28) {
         labelText = labelText.substring(0, 26) + '...';
       } else if (kind === 'element' && labelText.length > 22) {
         labelText = labelText.substring(0, 20) + '...';
@@ -504,7 +504,7 @@ function drawNode(
       ctx.fillRect(x - metrics.width / 2 - 4, labelY - 2, metrics.width + 8, 14);
 
       // Label Text color
-      if (kind === 'project') {
+      if (kind === 'org' || kind === 'project') {
         ctx.fillStyle = '#fbbf24'; // Warm amber gold
       } else if (kind === 'domain') {
         ctx.fillStyle = isCenter ? '#a5b4fc' : '#e2e8f0';

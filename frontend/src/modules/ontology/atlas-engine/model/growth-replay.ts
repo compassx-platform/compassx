@@ -26,7 +26,7 @@
  */
 export interface GrowthReplayNode {
   id: string;
-  kind: "project" | "domain" | "capability" | "element";
+  kind: "org" | "project" | "domain" | "subdomain" | "capability" | "element" | string;
   parentId: string | null;
 }
 
@@ -48,7 +48,7 @@ export const GROWTH_REPLAY_RISE_MS = 600;
 /** An input this long after the start cancels the replay (the first 300 ms is the click that started it). */
 export const GROWTH_REPLAY_CANCEL_GRACE_MS = 300;
 
-const KIND_RANK: Record<GrowthReplayNode["kind"], number> = { project: 0, domain: 1, capability: 2, element: 3 };
+const KIND_RANK: Record<string, number> = { org: 0, project: 0, domain: 1, subdomain: 2, capability: 2, element: 3 };
 const byIdAsc = (a: GrowthReplayNode, b: GrowthReplayNode) => (a.id < b.id ? -1 : 1);
 
 /**
@@ -75,12 +75,12 @@ export function growthReplayOrder(nodes: readonly GrowthReplayNode[]): string[] 
     order.push(n.id);
     const children = kids.get(n.id) ?? [];
     // Capabilities (each with its elements) before the parent's direct elements.
-    for (const c of children) if (c.kind === "capability") visit(c);
-    for (const c of children) if (c.kind !== "capability") visit(c);
+    for (const c of children) if (c.kind === "subdomain" || c.kind === "capability") visit(c);
+    for (const c of children) if (c.kind !== "subdomain" && c.kind !== "capability") visit(c);
   };
-  for (const p of nodes.filter((n) => n.kind === "project").sort(byIdAsc)) visit(p);
+  for (const p of nodes.filter((n) => n.kind === "org" || n.kind === "project").sort(byIdAsc)) visit(p);
   for (const d of nodes.filter((n) => n.kind === "domain").sort(byIdAsc)) visit(d);
-  for (const n of [...nodes].sort((a, b) => KIND_RANK[a.kind] - KIND_RANK[b.kind] || (a.id < b.id ? -1 : 1))) visit(n);
+  for (const n of [...nodes].sort((a, b) => (KIND_RANK[a.kind] ?? 3) - (KIND_RANK[b.kind] ?? 3) || (a.id < b.id ? -1 : 1))) visit(n);
   return order;
 }
 

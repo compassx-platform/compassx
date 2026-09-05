@@ -251,7 +251,7 @@ const edgeAlphaReused: number[] = [];
 const nodeVisualCache: (NodeVisual | undefined)[] = new Array(16);
 let nodeVisualCacheTokens: TopologyV2Tokens | null = null;
 let nodeVisualCacheReducedMotion: boolean | null = null;
-const KIND_CACHE_INDEX: Record<WorldNode["kind"], number> = { project: 0, domain: 1, capability: 2, element: 3 };
+const KIND_CACHE_INDEX: Record<string, number> = { org: 0, project: 0, domain: 1, subdomain: 2, capability: 2, element: 3 };
 /** The zero dome frame — shared (and never mutated) by dome-off nodes and the 2D path. */
 const ZERO_DOME_FRAME: DomeNodeFrame = { dx: 0, dy: 0, s: 1, a: 0, u: 0 };
 /**
@@ -325,24 +325,26 @@ let lastLabelRampNow = 0;
 // stroke" (a 1.5px amber outer stroke). The outer stroke hardcodes amber for
 // project (see `resolveNodeVisual` below), so its width is specified
 // independently of the other kinds' tier-neutral outlines.
-const LINE_WIDTH_BY_KIND: Record<WorldNode["kind"], number> = {
+const LINE_WIDTH_BY_KIND: Record<string, number> = {
+  org: 1.5,
   project: 1.5,
   domain: 1.6,
+  subdomain: 1.3,
   capability: 1.3,
   element: 1,
 };
 
-function tierFill(kind: WorldNode["kind"], tokens: TopologyV2Tokens): string {
-  if (kind === "project") return tokens.nodeFillProject;
+function tierFill(kind: string, tokens: TopologyV2Tokens): string {
+  if (kind === "org" || kind === "project") return tokens.nodeFillProject;
   if (kind === "domain") return tokens.nodeFillDomain;
-  if (kind === "capability") return tokens.nodeFillCapability;
+  if (kind === "subdomain" || kind === "capability") return tokens.nodeFillCapability;
   return tokens.nodeFillElement;
 }
 
-function tierStroke(kind: WorldNode["kind"], tokens: TopologyV2Tokens): string {
-  if (kind === "project") return tokens.nodeStrokeProject;
+function tierStroke(kind: string, tokens: TopologyV2Tokens): string {
+  if (kind === "org" || kind === "project") return tokens.nodeStrokeProject;
   if (kind === "domain") return tokens.nodeStrokeDomain;
-  if (kind === "capability") return tokens.nodeStrokeCapability;
+  if (kind === "subdomain" || kind === "capability") return tokens.nodeStrokeCapability;
   return tokens.nodeStrokeElement;
 }
 
@@ -413,7 +415,7 @@ function resolveNodeVisual(
     normalFill = tokens.nodeFillStale;
     normalStroke = tokens.nodeStrokeStale;
     normalBreathe = false;
-  } else if (node.kind === "project") {
+  } else if (node.kind === "org" || node.kind === "project") {
     normalFill = tierFill(node.kind, tokens);
     normalStroke = tokens.amberHub;
   } else {
@@ -445,7 +447,7 @@ function resolveNodeVisual(
     focusedFill = tokens.nodeFillStale;
     focusedStroke = tokens.nodeStrokeStale;
     focusedBreathe = false;
-  } else if (node.kind === "project") {
+  } else if (node.kind === "org" || node.kind === "project") {
     focusedFill = tierFill(node.kind, tokens);
     focusedStroke = tokens.amberHub;
   } else {
@@ -2069,7 +2071,7 @@ export function drawTopologyFrame(params: FrameDrawParams): void {
     // show (prototype `if (n.count && (project||domain) ...)`).
     // 3D — no numeral is engraved on a dot: this layer is about form, not a data table.
     const showCount =
-      (node.kind === "project" || node.kind === "domain") && node.count > 0 && !(domeOn && nodeDome.a > 0.5);
+      (node.kind === "org" || node.kind === "project" || node.kind === "domain") && node.count > 0 && !(domeOn && nodeDome.a > 0.5);
     // Canvas-emphasis slice §C — hover ring eligibility. `hoveredNodeId` is
     // already nulled by the caller (`use-topology-loop.ts`) whenever a focus
     // is active, so this is never true at the same time as `egoState ===
@@ -2179,7 +2181,7 @@ export function drawTopologyFrame(params: FrameDrawParams): void {
     // free.
     // perf 2026-08-19 — the `farT` test moved first, so at circuit altitude
     // (farT = 0) even the Set lookup is skipped. Same logic.
-    if (farT > 0.02 && (world.brightStarIds.has(node.id) || node.kind === "project")) {
+    if (farT > 0.02 && (world.brightStarIds.has(node.id) || node.kind === "org" || node.kind === "project")) {
       drawDiffractionSpike(ctx, {
         screenX: screen.x,
         screenY: screen.y,

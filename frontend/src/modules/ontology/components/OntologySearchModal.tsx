@@ -73,14 +73,18 @@ export const OntologySearchModal: React.FC<OntologySearchModalProps> = ({
 
   const getKindIcon = (kind: OntologyKind) => {
     switch (kind) {
+      case 'org':
       case 'project':
         return <Hexagon size={14} className="text-[#fbbf24]" />;
       case 'domain':
         return <Square size={14} className="text-[#a5b4fc]" />;
+      case 'subdomain':
       case 'capability':
         return <Circle size={14} className="text-[#7dd3fc]" />;
       case 'element':
         return <Hash size={14} className="text-[#94a3b8]" />;
+      default:
+        return <Circle size={14} className="text-[#cbd5e1]" />;
     }
   };
 
