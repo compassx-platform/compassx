@@ -84,7 +84,7 @@ ${node.description || ''}
   };
 
   return (
-    <div className="ontology-side-drawer absolute right-4 top-16 bottom-4 w-96 max-w-[calc(100vw-2rem)] z-30 flex flex-col rounded-2xl bg-[#0f121d]/90 backdrop-blur-xl border border-[#23293d] shadow-2xl overflow-hidden text-[#e2e8f0]">
+    <div className="ontology-side-drawer absolute right-2.5 top-10 bottom-2.5 w-96 max-w-[calc(100vw-2rem)] z-30 flex flex-col rounded-2xl bg-[#0f121d]/90 backdrop-blur-xl border border-[#23293d] shadow-2xl overflow-hidden text-[#e2e8f0]">
       {/* Header */}
       <div className="p-5 border-b border-[#23293d] flex items-start justify-between gap-3 bg-[#141827]/60">
         <div className="flex-1 min-w-0">

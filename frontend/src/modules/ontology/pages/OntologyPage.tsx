@@ -10,6 +10,7 @@ import { clearTopologyV2TokensCache } from '../atlas-engine/tokens/read-topology
 import { parseOntologyYaml, toTopologyV2Format, getDefaultDataset } from '../lib/ontologyParser';
 import { DEFAULT_ONTOLOGY_YAML } from '../data/defaultOntologyData';
 import { OntologyToolbar } from '../components/OntologyToolbar';
+import { OntologyConfigMenu } from '../components/OntologyConfigMenu';
 import { OntologySideDrawer } from '../components/OntologySideDrawer';
 import { OntologySearchModal } from '../components/OntologySearchModal';
 import { OntologyYamlEditorModal } from '../components/OntologyYamlEditorModal';
@@ -193,6 +194,18 @@ export default function OntologyPage() {
     return true;
   };
 
+  // Reset to default YAML dataset
+  const handleResetDefaultData = useCallback(() => {
+    const defaultData = getDefaultDataset();
+    setYamlContent(DEFAULT_ONTOLOGY_YAML);
+    setDataset(defaultData);
+    setSelectedNodeId(null);
+    setVisitedTrail([]);
+    setExpandedParents(new Set());
+    setRelayoutToken(t => t + 1);
+    setFitViewToken(t => t + 1);
+  }, []);
+
   // Currently focused node object for drawer
   const focusedNode = useMemo(() => {
     if (!selectedNodeId) return null;
@@ -228,8 +241,8 @@ export default function OntologyPage() {
       </div>
 
       {/* Top Left Title & Breadcrumbs Trail Pill */}
-      <div className="ontology-header-pills absolute top-4 left-4 z-30 flex items-center gap-3 pointer-events-auto">
-        <div className="ontology-pill flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-[#131722]/85 backdrop-blur-md border border-[#2b334a]/80 shadow-xl text-white">
+      <div className="ontology-header-pills absolute top-1.5 left-2.5 z-30 flex items-center gap-2 pointer-events-auto">
+        <div className="ontology-pill flex items-center gap-2 px-2.5 py-0.5 rounded-full bg-[#131722]/85 backdrop-blur-md border border-[#2b334a]/80 shadow-xl text-white">
           <Sparkles size={14} className="text-[#fbbf24]" />
           <span className="text-xs font-bold tracking-tight">Ontology Topology Map</span>
           <span className="ontology-pill-count text-[10px] font-mono px-1.5 py-0.5 rounded bg-[#1e2438] text-[#94a3b8]">
@@ -267,6 +280,24 @@ export default function OntologyPage() {
         onToggleArrangement={handleToggleArrangement}
         themeMode={themeMode}
         onToggleTheme={handleToggleTheme}
+      />
+
+      {/* Top Right Floating Configuration Button & Dropdown */}
+      <OntologyConfigMenu
+        themeMode={themeMode}
+        onToggleTheme={handleToggleTheme}
+        view3d={view3d}
+        onToggle3D={handleToggle3D}
+        mapArrangement={mapArrangement}
+        onToggleArrangement={handleToggleArrangement}
+        expandedAll={expandedAll}
+        onToggleExpandAll={handleToggleExpandAll}
+        onAutoArrange={handleAutoArrange}
+        onFitView={handleFitView}
+        onOpenYamlEditor={() => setYamlEditorOpen(true)}
+        onResetDefaultData={handleResetDefaultData}
+        nodeCount={nodes.length}
+        edgeCount={edges.length}
       />
 
       {/* Edge Hover Microcard Tooltip */}
