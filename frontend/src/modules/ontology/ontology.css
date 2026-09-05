@@ -241,6 +241,12 @@
   transition: all 0.2s ease;
 }
 
+@media (max-width: 1280px) {
+  .ontology-pill .ontology-pill-count {
+    display: none;
+  }
+}
+
 /* Floating Top Center Toolbar */
 .ontology-toolbar-container {
   position: absolute;
@@ -261,10 +267,10 @@
   color: #cbd5e1;
   pointer-events: auto;
   white-space: nowrap;
-  max-width: calc(100vw - 32px);
+  max-width: calc(100% - 32px);
   overflow-x: auto;
   scrollbar-width: none;
-  transition: all 0.2s ease;
+  transition: background-color 0.2s ease, border-color 0.2s ease, color 0.2s ease, box-shadow 0.2s ease;
 }
 
 .ontology-toolbar-container::-webkit-scrollbar {

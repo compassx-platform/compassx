@@ -232,7 +232,7 @@ export default function OntologyPage() {
         <div className="ontology-pill flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-[#131722]/85 backdrop-blur-md border border-[#2b334a]/80 shadow-xl text-white">
           <Sparkles size={14} className="text-[#fbbf24]" />
           <span className="text-xs font-bold tracking-tight">Ontology Topology Map</span>
-          <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-[#1e2438] text-[#94a3b8]">
+          <span className="ontology-pill-count text-[10px] font-mono px-1.5 py-0.5 rounded bg-[#1e2438] text-[#94a3b8]">
             {nodes.length} nodes · {edges.length} relations
           </span>
         </div>
