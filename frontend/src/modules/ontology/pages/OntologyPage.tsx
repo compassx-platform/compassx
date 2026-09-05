@@ -6,6 +6,7 @@ import {
   type TopologyV2Node,
   type TopologyV2Edge,
 } from '../atlas-engine';
+import { clearTopologyV2TokensCache } from '../atlas-engine/tokens/read-topology-v2-tokens';
 import { parseOntologyYaml, toTopologyV2Format, getDefaultDataset } from '../lib/ontologyParser';
 import { DEFAULT_ONTOLOGY_YAML } from '../data/defaultOntologyData';
 import { OntologyToolbar } from '../components/OntologyToolbar';
@@ -20,6 +21,23 @@ export default function OntologyPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [yamlContent, setYamlContent] = useState<string>(DEFAULT_ONTOLOGY_YAML);
   const [dataset, setDataset] = useState(() => getDefaultDataset());
+
+  // Light / Dark Theme Mode
+  const [themeMode, setThemeMode] = useState<'dark' | 'light'>(() => {
+    if (typeof window === 'undefined') return 'dark';
+    const stored = localStorage.getItem('ontology_theme_mode');
+    if (stored === 'light' || stored === 'dark') return stored;
+    return 'dark';
+  });
+
+  const handleToggleTheme = useCallback(() => {
+    setThemeMode(prev => {
+      const next = prev === 'dark' ? 'light' : 'dark';
+      localStorage.setItem('ontology_theme_mode', next);
+      clearTopologyV2TokensCache();
+      return next;
+    });
+  }, []);
 
   // Tokens for forcing canvas updates
   const [fitViewToken, setFitViewToken] = useState(1);
@@ -125,7 +143,7 @@ export default function OntologyPage() {
       const nextState = !prev;
       if (nextState) {
         const allParentIds = new Set<string>();
-        for (const n of nodes) {
+        for (const n of dataset.nodes) {
           if (n.parentId) {
             allParentIds.add(n.parentId);
           }
@@ -140,7 +158,7 @@ export default function OntologyPage() {
       return nextState;
     });
     setFitViewToken(t => t + 1);
-  }, [nodes]);
+  }, [dataset.nodes]);
 
   // Auto-arrange / Reset physics
   const handleAutoArrange = () => {
@@ -183,7 +201,8 @@ export default function OntologyPage() {
 
   return (
     <div
-      className="ontology-page-root relative w-full h-full flex flex-col bg-[#090a10] overflow-hidden select-none"
+      className="ontology-page-root relative w-full h-full flex flex-col overflow-hidden select-none"
+      data-theme={themeMode}
     >
       {/* Top Left Title & Breadcrumbs Trail Pill */}
       <div className="ontology-header-pills absolute top-4 left-4 z-20 flex items-center gap-3">
@@ -223,6 +242,8 @@ export default function OntologyPage() {
         mapArrangement={mapArrangement}
         onToggle3D={handleToggle3D}
         onToggleArrangement={handleToggleArrangement}
+        themeMode={themeMode}
+        onToggleTheme={handleToggleTheme}
       />
 
       {/* Verbatim Ported TopologyMapV2 Canvas Engine */}
@@ -244,13 +265,14 @@ export default function OntologyPage() {
           walkNoticeLabel="No further connection in this direction"
           canvasLabel="Ontology Architecture Map"
           canvasBackground="dot"
+          theme={themeMode}
         />
       </div>
 
       {/* Edge Hover Microcard Tooltip */}
       {hoverEdgeCard && (
         <div
-          className="fixed z-30 pointer-events-none transform -translate-x-1/2 -translate-y-full mb-3 px-3 py-1.5 rounded-lg bg-[#141824]/95 backdrop-blur-md border border-[#3b476e] shadow-2xl text-xs text-white transition-opacity duration-150"
+          className="ontology-edge-tooltip fixed z-30 pointer-events-none transform -translate-x-1/2 -translate-y-full mb-3 px-3 py-1.5 rounded-lg bg-[#141824]/95 backdrop-blur-md border border-[#3b476e] shadow-2xl text-xs text-white transition-opacity duration-150"
           style={{
             left: hoverEdgeCard.x,
             top: hoverEdgeCard.y - 12,

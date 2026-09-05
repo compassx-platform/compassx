@@ -448,7 +448,15 @@ let cached: TopologyV2Tokens | null = null;
  */
 export function getTopologyV2Tokens(element?: Element): TopologyV2Tokens {
   if (cached) return cached;
-  cached = readFromElement(element ?? document.documentElement);
+  const targetElement =
+    element ??
+    (typeof document !== "undefined"
+      ? (document.querySelector(".ontology-page-root") as Element | null) ?? document.documentElement
+      : null);
+  if (!targetElement) {
+    throw new TopologyV2TokenError(["document not available"]);
+  }
+  cached = readFromElement(targetElement);
   return cached;
 }
 

@@ -11,6 +11,7 @@
   background-color: #090a10;
   overflow: hidden;
   user-select: none;
+  transition: background-color 0.25s ease;
 }
 
 .page-content:has(.ontology-page-root) {
@@ -22,6 +23,176 @@
 .page-content .ontology-page-root {
   height: 100%;
   min-height: 100%;
+}
+
+/* ==========================================================================
+   Light / Dark Mode Token Definitions for Canvas 2D Engine
+   ========================================================================== */
+
+.ontology-page-root[data-theme="light"] {
+  background-color: #f8fafc;
+  color: #1e293b;
+
+  /* 2.1 Node surface tokens - Light Mode */
+  --topology-v2-node-fill-project: #ffffff;
+  --topology-v2-node-fill-domain: #ffffff;
+  --topology-v2-node-fill-capability: #f8fafc;
+  --topology-v2-node-fill-element: #f1f5f9;
+  --topology-v2-ink-depth-leaf: #64748b;
+  --topology-v2-ink-depth-mid: #475569;
+  --topology-v2-ink-depth-top: #1e293b;
+  --topology-v2-node-stroke-project: #d97706;
+  --topology-v2-node-stroke-domain: #4f46e5;
+  --topology-v2-node-stroke-capability: #0284c7;
+  --topology-v2-node-stroke-element: #64748b;
+  --topology-v2-node-fill-dim: #f1f5f9;
+  --topology-v2-node-stroke-dim: #cbd5e1;
+  --topology-v2-spotlight-rest-alpha: 0.65;
+  --topology-v2-spotlight-ring-speed: 0.012;
+  --topology-v2-node-fill-stale: #f8fafc;
+  --topology-v2-node-stroke-stale: #94a3b8;
+  --topology-v2-node-hole-fill: #ffffff;
+  --topology-v2-indigo: #4f46e5;
+  --topology-v2-indigo-bright: #4338ca;
+  --topology-v2-amber-hub: #b45309;
+  --topology-v2-recent-change: #0d9488;
+  --topology-v2-numeral-shadow: #ffffff;
+  --topology-v2-numeral-face: #334155;
+  --topology-v2-cluster-chip-border-rest: #94a3b8;
+  --topology-v2-cluster-chip-ink-rest: #475569;
+  --topology-v2-node-sheen-tint: #ffffff;
+  --topology-v2-node-sheen-blend: 0.8;
+  --topology-v2-project-hairline-inner: rgba(217, 119, 6, 0.4);
+  --topology-v2-project-pin-tick: rgba(217, 119, 6, 0.65);
+  --topology-v2-selection-ring-indigo: #4338ca;
+  --topology-v2-selection-ring-hairline: rgba(79, 70, 229, 0.45);
+  --topology-v2-hover-ring: rgba(99, 102, 241, 0.55);
+  --topology-v2-hover-shimmer-seg: 0.16;
+  --topology-v2-hover-shimmer-period-ms: 2400;
+
+  /* 2.2 Edge, Label, Background tokens - Light Mode */
+  --topology-v2-edge-contains: #94a3b8;
+  --topology-v2-edge-contains-l0: #475569;
+  --topology-v2-edge-contains-l2: #cbd5e1;
+  --topology-v2-edge-passthrough-alpha: 0.35;
+  --topology-v2-node-min-separation-ratio: 1.35;
+  --topology-v2-radius-magnitude-k: 0.45;
+  --topology-v2-edge-selected: rgba(79, 70, 229, 0.8);
+  --topology-v2-expanded-cohort: rgba(99, 102, 241, 0.65);
+  --topology-v2-dust-parallax-min: 0.15;
+  --topology-v2-dust-parallax-max: 0.45;
+  --topology-v2-canvas-bg-parallax: 0.82;
+  --topology-v2-edge-depends: #6366f1;
+  --topology-v2-edge-dim: #e2e8f0;
+  --topology-v2-hull-stroke: #cbd5e1;
+  --topology-v2-label-project: #92400e;
+  --topology-v2-label-domain: #1e293b;
+  --topology-v2-label-capability: #334155;
+  --topology-v2-label-element: #475569;
+  --topology-v2-label-max-width: 168;
+  --topology-v2-canvas-bg-near: #f8fafc;
+  --topology-v2-canvas-bg-far: #f1f5f9;
+  --topology-v2-grid-minor: rgba(148, 163, 184, 0.2);
+  --topology-v2-grid-major: rgba(148, 163, 184, 0.4);
+  --topology-v2-vignette-base-alpha: 0.05;
+  --topology-v2-vignette-far-alpha: 0.02;
+  --topology-v2-dome-ring: #cbd5e1;
+  --canvas-bg-ink-max: 0.08;
+  --canvas-bg-particle-rgb: 100, 116, 139;
+
+  /* Panel Tokens */
+  --topology-v2-panel-surface: #ffffff;
+  --topology-v2-panel-border: rgba(203, 213, 225, 0.8);
+  --topology-v2-panel-divider: rgba(226, 232, 240, 0.8);
+  --topology-v2-panel-shadow: 0 8px 32px rgba(0, 0, 0, 0.08);
+  --topology-v2-panel-row-hover: rgba(241, 245, 249, 0.8);
+  --topology-v2-panel-text-primary: #0f172a;
+  --topology-v2-panel-text-secondary: #475569;
+  --topology-v2-panel-text-tertiary: #64748b;
+  --topology-v2-panel-text-quaternary: #94a3b8;
+}
+
+.ontology-page-root[data-theme="dark"] {
+  background-color: #090a10;
+  color: #e2e8f0;
+
+  /* 2.1 Node surface tokens - Dark Mode */
+  --topology-v2-node-fill-project: #1c1c22;
+  --topology-v2-node-fill-domain: #191920;
+  --topology-v2-node-fill-capability: #17171d;
+  --topology-v2-node-fill-element: #15151a;
+  --topology-v2-ink-depth-leaf: #7a7a86;
+  --topology-v2-ink-depth-mid: #80808c;
+  --topology-v2-ink-depth-top: #8a8a96;
+  --topology-v2-node-stroke-project: #9898a3;
+  --topology-v2-node-stroke-domain: #8a8a96;
+  --topology-v2-node-stroke-capability: #80808c;
+  --topology-v2-node-stroke-element: #7a7a86;
+  --topology-v2-node-fill-dim: #1e1e24;
+  --topology-v2-node-stroke-dim: #6a6a74;
+  --topology-v2-spotlight-rest-alpha: 0.65;
+  --topology-v2-spotlight-ring-speed: 0.012;
+  --topology-v2-node-fill-stale: #141418;
+  --topology-v2-node-stroke-stale: #454549;
+  --topology-v2-node-hole-fill: #0c0c10;
+  --topology-v2-indigo: #6366f1;
+  --topology-v2-indigo-bright: #8890e0;
+  --topology-v2-amber-hub: #d4b478;
+  --topology-v2-recent-change: #3fbfae;
+  --topology-v2-numeral-shadow: #08080a;
+  --topology-v2-numeral-face: #8c8c94;
+  --topology-v2-cluster-chip-border-rest: #5c5c65;
+  --topology-v2-cluster-chip-ink-rest: #5f5f65;
+  --topology-v2-node-sheen-tint: #232329;
+  --topology-v2-node-sheen-blend: 0.6;
+  --topology-v2-project-hairline-inner: rgba(212, 180, 120, 0.35);
+  --topology-v2-project-pin-tick: rgba(212, 180, 120, 0.5);
+  --topology-v2-selection-ring-indigo: #8890e0;
+  --topology-v2-selection-ring-hairline: rgba(94, 106, 210, 0.45);
+  --topology-v2-hover-ring: rgba(99, 102, 241, 0.55);
+  --topology-v2-hover-shimmer-seg: 0.16;
+  --topology-v2-hover-shimmer-period-ms: 2400;
+
+  /* 2.2 Edge, Label, Background tokens - Dark Mode */
+  --topology-v2-edge-contains: #80808c;
+  --topology-v2-edge-contains-l0: #8a8a96;
+  --topology-v2-edge-contains-l2: #7a7a86;
+  --topology-v2-edge-passthrough-alpha: 0.3;
+  --topology-v2-node-min-separation-ratio: 1.35;
+  --topology-v2-radius-magnitude-k: 0.45;
+  --topology-v2-edge-selected: rgba(200, 210, 255, 0.66);
+  --topology-v2-expanded-cohort: rgba(146, 156, 194, 0.72);
+  --topology-v2-dust-parallax-min: 0.15;
+  --topology-v2-dust-parallax-max: 0.45;
+  --topology-v2-canvas-bg-parallax: 0.82;
+  --topology-v2-edge-depends: #666685;
+  --topology-v2-edge-dim: #1e1e22;
+  --topology-v2-hull-stroke: #3a3a42;
+  --topology-v2-label-project: #d4b478;
+  --topology-v2-label-domain: #b8b8c1;
+  --topology-v2-label-capability: #84848c;
+  --topology-v2-label-element: #6a6a73;
+  --topology-v2-label-max-width: 168;
+  --topology-v2-canvas-bg-near: #0a0a0d;
+  --topology-v2-canvas-bg-far: #050507;
+  --topology-v2-grid-minor: #0e0e13;
+  --topology-v2-grid-major: #121218;
+  --topology-v2-vignette-base-alpha: 0.32;
+  --topology-v2-vignette-far-alpha: 0.18;
+  --topology-v2-dome-ring: #43434f;
+  --canvas-bg-ink-max: 0.08;
+  --canvas-bg-particle-rgb: 150, 165, 220;
+
+  /* Panel Tokens */
+  --topology-v2-panel-surface: #17171c;
+  --topology-v2-panel-border: rgba(255, 255, 255, 0.08);
+  --topology-v2-panel-divider: rgba(255, 255, 255, 0.06);
+  --topology-v2-panel-shadow: 0 8px 32px rgba(0, 0, 0, 0.45);
+  --topology-v2-panel-row-hover: rgba(255, 255, 255, 0.06);
+  --topology-v2-panel-text-primary: #ececf0;
+  --topology-v2-panel-text-secondary: #a3a3ac;
+  --topology-v2-panel-text-tertiary: #868690;
+  --topology-v2-panel-text-quaternary: #82828a;
 }
 
 /* Floating Title & Breadcrumbs Trail */
@@ -50,6 +221,7 @@
   color: #ffffff;
   font-size: 12px;
   font-weight: 600;
+  transition: all 0.2s ease;
 }
 
 .ontology-pill-trail {
@@ -66,6 +238,7 @@
   color: #c7d2fe;
   font-size: 12px;
   font-weight: 500;
+  transition: all 0.2s ease;
 }
 
 /* Floating Top Center Toolbar */
@@ -86,6 +259,7 @@
   border: 1px solid rgba(43, 51, 74, 0.85);
   box-shadow: 0 20px 30px -10px rgba(0, 0, 0, 0.6);
   color: #cbd5e1;
+  transition: all 0.2s ease;
 }
 
 .ontology-toolbar-btn {
@@ -153,6 +327,7 @@
   overflow: hidden;
   color: #e2e8f0;
   animation: ontologySlideIn 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  transition: background-color 0.2s ease, border-color 0.2s ease;
 }
 
 @keyframes ontologySlideIn {
@@ -195,6 +370,7 @@
   box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.8);
   overflow: hidden;
   color: #e2e8f0;
+  transition: background-color 0.2s ease, border-color 0.2s ease;
 }
 
 .ontology-modal-content-lg {
@@ -206,6 +382,7 @@
   box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.8);
   overflow: hidden;
   color: #e2e8f0;
+  transition: background-color 0.2s ease, border-color 0.2s ease;
 }
 
 /* Bottom Right Legend */
@@ -222,4 +399,221 @@
   box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5);
   color: #cbd5e1;
   overflow: hidden;
+  transition: background-color 0.2s ease, border-color 0.2s ease;
 }
+
+/* ==========================================================================
+   Light Theme UI Overrides
+   ========================================================================== */
+
+.ontology-page-root[data-theme="light"] .ontology-pill {
+  background: rgba(255, 255, 255, 0.94);
+  border-color: rgba(203, 213, 225, 0.85);
+  color: #0f172a;
+  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.08), 0 4px 6px -4px rgba(0, 0, 0, 0.04);
+}
+
+.ontology-page-root[data-theme="light"] .ontology-pill span.font-mono {
+  background: #f1f5f9;
+  color: #475569;
+}
+
+.ontology-page-root[data-theme="light"] .ontology-pill-trail {
+  background: rgba(240, 244, 255, 0.95);
+  border-color: rgba(199, 210, 254, 0.9);
+  color: #3730a3;
+  box-shadow: 0 10px 25px -5px rgba(79, 70, 229, 0.1);
+}
+
+.ontology-page-root[data-theme="light"] .ontology-toolbar-container {
+  background: rgba(255, 255, 255, 0.94);
+  border-color: rgba(203, 213, 225, 0.85);
+  box-shadow: 0 20px 30px -10px rgba(0, 0, 0, 0.08), 0 4px 6px -2px rgba(0, 0, 0, 0.04);
+  color: #475569;
+}
+
+.ontology-page-root[data-theme="light"] .ontology-toolbar-btn {
+  color: #475569;
+}
+
+.ontology-page-root[data-theme="light"] .ontology-toolbar-btn:hover {
+  background: #f1f5f9;
+  color: #0f172a;
+}
+
+.ontology-page-root[data-theme="light"] .ontology-toolbar-btn.active {
+  background: #e0e7ff;
+  color: #3730a3;
+  border-color: #c7d2fe;
+}
+
+.ontology-page-root[data-theme="light"] .ontology-toolbar-divider {
+  background: #e2e8f0;
+}
+
+.ontology-page-root[data-theme="light"] .ontology-kbd-badge {
+  background: #f1f5f9;
+  color: #64748b;
+  border-color: #cbd5e1;
+}
+
+.ontology-page-root[data-theme="light"] .ontology-side-drawer {
+  background: rgba(255, 255, 255, 0.95);
+  border-color: #e2e8f0;
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.15);
+  color: #334155;
+}
+
+.ontology-page-root[data-theme="light"] .ontology-side-drawer .bg-\[\#141827\]\/60 {
+  background-color: rgba(248, 250, 252, 0.85) !important;
+}
+
+.ontology-page-root[data-theme="light"] .ontology-side-drawer .border-\[\#23293d\] {
+  border-color: #e2e8f0 !important;
+}
+
+.ontology-page-root[data-theme="light"] .ontology-side-drawer .text-white {
+  color: #0f172a !important;
+}
+
+.ontology-page-root[data-theme="light"] .ontology-side-drawer .text-\[\#e2e8f0\] {
+  color: #334155 !important;
+}
+
+.ontology-page-root[data-theme="light"] .ontology-side-drawer .text-\[\#cbd5e1\] {
+  color: #475569 !important;
+}
+
+.ontology-page-root[data-theme="light"] .ontology-side-drawer .text-\[\#94a3b8\] {
+  color: #64748b !important;
+}
+
+.ontology-page-root[data-theme="light"] .ontology-side-drawer .bg-\[\#141828\] {
+  background-color: #f1f5f9 !important;
+}
+
+.ontology-page-root[data-theme="light"] .ontology-side-drawer .bg-\[\#161b2e\] {
+  background-color: #f8fafc !important;
+}
+
+.ontology-page-root[data-theme="light"] .ontology-side-drawer .bg-\[\#1e2438\] {
+  background-color: #e2e8f0 !important;
+}
+
+.ontology-page-root[data-theme="light"] .ontology-side-drawer .border-\[\#2b3553\] {
+  border-color: #cbd5e1 !important;
+}
+
+.ontology-page-root[data-theme="light"] .ontology-legend-container {
+  background: rgba(255, 255, 255, 0.95);
+  border-color: #e2e8f0;
+  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.08);
+  color: #475569;
+}
+
+.ontology-page-root[data-theme="light"] .ontology-legend-container .text-white {
+  color: #0f172a !important;
+}
+
+.ontology-page-root[data-theme="light"] .ontology-legend-container .text-\[\#94a3b8\] {
+  color: #64748b !important;
+}
+
+.ontology-page-root[data-theme="light"] .ontology-legend-container .border-\[\#20273c\] {
+  border-color: #e2e8f0 !important;
+}
+
+.ontology-page-root[data-theme="light"] .ontology-legend-container button:hover {
+  background-color: #f1f5f9 !important;
+}
+
+.ontology-page-root[data-theme="light"] .ontology-modal-overlay {
+  background: rgba(15, 23, 42, 0.4);
+}
+
+.ontology-page-root[data-theme="light"] .ontology-modal-content,
+.ontology-page-root[data-theme="light"] .ontology-modal-content-lg {
+  background: #ffffff;
+  border-color: #e2e8f0;
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.2);
+  color: #1e293b;
+}
+
+.ontology-page-root[data-theme="light"] .ontology-modal-content .bg-\[\#141827\],
+.ontology-page-root[data-theme="light"] .ontology-modal-content-lg .bg-\[\#141827\] {
+  background-color: #f8fafc !important;
+}
+
+.ontology-page-root[data-theme="light"] .ontology-modal-content .border-\[\#23293d\],
+.ontology-page-root[data-theme="light"] .ontology-modal-content-lg .border-\[\#23293d\] {
+  border-color: #e2e8f0 !important;
+}
+
+.ontology-page-root[data-theme="light"] .ontology-modal-content .text-white,
+.ontology-page-root[data-theme="light"] .ontology-modal-content-lg .text-white {
+  color: #0f172a !important;
+}
+
+.ontology-page-root[data-theme="light"] .ontology-modal-content input,
+.ontology-page-root[data-theme="light"] .ontology-modal-content textarea,
+.ontology-page-root[data-theme="light"] .ontology-modal-content-lg textarea {
+  color: #0f172a !important;
+}
+
+.ontology-page-root[data-theme="light"] .ontology-modal-content input::placeholder,
+.ontology-page-root[data-theme="light"] .ontology-modal-content textarea::placeholder,
+.ontology-page-root[data-theme="light"] .ontology-modal-content-lg textarea::placeholder {
+  color: #94a3b8 !important;
+}
+
+.ontology-page-root[data-theme="light"] .ontology-modal-content-lg .bg-\[\#121624\] {
+  background-color: #f1f5f9 !important;
+}
+
+.ontology-page-root[data-theme="light"] .ontology-modal-content-lg .bg-\[\#090b12\] {
+  background-color: #f8fafc !important;
+}
+
+.ontology-page-root[data-theme="light"] .ontology-modal-content-lg .bg-\[\#0b0e17\] {
+  background-color: #ffffff !important;
+}
+
+.ontology-page-root[data-theme="light"] .ontology-modal-content-lg .border-\[\#20263c\],
+.ontology-page-root[data-theme="light"] .ontology-modal-content-lg .border-\[\#20263a\] {
+  border-color: #e2e8f0 !important;
+}
+
+.ontology-page-root[data-theme="light"] .ontology-modal-content-lg .bg-\[\#1a2033\] {
+  background-color: #f1f5f9 !important;
+  border-color: #cbd5e1 !important;
+  color: #334155 !important;
+}
+
+.ontology-page-root[data-theme="light"] .ontology-modal-content .hover\:bg-\[\#171d2f\]:hover {
+  background-color: #f1f5f9 !important;
+}
+
+.ontology-page-root[data-theme="light"] .ontology-modal-content .bg-\[\#1a2238\] {
+  background-color: #e0e7ff !important;
+}
+
+.ontology-page-root[data-theme="light"] .ontology-edge-tooltip {
+  background-color: rgba(255, 255, 255, 0.95) !important;
+  border-color: #cbd5e1 !important;
+  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.15) !important;
+  color: #1e293b !important;
+}
+
+.ontology-page-root[data-theme="light"] .ontology-edge-tooltip .text-white {
+  color: #0f172a !important;
+}
+
+.ontology-page-root[data-theme="light"] .ontology-edge-tooltip .text-\[\#94a3b8\] {
+  color: #64748b !important;
+}
+
+.ontology-page-root[data-theme="light"] .ontology-edge-tooltip .text-\[\#818cf8\] {
+  color: #4f46e5 !important;
+}
+
+

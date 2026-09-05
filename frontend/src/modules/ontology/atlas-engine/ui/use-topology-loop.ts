@@ -162,7 +162,7 @@ function overviewBoundsFor(
 ) {
   return fit === "full" ? world.bounds : computeRevealedBounds(world, tokens, expandedParents, clustered);
 }
-import type { TopologyV2Tokens } from "../tokens/read-topology-v2-tokens";
+import { clearTopologyV2TokensCache, type TopologyV2Tokens } from "../tokens/read-topology-v2-tokens";
 
 /**
  * How fast a neighbour's tug offset eases toward its target (or back to 0 on
@@ -467,6 +467,8 @@ export interface UseTopologyLoopArgs {
   wheelIntent?: "zoom" | "page-scroll";
   /** Ambient sleep delay — see `ambientSleepDelayMs` on `TopologyMapV2`. */
   ambientSleepDelayMs?: number;
+  /** UI Color Theme (light / dark) */
+  theme?: "light" | "dark";
 }
 
 /** Immutable empties so the dome's collapsed/chip consumers allocate nothing per frame. */
@@ -484,7 +486,7 @@ export type UseTopologyLoopResult = TopologyPointerHandlers & {
 };
 
 export function useTopologyLoop(args: UseTopologyLoopArgs): UseTopologyLoopResult {
-  const { nodes, edges, focusedSlug, emphasizedNeighborSlug = null, dataSourceKey = null, overviewFit = "spine", fitViewToken, growthReplayToken = 0, spotlightFitToken = 0, relayoutToken, revealToken = 0, onSelectEdge, onHoverEdge, onSelect, onPaneClick, onVisibleCountChange, onGraphStatsChange, onZoomTierChange, onContextMenuNode, onContextMenuPane, agentFocusNodeId = null, spotlightIds = null, mapLensKind = "recent", pathEdgeIds = null, selectedEdge = null, previewEdge = null, expandedParents = EMPTY_EXPANDED_SET, onToggleCluster, onHoverCluster, realmRootId = null, onEnterRealm, realmEnterButtonRef, realmCaption = null, visitedTrail = EMPTY_TRAIL, trailLensActiveRef, clusterBarLabels = null, trailHoverNodeIdRef, panelHoverNodeIdRef, tierReveal = DEFAULT_TIER_REVEAL, tourAnchorNodeId = null, tourAnchorRef, glyphSet = "geometric", canvasBackground = "dot", view3d = false, mapArrangement = DEFAULT_MAP_ARRANGEMENT, detailPanelVisible = false, footprint = null, expand = DEFAULT_EXPAND, wheelIntent = "zoom", ambientSleepDelayMs, onWalkDeadEnd = null } = args;
+  const { nodes, edges, focusedSlug, emphasizedNeighborSlug = null, dataSourceKey = null, overviewFit = "spine", fitViewToken, growthReplayToken = 0, spotlightFitToken = 0, relayoutToken, revealToken = 0, onSelectEdge, onHoverEdge, onSelect, onPaneClick, onVisibleCountChange, onGraphStatsChange, onZoomTierChange, onContextMenuNode, onContextMenuPane, agentFocusNodeId = null, spotlightIds = null, mapLensKind = "recent", pathEdgeIds = null, selectedEdge = null, previewEdge = null, expandedParents = EMPTY_EXPANDED_SET, onToggleCluster, onHoverCluster, realmRootId = null, onEnterRealm, realmEnterButtonRef, realmCaption = null, visitedTrail = EMPTY_TRAIL, trailLensActiveRef, clusterBarLabels = null, trailHoverNodeIdRef, panelHoverNodeIdRef, tierReveal = DEFAULT_TIER_REVEAL, tourAnchorNodeId = null, tourAnchorRef, glyphSet = "geometric", canvasBackground = "dot", view3d = false, mapArrangement = DEFAULT_MAP_ARRANGEMENT, detailPanelVisible = false, footprint = null, expand = DEFAULT_EXPAND, wheelIntent = "zoom", ambientSleepDelayMs, onWalkDeadEnd = null, theme = "dark" } = args;
 
   const getRealmCaption = useEffectEvent(() => realmCaption);
   const getClusterBarLabels = useEffectEvent(() => clusterBarLabels);
@@ -1821,20 +1823,19 @@ export function useTopologyLoop(args: UseTopologyLoopArgs): UseTopologyLoopResul
       if (!tokens) return;
 
       if (!gridCanvasRef.current) gridCanvasRef.current = document.createElement("canvas");
-      if (!gridPatternRef.current) {
-        gridPatternRef.current = buildGridPattern(gridCanvasRef.current, {
-          minorColor: tokens.gridMinor,
-          majorColor: tokens.gridMajor,
-          baseColor: tokens.canvasBgNear,
-        });
-      }
+      gridPatternRef.current = buildGridPattern(gridCanvasRef.current, {
+        minorColor: tokens.gridMinor,
+        majorColor: tokens.gridMajor,
+        baseColor: tokens.canvasBgNear,
+      });
       // The three depth-dot layers are static tiles, built once per viewport rebuild.
       if (depthDotCanvasRef.current.length === 0) {
         depthDotCanvasRef.current = DEPTH_DOT_LAYERS.map(() => document.createElement("canvas"));
       }
       {
-        const rootStyle = getComputedStyle(document.documentElement);
-        const rgb = rootStyle.getPropertyValue("--canvas-bg-particle-rgb").trim() || "150, 165, 220";
+        const targetElem = containerRef.current || (typeof document !== "undefined" ? (document.querySelector(".ontology-page-root") as Element | null) ?? document.documentElement : null);
+        const rootStyle = targetElem ? getComputedStyle(targetElem) : null;
+        const rgb = rootStyle?.getPropertyValue("--canvas-bg-particle-rgb").trim() || "150, 165, 220";
         depthDotPatternsRef.current = DEPTH_DOT_LAYERS.map((layer, i) =>
           buildDepthDotPattern(depthDotCanvasRef.current[i], layer, `rgba(${rgb}, ${0.055 * layer.alphaScale})`),
         );
@@ -2042,6 +2043,14 @@ export function useTopologyLoop(args: UseTopologyLoopArgs): UseTopologyLoopResul
     if (relayoutToken === initial.relayout && fitViewToken === initial.fitView) return;
     runOverviewFit();
   }, [relayoutToken, fitViewToken, runOverviewFit]);
+
+  useEffect(() => {
+    clearTopologyV2TokensCache();
+    gridPatternRef.current = null;
+    depthDotPatternsRef.current = [];
+    rebuildViewportLayersRef.current?.();
+    lastActiveMsRef.current = performance.now();
+  }, [theme]);
 
   /*
    * The spotlight fit: the **moment** the recent-changes lens turns on or its

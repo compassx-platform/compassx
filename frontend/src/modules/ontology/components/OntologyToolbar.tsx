@@ -8,6 +8,8 @@ import {
   FileCode,
   Scan,
   Layers,
+  Sun,
+  Moon,
 } from 'lucide-react';
 import type { MapArrangement } from '../shared/appearance-preferences';
 
@@ -22,6 +24,8 @@ interface OntologyToolbarProps {
   mapArrangement: MapArrangement;
   onToggle3D: () => void;
   onToggleArrangement: () => void;
+  themeMode?: 'light' | 'dark';
+  onToggleTheme?: () => void;
 }
 
 export const OntologyToolbar: React.FC<OntologyToolbarProps> = ({
@@ -35,6 +39,8 @@ export const OntologyToolbar: React.FC<OntologyToolbarProps> = ({
   mapArrangement,
   onToggle3D,
   onToggleArrangement,
+  themeMode = 'dark',
+  onToggleTheme,
 }) => {
   return (
     <div className="ontology-toolbar-container absolute top-4 left-1/2 -translate-x-1/2 z-20 flex items-center gap-1.5 p-1.5 rounded-full bg-[#131722]/85 backdrop-blur-md border border-[#2b334a]/80 shadow-2xl text-[#cbd5e1]">
@@ -126,6 +132,30 @@ export const OntologyToolbar: React.FC<OntologyToolbarProps> = ({
         <FileCode size={13} className="text-[#a5b4fc]" />
         <span>YAML</span>
       </button>
+
+      {onToggleTheme && (
+        <>
+          <div className="ontology-toolbar-divider w-[1px] h-4 bg-[#2e374f]" />
+          {/* Light / Dark Mode Switcher */}
+          <button
+            onClick={onToggleTheme}
+            className="ontology-toolbar-btn flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium hover:bg-[#20273c] hover:text-white transition-colors"
+            title={themeMode === 'dark' ? 'Switch to Light mode' : 'Switch to Dark mode'}
+          >
+            {themeMode === 'dark' ? (
+              <>
+                <Sun size={13} className="text-[#fbbf24]" />
+                <span>Light</span>
+              </>
+            ) : (
+              <>
+                <Moon size={13} className="text-[#6366f1]" />
+                <span>Dark</span>
+              </>
+            )}
+          </button>
+        </>
+      )}
     </div>
   );
 };
