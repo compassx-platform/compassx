@@ -57,6 +57,7 @@ def _is_catalog_allowed(workspace_id: str | None, catalog_name: str, db: Session
 CATALOG_OPERATIONS = [
     "list_catalogs",
     "list_schemas",
+    "list_tables",
     "search_catalog",
     "get_asset_schema",
     "get_asset_details",
@@ -107,7 +108,7 @@ class CatalogTool(BaseTool):
                     },
                     "limit": {
                         "type": "integer",
-                        "description": "Max results to return (used for 'search_catalog').",
+                        "description": "Max results to return (used for 'search_catalog', 'list_tables').",
                     },
                     "full_name": {
                         "type": "string",
@@ -135,7 +136,11 @@ class CatalogTool(BaseTool):
                     },
                     "catalog_name": {
                         "type": "string",
-                        "description": "Catalog name (used for 'list_schemas' and 'sync_foreign_catalog').",
+                        "description": "Catalog name (used for 'list_schemas', 'list_tables', and 'sync_foreign_catalog').",
+                    },
+                    "schema_name": {
+                        "type": "string",
+                        "description": "Schema name (optional filter used for 'list_tables').",
                     },
                     "foreign_catalog_name": {
                         "type": "string",
@@ -163,6 +168,8 @@ class CatalogTool(BaseTool):
                 res = self._list_catalogs(db, payload, agent, account_db)
             elif operation == "list_schemas":
                 res = self._list_schemas(db, payload, agent, account_db)
+            elif operation == "list_tables":
+                res = self._list_tables(db, payload, agent, account_db)
             elif operation == "search_catalog":
                 res = self._search_catalog(db, payload, agent, account_db)
             elif operation == "get_asset_schema":
@@ -244,12 +251,65 @@ class CatalogTool(BaseTool):
             })
         return {"catalog_name": catalog_name, "schemas": schemas, "count": len(schemas)}
 
+    def _list_tables(self, db: Session, payload: dict[str, Any], agent: Agent, account_db: Session) -> dict[str, Any]:
+        catalog_name = str(payload.get("catalog_name") or "").strip()
+        schema_name = str(payload.get("schema_name") or "").strip()
+        limit = min(int(payload.get("limit") or 100), 500)
+        if limit < 1:
+            limit = 1
+
+        allowed_catalogs = _get_allowed_catalogs(agent.workspace_id, account_db)
+        if catalog_name:
+            if not _is_catalog_allowed(agent.workspace_id, catalog_name, account_db):
+                raise ValueError(f"Access denied to catalog '{catalog_name}' in this workspace")
+        elif allowed_catalogs is not None and not allowed_catalogs:
+            return {"tables": [], "count": 0, "catalog_name": None, "schema_name": None}
+
+        query = account_db.query(UnifiedCatalogTable).join(UnifiedCatalogSchema).join(UnifiedCatalog)
+        if catalog_name:
+            query = query.filter(UnifiedCatalog.name == catalog_name)
+        elif allowed_catalogs is not None:
+            query = query.filter(UnifiedCatalog.name.in_(allowed_catalogs))
+
+        if schema_name:
+            query = query.filter(UnifiedCatalogSchema.name == schema_name)
+
+        tables = (
+            query.order_by(UnifiedCatalog.name, UnifiedCatalogSchema.name, UnifiedCatalogTable.name)
+            .limit(limit)
+            .all()
+        )
+
+        results = []
+        for t in tables:
+            cat_name = t.schema.catalog.name if t.schema and t.schema.catalog else ""
+            sch_name = t.schema.name if t.schema else ""
+            col_names = [col.name for col in t.columns] if hasattr(t, "columns") and t.columns else []
+            t_type = t.table_type.value if hasattr(t.table_type, "value") else str(t.table_type)
+            results.append({
+                "id": t.id,
+                "full_name": f"{cat_name}.{sch_name}.{t.name}",
+                "catalog_name": cat_name,
+                "schema_name": sch_name,
+                "table_name": t.name,
+                "table_type": t_type,
+                "description": t.description,
+                "owner": t.owner,
+                "column_count": len(col_names),
+                "columns": col_names,
+                "created_at": t.created_at.isoformat() if t.created_at else None,
+            })
+
+        return {
+            "catalog_name": catalog_name or None,
+            "schema_name": schema_name or None,
+            "count": len(results),
+            "tables": results,
+        }
+
     # 3.1 search_catalog
     def _search_catalog(self, db: Session, payload: dict[str, Any], agent: Agent, account_db: Session) -> dict[str, Any]:
         query_text = str(payload.get("query") or "").strip()
-        if not query_text:
-            raise ValueError("query must be a non-empty string")
-
         object_type = payload.get("object_type")
         if object_type == "all":
             object_type = None
@@ -261,8 +321,51 @@ class CatalogTool(BaseTool):
         if allowed_catalogs is not None and not allowed_catalogs:
             return {"query": query_text, "results": [], "count": 0}
 
-        query_vec = get_embedding(query_text)
         from app.database import account_engine
+
+        # If query is empty, gracefully list assets of matching object_type from vector_db.assets
+        if not query_text:
+            conditions = []
+            bind_params: dict[str, Any] = {"limit": limit}
+            if object_type is not None:
+                conditions.append("object_type = :object_type_filter")
+                bind_params["object_type_filter"] = object_type
+            if allowed_catalogs is not None:
+                conditions.append("catalog_name IN :allowed_catalogs")
+                bind_params["allowed_catalogs"] = tuple(allowed_catalogs)
+
+            where_str = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+            sql = f"""
+            SELECT
+                catalog_name || '.' || schema_name || '.' || object_name AS full_name,
+                object_type,
+                description,
+                is_foreign,
+                1.0 AS similarity_score
+            FROM vector_db.assets
+            {where_str}
+            ORDER BY catalog_name, schema_name, object_name
+            LIMIT :limit
+            """
+            try:
+                with account_engine.connect() as conn:
+                    rows = conn.execute(text(sql), bind_params).fetchall()
+                results = [
+                    {
+                        "full_name": row.full_name,
+                        "object_type": row.object_type,
+                        "description": row.description,
+                        "is_foreign": row.is_foreign,
+                        "similarity_score": 1.0,
+                    }
+                    for row in rows
+                ]
+                return {"query": query_text, "results": results, "count": len(results)}
+            except Exception as exc:
+                logger.warning("Empty-query catalog search failed: %s", exc)
+                return {"query": query_text, "results": [], "count": 0}
+
+        query_vec = get_embedding(query_text)
 
         if query_vec is not None:
             # Cosine similarity SQL
@@ -845,6 +948,34 @@ class CatalogTool(BaseTool):
                     "description": sch.description,
                     "created_by": sch.created_by,
                     "created_at": sch.created_at.isoformat() if sch.created_at else None,
+                })
+
+        # 3. Search Tables
+        if object_type in ("all", "table"):
+            q_tables = account_db.query(UnifiedCatalogTable).join(UnifiedCatalogSchema).join(UnifiedCatalog)
+            if allowed_catalogs is not None:
+                q_tables = q_tables.filter(UnifiedCatalog.name.in_(allowed_catalogs))
+            if catalog_filter:
+                q_tables = q_tables.filter(UnifiedCatalog.name.ilike(f"%{catalog_filter}%"))
+            if query_str:
+                q_tables = q_tables.filter(
+                    (UnifiedCatalogTable.name.ilike(f"%{query_str}%")) |
+                    (UnifiedCatalogTable.description.ilike(f"%{query_str}%"))
+                )
+            tables = q_tables.order_by(UnifiedCatalogTable.name).limit(limit).all()
+            for tbl in tables:
+                cat_name = tbl.schema.catalog.name if tbl.schema and tbl.schema.catalog else ""
+                sch_name = tbl.schema.name if tbl.schema else ""
+                results.append({
+                    "object_type": "table",
+                    "name": tbl.name,
+                    "full_name": f"{cat_name}.{sch_name}.{tbl.name}",
+                    "catalog_name": cat_name,
+                    "schema_name": sch_name,
+                    "description": tbl.description,
+                    "table_type": tbl.table_type.value if hasattr(tbl.table_type, "value") else str(tbl.table_type),
+                    "created_by": tbl.created_by,
+                    "created_at": tbl.created_at.isoformat() if tbl.created_at else None,
                 })
 
         results.sort(key=lambda x: x["name"])
