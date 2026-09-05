@@ -9,8 +9,13 @@ import {
 import { clearTopologyV2TokensCache } from '../atlas-engine/tokens/read-topology-v2-tokens';
 import { parseOntologyYaml, toTopologyV2Format, getDefaultDataset } from '../lib/ontologyParser';
 import { DEFAULT_ONTOLOGY_YAML } from '../data/defaultOntologyData';
+import {
+  OntologyConfigPanel,
+  loadKindsConfig,
+  saveKindsConfig,
+  type KindConfig,
+} from '../config';
 import { OntologyToolbar } from '../components/OntologyToolbar';
-import { OntologyConfigMenu } from '../components/OntologyConfigMenu';
 import { OntologySideDrawer } from '../components/OntologySideDrawer';
 import { OntologySearchModal } from '../components/OntologySearchModal';
 import { OntologyYamlEditorModal } from '../components/OntologyYamlEditorModal';
@@ -88,10 +93,20 @@ export default function OntologyPage() {
     };
   }, [hoverEdge, dataset.nodes]);
 
+  // Dynamic Kinds Configuration (Isolated Configuration Subsystem)
+  const [kindsConfig, setKindsConfig] = useState<KindConfig[]>(() => loadKindsConfig());
+
+  const handleUpdateKindsConfig = useCallback((newKinds: KindConfig[]) => {
+    setKindsConfig(newKinds);
+    saveKindsConfig(newKinds);
+    setRelayoutToken(t => t + 1);
+    setFitViewToken(t => t + 1);
+  }, []);
+
   // Convert YAML dataset to exact TopologyMapV2 engine nodes and edges
   const { nodes, edges } = useMemo(() => {
-    return toTopologyV2Format(dataset);
-  }, [dataset]);
+    return toTopologyV2Format(dataset, kindsConfig);
+  }, [dataset, kindsConfig]);
 
   // Handle Node Selection / 1-Hop Ego Focus
   const handleSelectNode = useCallback((nodeId: string | null) => {
@@ -282,8 +297,10 @@ export default function OntologyPage() {
         onToggleTheme={handleToggleTheme}
       />
 
-      {/* Top Right Floating Configuration Button & Dropdown */}
-      <OntologyConfigMenu
+      {/* Top Right Floating Configuration Button & Panel (Isolated Subsystem) */}
+      <OntologyConfigPanel
+        kindsConfig={kindsConfig}
+        onUpdateKindsConfig={handleUpdateKindsConfig}
         themeMode={themeMode}
         onToggleTheme={handleToggleTheme}
         view3d={view3d}

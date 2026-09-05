@@ -1,5 +1,5 @@
 import { load } from 'js-yaml';
-import { OntologyDataset, OntologyNode, OntologyEdge, OntologyKind } from '../types/ontology';
+import { OntologyDataset, OntologyNode, OntologyEdge, OntologyKind, KindConfig, DEFAULT_KINDS_CONFIG } from '../types/ontology';
 import { DEFAULT_ONTOLOGY_YAML } from '../data/defaultOntologyData';
 
 export function parseOntologyYaml(yamlContent: string): OntologyDataset {
@@ -106,7 +106,10 @@ export function parseOntologyYaml(yamlContent: string): OntologyDataset {
   };
 }
 
-export function toTopologyV2Format(dataset: OntologyDataset): {
+export function toTopologyV2Format(
+  dataset: OntologyDataset,
+  kindsConfig: KindConfig[] = DEFAULT_KINDS_CONFIG
+): {
   nodes: import('../atlas-engine').TopologyV2Node[];
   edges: import('../atlas-engine').TopologyV2Edge[];
 } {
@@ -120,25 +123,27 @@ export function toTopologyV2Format(dataset: OntologyDataset): {
     degreeMap.set(edge.target, (degreeMap.get(edge.target) || 0) + 1);
   }
 
-  const kindSize: Record<string, number> = {
-    project: 30,
-    domain: 17,
-    capability: 11,
-    element: 7,
-  };
+  const kindSizeMap = new Map<string, number>();
+  for (const k of kindsConfig) {
+    kindSizeMap.set(k.id, k.baseRadius);
+  }
+
+  // Root tier 0 kinds are hubs (default project or configured tier 0)
+  const rootKindIds = new Set(kindsConfig.filter(k => k.tier === 0).map(k => k.id));
+  if (rootKindIds.size === 0) rootKindIds.add('project');
 
   const nodes = dataset.nodes.map(node => {
     const deg = degreeMap.get(node.id) || 0;
-    const kind = (node.kind as any) || 'element';
-    const baseSize = kindSize[kind] || 10;
+    const kind = node.kind || 'element';
+    const baseSize = kindSizeMap.get(kind) || 10;
     return {
       id: node.id,
       label: node.title || node.id,
-      kind,
+      kind: kind as any,
       size: baseSize,
       x: 0,
       y: 0,
-      isHub: node.kind === 'project' || deg >= 8,
+      isHub: rootKindIds.has(node.kind) || deg >= 8,
       ownerKey: null,
       recentlyUpdated: false,
       fullDegree: deg,

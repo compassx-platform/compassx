@@ -1,4 +1,7 @@
-export type OntologyKind = 'project' | 'domain' | 'capability' | 'element';
+export type OntologyKind = string;
+
+export type { KindConfig, NodeShapeType } from '../config';
+export { DEFAULT_KINDS_CONFIG } from '../config';
 
 export type RelationType = 'contains' | 'depends_on' | 'relies_on' | 'reads' | 'is_similar_to' | 'relates';
 

@@ -1,0 +1,312 @@
+/* ==========================================================================
+   Ontology Configuration Subsystem - Design System Aligned Styles
+   
+   Isolated strictly from core ontology graph canvas rendering.
+   Uses standard CompassX design system tokens, variables, and typography.
+   ========================================================================== */
+
+/* Top Right Trigger Container & Button */
+.cx-ontology-config-trigger {
+  position: absolute;
+  top: 6px;
+  right: 10px;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  padding: 0;
+  border-radius: 9999px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  box-shadow: var(--shadow-sm);
+  color: var(--color-text-muted);
+  pointer-events: auto;
+  transition: all 0.15s ease;
+}
+
+.cx-ontology-config-trigger:hover {
+  border-color: var(--color-border-strong);
+  color: var(--color-text);
+}
+
+.cx-ontology-config-trigger.is-active {
+  background: var(--color-primary-bg);
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+  box-shadow: 0 0 0 2px var(--color-primary-bg);
+}
+
+.cx-ontology-config-trigger-btn {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3.5px 10px;
+  border-radius: 9999px;
+  font-size: 11px;
+  font-weight: 500;
+  font-family: var(--font-family);
+  color: inherit;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.15s ease;
+}
+
+/* Side Configuration Panel */
+.cx-ontology-config-panel {
+  position: absolute;
+  right: 10px;
+  top: 40px;
+  bottom: 10px;
+  z-index: 35;
+  display: flex;
+  flex-direction: column;
+  border-radius: var(--radius-lg, 8px);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  box-shadow: var(--shadow-md, 0 4px 16px rgba(0, 0, 0, 0.12));
+  overflow: hidden;
+  color: var(--color-text);
+  font-family: var(--font-family);
+  animation: cxPanelSlideIn 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes cxPanelSlideIn {
+  from {
+    opacity: 0;
+    transform: translateX(16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+/* Resize Handle (Left edge) */
+.cx-ontology-config-resize-handle {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 6px;
+  cursor: ew-resize;
+  z-index: 10;
+  background: transparent;
+  transition: background-color 0.15s ease;
+}
+
+.cx-ontology-config-resize-handle:hover,
+.cx-ontology-config-resize-handle.is-dragging {
+  background-color: var(--color-primary);
+}
+
+/* Header & Standard PageTabs */
+.cx-ontology-config-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 8px 0 14px;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-surface);
+  min-height: 44px;
+  flex-shrink: 0;
+  user-select: none;
+}
+
+.cx-ontology-config-header .page-tabs {
+  margin: 0;
+  border-bottom: none;
+  gap: 16px;
+  align-items: center;
+  height: 100%;
+}
+
+.cx-ontology-config-header .page-tabs button {
+  padding: 10px 2px 11px;
+  font-size: 13px;
+  font-weight: 500;
+  border-bottom-width: 2.5px;
+  white-space: nowrap;
+}
+
+.cx-ontology-config-header .page-tabs button:hover {
+  color: var(--color-text);
+}
+
+.cx-ontology-config-header .page-tabs button.is-active {
+  color: var(--color-primary);
+  font-weight: 600;
+  border-bottom-color: var(--color-primary);
+}
+
+.cx-ontology-config-close-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius);
+  border: none;
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  transition: background-color 0.12s ease, color 0.12s ease;
+}
+
+.cx-ontology-config-close-btn:hover {
+  background: var(--color-surface-hover);
+  color: var(--color-text);
+}
+
+/* Panel Content Body */
+.cx-ontology-config-body {
+  flex: 1;
+  width: 100%;
+  padding: 16px;
+  overflow-y: auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* Kinds Section Header */
+.cx-ontology-config-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.cx-ontology-config-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.cx-ontology-config-subtitle {
+  font-size: 11px;
+  color: var(--color-text-muted);
+  margin-top: 2px;
+}
+
+/* Form Container (Add / Edit) */
+.cx-ontology-config-form {
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg, 8px);
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.cx-ontology-config-form-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.cx-ontology-config-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.cx-ontology-config-form-grid-3 {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.cx-ontology-config-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.cx-ontology-config-label {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-muted);
+}
+
+/* Kinds List Cards */
+.cx-ontology-config-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  border-radius: var(--radius, 6px);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  transition: border-color 0.15s ease, background-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.cx-ontology-config-card:hover {
+  border-color: var(--color-border-strong);
+  background: var(--color-surface-hover);
+}
+
+.cx-ontology-config-card-icon-box {
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius, 6px);
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: var(--color-primary);
+}
+
+.cx-ontology-config-slug-badge {
+  font-family: var(--cx-font-mono, monospace);
+  font-size: 10px;
+  font-weight: 500;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  color: var(--color-text-muted);
+}
+
+.cx-ontology-config-meta-item {
+  font-size: 11px;
+  color: var(--color-text-muted);
+}
+
+.cx-ontology-config-meta-val {
+  color: var(--color-text);
+  font-weight: 500;
+  text-transform: capitalize;
+}
+
+/* Action Icon Buttons inside cards */
+.cx-ontology-config-icon-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: var(--radius, 4px);
+  border: none;
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  transition: all 0.12s ease;
+}
+
+.cx-ontology-config-icon-btn:hover {
+  background: var(--color-surface-hover);
+  color: var(--color-text);
+}
+
+.cx-ontology-config-icon-btn.is-danger:hover {
+  background: var(--color-danger-bg, #fee2e2);
+  color: var(--color-danger, #ef4444);
+}
