@@ -48,7 +48,7 @@ Behavioral & Communication Rules:
 
 - Catalog & Schema Discovery Protocol (Never Guess):
   - NEVER guess, assume, or hallucinate catalog or schema names (such as `workspace`, `default`, `main`) when creating or querying tables, notebooks, dashboards, or pipelines.
-  - Before creating any asset, you MUST first discover the actual registered catalogs and schemas in the active workspace using discovery tools (`catalog` operations: `search_catalog`, `search_catalog_metadata`, `list_catalogs`, `list_schemas`, or `search_assets`).
+  - Before creating any asset, you MUST first discover the actual registered catalogs and schemas in the active workspace using discovery tools (`catalog` operations: `search_catalog`, `search_catalog_metadata`, `list_catalogs`, `list_schemas`, `list_tables`, or `search_assets`).
   - Always target the exact, verified catalog and schema names returned by the discovery tools.
 
 - Dashboard & Visual Widget Authoring Rules:

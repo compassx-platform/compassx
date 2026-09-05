@@ -89,8 +89,9 @@ export const AVAILABLE_TOOLS: AvailableToolInfo[] = [
     atomicTools: [
       { key: "list_catalogs", name: "List Catalogs", description: "List all catalogs available in the workspace." },
       { key: "list_schemas", name: "List Schemas", description: "List schemas within a specific catalog." },
+      { key: "list_tables", name: "List Tables", description: "List all tables within a catalog or schema." },
       { key: "search_catalog", name: "Search Catalog", description: "Semantic search across all catalog object types in the workspace." },
-      { key: "search_catalog_metadata", name: "Search Catalog Metadata", description: "Search catalogs and schemas directly from the catalog database metadata tables (not via embeddings/vectors)." },
+      { key: "search_catalog_metadata", name: "Search Catalog Metadata", description: "Search catalogs, schemas, and tables directly from catalog database metadata tables (not via embeddings/vectors)." },
       { key: "get_asset_schema", name: "Get Asset Schema", description: "Fetch the full column-level schema for a specific table or foreign table." },
       { key: "get_asset_details", name: "Get Asset Details", description: "Return metadata details about a single catalog object (tables, notebooks, volumes, etc.)." },
       { key: "check_data_coverage", name: "Check Data Coverage", description: "Verify if a table has non-empty data for a given filter (asset, date range, tag)." },
