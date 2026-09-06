@@ -46,15 +46,9 @@ import ComputePage from '@/modules/compute/pages/ComputePage';
 import ComputeResourceDetailPage from '@/modules/compute/pages/ComputeResourceDetailPage';
 import DashboardsPage from '@/modules/dashboards/pages/DashboardsPage';
 import DashboardEditorPage from '@/modules/dashboards/pages/DashboardEditorPage';
-import AssetTypeFormPage from '@/modules/asset_manager/pages/AssetTypeFormPage';
-import AssetExplorerPage from '@/modules/asset_manager/pages/AssetExplorerPage';
-import AssetFormPage from '@/modules/asset_manager/pages/AssetFormPage';
-import AssetImportPage from '@/modules/asset_manager/pages/AssetImportPage';
 import JobsListPage from '@/modules/jobs/pages/JobsListPage';
 import JobDetailPage from '@/modules/jobs/pages/JobDetailPage';
 import RunDetailPage from '@/modules/jobs/pages/RunDetailPage';
-import AppsListPage from '@/modules/apps_development/pages/AppsListPage';
-import AppEditorPage from '@/modules/apps_development/pages/AppEditorPage';
 import MonitoringPage from '@/modules/monitoring/pages/MonitoringPage';
 import IngestionConnectionsPage from '@/modules/ingestion/pages/ConnectionsPage';
 import IngestionConnectionDetailPage from '@/modules/ingestion/pages/ConnectionDetailPage';
@@ -208,45 +202,6 @@ function AppHomeRedirect() {
   const normalized = normalizeAppId(appId);
   if (!normalized) return <Navigate to={`/w/${workspaceSlug}/${DEFAULT_APP_ID}`} replace />;
 
-  if (normalized === 'business_center') {
-    // Scan localStorage for custom Business Center links (by slug, by UUID, or any key)
-    let foundFirstUrl: string | null = null;
-    try {
-      const bySlug = localStorage.getItem(`compassx_bc_links_${workspaceSlug}`);
-      if (bySlug) {
-        const parsed = JSON.parse(bySlug);
-        if (Array.isArray(parsed) && parsed.length > 0 && parsed[0].url) {
-          foundFirstUrl = parsed[0].url;
-        }
-      }
-      if (!foundFirstUrl) {
-        for (let i = 0; i < localStorage.length; i++) {
-          const key = localStorage.key(i);
-          if (key && key.startsWith('compassx_bc_links_')) {
-            const raw = localStorage.getItem(key);
-            if (raw) {
-              const parsed = JSON.parse(raw);
-              if (Array.isArray(parsed) && parsed.length > 0 && parsed[0].url) {
-                foundFirstUrl = parsed[0].url;
-                break;
-              }
-            }
-          }
-        }
-      }
-    } catch (e) {
-      console.error('Failed to parse custom sidebar links for redirect', e);
-    }
-
-    if (foundFirstUrl) {
-      if (foundFirstUrl.startsWith('/w/')) {
-        return <Navigate to={foundFirstUrl} replace />;
-      }
-      const cleanPath = foundFirstUrl.startsWith('/') ? foundFirstUrl : `/${foundFirstUrl}`;
-      return <Navigate to={`/w/${workspaceSlug}/business_center${cleanPath}`} replace />;
-    }
-  }
-
   return <Navigate to={`/w/${workspaceSlug}/${normalized}${getDefaultPathForApp(normalized)}`} replace />;
 }
 
@@ -354,18 +309,6 @@ export default function App() {
                   <Route path="dashboards" element={<DashboardsPage />} />
                   <Route path="dashboards/:dashboardId" element={<DashboardEditorPage />} />
                   <Route path="dashboards/:dashboardId/edit" element={<DashboardEditorPage />} />
-                  <Route path="assets" element={<AssetExplorerPage />} />
-                  <Route path="assets/search" element={<AssetExplorerPage view="search" />} />
-                  <Route path="assets/new" element={<AssetFormPage />} />
-                  <Route path="assets/import" element={<AssetImportPage />} />
-                  <Route path="assets/import/new" element={<AssetImportPage startNew />} />
-                  <Route path="assets/import/:jobId" element={<AssetImportPage />} />
-                  <Route path="assets/types" element={<AssetExplorerPage view="types" />} />
-                  <Route path="assets/types/hierarchy" element={<Navigate to="../.." replace />} />
-                  <Route path="assets/types/new" element={<AssetTypeFormPage />} />
-                  <Route path="assets/types/:typeId/edit" element={<AssetTypeFormPage />} />
-                  <Route path="assets/:instanceId" element={<AssetExplorerPage />} />
-                  <Route path="assets/:instanceId/edit" element={<AssetFormPage />} />
                   <Route path="jobs" element={<JobsListPage />} />
                   <Route path="jobs/:jobId" element={<JobDetailPage />} />
                   <Route path="jobs/:jobId/runs/:runId" element={<RunDetailPage />} />
@@ -375,9 +318,6 @@ export default function App() {
                   <Route path="ingestion/job-configs" element={<IngestionJobConfigsPage />} />
                   <Route path="ingestion/job-configs/:jobConfigId" element={<IngestionJobConfigDetailPage />} />
                   <Route path="ingestion/runs/:runId" element={<IngestionRunDetailPage />} />
-                  {/* CompassX Apps */}
-                  <Route path="apps_development" element={<AppsListPage />} />
-                  <Route path="apps_development/:compassAppId/:branchId" element={<AppEditorPage />} />
                   {/* Custom Technology & Data Icons Showcase */}
                   <Route path="icons" element={<IconsShowcasePage />} />
                   {/* CompassX Brand & Logo Visualizer */}

@@ -81,7 +81,6 @@ class ToolRegistry:
         from app.agents.services.agent.tools.visualization_tool import VisualizationTool
         from app.agents.services.agent.tools.rag_search_tool import RagSearchTool
         from app.agents.services.agent.tools.invoke_agent_tool import InvokeAgentTool
-        from app.agents.services.agent.tools.platform.asset_manager import AssetManagerTool
         from app.agents.services.agent.tools.platform.notebooks import NotebookManagerTool
         from app.agents.services.agent.tools.platform.dashboards import DashboardManagerTool
         from app.agents.services.agent.tools.platform.sql_warehouse import SqlWarehouseTool
@@ -104,7 +103,6 @@ class ToolRegistry:
             PythonCodeTool,
             VisualizationTool,
             RagSearchTool,
-            AssetManagerTool,
             NotebookManagerTool,
             DashboardManagerTool,
             InvokeAgentTool,

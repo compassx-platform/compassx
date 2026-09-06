@@ -24,7 +24,7 @@ class DummyTestTool(BaseTool):
 def test_tool_registry_singleton_contains_core_tools():
     assert tool_registry.get("sql_warehouse") is not None
     assert tool_registry.get("python_code") is not None
-    assert tool_registry.get("asset_manager") is not None
+    assert tool_registry.get("notebook_manager") is not None
     assert tool_registry.get("create_plan") is not None
 
 

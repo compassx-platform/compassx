@@ -29,7 +29,6 @@ class Settings(BaseSettings):
     SKIP_DB_INIT: bool = False
 
     # External services
-    ASSET_MANAGER_BASE_URL: str = "http://localhost:8001"
     USER_MANAGER_BASE_URL: str = "http://localhost:8002"
 
     # CORS
@@ -54,14 +53,6 @@ class Settings(BaseSettings):
     DATA_DB_URL: str = ""                     # set this to override entirely
     DATA_DB_POOL_MIN: int = 5
     DATA_DB_POOL_MAX: int = 20
-
-    # Asset Manager database.
-    # If left empty, derived from PG_* settings as:
-    #   postgresql://{PG_USER}:{PG_PASSWORD}@{PG_HOST}:{PG_PORT}/asset_manager
-    ASSET_DB_NAME: str = "asset_manager"       # override to use different DB name
-    ASSET_DB_URL: str = ""                     # set this to override entirely
-    ASSET_DB_POOL_MIN: int = 2
-    ASSET_DB_POOL_MAX: int = 10
 
     # Redis for workspace slug cache and session cache
     REDIS_URL: str = ""
@@ -109,16 +100,6 @@ class Settings(BaseSettings):
         return (
             f"postgresql://{self.PG_USER}:{self.PG_PASSWORD}"
             f"@{self.PG_HOST}:{self.PG_PORT}/{self.DATA_DB_NAME}"
-        )
-
-    @property
-    def resolved_asset_db_url(self) -> str:
-        """Return ASSET_DB_URL if set, otherwise derive from PG_* settings."""
-        if self.ASSET_DB_URL:
-            return self.ASSET_DB_URL
-        return (
-            f"postgresql://{self.PG_USER}:{self.PG_PASSWORD}"
-            f"@{self.PG_HOST}:{self.PG_PORT}/{self.ASSET_DB_NAME}"
         )
 
     @property

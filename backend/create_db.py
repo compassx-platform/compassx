@@ -22,7 +22,6 @@ PG_PASSWORD = os.getenv("PG_PASSWORD", "")
 DATABASES = [
     os.getenv("SYSTEM_DB_NAME", "compassx_account"),
     os.getenv("DATA_DB_NAME", "compassx_system"),
-    os.getenv("ASSET_DB_NAME", "asset_manager"),
 ]
 
 

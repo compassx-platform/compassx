@@ -3,7 +3,6 @@
 @import "./_doc_editor_styles.css";
 @import "./_notebook_styles.css";
 @import "./_dashboard_styles.css";
-@import "./modules/asset_manager/asset-manager.css";
 
 /* Assistant Markdown Response Typography & Formatting */
 .assistant-response-content p {
@@ -2003,7 +2002,6 @@ html {
   padding: 0 3.5rem 2rem;
 }
 
-.page-content:has(.asset-page),
 .page-content:has(.compute-page),
 .page-content:has(.dashboard-page),
 .page-content:has(.dashboard-editor-page),

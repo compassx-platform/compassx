@@ -7,13 +7,11 @@
 
 import { useEffect, useState, useRef } from 'react';
 import { useParams, useSearchParams } from 'react-router-dom';
-import { useQueryClient } from '@tanstack/react-query';
 import { Loader2 } from 'lucide-react';
 import { useDashboard, useSaveDashboard } from '@/modules/dashboards/hooks/useDashboard';
 import { useDashboardStore } from '@/modules/dashboards/stores/dashboardStore';
 import { useToast } from '@/lib/toast';
 import { randomUUID } from '@/lib/utils';
-import { useCurrentAppId } from '@/lib/appNavigation';
 import DashboardTopBar from '@/modules/dashboards/components/DashboardTopBar';
 import PageTabBar from '@/modules/dashboards/components/PageTabBar';
 import FilterBar from '@/modules/dashboards/components/FilterBar';
@@ -36,8 +34,6 @@ export default function DashboardEditorPage({ dashboardId: dashboardIdProp, embe
   const { dashboardId: routeDashboardId } = useParams<{ dashboardId: string }>();
   const dashboardId = dashboardIdProp ?? routeDashboardId;
   const toast = useToast();
-  const appId = useCurrentAppId();
-  const isBusinessCenter = appId === 'business_center';
 
   const { data: dashboard, isLoading, error, refetch: refetchDashboard } = useDashboard(dashboardId);
   const saveDashboardMutation = useSaveDashboard();
@@ -110,8 +106,8 @@ export default function DashboardEditorPage({ dashboardId: dashboardIdProp, embe
   const isEditRoute = embedded || window.location.pathname.endsWith('/edit');
 
   useEffect(() => {
-    setEditMode(!isBusinessCenter && isEditRoute);
-  }, [isBusinessCenter, isEditRoute, setEditMode]);
+    setEditMode(isEditRoute);
+  }, [isEditRoute, setEditMode]);
 
   // Listen for the signal emitted by AppNovaSidebar after a mutating
   // dashboard_manager tool call. Explicitly refetches the dashboard from the server
@@ -148,7 +144,7 @@ export default function DashboardEditorPage({ dashboardId: dashboardIdProp, embe
 
       initializedDashboardIdRef.current = dashboard.id;
       setActiveDashboard(dashboard);
-      setEditMode(!isBusinessCenter && isEditRoute);
+      setEditMode(isEditRoute);
       setActiveTab('page');
 
       // Sync active page from URL query parameter on page load / refresh
@@ -167,7 +163,7 @@ export default function DashboardEditorPage({ dashboardId: dashboardIdProp, embe
       isHydratedRef.current = true;
       setSaveStatus('idle');
     }
-  }, [dashboard, setActiveDashboard, setEditMode, isBusinessCenter, isEditRoute, searchParams]);
+  }, [dashboard, setActiveDashboard, setEditMode, isEditRoute, searchParams]);
 
 
   // Keep URL query parameter ?page= in sync when activePageId changes

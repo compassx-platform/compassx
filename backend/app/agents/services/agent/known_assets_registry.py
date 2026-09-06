@@ -107,7 +107,7 @@ registry = KnownAssetsRegistry()
 # Catalog/file/notebook tools whose results contain full_name references
 _CATALOG_TOOLS = {
     "catalog", "search_assets", "list_tables", "get_table_schema",
-    "get_column_stats", "asset_manager", "notebook_manager",
+    "get_column_stats", "notebook_manager",
     "dashboard_manager", "catalog_editor",
 }
 

@@ -37,8 +37,6 @@ from app.models.agents import (
 from app.agents.services.agent.context_builder import build_agent_system_prompt, build_system_prompt
 from app.services.llm_client import chat_stream
 from app.agents.services.agent.tool_executor import execute_tool
-from app.asset_manager.schemas.agent_context import AssetManagerContextRequest
-from app.asset_manager.services.agent_context_resolver import AssetManagerContextResolver
 from app.agents.schemas.agent_manifest import AgentManifest, BaseProfile
 from app.agents.services.agent.request_router import RequestRouter
 from app.agents.services.agent.write_gating_middleware import WriteGatingMiddleware, WriteGatingViolation
@@ -242,15 +240,7 @@ def _resolve_runtime_context(context: dict | None) -> dict:
     """Resolve module-owned frontend context into prompt/tool-ready context."""
     if not isinstance(context, dict):
         return {}
-
-    resolved = dict(context)
-    asset_context = context.get("asset_manager")
-    if isinstance(asset_context, dict):
-        resolved_asset_context = AssetManagerContextResolver().resolve(
-            AssetManagerContextRequest.model_validate(asset_context)
-        )
-        resolved = {**resolved, **resolved_asset_context}
-    return resolved
+    return dict(context)
 
 
 async def orchestrate_stream(
@@ -552,7 +542,7 @@ async def orchestrate_stream(
     for plan_tool_name in ["create_plan", "get_plan", "get_next_step", "mark_step", "append_correction", "escalate_to_plan"]:
         if plan_tool_name not in enabled_tool_keys:
             enabled_tool_keys.append(plan_tool_name)
-    for build_tool_name in ["notebook_manager", "python_code", "sql_warehouse", "asset_manager"]:
+    for build_tool_name in ["notebook_manager", "python_code", "sql_warehouse"]:
         if build_tool_name not in enabled_tool_keys:
             enabled_tool_keys.append(build_tool_name)
 

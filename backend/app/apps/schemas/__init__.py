@@ -1,1 +1,0 @@
-"""CompassX Apps schemas."""

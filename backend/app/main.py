@@ -43,7 +43,6 @@ from app.catalog import models as unified_catalog_models  # noqa: E402, F401
 from app.agents.models import agents as agents_models  # noqa: E402, F401
 from app.compute.models import compute_resources  # noqa: E402, F401
 from app.dashboards.models import dashboard  # noqa: E402, F401
-from app.asset_manager.models import asset_manager as asset_manager_models  # noqa: E402, F401
 from app.jobs.models import job as jobs_job_models  # noqa: E402, F401
 from app.jobs.models import run_trace as jobs_run_trace_models  # noqa: E402, F401
 from app.storage import db_models as storage_db_models  # noqa: E402, F401
@@ -51,7 +50,6 @@ from app.sql_warehouse import models as sql_warehouse_models  # noqa: E402, F401
 from app.workspace import models as workspace_models  # noqa: E402, F401
 from app.workspace import data_models as workspace_data_models  # noqa: E402, F401
 from app.catalog import search_models as catalog_search_models  # noqa: E402, F401  (catalog_search_*)
-from app.apps.models import apps as apps_models  # noqa: E402, F401
 from app.ingestion import models as ingestion_models  # noqa: E402, F401
 from app.ontology.models import ontology as ontology_models  # noqa: E402, F401
 from app.monitoring import routes as monitoring_routes  # noqa: E402
@@ -444,35 +442,6 @@ app.include_router(governance_routes.router)
 
 from app.compute.routes.router import router as compute_router  # noqa: E402
 app.include_router(compute_router, prefix="/api/v1/compute")
-
-# Apps (CompassX Apps — FastAPI+React app builder)
-from app.apps.routes import app_routes, branch_routes, publish_routes, file_routes  # noqa: E402
-from app.apps.routes import terminal_routes, agent_routes  # noqa: E402
-app.include_router(app_routes.router)
-app.include_router(branch_routes.router)
-app.include_router(publish_routes.router)
-app.include_router(file_routes.router)
-app.include_router(terminal_routes.router)
-app.include_router(agent_routes.router)
-
-from app.asset_manager.routes import (  # noqa: E402
-    asset_type_routes,
-    asset_instance_routes,
-    asset_hierarchy_routes,
-    asset_relationship_routes,
-    asset_event_routes,
-    asset_tag_routes,
-    asset_document_routes,
-    asset_import_routes,
-)
-app.include_router(asset_type_routes.router)
-app.include_router(asset_instance_routes.router)
-app.include_router(asset_hierarchy_routes.router)
-app.include_router(asset_relationship_routes.router)
-app.include_router(asset_event_routes.router)
-app.include_router(asset_tag_routes.router)
-app.include_router(asset_document_routes.router)
-app.include_router(asset_import_routes.router)
 
 from app.jobs.routes import router as jobs_router, run_router as job_runs_router, webhook_router as airflow_webhook_router  # noqa: E402
 from app.jobs.execution_routes import execution_router as job_execution_router, internal_router as jobs_internal_router  # noqa: E402

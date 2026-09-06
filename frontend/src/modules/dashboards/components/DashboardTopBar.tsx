@@ -4,9 +4,8 @@
  */
 
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { useCurrentAppId, useCurrentWorkspaceSlug, useScopedNavigate } from '@/lib/appNavigation';
-import { ArrowLeft, Settings, Share2, CheckCircle, RotateCcw, Pencil, Plus, BarChart2, Filter, FileText, ExternalLink } from 'lucide-react';
+import { useScopedNavigate } from '@/lib/appNavigation';
+import { ArrowLeft, Settings, Share2, CheckCircle, RotateCcw, Pencil, Plus, BarChart2, Filter, FileText } from 'lucide-react';
 import { useDashboardStore } from '@/modules/dashboards/stores/dashboardStore';
 import { usePublishDashboard, useDiscardDraft } from '@/modules/dashboards/hooks/useDashboard';
 import { useToast } from '@/lib/toast';
@@ -22,10 +21,6 @@ interface Props {
 
 export default function DashboardTopBar({ onOpenSettings, onAddChart, onAddFilter, onAddHtmlReport, saveStatus = 'idle', hideBackButton = false }: Props) {
   const navigate = useScopedNavigate();
-  const rawNavigate = useNavigate();
-  const appId = useCurrentAppId();
-  const workspaceSlug = useCurrentWorkspaceSlug();
-  const isBusinessCenter = appId === 'business_center';
 
   const toast = useToast();
   const { activeDashboard, editMode, setEditMode } = useDashboardStore();
@@ -74,7 +69,7 @@ export default function DashboardTopBar({ onOpenSettings, onAddChart, onAddFilte
       flexShrink: 0,
     }}>
       {/* Back */}
-      {!hideBackButton && !isBusinessCenter && (
+      {!hideBackButton && (
         <>
           <button className="btn-icon" onClick={() => navigate('/dashboards')} title="Back to dashboards">
             <ArrowLeft size={16} />
@@ -110,19 +105,8 @@ export default function DashboardTopBar({ onOpenSettings, onAddChart, onAddFilte
               <Pencil size={12} />
             </button>
           )}
-          {isBusinessCenter && (
-            <button
-              className="btn-icon"
-              style={{ opacity: 0.7 }}
-              onClick={() => rawNavigate(`/w/${workspaceSlug}/platform/dashboards/${activeDashboard.id}/edit`)}
-              title="Open in Catalog"
-            >
-              <ExternalLink size={14} />
-            </button>
-          )}
         </div>
       )}
-
 
       {/* Draft badge */}
       {activeDashboard.isDraft && (
@@ -158,17 +142,15 @@ export default function DashboardTopBar({ onOpenSettings, onAddChart, onAddFilte
       )}
 
       {/* Edit / View toggle */}
-      {!isBusinessCenter && (
-        <button
-          className={editMode ? 'btn btn-secondary' : 'btn btn-secondary'}
-          style={{ fontSize: '0.78rem', padding: '4px 12px' }}
-          onClick={() => setEditMode(!editMode)}
-        >
-          {editMode ? 'View mode' : 'Edit'}
-        </button>
-      )}
+      <button
+        className={editMode ? 'btn btn-secondary' : 'btn btn-secondary'}
+        style={{ fontSize: '0.78rem', padding: '4px 12px' }}
+        onClick={() => setEditMode(!editMode)}
+      >
+        {editMode ? 'View mode' : 'Edit'}
+      </button>
 
-      {!isBusinessCenter && editMode && (
+      {editMode && (
         <>
           <div style={{ position: 'relative' }}>
             <button
@@ -225,17 +207,13 @@ export default function DashboardTopBar({ onOpenSettings, onAddChart, onAddFilte
         </>
       )}
 
-      {!isBusinessCenter && (
-        <>
-          <button className="btn-icon" title="Share" onClick={() => toast.info('Share coming soon')}>
-            <Share2 size={15} />
-          </button>
+      <button className="btn-icon" title="Share" onClick={() => toast.info('Share coming soon')}>
+        <Share2 size={15} />
+      </button>
 
-          <button className="btn-icon" title="Settings" onClick={onOpenSettings}>
-            <Settings size={15} />
-          </button>
-        </>
-      )}
+      <button className="btn-icon" title="Settings" onClick={onOpenSettings}>
+        <Settings size={15} />
+      </button>
     </div>
   );
 }

@@ -111,10 +111,9 @@ def _compile_create_table_sqlite(element, compiler, **kw):
 # ---------------------------------------------------------------------------
 # Import app models (triggers SQLAlchemy mapper registration).
 # ---------------------------------------------------------------------------
-from app.database import Base, AssetBase  # noqa: E402
+from app.database import Base  # noqa: E402
 from app.workspace import models as workspace_models  # noqa: F401, E402
 from app.models import agents, dataset, data_catalog, unified_catalog  # noqa: E402, F401
-import app.asset_manager.models.asset_manager  # noqa: E402, F401
 
 # ---------------------------------------------------------------------------
 # Test database engine — single shared in-memory SQLite instance.
@@ -196,7 +195,6 @@ class TestAccountSessionLocal:
 import app.database
 app.database.AccountSessionLocal = TestAccountSessionLocal()
 app.database.SystemSessionLocal = TestAccountSessionLocal()
-app.database.AssetSessionLocal = TestAccountSessionLocal()
 
 
 # ---------------------------------------------------------------------------
@@ -211,18 +209,15 @@ def create_tables():
     import app.user_manager.models.system_models  # noqa: F401
     import app.user_manager.models.account_models  # noqa: F401
     import app.governance.models  # noqa: F401
-    from app.database import AccountBase, SystemBase, AssetBase
+    from app.database import AccountBase, SystemBase
     if "sqlite" in test_engine.name:
         for table in AccountBase.metadata.tables.values():
             table.schema = None
         for table in SystemBase.metadata.tables.values():
             table.schema = None
-        for table in AssetBase.metadata.tables.values():
-            table.schema = None
     Base.metadata.create_all(bind=test_engine)
     AccountBase.metadata.create_all(bind=test_engine)
     SystemBase.metadata.create_all(bind=test_engine)
-    AssetBase.metadata.create_all(bind=test_engine)
 
     from app.user_manager.models.system_models import UmWorkspaceRole
     with Session(test_engine) as init_session:
@@ -235,7 +230,6 @@ def create_tables():
         Base.metadata.drop_all(bind=test_engine)
         AccountBase.metadata.drop_all(bind=test_engine)
         SystemBase.metadata.drop_all(bind=test_engine)
-        AssetBase.metadata.drop_all(bind=test_engine)
     except OperationalError as error:
         # SQLite schema cleanup can fail if the database state has become inconsistent
         # during a failed test run. Avoid hiding the actual failure, but allow the
@@ -299,7 +293,7 @@ def _make_test_app(db: Session) -> FastAPI:
     from fastapi import FastAPI
     from app.routes import data_catalog_routes, workspace_routes, llm_connection_routes
     from app.catalog import routes as catalog_routes
-    from app.database import get_db, get_system_db, get_account_db, get_asset_db
+    from app.database import get_db, get_system_db, get_account_db
     from app.dependencies import get_current_user
 
     app = FastAPI()
@@ -339,7 +333,6 @@ def _make_test_app(db: Session) -> FastAPI:
     app.dependency_overrides[get_db] = _override_get_db
     app.dependency_overrides[get_system_db] = _override_get_db
     app.dependency_overrides[get_account_db] = _override_get_db
-    app.dependency_overrides[get_asset_db] = _override_get_db
     app.dependency_overrides[get_current_user] = _override_get_current_user
     app.dependency_overrides[get_guard] = _override_guard
 

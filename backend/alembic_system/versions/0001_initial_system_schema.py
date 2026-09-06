@@ -17,10 +17,7 @@ import app.dashboards.models.dashboard  # noqa: F401
 import app.jobs.models.job  # noqa: F401
 import app.jobs.models.run_trace  # noqa: F401
 import app.compute.models.compute_resources  # noqa: F401
-import app.asset_manager.models.asset_manager  # noqa: F401
 import app.data.models.dataset  # noqa: F401
-import app.apps.models.apps  # noqa: F401
-import app.apps.models.app_chat  # noqa: F401
 
 revision: str = "0001_initial_system_schema"
 down_revision: Union[str, None] = None

@@ -45,7 +45,6 @@ import app.dashboards.models.dashboard  # noqa: F401, E402
 import app.jobs.models.job  # noqa: F401, E402
 import app.jobs.models.run_trace  # noqa: F401, E402
 import app.compute.models.compute_resources  # noqa: F401, E402
-import app.asset_manager.models.asset_manager  # noqa: F401, E402
 import app.data.models.dataset  # noqa: F401, E402
 import app.user_manager.models.system_models  # noqa: F401, E402
 import app.governance.models  # noqa: F401, E402  (ObjectGrant, SecurableOwner, ...)

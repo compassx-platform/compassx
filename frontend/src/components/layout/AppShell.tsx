@@ -2,22 +2,15 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   FileText,
-  Database,
   ChevronRight,
   ChevronLeft,
   ChevronDown,
-  PanelLeftClose,
-  PanelLeftOpen,
   Sparkles,
   CircleUserRound,
   Settings,
   LogOut,
   FlaskConical,
   Grid2x2,
-  Plus,
-  Pencil,
-  Trash2,
-  LayoutDashboard,
   Palette,
   Image,
   ArrowDownToLine,
@@ -25,8 +18,6 @@ import {
 import { CompassXLogo } from '@/components/common/CompassXLogo';
 import AppNovaSidebar from '@/modules/nova/components/AppNovaSidebar';
 import { useNovaStore } from '@/modules/nova/stores/novaStore';
-import { useDashboards } from '@/modules/dashboards/hooks/useDashboard';
-import { useApps } from '@/modules/apps_development/hooks/useApps';
 import {
   APP_IDS,
   APP_DEFINITIONS,
@@ -84,96 +75,6 @@ export default function AppShell() {
   const [workspaceMenuOpen, setWorkspaceMenuOpen] = useState(false);
   const { data: workspaces = [] } = useMyWorkspaces();
 
-  // Queries for custom links picker
-  const { data: dashboards = [] } = useDashboards();
-  const { data: apps = [] } = useApps(workspaceCtx?.id ?? '');
-
-  // State for custom links
-  const [customLinks, setCustomLinks] = useState<Array<{ id: string; name: string; url: string; type: 'dashboard' | 'app' }>>([]);
-  
-  // Modal states
-  const [isModalOpen, setIsModalOpen] = useState(false);
-  const [editingLinkId, setEditingLinkId] = useState<string | null>(null);
-  const [targetType, setTargetType] = useState<'dashboard' | 'app'>('dashboard');
-  const [selectedItem, setSelectedItem] = useState<string>('');
-  const [customName, setCustomName] = useState('');
-  const [customUrl, setCustomUrl] = useState('');
-
-  // Load custom links on workspace change
-  useEffect(() => {
-    if (workspaceCtx?.id) {
-      const stored = localStorage.getItem(`compassx_bc_links_${workspaceCtx.id}`);
-      if (stored) {
-        try {
-          setCustomLinks(JSON.parse(stored));
-        } catch (e) {
-          console.error("Failed to parse custom links", e);
-        }
-      } else {
-        setCustomLinks([]);
-      }
-    } else {
-      setCustomLinks([]);
-    }
-  }, [workspaceCtx?.id]);
-
-  const handleSaveLink = () => {
-    if (!customName.trim() || !customUrl.trim() || !workspaceCtx?.id) return;
-
-    let updatedLinks = [...customLinks];
-    if (editingLinkId) {
-      updatedLinks = updatedLinks.map(link => 
-        link.id === editingLinkId 
-          ? { ...link, name: customName.trim(), url: customUrl.trim() }
-          : link
-      );
-    } else {
-      updatedLinks.push({
-        id: Math.random().toString(36).substring(2, 9),
-        name: customName.trim(),
-        url: customUrl.trim(),
-        type: targetType,
-      });
-    }
-
-    localStorage.setItem(`compassx_bc_links_${workspaceCtx.id}`, JSON.stringify(updatedLinks));
-    setCustomLinks(updatedLinks);
-    setIsModalOpen(false);
-  };
-
-  const handleDeleteLink = (id: string) => {
-    if (!workspaceCtx?.id) return;
-    if (!confirm('Are you sure you want to delete this custom sidebar link?')) return;
-    const updatedLinks = customLinks.filter(link => link.id !== id);
-    localStorage.setItem(`compassx_bc_links_${workspaceCtx.id}`, JSON.stringify(updatedLinks));
-    setCustomLinks(updatedLinks);
-  };
-
-  const handleEditLink = (link: { id: string; name: string; url: string; type: 'dashboard' | 'app' }) => {
-    setEditingLinkId(link.id);
-    setTargetType(link.type);
-    setCustomName(link.name);
-    setCustomUrl(link.url);
-    
-    const match = link.url.match(/\/([^/]+)\/(edit|main)$/);
-    if (match) {
-      setSelectedItem(match[1]);
-    } else {
-      setSelectedItem('');
-    }
-    
-    setIsModalOpen(true);
-  };
-
-  const handleOpenAddModal = () => {
-    setEditingLinkId(null);
-    setTargetType('dashboard');
-    setSelectedItem('');
-    setCustomName('');
-    setCustomUrl('');
-    setIsModalOpen(true);
-  };
-
   const activeAppId: AppId = isAppId(appId) ? appId : DEFAULT_APP_ID;
 
   const navGroups = useMemo(() => getNavGroupsForApp(activeAppId), [activeAppId]);
@@ -181,13 +82,10 @@ export default function AppShell() {
 
   const pageTitle = useMemo(() => {
     if (scopedPathname.startsWith('/home')) return 'Home';
-    if (scopedPathname.startsWith('/apps_development')) return 'App Developer';
     if (scopedPathname.startsWith('/notebooks/open')) return 'Notebook';
     if (scopedPathname.startsWith('/notebooks')) return 'Notebooks';
     if (scopedPathname.startsWith('/dashboards')) return 'Dashboards';
     if (scopedPathname.startsWith('/agents')) return 'Agents';
-    if (scopedPathname.startsWith('/assets/types')) return 'Asset Types';
-    if (scopedPathname.startsWith('/assets')) return 'Assets';
     if (/^\/jobs\/[^/]+\/runs\//.test(scopedPathname)) return 'Run Detail';
     if (/^\/jobs\/[^/]+/.test(scopedPathname)) return 'Job Detail';
     if (scopedPathname.startsWith('/jobs')) return 'Jobs';
@@ -263,107 +161,27 @@ export default function AppShell() {
           </div>
 
           <div className="app-sidebar-section">
-            {activeAppId === 'business_center' ? (
-              <>
-                {customLinks.map((link) => (
-                  <div key={link.id} className="app-sidebar-link-container">
-                    <NavLink
-                      to={link.url}
-                      className={({ isActive }) => `app-sidebar-link ${isActive ? 'is-active' : ''}`}
-                      style={{ flex: 1, paddingRight: '2.5rem' }}
-                      title={link.name}
-                    >
-                      {link.type === 'dashboard' ? (
-                        <LayoutDashboard size={16} className="app-sidebar-link-icon" />
-                      ) : (
-                        <Grid2x2 size={16} className="app-sidebar-link-icon" />
-                      )}
-                      <span className="app-sidebar-link-label" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        {link.name}
-                      </span>
-                    </NavLink>
-                    <div className="custom-link-actions">
-                      <button
-                        type="button"
-                        style={{
-                          border: 'none',
-                          background: 'transparent',
-                          color: 'var(--sb-muted)',
-                          cursor: 'pointer',
-                          padding: '2px',
-                        }}
-                        onClick={(e) => {
-                          e.preventDefault();
-                          e.stopPropagation();
-                          handleEditLink(link);
-                        }}
-                        title="Edit link"
-                      >
-                        <Pencil size={12} />
-                      </button>
-                      <button
-                        type="button"
-                        style={{
-                          border: 'none',
-                          background: 'transparent',
-                          color: 'var(--color-danger)',
-                          cursor: 'pointer',
-                          padding: '2px',
-                        }}
-                        onClick={(e) => {
-                          e.preventDefault();
-                          e.stopPropagation();
-                          handleDeleteLink(link.id);
-                        }}
-                        title="Delete link"
-                      >
-                        <Trash2 size={12} />
-                      </button>
-                    </div>
+            {navGroups.map((group, groupIdx) => (
+              <div key={group.title || `group-${groupIdx}`} className="app-sidebar-group">
+                {group.title && (
+                  <div className="app-sidebar-divider-label">
+                    {group.title}
                   </div>
+                )}
+                {group.items.map((item) => (
+                  <NavLink
+                    key={item.to}
+                    to={appPath(item.to)}
+                    end={item.end}
+                    className={({ isActive }) => `app-sidebar-link ${isActive ? 'is-active' : ''}`}
+                    title={item.label}
+                  >
+                    <item.icon size={16} className="app-sidebar-link-icon" />
+                    <span className="app-sidebar-link-label">{item.label}</span>
+                  </NavLink>
                 ))}
-                
-                <button
-                  type="button"
-                  className="app-sidebar-link"
-                  title="Add Link"
-                  style={{
-                    marginTop: '0.5rem',
-                    border: '1px dashed var(--sb-border)',
-                    background: 'transparent',
-                    color: 'var(--color-primary)',
-                    justifyContent: 'center',
-                    cursor: 'pointer',
-                  }}
-                  onClick={handleOpenAddModal}
-                >
-                  <Plus size={14} />
-                  <span className="app-sidebar-link-label">Add Link</span>
-                </button>
-              </>
-            ) : (
-              navGroups.map((group, groupIdx) => (
-                <div key={group.title || `group-${groupIdx}`} className="app-sidebar-group">
-                  {group.title && (
-                    <div className="app-sidebar-divider-label">
-                      {group.title}
-                    </div>
-                  )}
-                  {group.items.map((item) => (
-                    <NavLink
-                      key={item.to}
-                      to={appPath(item.to)}
-                      end={item.end}
-                      className={({ isActive }) => `app-sidebar-link ${isActive ? 'is-active' : ''}`}
-                      title={item.label}
-                    >
-                      <item.icon size={16} className="app-sidebar-link-icon" />
-                      <span className="app-sidebar-link-label">{item.label}</span>
-                    </NavLink>
-                  ))}
-                </div>
-              ))
-            )}
+              </div>
+            ))}
           </div>
         </nav>
       )}
@@ -520,18 +338,6 @@ export default function AppShell() {
                       {candidate === activeAppId && <span className="app-switcher-option-badge">Current</span>}
                     </button>
                   ))}
-                  <div style={{ borderTop: '1px solid var(--color-border)', margin: '6px 0' }} />
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setAppMenuOpen(false);
-                      rawNavigate(`/w/${workspaceSlug}/${activeAppId}/apps_development${location.search}${location.hash}`);
-                    }}
-                    className={`app-switcher-option ${scopedPathname.startsWith('/apps_development') ? 'is-active' : ''}`}
-                  >
-                    <span>App Developer</span>
-                    {scopedPathname.startsWith('/apps_development') && <span className="app-switcher-option-badge">Current</span>}
-                  </button>
                 </div>
               )}
             </div>
@@ -864,169 +670,6 @@ export default function AppShell() {
           )}
         </div>
       </main>
-
-      {isModalOpen && (
-        <div
-          style={{
-            position: 'fixed',
-            inset: 0,
-            background: 'rgba(0,0,0,0.5)',
-            backdropFilter: 'blur(4px)',
-            zIndex: 1000,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-          }}
-          onClick={(e) => e.target === e.currentTarget && setIsModalOpen(false)}
-        >
-          <div
-            className="glass"
-            style={{
-              borderRadius: '16px',
-              padding: '24px',
-              width: '480px',
-              maxWidth: '90%',
-              display: 'flex',
-              flexDirection: 'column',
-              gap: '18px',
-              background: 'var(--color-surface)',
-              color: 'var(--color-text)',
-              boxShadow: '0 20px 50px rgba(0,0,0,0.2)',
-              animation: 'fadeIn 0.2s ease-out',
-            }}
-          >
-            <h3 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 600 }}>
-              {editingLinkId ? 'Edit Sidebar Link' : 'Add Link to Sidebar'}
-            </h3>
-
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-              <label className="label">Type</label>
-              <div className="toggle-group">
-                <button
-                  type="button"
-                  className={`toggle-btn ${targetType === 'dashboard' ? 'active' : ''}`}
-                  onClick={() => {
-                    setTargetType('dashboard');
-                    setSelectedItem('');
-                    setCustomName('');
-                    setCustomUrl('');
-                  }}
-                >
-                  Dashboard
-                </button>
-                <button
-                  type="button"
-                  className={`toggle-btn ${targetType === 'app' ? 'active' : ''}`}
-                  onClick={() => {
-                    setTargetType('app');
-                    setSelectedItem('');
-                    setCustomName('');
-                    setCustomUrl('');
-                  }}
-                >
-                  App
-                </button>
-              </div>
-            </div>
-
-            {targetType === 'dashboard' ? (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                <label className="label">Select Dashboard</label>
-                <select
-                  className="form-input"
-                  value={selectedItem}
-                  onChange={(e) => {
-                    const id = e.target.value;
-                    setSelectedItem(id);
-                    const found = dashboards.find(d => d.id === id);
-                    if (found) {
-                      setCustomName(found.name);
-                      setCustomUrl(`/w/${workspaceSlug}/business_center/dashboards/${found.id}`);
-                    }
-                  }}
-                >
-                  <option value="">-- Choose Dashboard --</option>
-                  {dashboards.map((d) => (
-                    <option key={d.id} value={d.id}>
-                      {d.name} {d.isDraft ? '(Draft)' : ''}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                <label className="label">Select App</label>
-                <select
-                  className="form-input"
-                  value={selectedItem}
-                  onChange={(e) => {
-                    const id = e.target.value;
-                    setSelectedItem(id);
-                    const found = apps.find(a => a.app_id === id);
-                    if (found) {
-                      setCustomName(found.name);
-                      setCustomUrl(`/w/${workspaceSlug}/business_center/apps_development/${found.app_id}/main`);
-                    }
-                  }}
-                >
-                  <option value="">-- Choose App --</option>
-                  {apps.map((a) => (
-                    <option key={a.app_id} value={a.app_id}>
-                      {a.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            )}
-
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-              <label className="label">Display Name</label>
-              <input
-                type="text"
-                className="form-input"
-                value={customName}
-                onChange={(e) => setCustomName(e.target.value)}
-                placeholder="Link Label"
-              />
-            </div>
-
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-              <label className="label">URL</label>
-              <input
-                type="text"
-                className="form-input"
-                value={customUrl}
-                onChange={(e) => setCustomUrl(e.target.value)}
-                placeholder="/w/workspace/..."
-              />
-            </div>
-
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '12px' }}>
-              <button
-                className="btn-outline"
-                type="button"
-                onClick={() => setIsModalOpen(false)}
-              >
-                Cancel
-              </button>
-              <button
-                className="btn-primary"
-                type="button"
-                onClick={handleSaveLink}
-                disabled={!customName.trim() || !customUrl.trim()}
-              >
-                Save
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
-
-
-
-
-
-
