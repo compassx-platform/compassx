@@ -4,7 +4,7 @@ Usage (run from the backend/ directory):
     python create_db.py
 
 Reads connection details from the same environment variables used by the app:
-    PG_HOST, PG_PORT, PG_USER, PG_PASSWORD, SYSTEM_DB_NAME, DATA_DB_NAME, ASSET_DB_NAME
+    PG_HOST, PG_PORT, PG_USER, PG_PASSWORD, SYSTEM_DB_NAME, DATA_DB_NAME
 """
 
 import os

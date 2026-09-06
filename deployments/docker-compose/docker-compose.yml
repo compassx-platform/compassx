@@ -147,7 +147,6 @@ services:
       PG_PASSWORD: postgres
       SYSTEM_DB_NAME: compassx_account
       DATA_DB_NAME: compassx_system
-      ASSET_DB_NAME: asset_manager
       MINIO_ENDPOINT: minio:9000
       STORAGE_BACKEND: minio
       STORAGE_ENDPOINT: http://minio:9000

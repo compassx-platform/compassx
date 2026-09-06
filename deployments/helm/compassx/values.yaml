@@ -44,7 +44,6 @@ backend:
     COMPASSX_ENV: "production"
     SYSTEM_DB_NAME: "compassx_account"
     DATA_DB_NAME: "compassx_system"
-    ASSET_DB_NAME: "asset_manager"
     STORAGE_BUCKET: "compassx"
     STORAGE_REGION: "us-east-1"
     SKIP_DB_INIT: "false"
