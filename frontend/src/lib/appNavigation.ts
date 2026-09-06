@@ -1,6 +1,6 @@
 import { useCallback, type ElementType } from 'react';
 import { useLocation, useNavigate, useParams, type NavigateOptions, type To } from 'react-router-dom';
-import { Briefcase, Code2, Layers, Zap, LayoutDashboard, FileText, Database, GitBranch, Cable, BookOpen, ServerCog, History, Activity, Home, Sparkles, Network } from 'lucide-react';
+import { Briefcase, Code2, Layers, Zap, LayoutDashboard, FileText, Database, GitBranch, Cable, BookOpen, ServerCog, History, Activity, Home, Sparkles, Network, LayoutGrid } from 'lucide-react';
 
 export const APP_IDS = ['platform', 'apps'] as const;
 export type AppId = (typeof APP_IDS)[number];
@@ -69,7 +69,13 @@ const PLATFORM_NAV_GROUPS: NavGroup[] = [
   },
 ];
 
-const APPS_NAV_GROUPS: NavGroup[] = [];
+const APPS_NAV_GROUPS: NavGroup[] = [
+  {
+    items: [
+      { to: '/home', icon: LayoutGrid, label: 'Apps', end: true },
+    ],
+  },
+];
 
 export const APP_DEFINITIONS: Record<AppId, AppDefinition> = {
   platform: {
@@ -104,7 +110,14 @@ export const APP_DEFINITIONS: Record<AppId, AppDefinition> = {
     defaultPath: '/home',
     navGroups: APPS_NAV_GROUPS,
     navItems: APPS_NAV_GROUPS.flatMap((g) => g.items),
-    allowedPrefixes: ['/home'],
+    allowedPrefixes: [
+      '/home',
+      '/apps',
+      '/icons',
+      '/logo',
+      '/brand-logo',
+      '/design-system',
+    ],
   },
 };
 
@@ -138,7 +151,7 @@ export function stripAppScope(pathname: string): string {
     return rest ? `/${rest}` : '/';
   }
   // Strip /:appId prefix (legacy)
-  if (isAppId(segments[0]) || segments[0] in LEGACY_APP_ID_ALIASES) {
+  if (segments[0] === 'platform' || segments[0] in LEGACY_APP_ID_ALIASES) {
     const rest = segments.slice(1).join('/');
     return rest ? `/${rest}` : '/';
   }

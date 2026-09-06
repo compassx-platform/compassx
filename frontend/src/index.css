@@ -2006,6 +2006,7 @@ html {
 .page-content:has(.dashboard-page),
 .page-content:has(.dashboard-editor-page),
 .page-content:has(.agents-page),
+.page-content:has(.apps-page),
 .page-content:has(.notebooks-page),
 .page-content:has(.sql-warehouse-page),
 .page-content:has(.connections-page),
@@ -2022,6 +2023,7 @@ html {
 }
 
 .agents-page,
+.apps-page,
 .notebooks-page,
 .connections-page {
   width: 100%;

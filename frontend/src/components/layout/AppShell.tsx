@@ -81,7 +81,8 @@ export default function AppShell() {
   const navItems = useMemo(() => getNavItemsForApp(activeAppId), [activeAppId]);
 
   const pageTitle = useMemo(() => {
-    if (scopedPathname.startsWith('/home')) return 'Home';
+    if (scopedPathname.startsWith('/home')) return activeAppId === 'apps' ? 'Apps' : 'Home';
+    if (scopedPathname.startsWith('/apps')) return 'Apps';
     if (scopedPathname.startsWith('/notebooks/open')) return 'Notebook';
     if (scopedPathname.startsWith('/notebooks')) return 'Notebooks';
     if (scopedPathname.startsWith('/dashboards')) return 'Dashboards';
@@ -100,7 +101,7 @@ export default function AppShell() {
     if (scopedPathname.startsWith('/ontology') || scopedPathname.startsWith('/topology')) return 'Ontology';
     return 'CompassX';
 
-  }, [scopedPathname]);
+  }, [scopedPathname, activeAppId]);
 
   useEffect(() => {
     function handlePointerDown(event: MouseEvent) {

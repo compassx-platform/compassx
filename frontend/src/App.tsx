@@ -57,7 +57,9 @@ import IngestionJobConfigDetailPage from '@/modules/ingestion/pages/JobConfigDet
 import IngestionRunDetailPage from '@/modules/ingestion/pages/IngestionRunDetailPage';
 import LogoShowcasePage from '@/pages/LogoShowcasePage';
 import DesignSystemShowcasePage from '@/pages/DesignSystemShowcasePage';
-import { DEFAULT_APP_ID, isAppId, normalizeAppId, stripAppScope, getDefaultPathForApp } from '@/lib/appNavigation';
+import AppsHomePage from '@/modules/apps/pages/AppsHomePage';
+import AppDetailPage from '@/modules/apps/pages/AppDetailPage';
+import { DEFAULT_APP_ID, isAppId, normalizeAppId, stripAppScope, getDefaultPathForApp, useCurrentAppId } from '@/lib/appNavigation';
 import { useMyWorkspaces } from '@/lib/workspaceApi';
 
 // ── User Manager v1 pages (lazy loaded) ─────────────────────────────────────
@@ -177,7 +179,7 @@ function EntryPointGuard() {
           </p>
           <div style={{ display: 'flex', gap: 12, justifyContent: 'center' }}>
             <button className="btn-primary" style={{ padding: '8px 16px', borderRadius: 8, cursor: 'pointer' }} onClick={() => resolve()}>
-              Retry Connection
+              Retry
             </button>
             <button className="btn-outline" style={{ padding: '8px 16px', borderRadius: 8, cursor: 'pointer' }} onClick={() => navigate('/login')}>
               Go to Login
@@ -190,6 +192,14 @@ function EntryPointGuard() {
 
   // Legacy fallback
   return <RootRedirect />;
+}
+
+function WorkspaceHomePage() {
+  const appId = useCurrentAppId();
+  if (appId === 'apps') {
+    return <AppsHomePage />;
+  }
+  return <LandingPage />;
 }
 
 function WorkspaceIndex() {
@@ -267,7 +277,10 @@ export default function App() {
                 <Route index element={<WorkspaceIndex />} />
                 <Route path=":appId" element={<AppScopeGuard />}>
                   <Route index element={<AppHomeRedirect />} />
-                  <Route path="home" element={<LandingPage />} />
+                  <Route path="home" element={<WorkspaceHomePage />} />
+                  <Route path="apps" element={<AppsHomePage />} />
+                  <Route path="apps/:applicationId" element={<AppDetailPage />} />
+                  <Route path="apps/:appId" element={<AppDetailPage />} />
                   <Route path="data-catalog" element={<DataCatalog />} />
                   <Route path="data-catalog/:catalog" element={<DataCatalog />} />
                   <Route path="data-catalog/:catalog/:schema" element={<DataCatalog />} />

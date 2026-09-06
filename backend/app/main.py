@@ -87,6 +87,7 @@ from app.sql_warehouse import routes as sql_warehouse_routes  # noqa: E402
 from app.workspace import auth_routes as workspace_auth_routes  # noqa: E402
 from app.workspace import account_routes as workspace_account_routes  # noqa: E402
 from app.workspace import workspace_routes as workspace_ws_routes  # noqa: E402
+from app.routes import app_routes  # noqa: E402
 
 # User Manager v1 routes
 from app.user_manager.routes import setup_routes as um_setup_routes  # noqa: E402
@@ -419,6 +420,7 @@ app.include_router(jupyter_proxy.router)
 app.include_router(dashboard_routes.router)
 app.include_router(monitoring_routes.router)
 app.include_router(sql_warehouse_routes.router)
+app.include_router(app_routes.router)
 
 # Workspace / account / auth routes (legacy - kept for backward compat)
 app.include_router(workspace_auth_routes.router)
