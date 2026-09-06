@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { X, Plus, AlertCircle, Loader2, Check } from 'lucide-react';
-import type { KindConfig } from '../config/types';
+import { X, Plus, AlertCircle, Loader2, Check, Lock } from 'lucide-react';
+import type { KindConfig, TypeRelationConfig } from '../config/types';
 import type { OntologyNode } from '../types/ontology';
 import './entity-ui.css';
 
@@ -8,7 +8,9 @@ interface OntologyAddNodeModalProps {
   isOpen: boolean;
   onClose: () => void;
   kindsConfig: KindConfig[];
+  typeRelations?: TypeRelationConfig[];
   existingNodes: OntologyNode[];
+  initialParentId?: string | null;
   onAddNode: (node: {
     id: string;
     kind: string;
@@ -24,7 +26,9 @@ export const OntologyAddNodeModal: React.FC<OntologyAddNodeModalProps> = ({
   isOpen,
   onClose,
   kindsConfig,
+  typeRelations,
   existingNodes,
+  initialParentId,
   onAddNode,
 }) => {
   const [title, setTitle] = useState('');
@@ -39,21 +43,112 @@ export const OntologyAddNodeModal: React.FC<OntologyAddNodeModalProps> = ({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [success, setSuccess] = useState(false);
 
-  // Set default kind on open
+  // Find selected parent node if initialParentId or parentId is set
+  const selectedParentNode = useMemo(() => {
+    const pId = initialParentId || parentId;
+    if (!pId) return null;
+    return existingNodes.find(n => n.id === pId) || null;
+  }, [initialParentId, parentId, existingNodes]);
+
+  // Compute allowed semantic types (kinds) strictly based on metamodel containment rules for the parent
+  const allowedKinds = useMemo(() => {
+    if (!selectedParentNode) {
+      // When no parent is selected / fixed, allow all registered kinds
+      return kindsConfig;
+    }
+
+    const parentKind = selectedParentNode.kind;
+
+    // 1. Filter typeRelations for containment rules where source_type_id matches parent's kind
+    const containmentRules = (typeRelations || []).filter(
+      r => r.source_type_id === parentKind && (r.is_hierarchical || r.relation_type === 'contains')
+    );
+
+    if (containmentRules.length > 0) {
+      const allowedTypeIds = new Set(containmentRules.map(r => r.target_type_id));
+      const matched = kindsConfig.filter(k => allowedTypeIds.has(k.id));
+      if (matched.length > 0) {
+        return matched;
+      }
+    }
+
+    // 2. Metamodel tier fallback if no explicit rule is configured: kinds with higher tier than parent
+    const parentKindConfig = kindsConfig.find(k => k.id === parentKind);
+    const parentTier = parentKindConfig ? parentKindConfig.tier : 0;
+    const higherTier = kindsConfig.filter(k => k.tier > parentTier);
+    if (higherTier.length > 0) {
+      return higherTier;
+    }
+
+    // 3. Fallback defaults
+    if (parentKind === 'org' || parentKind === 'project') {
+      const d = kindsConfig.filter(k => k.id === 'domain');
+      if (d.length > 0) return d;
+    } else if (parentKind === 'domain') {
+      const s = kindsConfig.filter(k => k.id === 'subdomain' || k.id === 'capability');
+      if (s.length > 0) return s;
+    } else if (parentKind === 'subdomain' || parentKind === 'capability') {
+      const e = kindsConfig.filter(k => k.id === 'element');
+      if (e.length > 0) return e;
+    }
+
+    return kindsConfig;
+  }, [selectedParentNode, kindsConfig, typeRelations]);
+
+  // Set default kind and parent on open
   useEffect(() => {
     if (isOpen) {
       setTitle('');
       setId('');
-      const defaultK = kindsConfig.find(k => k.id !== 'org' && k.id !== 'project')?.id || kindsConfig[0]?.id || 'domain';
-      setKind(defaultK);
-      setParentId('');
       setDescription('');
       setTagsStr('');
       setAutoId(true);
       setError(null);
       setSuccess(false);
+
+      if (initialParentId) {
+        setParentId(initialParentId);
+        const parentNode = existingNodes.find(n => n.id === initialParentId);
+        if (parentNode) {
+          // Look up metamodel hierarchical relation for parentNode.kind
+          const rule = (typeRelations || []).find(
+            r => r.source_type_id === parentNode.kind && (r.is_hierarchical || r.relation_type === 'contains')
+          );
+          if (rule && kindsConfig.some(k => k.id === rule.target_type_id)) {
+            setKind(rule.target_type_id);
+          } else {
+            // Find kind with next tier
+            const parentKindConfig = kindsConfig.find(k => k.id === parentNode.kind);
+            const parentTier = parentKindConfig ? parentKindConfig.tier : 0;
+            const nextKind = kindsConfig.find(k => k.tier === parentTier + 1);
+            if (nextKind) {
+              setKind(nextKind.id);
+            } else if (parentNode.kind === 'org' || parentNode.kind === 'project') {
+              setKind('domain');
+            } else if (parentNode.kind === 'domain') {
+              setKind('subdomain');
+            } else {
+              setKind('element');
+            }
+          }
+        }
+      } else {
+        setParentId('');
+        const defaultK =
+          kindsConfig.find(k => k.id !== 'org' && k.id !== 'project')?.id ||
+          kindsConfig[0]?.id ||
+          'domain';
+        setKind(defaultK);
+      }
     }
-  }, [isOpen, kindsConfig]);
+  }, [isOpen, initialParentId, kindsConfig, typeRelations, existingNodes]);
+
+  // Keep kind in sync with allowedKinds whenever allowedKinds changes
+  useEffect(() => {
+    if (allowedKinds.length > 0 && !allowedKinds.some(k => k.id === kind)) {
+      setKind(allowedKinds[0].id);
+    }
+  }, [allowedKinds, kind]);
 
   // Auto-generate ID slug from title and kind
   useEffect(() => {
@@ -80,13 +175,13 @@ export const OntologyAddNodeModal: React.FC<OntologyAddNodeModalProps> = ({
     const currentKindConfig = kindsConfig.find(k => k.id === kind);
     const targetTier = currentKindConfig ? currentKindConfig.tier : 1;
 
-    // Filter nodes that belong to a higher hierarchy tier (lower tier number)
+    // Filter nodes that belong to a higher hierarchy tier (lower tier number) or match initialParentId
     return existingNodes.filter(n => {
       const parentKindConfig = kindsConfig.find(k => k.id === n.kind);
       const pTier = parentKindConfig ? parentKindConfig.tier : 0;
-      return pTier < targetTier;
+      return pTier < targetTier || n.id === initialParentId;
     });
-  }, [kind, kindsConfig, existingNodes]);
+  }, [kind, kindsConfig, existingNodes, initialParentId]);
 
   if (!isOpen) return null;
 
@@ -143,10 +238,14 @@ export const OntologyAddNodeModal: React.FC<OntologyAddNodeModalProps> = ({
             </div>
             <div>
               <h3 className="cx-kg-modal-title">
-                Add Knowledge Graph Entity
+                {selectedParentNode && initialParentId
+                  ? `Add Child Entity to "${selectedParentNode.title}"`
+                  : 'Add Knowledge Graph Entity'}
               </h3>
               <p className="cx-kg-modal-subtitle">
-                Create a new node in the active database graph
+                {selectedParentNode && initialParentId
+                  ? `Creating child node under ${selectedParentNode.kind} (${selectedParentNode.id})`
+                  : 'Create a new node in the active database graph'}
               </p>
             </div>
           </div>
@@ -190,16 +289,21 @@ export const OntologyAddNodeModal: React.FC<OntologyAddNodeModalProps> = ({
             <div className="cx-kg-modal-field">
               <label className="cx-kg-modal-label">
                 <span>Semantic Type (Kind) <span className="cx-kg-modal-label-required">*</span></span>
+                {initialParentId && (
+                  <span className="cx-kg-modal-label-badge">Rule Allowed Only</span>
+                )}
               </label>
               <select
                 value={kind}
                 onChange={e => {
                   setKind(e.target.value);
-                  setParentId('');
+                  if (!initialParentId) {
+                    setParentId('');
+                  }
                 }}
                 className="cx-kg-select"
               >
-                {kindsConfig.map(k => (
+                {allowedKinds.map(k => (
                   <option key={k.id} value={k.id}>
                     {k.label || (k.id === 'org' ? 'Organization' : k.id === 'domain' ? 'Domain' : k.id === 'subdomain' ? 'Subdomain' : k.id === 'element' ? 'Element' : k.id)}
                   </option>
@@ -210,12 +314,19 @@ export const OntologyAddNodeModal: React.FC<OntologyAddNodeModalProps> = ({
             <div className="cx-kg-modal-field">
               <label className="cx-kg-modal-label">
                 <span>Parent Entity</span>
-                <span className="cx-kg-modal-label-badge">Hierarchy</span>
+                {initialParentId ? (
+                  <span className="cx-kg-modal-label-badge" style={{ display: 'inline-flex', alignItems: 'center', gap: 3 }}>
+                    <Lock size={10} /> Fixed Parent
+                  </span>
+                ) : (
+                  <span className="cx-kg-modal-label-badge">Hierarchy</span>
+                )}
               </label>
               <select
                 value={parentId}
                 onChange={e => setParentId(e.target.value)}
-                className="cx-kg-select"
+                disabled={Boolean(initialParentId)}
+                className={`cx-kg-select ${initialParentId ? 'is-disabled' : ''}`}
               >
                 <option value="">(None / Root Apex)</option>
                 {eligibleParents.map(p => (

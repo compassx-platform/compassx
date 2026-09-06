@@ -28,6 +28,7 @@ interface OntologySideDrawerProps {
   onClose: () => void;
   onSelectNode: (nodeId: string) => void;
   onIsolateArea: (nodeId: string) => void;
+  onOpenAddChildNode?: (parentId: string) => void;
   onUpdateNode?: (nodeId: string, updates: { title?: string; description?: string; tags?: string[]; status?: string }) => Promise<boolean>;
   onDeleteNode?: (nodeId: string) => Promise<boolean>;
   onAddEdge?: (edge: { source: string; target: string; type: string; description?: string }) => Promise<boolean>;
@@ -40,6 +41,7 @@ export const OntologySideDrawer: React.FC<OntologySideDrawerProps> = ({
   onClose,
   onSelectNode,
   onIsolateArea,
+  onOpenAddChildNode,
   onUpdateNode,
   onDeleteNode,
   onAddEdge,
@@ -320,6 +322,16 @@ ${node.description || ''}
         </div>
 
         <div className="cx-kg-drawer-header-actions">
+          {onOpenAddChildNode && !isEditing && (
+            <button
+              type="button"
+              onClick={() => onOpenAddChildNode(node.id)}
+              className="cx-ontology-config-close-btn"
+              title="Add child entity under this node"
+            >
+              <Plus size={15} />
+            </button>
+          )}
           {onUpdateNode && !isEditing && (
             <button
               type="button"
@@ -429,7 +441,19 @@ ${node.description || ''}
               <div className="cx-kg-drawer-metric-card">
                 <div className="cx-kg-drawer-metric-header">
                   <span>Direct Children</span>
-                  <span className="cx-kg-drawer-metric-hint">Glance</span>
+                  {onOpenAddChildNode ? (
+                    <button
+                      type="button"
+                      onClick={() => onOpenAddChildNode(node.id)}
+                      className="cx-kg-drawer-add-child-action"
+                      title="Add child entity under this node"
+                    >
+                      <Plus size={11} />
+                      <span>Add</span>
+                    </button>
+                  ) : (
+                    <span className="cx-kg-drawer-metric-hint">Glance</span>
+                  )}
                 </div>
                 <div className="cx-kg-drawer-metric-val">
                   {node.directChildCount || 0}

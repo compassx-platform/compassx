@@ -224,6 +224,16 @@
   box-shadow: 0 0 0 3px var(--color-primary-bg, var(--cx-color-primary-bg, rgba(34, 114, 180, 0.15)));
 }
 
+.cx-kg-input:disabled,
+.cx-kg-select:disabled,
+.cx-kg-select.is-disabled {
+  background: var(--color-surface-subtle, var(--cx-color-surface-subtle, #f1f5f9));
+  color: var(--color-text-muted, var(--cx-color-text-muted, #64748b));
+  cursor: not-allowed;
+  opacity: 0.85;
+  border-color: var(--color-border, var(--cx-color-border, #d1d5db));
+}
+
 .cx-kg-input-mono {
   font-family: var(--font-mono, var(--cx-font-mono, monospace));
   font-size: 12px;
@@ -563,6 +573,27 @@
 .cx-kg-drawer-metric-hint {
   font-size: 10px;
   color: var(--color-text-subtle, var(--cx-color-text-subtle, #94a3b8));
+}
+
+.cx-kg-drawer-add-child-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 7px;
+  font-size: 10px;
+  font-weight: 600;
+  border-radius: var(--radius-sm, var(--cx-radius-sm, 4px));
+  background: var(--color-primary-subtle, var(--cx-color-primary-subtle, rgba(34, 114, 180, 0.1)));
+  color: var(--color-primary, var(--cx-color-primary, #2272b4));
+  border: 1px solid var(--color-primary-border, var(--cx-color-primary-border, rgba(34, 114, 180, 0.25)));
+  cursor: pointer;
+  transition: all var(--transition-fast, 0.15s ease);
+}
+
+.cx-kg-drawer-add-child-action:hover {
+  background: var(--color-primary, var(--cx-color-primary, #2272b4));
+  color: #ffffff;
+  border-color: var(--color-primary, var(--cx-color-primary, #2272b4));
 }
 
 .cx-kg-drawer-metric-val {

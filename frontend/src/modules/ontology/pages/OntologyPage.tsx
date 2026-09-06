@@ -43,6 +43,7 @@ export default function OntologyPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [dataset, setDataset] = useState(() => getDefaultDataset());
   const [addNodeOpen, setAddNodeOpen] = useState(false);
+  const [addNodeParentId, setAddNodeParentId] = useState<string | null>(null);
 
   // Light / Dark Theme Mode
   const [themeMode, setThemeMode] = useState<'dark' | 'light'>(() => {
@@ -400,7 +401,10 @@ export default function OntologyPage() {
         expandedAll={expandedAll}
         onToggleExpandAll={handleToggleExpandAll}
         onOpenSearch={() => setSearchOpen(true)}
-        onOpenAddNode={() => setAddNodeOpen(true)}
+        onOpenAddNode={() => {
+          setAddNodeParentId(null);
+          setAddNodeOpen(true);
+        }}
         onAutoArrange={handleAutoArrange}
         onFitView={handleFitView}
         view3d={view3d}
@@ -480,6 +484,10 @@ export default function OntologyPage() {
           onClose={handleCloseDrawer}
           onSelectNode={handleSelectNode}
           onIsolateArea={handleSelectNode}
+          onOpenAddChildNode={(parentId) => {
+            setAddNodeParentId(parentId);
+            setAddNodeOpen(true);
+          }}
           onUpdateNode={handleUpdateNode}
           onDeleteNode={handleDeleteNode}
           onAddEdge={handleAddEdge}
@@ -502,9 +510,14 @@ export default function OntologyPage() {
       {/* Add Entity Modal */}
       <OntologyAddNodeModal
         isOpen={addNodeOpen}
-        onClose={() => setAddNodeOpen(false)}
+        onClose={() => {
+          setAddNodeOpen(false);
+          setAddNodeParentId(null);
+        }}
         kindsConfig={kindsConfig}
+        typeRelations={typeRelations}
         existingNodes={dataset.nodes}
+        initialParentId={addNodeParentId}
         onAddNode={handleAddNode}
       />
     </div>
