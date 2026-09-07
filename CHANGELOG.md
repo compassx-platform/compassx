@@ -5,6 +5,23 @@ All notable changes to the CompassX Platform will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.1] - 2026-09-07
+
+### 🚀 Highlights
+
+CompassX `0.7.1` delivers critical runtime engine improvements for Kubernetes application provisioning, automatic RFC 1123 resource label sanitization, dynamic Streamlit/Node execution containers, and enhanced Helm RBAC roles.
+
+### 🧹 Bug Fixes & Platform Enhancements
+
+#### Kubernetes App Runtime Driver
+- **RFC 1123 Label & Name Sanitization**: Automatically sanitize all application IDs and selector labels to strictly comply with Kubernetes DNS subdomain formatting.
+- **Dynamic Container Execution Pipeline**: Implemented resilient entrypoint preparation and runtime fallback handling for Streamlit and Node container workloads.
+- **Subresource & Ingress RBAC**: Expanded Helm Role permissions to support `networking.k8s.io` Ingresses and status subresources (`deployments/status`, `services/status`, `ingresses/status`).
+- **Container Tooling**: Bundled `git`, `curl`, and `ca-certificates` into backend production images.
+- **K8s Client Networking Access**: Added missing `.networking()` accessor method to platform Kubernetes API client wrapper.
+
+---
+
 ## [0.7.0] - 2026-09-07
 
 ### 🚀 Highlights

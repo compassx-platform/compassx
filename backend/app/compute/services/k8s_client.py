@@ -167,6 +167,14 @@ class K8sClient:
             api.api_client.configuration.ssl_ca_cert = None
         return api
 
+    def networking(self) -> client.NetworkingV1Api:
+        """Return NetworkingV1Api instance."""
+        api = client.NetworkingV1Api()
+        if compute_settings.SKIP_K8S_SSL_VERIFY:
+            api.api_client.configuration.verify_ssl = False
+            api.api_client.configuration.ssl_ca_cert = None
+        return api
+
     def is_local(self) -> bool:
         """True when COMPASSX_ENV=local."""
         return compute_settings.COMPASSX_ENV == "local"

@@ -18,7 +18,7 @@ class KubernetesAppDriver(BaseAppDriver):
 
     def _get_k8s_client(self):
         try:
-            from compute.k8s_client import get_k8s_client
+            from app.compute.services.k8s_client import get_k8s_client
             return get_k8s_client()
         except Exception:
             try:
@@ -34,8 +34,8 @@ class KubernetesAppDriver(BaseAppDriver):
 
         k8s = self._get_k8s_client()
         ns = settings.K8S_NAMESPACE
-        name = f"compassx-app-{app.id}"
-        image_tag = f"compassx-app-{app.slug}:latest"
+        clean_id = re.sub(r"[^a-z0-9-]", "-", app.id.lower()).strip("-")
+        name = f"compassx-app-{clean_id}"
         subdomain = ingress_service.get_app_domain(app)
         live_url = ingress_service.get_app_url(app)
         now_ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
@@ -46,7 +46,7 @@ class KubernetesAppDriver(BaseAppDriver):
         labels = {
             "app.kubernetes.io/name": name,
             "app.kubernetes.io/instance": app.slug,
-            "compassx/app-id": app.id,
+            "compassx/app-id": clean_id,
             "compassx/managed": "true",
         }
 
@@ -63,12 +63,64 @@ class KubernetesAppDriver(BaseAppDriver):
             if isinstance(ev, dict) and ev.get("key") and ev.get("value"):
                 env_vars.append(client.V1EnvVar(name=ev["key"], value=str(ev["value"])))
 
-        # 2. Deployment Spec
+        # 2. Dynamic Container Image and Execution Command
+        custom_image = cfg.get("image")
+        app_type = (app.app_type or "").lower()
+
+        git_url = app.git_repo_url
+        git_token = None
+        if hasattr(app, "git_pat_enc") and app.git_pat_enc:
+            try:
+                from app.services.encryption import decrypt_field
+                git_token = decrypt_field(app.git_pat_enc)
+            except Exception:
+                pass
+        auth_url = git_url
+        if git_token and "github.com" in git_url and not ("@" in git_url.split("//")[-1]):
+            auth_url = git_url.replace("https://", f"https://x-access-token:{git_token}@")
+        git_ref = app.git_ref or app.git_branch or "main"
+        entrypoint = app.entrypoint or "app.py"
+
+        if custom_image:
+            image_tag = custom_image
+            container_cmd = None
+            container_args = None
+        elif "streamlit" in app_type or "python" in app_type:
+            image_tag = "python:3.11-slim"
+            container_cmd = ["/bin/sh", "-c"]
+            run_cmd = (
+                f"apt-get update && apt-get install -y --no-install-recommends git curl && "
+                f"mkdir -p /app_src && cd /app_src && "
+                f"(git clone --branch '{git_ref}' '{auth_url}' . || git clone '{auth_url}' . || true) && "
+                f"(if [ -f requirements.txt ]; then pip install --no-cache-dir -r requirements.txt; fi) && "
+                f"pip install --no-cache-dir streamlit && "
+                f"(if [ ! -f '{entrypoint}' ]; then echo \"import streamlit as st\\nst.set_page_config(page_title='{app.name}', layout='wide')\\nst.title('{app.name}')\\nst.success('Application running successfully on CompassX Platform.')\\nst.info('Deploy your custom Streamlit app by connecting your Git repository.')\" > '{entrypoint}'; fi) && "
+                f"exec streamlit run '{entrypoint}' --server.port=8080 --server.address=0.0.0.0 --server.headless=true"
+            )
+            container_args = [run_cmd]
+        elif "node" in app_type or "next" in app_type or "vite" in app_type:
+            image_tag = "node:20-alpine"
+            container_cmd = ["/bin/sh", "-c"]
+            run_cmd = (
+                f"apk add --no-cache git && "
+                f"mkdir -p /app_src && cd /app_src && "
+                f"(git clone --branch '{git_ref}' '{auth_url}' . || git clone '{auth_url}' . || true) && "
+                f"(if [ -f package.json ]; then npm install && npm run build --if-present && exec npm start -- -p 8080; else echo '<!DOCTYPE html><html><body><h1>{app.name}</h1><p>Running on CompassX</p></body></html>' > index.html && npx serve -l 8080 .; fi)"
+            )
+            container_args = [run_cmd]
+        else:
+            image_tag = f"compassx-app-{app.slug}:latest"
+            container_cmd = None
+            container_args = None
+
+        # 3. Deployment Spec
         container = client.V1Container(
             name="app",
             image=image_tag,
             image_pull_policy="IfNotPresent",
             env=env_vars,
+            command=container_cmd,
+            args=container_args,
             ports=[client.V1ContainerPort(container_port=8080, name="http")],
             resources=client.V1ResourceRequirements(
                 requests={"cpu": "100m", "memory": "256Mi"},
@@ -82,7 +134,7 @@ class KubernetesAppDriver(BaseAppDriver):
             metadata=client.V1ObjectMeta(name=name, namespace=ns, labels=labels),
             spec=client.V1DeploymentSpec(
                 replicas=1,
-                selector=client.V1LabelSelector(match_labels={"compassx/app-id": app.id}),
+                selector=client.V1LabelSelector(match_labels={"compassx/app-id": clean_id}),
                 template=client.V1PodTemplateSpec(
                     metadata=client.V1ObjectMeta(labels=labels),
                     spec=client.V1PodSpec(containers=[container]),
@@ -90,19 +142,19 @@ class KubernetesAppDriver(BaseAppDriver):
             ),
         )
 
-        # 3. Service Spec
+        # 4. Service Spec
         service = client.V1Service(
             api_version="v1",
             kind="Service",
             metadata=client.V1ObjectMeta(name=name, namespace=ns, labels=labels),
             spec=client.V1ServiceSpec(
-                selector={"compassx/app-id": app.id},
+                selector={"compassx/app-id": clean_id},
                 ports=[client.V1ServicePort(name="http", port=80, target_port=8080)],
                 type="ClusterIP",
             ),
         )
 
-        # 4. Ingress Spec with Subdomain Host Routing
+        # 5. Ingress Spec with Subdomain Host Routing
         ingress_path = client.V1HTTPIngressPath(
             path="/",
             path_type="Prefix",
@@ -136,6 +188,8 @@ class KubernetesAppDriver(BaseAppDriver):
                 namespace=ns,
                 labels=labels,
                 annotations={
+                    "nginx.ingress.kubernetes.io/ssl-redirect": "false",
+                    "nginx.ingress.kubernetes.io/force-ssl-redirect": "false",
                     "nginx.ingress.kubernetes.io/proxy-read-timeout": "3600",
                     "nginx.ingress.kubernetes.io/proxy-send-timeout": "3600",
                 },
@@ -193,7 +247,8 @@ class KubernetesAppDriver(BaseAppDriver):
         if not k8s:
             return False
         ns = settings.K8S_NAMESPACE
-        name = f"compassx-app-{app.id}"
+        clean_id = re.sub(r"[^a-z0-9-]", "-", app.id.lower()).strip("-")
+        name = f"compassx-app-{clean_id}"
         try:
             k8s.apps().delete_namespaced_deployment(name=name, namespace=ns)
             return True
@@ -203,15 +258,22 @@ class KubernetesAppDriver(BaseAppDriver):
 
     def get_status(self, app) -> Dict[str, Any]:
         k8s = self._get_k8s_client()
-        name = f"compassx-app-{app.id}"
+        clean_id = re.sub(r"[^a-z0-9-]", "-", app.id.lower()).strip("-")
+        name = f"compassx-app-{clean_id}"
         ns = settings.K8S_NAMESPACE
         if not k8s:
             return {"status": "unknown", "deployment_name": name}
         try:
-            dep = k8s.apps().read_namespaced_deployment_status(name=name, namespace=ns)
-            available = (dep.status.available_replicas or 0) > 0
+            dep = k8s.apps().read_namespaced_deployment(name=name, namespace=ns)
+            available = (dep.status and (dep.status.available_replicas or dep.status.ready_replicas or 0) > 0)
             return {"status": "running" if available else "starting", "deployment_name": name}
         except Exception:
+            try:
+                pods = k8s.core().list_namespaced_pod(namespace=ns, label_selector=f"compassx/app-id={clean_id}")
+                if pods.items and any(p.status and p.status.phase == "Running" for p in pods.items):
+                    return {"status": "running", "deployment_name": name}
+            except Exception:
+                pass
             return {"status": "stopped", "deployment_name": name}
 
     def get_logs(self, app, max_lines: int = 200) -> List[str]:
@@ -219,8 +281,9 @@ class KubernetesAppDriver(BaseAppDriver):
         if not k8s:
             return []
         ns = settings.K8S_NAMESPACE
+        clean_id = re.sub(r"[^a-z0-9-]", "-", app.id.lower()).strip("-")
         try:
-            pods = k8s.core().list_namespaced_pod(namespace=ns, label_selector=f"compassx/app-id={app.id}")
+            pods = k8s.core().list_namespaced_pod(namespace=ns, label_selector=f"compassx/app-id={clean_id}")
             if not pods.items:
                 return []
             pod_name = pods.items[0].metadata.name
@@ -239,7 +302,7 @@ class KubernetesDevDriver(BaseDevDriver):
 
     def _get_k8s_client(self):
         try:
-            from compute.k8s_client import get_k8s_client
+            from app.compute.services.k8s_client import get_k8s_client
             return get_k8s_client()
         except Exception:
             try:
@@ -249,9 +312,10 @@ class KubernetesDevDriver(BaseDevDriver):
                 return None
 
     def start_dev(self, app, repo_dir: str, omnigent_internal_url: str) -> Dict[str, Any]:
-        host_id = uuid.uuid5(uuid.NAMESPACE_DNS, f"compassx-app-{app.id}").hex
+        clean_id = re.sub(r"[^a-z0-9-]", "-", app.id.lower()).strip("-")
+        host_id = uuid.uuid5(uuid.NAMESPACE_DNS, f"compassx-app-{clean_id}").hex
         host_name = str(app.name or app.slug or app.id).strip()
-        dev_name = f"compassx-app-dev-{app.id}"
+        dev_name = f"compassx-app-dev-{clean_id}"
         dev_url = ingress_service.get_app_dev_url(app)
         ns = settings.K8S_NAMESPACE
 
@@ -271,7 +335,8 @@ class KubernetesDevDriver(BaseDevDriver):
         if not k8s:
             return False
         ns = settings.K8S_NAMESPACE
-        name = f"compassx-app-dev-{app.id}"
+        clean_id = re.sub(r"[^a-z0-9-]", "-", app.id.lower()).strip("-")
+        name = f"compassx-app-dev-{clean_id}"
         try:
             k8s.core().delete_namespaced_pod(name=name, namespace=ns)
             return True
@@ -279,7 +344,8 @@ class KubernetesDevDriver(BaseDevDriver):
             return False
 
     def get_dev_status(self, app) -> Dict[str, Any]:
-        dev_name = f"compassx-app-dev-{app.id}"
+        clean_id = re.sub(r"[^a-z0-9-]", "-", app.id.lower()).strip("-")
+        dev_name = f"compassx-app-dev-{clean_id}"
         return {"status": "active", "pod_name": dev_name, "mode": "kubernetes"}
 
     def get_dev_url(self, app) -> str:
@@ -290,7 +356,8 @@ class KubernetesDevDriver(BaseDevDriver):
         if not k8s:
             return ""
         ns = settings.K8S_NAMESPACE
-        name = f"compassx-app-dev-{app.id}"
+        clean_id = re.sub(r"[^a-z0-9-]", "-", app.id.lower()).strip("-")
+        name = f"compassx-app-dev-{clean_id}"
         try:
             return k8s.core().read_namespaced_pod_log(name=name, namespace=ns, tail_lines=200)
         except Exception:

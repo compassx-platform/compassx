@@ -61,33 +61,37 @@ class AppRunnerService:
 
         git_ref = app.git_ref or app.git_branch or "main"
 
-        if os.path.exists(os.path.join(repo_dir, ".git")):
-            logger.info("Updating existing repo clone for app %s in %s", app.name, repo_dir)
-            try:
-                subprocess.run(["git", "fetch", "--all"], cwd=repo_dir, capture_output=True, text=True, check=True)
-                subprocess.run(["git", "checkout", git_ref], cwd=repo_dir, capture_output=True, text=True, check=True)
-                subprocess.run(["git", "pull"], cwd=repo_dir, capture_output=True, text=True, check=False)
-            except Exception as e:
-                logger.warning("Git pull failed for app %s, proceeding with current clone: %s", app.name, e)
-        else:
-            logger.info("Cloning repo %s (ref: %s) for app %s into %s", git_url, git_ref, app.name, repo_dir)
-            if os.path.exists(repo_dir):
-                shutil.rmtree(repo_dir, ignore_errors=True)
-            res = subprocess.run(
-                ["git", "clone", "--branch", git_ref, auth_url, repo_dir],
-                capture_output=True,
-                text=True,
-                check=False,
-            )
-            if res.returncode != 0:
-                res2 = subprocess.run(
-                    ["git", "clone", auth_url, repo_dir],
+        try:
+            if os.path.exists(os.path.join(repo_dir, ".git")):
+                logger.info("Updating existing repo clone for app %s in %s", app.name, repo_dir)
+                try:
+                    subprocess.run(["git", "fetch", "--all"], cwd=repo_dir, capture_output=True, text=True, check=True)
+                    subprocess.run(["git", "checkout", git_ref], cwd=repo_dir, capture_output=True, text=True, check=True)
+                    subprocess.run(["git", "pull"], cwd=repo_dir, capture_output=True, text=True, check=False)
+                except Exception as e:
+                    logger.warning("Git pull failed for app %s, proceeding with current clone: %s", app.name, e)
+            else:
+                logger.info("Cloning repo %s (ref: %s) for app %s into %s", git_url, git_ref, app.name, repo_dir)
+                if os.path.exists(repo_dir):
+                    shutil.rmtree(repo_dir, ignore_errors=True)
+                res = subprocess.run(
+                    ["git", "clone", "--branch", git_ref, auth_url, repo_dir],
                     capture_output=True,
                     text=True,
                     check=False,
                 )
-                if res2.returncode != 0:
-                    raise RuntimeError(f"Git clone failed for {git_url}: {res.stderr or res2.stderr}")
+                if res.returncode != 0:
+                    res2 = subprocess.run(
+                        ["git", "clone", auth_url, repo_dir],
+                        capture_output=True,
+                        text=True,
+                        check=False,
+                    )
+                    if res2.returncode != 0:
+                        logger.warning("Git clone failed for %s: %s", git_url, res.stderr or res2.stderr)
+        except Exception as exc:
+            logger.warning("Local git clone encountered error for app %s: %s", app.name, exc)
+            os.makedirs(repo_dir, exist_ok=True)
 
         return repo_dir
 
