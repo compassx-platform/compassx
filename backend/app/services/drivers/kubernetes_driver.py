@@ -154,10 +154,12 @@ class KubernetesAppDriver(BaseAppDriver):
             ),
         )
 
-        # 5. Ingress Spec with Subdomain Host Routing
-        ingress_path = client.V1HTTPIngressPath(
-            path="/",
-            path_type="Prefix",
+        # 5. Ingress Spec with Dual Routing: Subdomain Host Routing + Path Routing
+        # Rule 1: Subdomain routing: host: subdomain, path: /()(.*) -> target rewrite /$2
+        # Rule 2: Universal Path routing on cluster ingress: path: /apps/<slug>(/|$)(.*) -> target rewrite /$2
+        ingress_path_host = client.V1HTTPIngressPath(
+            path="/()(.*)",
+            path_type="ImplementationSpecific",
             backend=client.V1IngressBackend(
                 service=client.V1IngressServiceBackend(
                     name=name,
@@ -165,15 +167,30 @@ class KubernetesAppDriver(BaseAppDriver):
                 )
             ),
         )
-
-        ingress_rule = client.V1IngressRule(
+        ingress_rule_host = client.V1IngressRule(
             host=subdomain,
-            http=client.V1HTTPIngressRuleValue(paths=[ingress_path]),
+            http=client.V1HTTPIngressRuleValue(paths=[ingress_path_host]),
         )
+
+        ingress_path_route = client.V1HTTPIngressPath(
+            path=f"/apps/{app.slug}(/|$)(.*)",
+            path_type="ImplementationSpecific",
+            backend=client.V1IngressBackend(
+                service=client.V1IngressServiceBackend(
+                    name=name,
+                    port=client.V1ServiceBackendPort(number=80),
+                )
+            ),
+        )
+        ingress_rule_path = client.V1IngressRule(
+            http=client.V1HTTPIngressRuleValue(paths=[ingress_path_route]),
+        )
+
+        ingress_rules = [ingress_rule_host, ingress_rule_path]
 
         ingress_spec = client.V1IngressSpec(
             ingress_class_name=settings.K8S_INGRESS_CLASS,
-            rules=[ingress_rule],
+            rules=ingress_rules,
         )
         if settings.K8S_INGRESS_TLS_SECRET:
             ingress_spec.tls = [
@@ -192,6 +209,8 @@ class KubernetesAppDriver(BaseAppDriver):
                     "nginx.ingress.kubernetes.io/force-ssl-redirect": "false",
                     "nginx.ingress.kubernetes.io/proxy-read-timeout": "3600",
                     "nginx.ingress.kubernetes.io/proxy-send-timeout": "3600",
+                    "nginx.ingress.kubernetes.io/rewrite-target": "/$2",
+                    "nginx.ingress.kubernetes.io/use-regex": "true",
                 },
             ),
             spec=ingress_spec,
@@ -312,12 +331,155 @@ class KubernetesDevDriver(BaseDevDriver):
                 return None
 
     def start_dev(self, app, repo_dir: str, omnigent_internal_url: str) -> Dict[str, Any]:
+        from kubernetes import client
+        from kubernetes.client.exceptions import ApiException
+
+        k8s = self._get_k8s_client()
         clean_id = re.sub(r"[^a-z0-9-]", "-", app.id.lower()).strip("-")
         host_id = uuid.uuid5(uuid.NAMESPACE_DNS, f"compassx-app-{clean_id}").hex
         host_name = str(app.name or app.slug or app.id).strip()
         dev_name = f"compassx-app-dev-{clean_id}"
+        dev_subdomain = ingress_service.get_app_dev_domain(app)
         dev_url = ingress_service.get_app_dev_url(app)
         ns = settings.K8S_NAMESPACE
+
+        labels = {
+            "app.kubernetes.io/name": dev_name,
+            "app.kubernetes.io/instance": f"{app.slug}-dev",
+            "compassx/app-id": clean_id,
+            "compassx/dev": "true",
+            "compassx/managed": "true",
+        }
+
+        # If k8s client is available, provision Dev Pod, Service, and Ingress
+        if k8s:
+            try:
+                # 1. Dev Pod
+                dev_cmd = (
+                    f"mkdir -p /root/.omnigent && printf 'host:\\n  host_id: {host_id}\\n  name: \"{host_name}\"\\n' > /root/.omnigent/config.yaml; "
+                    f"export OMNIGENT_HOST_ID={host_id} OMNIGENT_HOST_NAME=\"{host_name}\" "
+                    f"NODE_TLS_REJECT_UNAUTHORIZED=0 NPM_CONFIG_STRICT_SSL=false PYTHONHTTPSVERIFY=0 GIT_SSL_NO_VERIFY=true CURL_INSECURE=1; "
+                    f"omnigent host --server {omnigent_internal_url} --background --non-interactive || true; "
+                    f"mkdir -p /app && cd /app && echo '<!DOCTYPE html><html><body><h1>Dev Sandbox for {app.name}</h1><p>Connected to Omnigent Dev Studio</p></body></html>' > index.html && "
+                    f"npx serve -l 8080 . || python -m http.server 8080"
+                )
+                pod = client.V1Pod(
+                    api_version="v1",
+                    kind="Pod",
+                    metadata=client.V1ObjectMeta(name=dev_name, namespace=ns, labels=labels),
+                    spec=client.V1PodSpec(
+                        containers=[
+                            client.V1Container(
+                                name="dev-host",
+                                image="ghcr.io/omnigent-ai/omnigent-host:latest",
+                                image_pull_policy="IfNotPresent",
+                                command=["/bin/sh", "-c"],
+                                args=[dev_cmd],
+                                ports=[client.V1ContainerPort(container_port=8080, name="http")],
+                                env=[
+                                    client.V1EnvVar(name="PORT", value="8080"),
+                                    client.V1EnvVar(name="APP_NAME", value=str(app.name)),
+                                    client.V1EnvVar(name="APP_SLUG", value=str(app.slug)),
+                                    client.V1EnvVar(name="APP_ID", value=str(app.id)),
+                                    client.V1EnvVar(name="OMNIGENT_HOST_ID", value=str(host_id)),
+                                    client.V1EnvVar(name="OMNIGENT_HOST_NAME", value=str(host_name)),
+                                    client.V1EnvVar(name="OMNIGENT_SERVER_URL", value=str(omnigent_internal_url)),
+                                ],
+                            )
+                        ],
+                        restart_policy="Always",
+                    ),
+                )
+                try:
+                    k8s.core().delete_namespaced_pod(name=dev_name, namespace=ns)
+                except Exception:
+                    pass
+                k8s.core().create_namespaced_pod(namespace=ns, body=pod)
+
+                # 2. Dev Service
+                dev_svc = client.V1Service(
+                    api_version="v1",
+                    kind="Service",
+                    metadata=client.V1ObjectMeta(name=dev_name, namespace=ns, labels=labels),
+                    spec=client.V1ServiceSpec(
+                        selector={"compassx/app-id": clean_id, "compassx/dev": "true"},
+                        ports=[client.V1ServicePort(name="http", port=80, target_port=8080)],
+                        type="ClusterIP",
+                    ),
+                )
+                try:
+                    k8s.core().replace_namespaced_service(name=dev_name, namespace=ns, body=dev_svc)
+                except ApiException as e:
+                    if e.status == 404:
+                        k8s.core().create_namespaced_service(namespace=ns, body=dev_svc)
+                    else:
+                        raise
+
+                # 3. Dev Ingress with Dual Routing
+                dev_ingress = client.V1Ingress(
+                    api_version="networking.k8s.io/v1",
+                    kind="Ingress",
+                    metadata=client.V1ObjectMeta(
+                        name=f"{dev_name}-ingress",
+                        namespace=ns,
+                        labels=labels,
+                        annotations={
+                            "nginx.ingress.kubernetes.io/ssl-redirect": "false",
+                            "nginx.ingress.kubernetes.io/force-ssl-redirect": "false",
+                            "nginx.ingress.kubernetes.io/proxy-read-timeout": "3600",
+                            "nginx.ingress.kubernetes.io/proxy-send-timeout": "3600",
+                            "nginx.ingress.kubernetes.io/rewrite-target": "/$2",
+                            "nginx.ingress.kubernetes.io/use-regex": "true",
+                        },
+                    ),
+                    spec=client.V1IngressSpec(
+                        ingress_class_name=settings.K8S_INGRESS_CLASS,
+                        rules=[
+                            client.V1IngressRule(
+                                host=dev_subdomain,
+                                http=client.V1HTTPIngressRuleValue(
+                                    paths=[
+                                        client.V1HTTPIngressPath(
+                                            path="/()(.*)",
+                                            path_type="ImplementationSpecific",
+                                            backend=client.V1IngressBackend(
+                                                service=client.V1IngressServiceBackend(
+                                                    name=dev_name,
+                                                    port=client.V1ServiceBackendPort(number=80),
+                                                )
+                                            ),
+                                        )
+                                    ]
+                                ),
+                            ),
+                            client.V1IngressRule(
+                                http=client.V1HTTPIngressRuleValue(
+                                    paths=[
+                                        client.V1HTTPIngressPath(
+                                            path=f"/apps/{app.slug}-dev(/|$)(.*)",
+                                            path_type="ImplementationSpecific",
+                                            backend=client.V1IngressBackend(
+                                                service=client.V1IngressServiceBackend(
+                                                    name=dev_name,
+                                                    port=client.V1ServiceBackendPort(number=80),
+                                                )
+                                            ),
+                                        )
+                                    ]
+                                ),
+                            ),
+                        ],
+                    ),
+                )
+                try:
+                    k8s.networking().replace_namespaced_ingress(name=f"{dev_name}-ingress", namespace=ns, body=dev_ingress)
+                except ApiException as e:
+                    if e.status == 404:
+                        k8s.networking().create_namespaced_ingress(namespace=ns, body=dev_ingress)
+                    else:
+                        raise
+            except Exception as e:
+                logger.warning("Could not create K8s dev sandbox resources: %s", e)
 
         return {
             "mode": "kubernetes",

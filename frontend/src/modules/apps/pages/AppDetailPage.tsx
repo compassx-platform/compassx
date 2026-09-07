@@ -370,7 +370,8 @@ export default function AppDetailPage() {
   const isRunning = isLive && (runtimeInfo?.status === 'running' || !!runtimeInfo?.container_id || !!runtimeInfo?.pid);
   const runtimePort = runtimeInfo?.host_port;
   const runtimeMode = (runtimeInfo?.mode || (runtimeInfo?.container_id ? 'docker' : 'local')).toUpperCase();
-  const appLiveUrl = runtimeInfo?.url || (runtimePort ? `http://localhost:${runtimePort}` : app.route);
+  const rawLiveUrl = runtimeInfo?.url || (runtimePort ? `http://localhost:${runtimePort}` : app.route);
+  const appLiveUrl = rawLiveUrl?.startsWith('/') ? `${window.location.origin}${rawLiveUrl}` : rawLiveUrl;
 
   return (
     <div className="page-section apps-page" style={{ width: '100%', maxWidth: '100%', padding: '20px 28px 40px', margin: 0 }}>

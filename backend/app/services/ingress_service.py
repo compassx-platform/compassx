@@ -76,10 +76,22 @@ class IngressService:
     def get_app_url(self, app, host_port: Optional[int] = None) -> str:
         """Resolve public live URL for an application."""
         mode = self.get_active_mode()
+        slug = getattr(app, "slug", str(app))
         if mode == "kubernetes":
             domain = self.get_app_domain(app)
-            scheme = "https" if ("." in domain and not domain.endswith(".internal") and not domain.endswith(".local")) else "http"
-            return f"{scheme}://{domain}"
+            # 1. Custom Public Domain (e.g. app1.domain.com)
+            if domain and not any(domain.endswith(ext) for ext in (".internal", ".local", ".lan")):
+                scheme = "https" if getattr(settings, "K8S_USE_HTTPS", True) else "http"
+                return f"{scheme}://{domain}"
+
+            # 2. Path-based ingress routing on specific ingress host / IP
+            ingress_host = getattr(settings, "K8S_INGRESS_HOST", "") or os.getenv("K8S_INGRESS_HOST", "")
+            if ingress_host:
+                scheme = "https" if getattr(settings, "K8S_USE_HTTPS", True) else "http"
+                return f"{scheme}://{ingress_host}/apps/{slug}/"
+
+            # 3. Universal path-based relative URL
+            return f"/apps/{slug}/"
 
         port = host_port or 8080
         return f"http://localhost:{port}"
@@ -95,10 +107,22 @@ class IngressService:
     def get_app_dev_url(self, app, dev_port: Optional[int] = None) -> str:
         """Resolve public preview URL for a development sandbox."""
         mode = self.get_active_mode()
+        slug = getattr(app, "slug", str(app))
         if mode == "kubernetes":
             domain = self.get_app_dev_domain(app)
-            scheme = "https" if ("." in domain and not domain.endswith(".internal") and not domain.endswith(".local")) else "http"
-            return f"{scheme}://{domain}"
+            # 1. Custom Public Domain
+            if domain and not any(domain.endswith(ext) for ext in (".internal", ".local", ".lan")):
+                scheme = "https" if getattr(settings, "K8S_USE_HTTPS", True) else "http"
+                return f"{scheme}://{domain}"
+
+            # 2. Path-based ingress routing on specific ingress host / IP
+            ingress_host = getattr(settings, "K8S_INGRESS_HOST", "") or os.getenv("K8S_INGRESS_HOST", "")
+            if ingress_host:
+                scheme = "https" if getattr(settings, "K8S_USE_HTTPS", True) else "http"
+                return f"{scheme}://{ingress_host}/apps/{slug}-dev/"
+
+            # 3. Universal path-based relative URL
+            return f"/apps/{slug}-dev/"
 
         port = dev_port or 9201
         return f"http://localhost:{port}"
@@ -121,8 +145,16 @@ class IngressService:
         mode = self.get_active_mode()
         if mode == "kubernetes":
             domain = self.get_omnigent_domain()
-            scheme = "https" if ("." in domain and not domain.endswith(".internal") and not domain.endswith(".local")) else "http"
-            return f"{scheme}://{domain}"
+            if domain and not any(domain.endswith(ext) for ext in (".internal", ".local", ".lan")):
+                scheme = "https" if getattr(settings, "K8S_USE_HTTPS", True) else "http"
+                return f"{scheme}://{domain}"
+
+            ingress_host = getattr(settings, "K8S_INGRESS_HOST", "") or os.getenv("K8S_INGRESS_HOST", "")
+            if ingress_host:
+                scheme = "https" if getattr(settings, "K8S_USE_HTTPS", True) else "http"
+                return f"{scheme}://{ingress_host}/devstudio"
+
+            return "/devstudio"
 
         return (getattr(settings, "OMNIGENT_SERVER_URL", "") or "http://localhost:6767").rstrip("/")
 

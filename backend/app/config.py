@@ -41,7 +41,9 @@ class Settings(BaseSettings):
     OMNIGENT_DOMAIN_TEMPLATE: str = "devstudio.{base_domain}"
     K8S_NAMESPACE: str = "compassx"
     K8S_INGRESS_CLASS: str = "nginx"
+    K8S_INGRESS_HOST: str = ""
     K8S_INGRESS_TLS_SECRET: str = ""
+    K8S_USE_HTTPS: bool = True
 
     # CORS
     FRONTEND_ORIGIN: str = "http://localhost:5173"
