@@ -385,6 +385,10 @@ class KubernetesDevDriver(BaseDevDriver):
                                     client.V1EnvVar(name="OMNIGENT_HOST_NAME", value=str(host_name)),
                                     client.V1EnvVar(name="OMNIGENT_SERVER_URL", value=str(omnigent_internal_url)),
                                 ],
+                                resources=client.V1ResourceRequirements(
+                                    requests={"cpu": "50m", "memory": "128Mi"},
+                                    limits={"cpu": "500m", "memory": "512Mi"},
+                                ),
                             )
                         ],
                         restart_policy="Always",
