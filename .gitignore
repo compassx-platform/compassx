@@ -17,6 +17,9 @@ dist/
 **/dist/
 /data/
 /architecture/
+storage/
+**/storage/
+*.crt
 
 # Documentation build output
 site/

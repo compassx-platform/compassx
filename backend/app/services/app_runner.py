@@ -1,15 +1,16 @@
-﻿import os
+"""App Runner Service — Orchestrates application lifecycles across Docker, Kubernetes, and Local runtimes (SOLID / SRP / DIP)."""
+import os
 import sys
 import shutil
-import socket
 import logging
 import subprocess
-import asyncio
 from datetime import datetime, timezone
-from typing import Dict, List, Optional, Tuple, Any
+from typing import Dict, List, Optional, Any
 import httpx
 from fastapi import Request, Response
-from starlette.responses import StreamingResponse
+
+from app.services.drivers.factory import driver_factory
+from app.services.ingress_service import ingress_service
 
 logger = logging.getLogger(__name__)
 
@@ -18,38 +19,20 @@ BASE_APPS_STORAGE = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "..", "storage", "apps")
 )
 
+
 class AppRunnerService:
-    """Manages multi-mode lifecycle (Docker / Local / Kubernetes) for deployed apps."""
+    """High-level application lifecycle orchestrator."""
 
     def __init__(self):
         os.makedirs(BASE_APPS_STORAGE, exist_ok=True)
-        self._docker_available = None
 
     def is_docker_available(self) -> bool:
-        """Check whether the local Docker daemon is reachable."""
+        """Check whether local Docker daemon is reachable."""
         try:
-            res = subprocess.run(
-                ["docker", "info", "--format", "{{.ServerVersion}}"],
-                capture_output=True,
-                text=True,
-                timeout=4,
-                check=False,
-            )
+            res = subprocess.run(["docker", "info"], capture_output=True, text=True, timeout=2, check=False)
             return res.returncode == 0
         except Exception:
             return False
-
-    def find_free_port(self, start_port: int = 9101, max_port: int = 9300) -> int:
-        """Find an available TCP port on localhost."""
-        for port in range(start_port, max_port):
-            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                s.settimeout(0.5)
-                try:
-                    s.bind(("127.0.0.1", port))
-                    return port
-                except OSError:
-                    continue
-        raise RuntimeError("No available free port found in range 9101-9300")
 
     def get_app_dir(self, app_id: str) -> str:
         """Return workspace directory for a specific app."""
@@ -74,7 +57,6 @@ class AppRunnerService:
 
         auth_url = git_url
         if git_token and "github.com" in git_url and not ("@" in git_url.split("//")[-1]):
-            # Insert token into clone url safely
             auth_url = git_url.replace("https://", f"https://x-access-token:{git_token}@")
 
         git_ref = app.git_ref or app.git_branch or "main"
@@ -98,7 +80,6 @@ class AppRunnerService:
                 check=False,
             )
             if res.returncode != 0:
-                # Retry with default clone if specific branch fails
                 res2 = subprocess.run(
                     ["git", "clone", auth_url, repo_dir],
                     capture_output=True,
@@ -131,7 +112,6 @@ HEALTHCHECK --interval=15s --timeout=5s --start-period=5s --retries=3 CMD curl -
 CMD ["streamlit", "run", "app.py", "--server.port=8080", "--server.address=0.0.0.0", "--server.headless=true"]
 """
         else:
-            # Standard Python/FastAPI fallback
             content = """FROM python:3.11-slim
 WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
@@ -148,116 +128,18 @@ CMD ["python", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080
             f.write(content)
 
     def deploy_app(self, app, runner_mode: Optional[str] = None) -> Dict[str, Any]:
-        """Build and deploy the application in Docker or local runner."""
+        """Build and deploy the application using the active runtime driver."""
         repo_dir = self.clone_or_update_repo(app)
         self.ensure_dockerfile(repo_dir, app)
 
-        use_docker = self.is_docker_available() if runner_mode is None else (runner_mode.lower() == "docker")
-
-        # Determine host port
-        cfg = dict(app.config or {})
-        runtime_meta = dict(cfg.get("runtime") or {})
-        existing_port = runtime_meta.get("host_port")
-
-        port = existing_port if (existing_port and isinstance(existing_port, int)) else self.find_free_port()
-        container_name = f"compassx-app-{app.id}"
-        image_tag = f"compassx-app-{app.slug}:latest"
+        driver = driver_factory.get_app_driver(runner_mode)
         now_ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
-
         build_logs = [
-            f"[{now_ts}] [INFO] Starting build for app '{app.name}' ({app.slug})",
-            f"[{now_ts}] [INFO] Cloned Git repository from {app.git_repo_url} (ref: {app.git_ref or 'main'})",
-            f"[{now_ts}] [INFO] Assigned local host port: {port}",
+            f"[{now_ts}] [INFO] Initiating deployment for app '{app.name}' ({app.slug})",
+            f"[{now_ts}] [INFO] Active runtime driver: {driver.__class__.__name__}",
         ]
 
-        if use_docker:
-            # 1. Build Docker Image
-            build_logs.append(f"[{now_ts}] [INFO] Building Docker container image: {image_tag}")
-            build_res = subprocess.run(
-                ["docker", "build", "-t", image_tag, "."],
-                cwd=repo_dir,
-                capture_output=True,
-                text=True,
-                check=False,
-            )
-            for line in (build_res.stdout or "").splitlines():
-                if line.strip():
-                    build_logs.append(f"[{now_ts}] [BUILD] {line.strip()}")
-            if build_res.returncode != 0:
-                error_msg = build_res.stderr or "Docker build failed"
-                build_logs.append(f"[{now_ts}] [ERROR] Docker build failed: {error_msg}")
-                raise RuntimeError(f"Docker build failed: {error_msg}")
-
-            # 2. Stop & Remove any existing container
-            subprocess.run(["docker", "rm", "-f", container_name], capture_output=True, text=True, check=False)
-
-            # 3. Prepare Environment Variables
-            env_args = [
-                "-e", f"PORT=8080",
-                "-e", f"APP_NAME={app.name}",
-                "-e", f"APP_SLUG={app.slug}",
-                "-e", f"APP_ID={app.id}",
-                "-e", f"WORKSPACE_ID={app.workspace_id}",
-            ]
-            if app.workspace_identity:
-                identity_id = app.workspace_identity.get("identity_id") or ""
-                env_args.extend(["-e", f"COMPASSX_WORKLOAD_IDENTITY={identity_id}"])
-
-            env_vars = cfg.get("env_vars") or []
-            for ev in env_vars:
-                if isinstance(ev, dict) and ev.get("key") and ev.get("value"):
-                    env_args.extend(["-e", f"{ev['key']}={ev['value']}"])
-
-            # 4. Run Docker Container
-            build_logs.append(f"[{now_ts}] [INFO] Launching Docker container '{container_name}' on port {port}:8080...")
-            run_cmd = ["docker", "run", "-d", "--name", container_name, "-p", f"{port}:8080"] + env_args + [image_tag]
-            run_res = subprocess.run(run_cmd, capture_output=True, text=True, check=False)
-            if run_res.returncode != 0:
-                raise RuntimeError(f"Docker run failed: {run_res.stderr}")
-
-            container_id = (run_res.stdout or "").strip()[:12]
-            build_logs.append(f"[{now_ts}] [SUCCESS] Container running (ID: {container_id}) at http://localhost:{port}")
-
-            runtime_info = {
-                "mode": "docker",
-                "container_id": container_id,
-                "container_name": container_name,
-                "image_tag": image_tag,
-                "host_port": port,
-                "url": f"http://localhost:{port}",
-                "deployed_at": datetime.now(timezone.utc).isoformat(),
-                "status": "running",
-            }
-        else:
-            # Local Process Fallback
-            build_logs.append(f"[{now_ts}] [INFO] Docker not detected. Spawning local app runner process on port {port}...")
-            # For test app: start python backend directly
-            backend_dir = os.path.join(repo_dir, "backend") if os.path.exists(os.path.join(repo_dir, "backend")) else repo_dir
-            log_file = os.path.join(self.get_app_dir(app.id), "runtime.log")
-            
-            env = dict(os.environ)
-            env["PORT"] = str(port)
-            env["APP_ID"] = app.id
-
-            with open(log_file, "a", encoding="utf-8") as f_out:
-                proc = subprocess.Popen(
-                    [sys.executable, "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", str(port)],
-                    cwd=backend_dir,
-                    env=env,
-                    stdout=f_out,
-                    stderr=f_out,
-                )
-
-            build_logs.append(f"[{now_ts}] [SUCCESS] Process spawned (PID: {proc.pid}) at http://localhost:{port}")
-            runtime_info = {
-                "mode": "local",
-                "pid": proc.pid,
-                "host_port": port,
-                "url": f"http://localhost:{port}",
-                "log_file": log_file,
-                "deployed_at": datetime.now(timezone.utc).isoformat(),
-                "status": "running",
-            }
+        runtime_info = driver.deploy(app, repo_dir, build_logs)
 
         return {
             "runtime_info": runtime_info,
@@ -265,72 +147,44 @@ CMD ["python", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080
         }
 
     def get_live_logs(self, app, tail: int = 250) -> List[str]:
-        """Fetch actual runtime container or process logs."""
+        """Fetch actual runtime container, pod, or process logs."""
         cfg = app.config or {}
         runtime = cfg.get("runtime") or {}
-        mode = runtime.get("mode", "docker")
-        container_name = runtime.get("container_name") or f"compassx-app-{app.id}"
+        mode = runtime.get("mode")
 
-        if mode == "docker" and self.is_docker_available():
-            res = subprocess.run(
-                ["docker", "logs", "--tail", str(tail), container_name],
-                capture_output=True,
-                text=True,
-                check=False,
-            )
-            raw = (res.stdout or "") + (res.stderr or "")
-            lines = [l for l in raw.splitlines() if l.strip()]
-            if lines:
-                return lines
-
-        # Local fallback log file
-        log_file = runtime.get("log_file") or os.path.join(self.get_app_dir(app.id), "runtime.log")
-        if os.path.exists(log_file):
-            try:
-                with open(log_file, "r", encoding="utf-8", errors="replace") as f:
-                    all_lines = f.readlines()
-                    return [l.rstrip("\r\n") for l in all_lines[-tail:] if l.strip()]
-            except Exception as e:
-                logger.warning("Error reading runtime log file: %s", e)
+        driver = driver_factory.get_app_driver(mode)
+        logs = driver.get_logs(app, max_lines=tail)
+        if logs:
+            return logs
 
         # Stored logs fallback
-        return cfg.get("logs") or [f"[INFO] App container {container_name} is active."]
+        return cfg.get("logs") or [f"[INFO] App '{app.name}' is registered and active."]
 
     def stop_app(self, app) -> None:
-        """Stop the running container or process."""
+        """Stop the running container, pod, or process."""
         cfg = app.config or {}
-        runtime = cfg.get("runtime") or {}
-        mode = runtime.get("mode", "docker")
-        container_name = runtime.get("container_name") or f"compassx-app-{app.id}"
-
-        if mode == "docker" and self.is_docker_available():
-            subprocess.run(["docker", "stop", container_name], capture_output=True, text=True, check=False)
-        elif mode == "local":
-            pid = runtime.get("pid")
-            if pid:
-                try:
-                    import signal
-                    os.kill(pid, signal.SIGTERM)
-                except Exception:
-                    pass
+        mode = (cfg.get("runtime") or {}).get("mode")
+        driver = driver_factory.get_app_driver(mode)
+        driver.stop(app)
 
     def start_app(self, app) -> None:
-        """Start a stopped container."""
+        """Start a stopped app instance."""
         cfg = app.config or {}
-        runtime = cfg.get("runtime") or {}
-        mode = runtime.get("mode", "docker")
-        container_name = runtime.get("container_name") or f"compassx-app-{app.id}"
+        mode = (cfg.get("runtime") or {}).get("mode")
+        container_name = (cfg.get("runtime") or {}).get("container_name") or f"compassx-app-{app.id}"
 
-        if mode == "docker" and self.is_docker_available():
+        if (mode == "docker" or self.is_docker_available()) and container_name:
             subprocess.run(["docker", "start", container_name], capture_output=True, text=True, check=False)
 
     def delete_app_runtime(self, app) -> None:
-        """Completely clean up container and storage files."""
-        cfg = app.config or {}
-        runtime = cfg.get("runtime") or {}
-        container_name = runtime.get("container_name") or f"compassx-app-{app.id}"
+        """Clean up app runtime resources and storage."""
+        try:
+            self.stop_app(app)
+        except Exception:
+            pass
 
         if self.is_docker_available():
+            container_name = f"compassx-app-{app.id}"
             subprocess.run(["docker", "rm", "-f", container_name], capture_output=True, text=True, check=False)
 
         app_dir = os.path.join(BASE_APPS_STORAGE, app.id)
@@ -338,7 +192,7 @@ CMD ["python", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080
             shutil.rmtree(app_dir, ignore_errors=True)
 
     async def proxy_request(self, app, subpath: str, request: Request) -> Response:
-        """Reverse-proxy HTTP requests to the running app container."""
+        """Reverse-proxy HTTP requests to the running app container when accessed locally."""
         cfg = app.config or {}
         runtime = cfg.get("runtime") or {}
         port = runtime.get("host_port")

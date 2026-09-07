@@ -44,6 +44,7 @@ import {
   useAppLogs,
   useUpdateAppStatus,
   useDeleteApp,
+  useStartDevSession,
 } from '../hooks/useApps';
 import { APP_TYPES } from '../components/CreateAppModal';
 
@@ -130,6 +131,20 @@ export default function AppDetailPage() {
   // UI Helpers
   const [copiedRoute, setCopiedRoute] = useState(false);
   const [isDeploying, setIsDeploying] = useState(false);
+  const startDevMutation = useStartDevSession();
+
+  async function handleLaunchDevStudio() {
+    if (!resolvedAppId || !app) return;
+    try {
+      toast.info(`Launching Omnigent for "${app.name}"...`);
+      const session = await startDevMutation.mutateAsync(resolvedAppId);
+      const targetUrl = session?.omnigent_session_url || session?.omnigent_server_url || 'http://localhost:6767';
+      window.open(targetUrl, '_blank');
+      toast.success(`Omnigent session opened for ${app.name}`);
+    } catch (err: any) {
+      toast.error(err?.response?.data?.detail || 'Failed to start Omnigent dev session.');
+    }
+  }
 
   useEffect(() => {
     if (app) {
@@ -503,6 +518,32 @@ export default function AppDetailPage() {
         {/* Action Controls */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
           <button
+            className="btn"
+            style={{
+              background: 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)',
+              color: '#ffffff',
+              border: 'none',
+              fontWeight: 600,
+              display: 'flex',
+              alignItems: 'center',
+              gap: 6,
+              boxShadow: '0 2px 6px rgba(99, 102, 241, 0.3)',
+              cursor: startDevMutation.isPending ? 'not-allowed' : 'pointer',
+              padding: '6px 14px',
+            }}
+            onClick={handleLaunchDevStudio}
+            disabled={startDevMutation.isPending}
+            title="Launch Omnigent AI pair programmer in new tab"
+          >
+            {startDevMutation.isPending ? (
+              <Loader2 size={14} className="spin" />
+            ) : (
+              <Sparkles size={14} />
+            )}
+            <span>{startDevMutation.isPending ? 'Launching Omnigent...' : 'Modify with Omnigent'}</span>
+          </button>
+
+          <button
             className="btn btn-outline"
             onClick={handleToggleStatus}
             disabled={statusMutation.isPending}
@@ -708,6 +749,74 @@ export default function AppDetailPage() {
                   </div>
                 </div>
               </div>
+            </div>
+
+            {/* Omnigent Development Sandbox Card */}
+            <div
+              style={{
+                background: 'linear-gradient(135deg, rgba(99, 102, 241, 0.08) 0%, rgba(168, 85, 247, 0.08) 100%)',
+                border: '1px solid rgba(99, 102, 241, 0.25)',
+                borderRadius: 'var(--radius-lg, 8px)',
+                padding: '18px 20px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: 16,
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+                <div
+                  style={{
+                    width: 40,
+                    height: 40,
+                    borderRadius: 8,
+                    background: 'linear-gradient(135deg, #6366f1 0%, #a855f7 100%)',
+                    color: '#fff',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    flexShrink: 0,
+                  }}
+                >
+                  <Sparkles size={20} />
+                </div>
+                <div>
+                  <h4 style={{ margin: '0 0 3px', fontSize: '0.95rem', fontWeight: 650, color: 'var(--color-text)' }}>
+                    Omnigent Development Studio
+                  </h4>
+                  <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--color-text-muted)', maxWidth: 520, lineHeight: 1.4 }}>
+                    Live dev container with volume-mounted hot-reloading. Pair-program with Omnigent AI, test code changes in real time, and publish commits directly to Git.
+                  </p>
+                </div>
+              </div>
+
+              <button
+                className="btn"
+                style={{
+                  background: 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)',
+                  color: '#ffffff',
+                  border: 'none',
+                  fontWeight: 600,
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 6,
+                  whiteSpace: 'nowrap',
+                  padding: '8px 16px',
+                  borderRadius: 6,
+                  cursor: startDevMutation.isPending ? 'not-allowed' : 'pointer',
+                  boxShadow: '0 2px 8px rgba(99, 102, 241, 0.3)',
+                }}
+                onClick={handleLaunchDevStudio}
+                disabled={startDevMutation.isPending}
+                title="Launch Omnigent AI pair programmer in new tab"
+              >
+                {startDevMutation.isPending ? (
+                  <Loader2 size={14} className="spin" />
+                ) : (
+                  <Sparkles size={14} />
+                )}
+                <span>{startDevMutation.isPending ? 'Launching Omnigent...' : 'Launch Dev Studio'}</span>
+              </button>
             </div>
 
             {/* Quick Live Preview Card */}

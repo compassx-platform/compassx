@@ -63,3 +63,8 @@ services:
     local:      { host: localhost, port: 9090, protocol: http }
     docker:     { host: prometheus, port: 9090, protocol: http }
     kubernetes: { host: compassx-prometheus.compassx.svc.cluster.local, port: 9090, protocol: http }
+
+  omnigent-server:
+    local:      { host: localhost, port: 6767, protocol: http }
+    docker:     { host: omnigent-server, port: 6767, protocol: http }
+    kubernetes: { host: compassx-omnigent-server.compassx.svc.cluster.local, port: 6767, protocol: http }

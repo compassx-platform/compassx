@@ -184,3 +184,69 @@ export function useDeleteApp() {
     },
   });
 }
+
+// ── Omnigent Dev Studio Hooks ──────────────────────────────────────────
+
+export interface DevSessionStatus {
+  app_id: string;
+  status: 'active' | 'inactive' | 'stopped';
+  mode?: 'docker' | 'local';
+  container_id?: string;
+  container_name?: string;
+  dev_port?: number;
+  dev_url?: string;
+  repo_dir?: string;
+  omnigent_attached?: boolean;
+  omnigent_server_url?: string;
+  omnigent_server_connected?: boolean;
+  omnigent_session_id?: string;
+  omnigent_session_url?: string;
+  host_id?: string;
+  host_online?: boolean;
+  workspace?: string;
+  started_at?: string;
+}
+
+
+export function useDevStatus(appId?: string, enabled = true) {
+  return useQuery({
+    queryKey: ['app-dev-status', appId],
+    queryFn: async () => {
+      if (!appId) throw new Error('App ID required');
+      const res = await api.get<DevSessionStatus>(`/apps/${appId}/dev/status`);
+      return res.data;
+    },
+    enabled: !!appId && enabled,
+    refetchInterval: (query) => (query.state.data?.status === 'active' ? 5000 : false),
+  });
+}
+
+export function useStartDevSession() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (appId: string) => {
+      const res = await api.post<DevSessionStatus>(`/apps/${appId}/dev/start`);
+      return res.data;
+    },
+    onSuccess: (data, appId) => {
+      qc.setQueryData(['app-dev-status', appId], data);
+      qc.invalidateQueries({ queryKey: ['app-dev-status', appId] });
+    },
+  });
+}
+
+export function useStopDevSession() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (appId: string) => {
+      const res = await api.post(`/apps/${appId}/dev/stop`);
+      return res.data;
+    },
+    onSuccess: (_, appId) => {
+      qc.invalidateQueries({ queryKey: ['app-dev-status', appId] });
+    },
+  });
+}
+
+
+

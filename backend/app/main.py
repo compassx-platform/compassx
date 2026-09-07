@@ -88,6 +88,7 @@ from app.workspace import auth_routes as workspace_auth_routes  # noqa: E402
 from app.workspace import account_routes as workspace_account_routes  # noqa: E402
 from app.workspace import workspace_routes as workspace_ws_routes  # noqa: E402
 from app.routes import app_routes  # noqa: E402
+from app.routes import app_dev_routes  # noqa: E402
 
 # User Manager v1 routes
 from app.user_manager.routes import setup_routes as um_setup_routes  # noqa: E402
@@ -421,6 +422,7 @@ app.include_router(dashboard_routes.router)
 app.include_router(monitoring_routes.router)
 app.include_router(sql_warehouse_routes.router)
 app.include_router(app_routes.router)
+app.include_router(app_dev_routes.router)
 
 # Workspace / account / auth routes (legacy - kept for backward compat)
 app.include_router(workspace_auth_routes.router)
@@ -462,9 +464,12 @@ app.include_router(ontology_router)
 from services.enterprise_gateway.router import router as eg_router  # noqa: E402
 from services.airflow.router import router as airflow_router  # noqa: E402
 from services.jupyter_server.router import router as js_router  # noqa: E402
+from services.omnigent.router import router as omnigent_router  # noqa: E402
 app.include_router(eg_router, prefix="/api/v1/services/enterprise-gateway")
 app.include_router(airflow_router, prefix="/api/v1/services/airflow")
 app.include_router(js_router, prefix="/api/v1/services/jupyter-server")
+app.include_router(omnigent_router, prefix="/api/v1/services/omnigent")
+
 
 
 @app.get("/")

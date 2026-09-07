@@ -197,7 +197,44 @@ services:
       timeout: 5s
       retries: 12
 
+  omnigent-server:
+    image: ghcr.io/omnigent-ai/omnigent-server:latest
+    profiles:
+      - omnigent
+      - on-demand
+    ports:
+      - "6767:6767"
+    environment:
+      PORT: 6767
+      HOST: 0.0.0.0
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/omnigent
+      OMNIGENT_AUTH_PROVIDER: header
+      OMNIGENT_LOCAL_SINGLE_USER: "1"
+      ARTIFACT_DIR: /data/artifacts
+      NODE_TLS_REJECT_UNAUTHORIZED: "0"
+      GIT_SSL_NO_VERIFY: "true"
+      PYTHONHTTPSVERIFY: "0"
+      NPM_CONFIG_STRICT_SSL: "false"
+      SSL_CERT_FILE: /etc/ssl/certs/ca-certificates.crt
+      REQUESTS_CA_BUNDLE: /etc/ssl/certs/ca-certificates.crt
+      NODE_EXTRA_CA_CERTS: /etc/ssl/certs/ca-certificates.crt
+      CURL_CA_BUNDLE: /etc/ssl/certs/ca-certificates.crt
+      CURL_INSECURE: "1"
+    volumes:
+      - omnigent-data:/data
+      - ./corporate-ca.crt:/usr/local/share/ca-certificates/corporate-ca.crt:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:6767/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
 volumes:
   postgres-data:
   redis-data:
   prometheus-data:
+  omnigent-data:

@@ -15,6 +15,7 @@ services:
   enterprise-gateway: { mode: docker }
   jupyter-server: { mode: docker }
   prometheus: { mode: docker }
+  omnigent-server: { mode: docker }
 
 compute:
   driver: docker

@@ -28,8 +28,20 @@ class Settings(BaseSettings):
     # Skip initial database connection tests (useful for fast startup if DB temporarily unavailable)
     SKIP_DB_INIT: bool = False
 
-    # External services
+    # External services & Omnigent
     USER_MANAGER_BASE_URL: str = "http://localhost:8002"
+    OMNIGENT_SERVER_URL: str = "http://localhost:6767"
+    OMNIGENT_PUBLIC_URL: str = ""
+    OMNIGENT_INTERNAL_URL: str = ""
+
+    # Multi-Mode App & Ingress Routing
+    APP_RUNNER_MODE: str = ""  # auto-detected (local, docker, kubernetes) if empty
+    APP_BASE_DOMAIN: str = "compassx.internal"
+    APP_DOMAIN_TEMPLATE: str = "{slug}.{base_domain}"
+    OMNIGENT_DOMAIN_TEMPLATE: str = "devstudio.{base_domain}"
+    K8S_NAMESPACE: str = "compassx"
+    K8S_INGRESS_CLASS: str = "nginx"
+    K8S_INGRESS_TLS_SECRET: str = ""
 
     # CORS
     FRONTEND_ORIGIN: str = "http://localhost:5173"
