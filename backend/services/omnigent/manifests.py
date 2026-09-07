@@ -39,8 +39,11 @@ def build_omnigent_deployment(namespace: str, env: str, llm_env: dict = None) ->
         )
     )
 
-    db_host = f"compassx-postgres.{namespace}.svc.cluster.local"
-    db_url = f"postgresql://{settings.PG_USER}:{settings.PG_PASSWORD}@{db_host}:5432/omnigent"
+    db_url = "sqlite:////data/omnigent.db"
+    if getattr(settings, "DATA_DB_URL", None):
+        db_url = settings.DATA_DB_URL
+    elif getattr(settings, "PG_HOST", None) and settings.PG_HOST != "localhost":
+        db_url = f"postgresql://{settings.PG_USER}:{settings.PG_PASSWORD}@{settings.PG_HOST}:{settings.PG_PORT}/omnigent"
 
     env_vars = [
         client.V1EnvVar(name="PORT", value="6767"),
@@ -87,6 +90,7 @@ def build_omnigent_deployment(namespace: str, env: str, llm_env: dict = None) ->
         ),
         spec=client.V1DeploymentSpec(
             replicas=1,
+            strategy=client.V1DeploymentStrategy(type="Recreate"),
             selector=client.V1LabelSelector(match_labels=labels),
             template=client.V1PodTemplateSpec(
                 metadata=client.V1ObjectMeta(labels=labels),
@@ -125,10 +129,10 @@ def build_omnigent_service(namespace: str, env: str) -> client.V1Service:
 
 
 def build_omnigent_ingress(namespace: str, env: str, host: str) -> client.V1Ingress:
-    """Ingress resource exposing Omnigent Server at devstudio.<base_domain> with WebSocket support."""
-    path = client.V1HTTPIngressPath(
-        path="/",
-        path_type="Prefix",
+    """Ingress resource exposing Omnigent Server at devstudio.<base_domain> and /devstudio with dual routing."""
+    path_host = client.V1HTTPIngressPath(
+        path="/()(.*)",
+        path_type="ImplementationSpecific",
         backend=client.V1IngressBackend(
             service=client.V1IngressServiceBackend(
                 name=omnigent_settings.OMNIGENT_CONTAINER_NAME,
@@ -137,14 +141,29 @@ def build_omnigent_ingress(namespace: str, env: str, host: str) -> client.V1Ingr
         ),
     )
 
-    rule = client.V1IngressRule(
+    rule_host = client.V1IngressRule(
         host=host,
-        http=client.V1HTTPIngressRuleValue(paths=[path]),
+        http=client.V1HTTPIngressRuleValue(paths=[path_host]),
+    )
+
+    path_universal = client.V1HTTPIngressPath(
+        path="/devstudio(/|$)(.*)",
+        path_type="ImplementationSpecific",
+        backend=client.V1IngressBackend(
+            service=client.V1IngressServiceBackend(
+                name=omnigent_settings.OMNIGENT_CONTAINER_NAME,
+                port=client.V1ServiceBackendPort(number=6767),
+            )
+        ),
+    )
+
+    rule_universal = client.V1IngressRule(
+        http=client.V1HTTPIngressRuleValue(paths=[path_universal]),
     )
 
     ingress_spec = client.V1IngressSpec(
         ingress_class_name=settings.K8S_INGRESS_CLASS,
-        rules=[rule],
+        rules=[rule_host, rule_universal],
     )
     if settings.K8S_INGRESS_TLS_SECRET:
         ingress_spec.tls = [
@@ -159,9 +178,12 @@ def build_omnigent_ingress(namespace: str, env: str, host: str) -> client.V1Ingr
             namespace=namespace,
             labels={"app": "compassx", "compassx/service": "omnigent-server"},
             annotations={
+                "nginx.ingress.kubernetes.io/ssl-redirect": "false",
                 "nginx.ingress.kubernetes.io/proxy-read-timeout": "3600",
                 "nginx.ingress.kubernetes.io/proxy-send-timeout": "3600",
                 "nginx.ingress.kubernetes.io/websocket-services": omnigent_settings.OMNIGENT_CONTAINER_NAME,
+                "nginx.ingress.kubernetes.io/rewrite-target": "/$2",
+                "nginx.ingress.kubernetes.io/use-regex": "true",
             },
         ),
         spec=ingress_spec,
