@@ -559,7 +559,7 @@ export function createTopologyPointerHandlers(refs: PointerHandlerRefs): Topolog
     const domeFrame = domeFrameNow();
     const renderOffsetForNode =
       parallax || domeFrame
-        ? (node: { id: string; x: number; y: number; kind: "project" | "domain" | "capability" | "element" }) => {
+        ? (node: any) => {
             const pOff = parallax
               ? depthParallaxOffsetFor(parallax.depthById.get(node.id), parallax.depth2, parallax.depth3)
               : ZERO_PARALLAX;
@@ -682,7 +682,7 @@ export function createTopologyPointerHandlers(refs: PointerHandlerRefs): Topolog
     const neighborsOfFocused = focusedNodeId ? world.neighborMap.get(focusedNodeId) : undefined;
     const hittable = new Set(
       world.nodes
-        .filter((n) =>
+        .filter((n: any) =>
           isNodeHittable(
             n,
             zoomRatio,
@@ -694,7 +694,7 @@ export function createTopologyPointerHandlers(refs: PointerHandlerRefs): Topolog
             lastDrawnNodeAlphas(),
           ),
         )
-        .map((n) => n.id),
+        .map((n: any) => n.id),
     );
     // Hit-test inversion guard (panel3-S3) — the end nodes' body radius in screen px
     // is computed with **the same formula** as `hitTestWorld`

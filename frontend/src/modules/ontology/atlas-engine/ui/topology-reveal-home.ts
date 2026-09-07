@@ -17,8 +17,8 @@ export function prepareRevealHome(
   tokens: TopologyV2Tokens,
   origin: { x: number; y: number },
 ): RevealHomeResult {
-  const projectId = world.nodes.find((node) => node.kind === "org" || node.kind === "project")?.id ?? null;
-  const nodes = world.nodes.map((node) => ({
+  const projectId = world.nodes.find((node: any) => node.kind === "org" || node.kind === "project")?.id ?? null;
+  const nodes = world.nodes.map((node: any) => ({
     ...node,
     x: node.id === projectId ? node.x : origin.x,
     y: node.id === projectId ? node.y : origin.y,
@@ -26,8 +26,8 @@ export function prepareRevealHome(
   const nextWorld: TopologyWorld = {
     ...world,
     nodes,
-    nodeById: new Map(nodes.map((node) => [node.id, node])),
-    edges: world.edges.map((edge) => ({ ...edge })),
+    nodeById: new Map(nodes.map((node: any) => [node.id, node])),
+    edges: world.edges.map((edge: any) => ({ ...edge })),
     bounds: { ...world.bounds },
     spineBounds: { ...world.spineBounds },
   };
@@ -35,6 +35,6 @@ export function prepareRevealHome(
 
   return {
     world: nextWorld,
-    springs: new Map(nodes.map((node) => [node.id, initHomeSpring(node.x, node.y)])),
+    springs: new Map(nodes.map((node: any) => [node.id, initHomeSpring(node.x, node.y)])),
   };
 }

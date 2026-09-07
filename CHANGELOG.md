@@ -5,6 +5,48 @@ All notable changes to the CompassX Platform will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] - 2026-09-07
+
+### 🚀 Highlights
+
+CompassX `0.7.0` introduces the full-stack **Interactive Knowledge Graph & Ontology Visualization Engine**, the next-generation **Apps Development Platform** with Omnigent Dev Studio integration and multi-mode application deployment, plus catalog tool query fallbacks and architectural cleanups.
+
+### ✨ Features & Enhancements
+
+#### Knowledge Graph & Ontology Studio
+- **Interactive Graph Visualization**: Implemented dynamic 2D/3D dome graph rendering for complex knowledge graphs, entities, and relationships.
+- **Ontology Configuration Panel**: Added dynamic kinds and relationship management, node creation modals, side drawer inspection, and responsive canvas toolbars.
+- **Theme Support**: Integrated instant light/dark mode theme switching across the ontology studio canvas.
+
+#### Apps Development Platform
+- **Multi-Mode Application Deployment**: Added native support for deploying Vite Single Page Applications, Next.js, Streamlit, and custom Docker container apps.
+- **Omnigent Dev Studio Integration**: Seamless development environment embedding for rapid application authoring and live hot-reloading.
+- **Apps Home & Lifecycle Dashboard**: Created `AppsHomePage` component for searching, deploying, monitoring, and managing application instances.
+
+#### Data Catalog & Compute
+- **Catalog Tool Enhancements**: Added `list_tables` operation and automatic empty query fallback handling in `CatalogTool`.
+- **Runtime Images**: Bumped compute runtime images (`compute-duckdb`, `airflow-notebook-runner`) to `v0.7.0`.
+
+### 🧹 Cleanup & Bug Fixes
+- Removed stale asset manager modules and dead entity interfaces across backend, frontend, and deployment manifests.
+- Bumped platform and component versions to `0.7.0`.
+
+---
+
+## [0.6.1] - 2026-09-04
+
+### 🚀 Highlights
+- Apps ecosystem management and initial multi-mode application runner preview.
+
+---
+
+## [0.6.0] - 2026-09-03
+
+### 🚀 Highlights
+- Major module cleanup and unified workspace navigation.
+
+---
+
 ## [0.5.2] - 2026-09-02
 
 ### 🐛 Bug Fixes

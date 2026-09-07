@@ -68,7 +68,7 @@ export interface SafeRectProtectionInput {
   isHovered: boolean;
   /** Whether the footprint lens is on and this node is one of the visited ones. */
   trailKept: boolean;
-  kind: "project" | "domain" | "capability" | "element";
+  kind: "org" | "project" | "domain" | "subdomain" | "capability" | "element" | string;
   isHub: boolean;
 }
 

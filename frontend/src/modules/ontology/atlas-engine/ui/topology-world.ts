@@ -133,22 +133,29 @@ export interface Bounds {
   maxY: number;
 }
 
-export interface World {
+export interface ClusterParentMeta {
+  angle: number;
+  ring: number;
+}
+
+export interface TopologyWorld {
   nodes: readonly WorldNode[];
   edges: readonly WorldEdge[];
   nodeById: ReadonlyMap<string, WorldNode>;
-  neighborsById: ReadonlyMap<string, ReadonlySet<string>>;
+  edgeIndexByNode?: ReadonlyMap<string, readonly number[]>;
+  neighborsById?: ReadonlyMap<string, ReadonlySet<string>>;
+  neighborMap: ReadonlyMap<string, ReadonlySet<string>>;
   childrenByParent: ReadonlyMap<string, readonly string[]>;
   /**
    * Density gate (2026-07-31): high-child-count parents that collapse their
    * element children into a summary disc.
    */
-  densityGate: Set<string>;
+  densityGate?: Set<string>;
   /**
    * Per-collapsed-parent geometry for the disc hull, cluster chip hit box, and
    * count numeral. Empty for parents not in `densityGate`.
    */
-  clusterMetaByParent: ReadonlyMap<string, DensityGateParentGeometry>;
+  clusterMetaByParent: ReadonlyMap<string, ClusterParentMeta | any>;
   /**
    * Hub IDs identified by degree analysis — the top 10% highest-degree nodes.
    * `focus-state.ts` promotes hubs to full visibility when their realm is active.
@@ -165,6 +172,8 @@ export interface World {
    */
   spineBounds: Bounds;
 }
+
+export type World = TopologyWorld;
 
 export function radiusForKind(kind: WorldNodeKind, tokens: TopologyV2Tokens): number {
   if (kind === "org" || kind === "project") return tokens.radiusProject;
@@ -576,6 +585,7 @@ export function buildTopologyWorld(
     edges: worldEdges,
     edgeIndexByNode,
     neighborMap,
+    neighborsById: neighborMap,
     childrenByParent,
     clusterMetaByParent,
     brightStarIds,
@@ -651,7 +661,7 @@ function growBounds(bounds: Bounds, node: WorldNode, tokens: TopologyV2Tokens): 
  */
 function recomputeMovedGeometry(world: TopologyWorld, tokens: TopologyV2Tokens, movedIds: ReadonlySet<string>): void {
   for (const id of movedIds) {
-    const indices = world.edgeIndexByNode.get(id);
+    const indices = world.edgeIndexByNode?.get(id);
     if (indices) {
       for (const index of indices) recomputeEdgeGeometry(world, tokens, world.edges[index]);
     }
