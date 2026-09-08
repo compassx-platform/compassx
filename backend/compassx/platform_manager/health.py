@@ -28,6 +28,7 @@ DEFAULT_HTTP_HEALTH_PATHS: dict[str, str] = {
     "jupyter-server": "/api",
     "prometheus": "/-/healthy",
     "frontend": "/",
+    "omnigent-server": "/health",
 }
 
 

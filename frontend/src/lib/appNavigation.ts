@@ -1,16 +1,16 @@
 import { useCallback, type ElementType } from 'react';
 import { useLocation, useNavigate, useParams, type NavigateOptions, type To } from 'react-router-dom';
-import { Briefcase, Code2, Layers, Zap, LayoutDashboard, FileText, Database, GitBranch, Cable, BookOpen, ServerCog, History, Activity, Home, Sparkles } from 'lucide-react';
+import { Briefcase, Code2, Layers, Zap, LayoutDashboard, FileText, Database, GitBranch, Cable, BookOpen, ServerCog, History, Activity, Home, Sparkles, Network, LayoutGrid } from 'lucide-react';
 
-export const APP_IDS = ['platform', 'apps', 'business_center'] as const;
+export const APP_IDS = ['platform', 'apps'] as const;
 export type AppId = (typeof APP_IDS)[number];
 
 export const DEFAULT_APP_ID: AppId = 'platform';
 
 const UNSCOPED_PREFIXES = ['/public', '/workspace'];
 const LEGACY_APP_ID_ALIASES: Record<string, AppId> = {
-  business: 'business_center',
-  business_center: 'business_center',
+  business: 'platform',
+  business_center: 'platform',
 };
 
 export type NavItem = {
@@ -53,9 +53,10 @@ const PLATFORM_NAV_GROUPS: NavGroup[] = [
     ],
   },
   {
-    title: 'AI',
+    title: 'AI & Meaning',
     items: [
       { to: '/agents', icon: Layers, label: 'Agents', end: false },
+      { to: '/ontology', icon: Network, label: 'Ontology', end: false },
       { to: '/connections', icon: Cable, label: 'Connections', end: false },
     ],
   },
@@ -71,16 +72,7 @@ const PLATFORM_NAV_GROUPS: NavGroup[] = [
 const APPS_NAV_GROUPS: NavGroup[] = [
   {
     items: [
-      { to: '/assets', icon: GitBranch, label: 'Assets', end: true },
-      { to: '/apps_development', icon: Code2, label: 'App Developer', end: false },
-    ],
-  },
-];
-
-const BUSINESS_CENTER_NAV_GROUPS: NavGroup[] = [
-  {
-    items: [
-      { to: '/dashboards', icon: LayoutDashboard, label: 'Dashboards', end: false },
+      { to: '/home', icon: LayoutGrid, label: 'Apps', end: true },
     ],
   },
 ];
@@ -92,23 +84,40 @@ export const APP_DEFINITIONS: Record<AppId, AppDefinition> = {
     defaultPath: '/home',
     navGroups: PLATFORM_NAV_GROUPS,
     navItems: PLATFORM_NAV_GROUPS.flatMap((g) => g.items),
-    allowedPrefixes: ['/home', '/jobs', '/notebooks', '/agents', '/data-catalog', '/sql-warehouse', '/connections', '/ingestion', '/compute', '/monitoring', '/dashboards', '/apps_development', '/icons', '/logo', '/brand-logo', '/design-system'],
+    allowedPrefixes: [
+      '/home',
+      '/jobs',
+      '/notebooks',
+      '/agents',
+      '/ontology',
+      '/topology',
+      '/data-catalog',
+      '/sql-warehouse',
+      '/connections',
+      '/ingestion',
+      '/compute',
+      '/monitoring',
+      '/dashboards',
+      '/icons',
+      '/logo',
+      '/brand-logo',
+      '/design-system',
+    ],
   },
   apps: {
     id: 'apps',
     label: 'Apps',
-    defaultPath: '/assets',
+    defaultPath: '/home',
     navGroups: APPS_NAV_GROUPS,
     navItems: APPS_NAV_GROUPS.flatMap((g) => g.items),
-    allowedPrefixes: ['/assets', '/apps_development'],
-  },
-  business_center: {
-    id: 'business_center',
-    label: 'Business Center',
-    defaultPath: '/dashboards',
-    navGroups: BUSINESS_CENTER_NAV_GROUPS,
-    navItems: BUSINESS_CENTER_NAV_GROUPS.flatMap((g) => g.items),
-    allowedPrefixes: ['/dashboards'],
+    allowedPrefixes: [
+      '/home',
+      '/apps',
+      '/icons',
+      '/logo',
+      '/brand-logo',
+      '/design-system',
+    ],
   },
 };
 
@@ -142,7 +151,7 @@ export function stripAppScope(pathname: string): string {
     return rest ? `/${rest}` : '/';
   }
   // Strip /:appId prefix (legacy)
-  if (isAppId(segments[0]) || segments[0] in LEGACY_APP_ID_ALIASES) {
+  if (segments[0] === 'platform' || segments[0] in LEGACY_APP_ID_ALIASES) {
     const rest = segments.slice(1).join('/');
     return rest ? `/${rest}` : '/';
   }

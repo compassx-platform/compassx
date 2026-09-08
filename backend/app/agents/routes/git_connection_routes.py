@@ -5,7 +5,11 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 
+from app.agents.routes._authz import authorized_connection, visible_connections
 from app.database import get_account_db
+from app.governance.dependencies import Guard, get_guard
+from app.governance.privileges import Privilege
+from app.governance.securable import Securable
 from app.models.agents import GitConnection
 from app.schemas.agents import GitConnectionCreate, GitConnectionResponse, GitConnectionUpdate, PingResponse
 from app.services.encryption import decrypt_field, encrypt_field
@@ -27,32 +31,50 @@ def _to_response(conn: GitConnection) -> GitConnectionResponse:
     )
 
 
-def _get_or_404(db: Session, connection_id: int, workspace_id: str | None = None) -> GitConnection:
-    query = db.query(GitConnection).filter(GitConnection.id == connection_id)
-    if workspace_id:
-        query = query.filter(GitConnection.workspace_id == workspace_id)
-    else:
-        query = query.filter(GitConnection.workspace_id == None)
-    conn = query.first()
-    if not conn:
-        raise HTTPException(404, "Git connection not found")
-    return conn
+def _get_or_404(db: Session, connection_id: int, guard: Guard, privilege: Privilege) -> GitConnection:
+    """Load a git connection the caller holds ``privilege`` on.
+
+    Workspace comes from the guard. The previous version fell back to
+    ``workspace_id == None`` when none was resolved, so an unscoped request
+    reached the workspace-less connections rather than being refused.
+    """
+    return authorized_connection(db, guard, GitConnection, connection_id, privilege)
 
 
 @router.get("", response_model=list[GitConnectionResponse])
-def list_git_connections(request: Request, db: Session = Depends(get_account_db)):
-    workspace_id = getattr(request.state, "workspace", None) and request.state.workspace.workspace_id
-    query = db.query(GitConnection)
-    if workspace_id:
-        query = query.filter(GitConnection.workspace_id == workspace_id)
-    else:
-        query = query.filter(GitConnection.workspace_id == None)
-    return [_to_response(r) for r in query.order_by(GitConnection.name).all()]
+def list_git_connections(
+    request: Request,
+    db: Session = Depends(get_account_db),
+    guard: Guard = Depends(get_guard),
+):
+    """List the git connections the caller may see.
+
+    ``pat_configured`` is a boolean — the token itself is encrypted at rest and
+    only decrypted when a call to the provider is made.
+    """
+    rows = (
+        db.query(GitConnection)
+        .filter(GitConnection.workspace_id == guard.workspace_id)
+        .order_by(GitConnection.name)
+        .all()
+    )
+    return [_to_response(r) for r in visible_connections(guard, rows)]
 
 
 @router.post("", response_model=GitConnectionResponse, status_code=201)
-def create_git_connection(request: Request, body: GitConnectionCreate, db: Session = Depends(get_account_db)):
-    workspace_id = getattr(request.state, "workspace", None) and request.state.workspace.workspace_id
+def create_git_connection(
+    request: Request,
+    body: GitConnectionCreate,
+    db: Session = Depends(get_account_db),
+    guard: Guard = Depends(get_guard),
+):
+    """Register a git provider.
+
+    Admin: the stored PAT carries whatever repository access it was issued
+    with, and anyone later granted USE_COMPUTE acts with it.
+    """
+    guard.require_workspace_admin("Creating a git connection")
+    workspace_id = guard.workspace_id
     conn = GitConnection(
         workspace_id=workspace_id,
         name=body.name,
@@ -65,19 +87,34 @@ def create_git_connection(request: Request, body: GitConnectionCreate, db: Sessi
     db.add(conn)
     db.commit()
     db.refresh(conn)
+    guard.claim_ownership(Securable.connection(str(conn.id)))
     return _to_response(conn)
 
 
 @router.get("/{connection_id}", response_model=GitConnectionResponse)
-def get_git_connection(request: Request, connection_id: int, db: Session = Depends(get_account_db)):
-    workspace_id = getattr(request.state, "workspace", None) and request.state.workspace.workspace_id
-    return _to_response(_get_or_404(db, connection_id, workspace_id))
+def get_git_connection(
+    request: Request,
+    connection_id: int,
+    db: Session = Depends(get_account_db),
+    guard: Guard = Depends(get_guard),
+):
+    return _to_response(_get_or_404(db, connection_id, guard, Privilege.BROWSE))
 
 
 @router.put("/{connection_id}", response_model=GitConnectionResponse)
-def update_git_connection(request: Request, connection_id: int, body: GitConnectionUpdate, db: Session = Depends(get_account_db)):
-    workspace_id = getattr(request.state, "workspace", None) and request.state.workspace.workspace_id
-    conn = _get_or_404(db, connection_id, workspace_id)
+def update_git_connection(
+    request: Request,
+    connection_id: int,
+    body: GitConnectionUpdate,
+    db: Session = Depends(get_account_db),
+    guard: Guard = Depends(get_guard),
+):
+    """Change a git connection.
+
+    EDIT: it can repoint the connection at a different organization or swap
+    the PAT, which every existing grantee then acts with.
+    """
+    conn = _get_or_404(db, connection_id, guard, Privilege.EDIT)
     data = body.model_dump(exclude_none=True)
     if "pat" in data:
         pat = data.pop("pat")
@@ -90,17 +127,35 @@ def update_git_connection(request: Request, connection_id: int, body: GitConnect
 
 
 @router.delete("/{connection_id}", status_code=204)
-def delete_git_connection(request: Request, connection_id: int, db: Session = Depends(get_account_db)):
-    workspace_id = getattr(request.state, "workspace", None) and request.state.workspace.workspace_id
-    conn = _get_or_404(db, connection_id, workspace_id)
+def delete_git_connection(
+    request: Request,
+    connection_id: int,
+    db: Session = Depends(get_account_db),
+    guard: Guard = Depends(get_guard),
+):
+    """Remove a git connection.
+
+    MANAGE: it revokes access for everyone granted on it and discards the PAT.
+    """
+    conn = _get_or_404(db, connection_id, guard, Privilege.MANAGE)
     db.delete(conn)
     db.commit()
 
 
 @router.post("/{connection_id}/test", response_model=PingResponse)
-def test_git_connection(request: Request, connection_id: int, db: Session = Depends(get_account_db)):
-    workspace_id = getattr(request.state, "workspace", None) and request.state.workspace.workspace_id
-    conn = _get_or_404(db, connection_id, workspace_id)
+def test_git_connection(
+    request: Request,
+    connection_id: int,
+    db: Session = Depends(get_account_db),
+    guard: Guard = Depends(get_guard),
+):
+    """Call the provider with the stored PAT and report the result.
+
+    USE_COMPUTE: this decrypts the token and makes a real authenticated call.
+    The response names the account the token belongs to and how many projects
+    it can reach, which is a description of the credential itself.
+    """
+    conn = _get_or_404(db, connection_id, guard, Privilege.USE_COMPUTE)
     if not conn.pat_enc:
         return PingResponse(success=False, message="No PAT configured for this connection.")
 

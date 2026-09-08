@@ -315,6 +315,8 @@ class ChatSession(Base):
     workspace_id = Column(UUID(as_uuid=False), nullable=True)
     agent_id = Column(Integer, ForeignKey("ai.agents.id", ondelete="CASCADE"), nullable=False)
     title = Column(Text, nullable=True)
+    summary = Column(Text, nullable=True)
+    summary_updated_at = Column(DateTime(timezone=True), nullable=True)
     archived = Column(Boolean, default=False)
     created_at = Column(DateTime(timezone=True), nullable=False, default=_utcnow)
     updated_at = Column(DateTime(timezone=True), nullable=False, default=_utcnow, onupdate=_utcnow)

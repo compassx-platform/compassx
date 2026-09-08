@@ -76,7 +76,7 @@ def node_resource(
 def timeseries(
     resource_type: str = Query(..., pattern="^(platform|node|service)$"),
     resource_id: str = Query(..., min_length=1, max_length=120),
-    metric: str = Query(..., pattern="^(cpu|memory|network_in|network_out|disk_read|disk_write)$"),
+    metric: str = Query(..., pattern="^(cpu|memory|memory_limit|network_in|network_out|disk_read|disk_write)$"),
     start: int = Query(0, ge=0),
     end: int = Query(0, ge=0),
     resolution: int = Query(60, ge=1, le=86400),
@@ -90,7 +90,7 @@ def timeseries(
 
 @router.get("/timeseries/services", response_model=GroupedTimeseriesResponse)
 def service_timeseries(
-    metric: str = Query(..., pattern="^(cpu|memory|network_in|network_out|disk_read|disk_write)$"),
+    metric: str = Query(..., pattern="^(cpu|memory|memory_limit|network_in|network_out|disk_read|disk_write)$"),
     start: int = Query(0, ge=0),
     end: int = Query(0, ge=0),
     resolution: int = Query(60, ge=60, le=86400),
@@ -100,6 +100,20 @@ def service_timeseries(
         end = int(time())
         start = end - 8 * 3600
     return service.service_timeseries(metric, start, end, resolution)
+
+
+@router.get("/timeseries/nodes", response_model=GroupedTimeseriesResponse)
+def node_timeseries(
+    metric: str = Query(..., pattern="^(cpu|memory|memory_limit|network_in|network_out|disk_read|disk_write)$"),
+    start: int = Query(0, ge=0),
+    end: int = Query(0, ge=0),
+    resolution: int = Query(60, ge=60, le=86400),
+    service: MonitoringService = Depends(get_monitoring_service),
+):
+    if end <= start:
+        end = int(time())
+        start = end - 8 * 3600
+    return service.node_timeseries(metric, start, end, resolution)
 
 
 @router.get("/health", response_model=HealthResponse)

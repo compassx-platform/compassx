@@ -1,6 +1,9 @@
 nav:
-  - CompassX Platform: index.md
-  - data-management
-  - ai-analytics
-  - development
-  - ...
+  - What is CompassX: what-is-compassx
+  - Getting Started: getting-started
+  - Data Catalog: data-catalog
+  - Notebooks: notebooks
+  - Jobs: jobs
+  - Dashboards: dashboards
+  - Agents: agents
+  - Compute: compute

@@ -1,0 +1,6 @@
+title: Getting Started
+nav:
+  - Overview: index.md
+  - Quickstart with Docker: quickstart-docker.md
+  - Workspace Navigation & UI: workspace-navigation.md
+  - Your First 5 Minutes Tutorial: first-data-pipeline.md

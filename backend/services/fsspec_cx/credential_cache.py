@@ -1,6 +1,7 @@
 """In-process credential cache for volume access."""
 import json
 import logging
+import os
 from datetime import datetime, timezone
 from typing import Optional, Tuple
 
@@ -74,15 +75,30 @@ class CredentialCache:
         # Cache miss or expired - resolve new credential
         logger.debug("Credential cache miss/expired for %s.%s.%s (mode=%s), resolving...", catalog, schema, volume, mode)
         try:
+            ws_id = os.environ.get("WORKSPACE_ID") or os.environ.get("KERNEL_WORKSPACE_ID")
+            ws_slug = os.environ.get("WORKSPACE_SLUG") or os.environ.get("KERNEL_WORKSPACE_SLUG")
+
+            req_headers = {"Authorization": f"Bearer {self._session_token}"}
+            if ws_id:
+                req_headers["X-Workspace-Id"] = ws_id
+            if ws_slug:
+                req_headers["X-Workspace-Slug"] = ws_slug
+
+            req_json = {
+                "catalog": catalog,
+                "schema_name": schema,
+                "volume": volume,
+                "mode": mode,
+            }
+            if ws_id:
+                req_json["workspace_id"] = ws_id
+            if ws_slug:
+                req_json["workspace_slug"] = ws_slug
+
             resp = httpx.post(
                 f"{self._catalog_url}/volumes/resolve",
-                headers={"Authorization": f"Bearer {self._session_token}"},
-                json={
-                    "catalog": catalog,
-                    "schema_name": schema,
-                    "volume": volume,
-                    "mode": mode,
-                },
+                headers=req_headers,
+                json=req_json,
                 timeout=10,
             )
             resp.raise_for_status()

@@ -19,6 +19,9 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from app.database import get_account_db
 from app.dependencies import get_current_user
+from app.governance.dependencies import Guard, get_guard
+from app.governance.privileges import Privilege
+from app.governance.securable import Securable
 
 from compute.config import compute_settings
 from services.storage.config import storage_settings
@@ -89,15 +92,29 @@ class NotebookServerConfig(BaseModel):
     base_url: str
     ws_url: str
     token: str
+    workspace_slug: str
 
 
 @router.get("/config", response_model=NotebookServerConfig)
-def get_notebook_config():
-    """Return jupyter_server connection settings for the frontend."""
+def get_notebook_config(request: Request, guard: Guard = Depends(get_guard)):
+    """Return jupyter connection settings for the frontend.
+
+    ``token`` is deliberately empty. It used to be the deployment-wide
+    ``JUPYTER_TOKEN``, which every user received identically — so it named
+    nobody and could not be the basis of any decision, while still being
+    enough to reach Enterprise Gateway. The frontend now appends the signed-in
+    user's own access token, which is what the kernel proxy authenticates.
+
+    ``workspace_slug`` is returned because a browser WebSocket cannot send the
+    X-Workspace-Slug header the rest of the API relies on; it travels in the
+    query string instead.
+    """
+    ctx = getattr(request.state, "workspace", None)
     return NotebookServerConfig(
         base_url=_jupyter_base_url(),
         ws_url=_jupyter_ws_url(),
-        token=JUPYTER_TOKEN,
+        token="",
+        workspace_slug=ctx.workspace_slug if ctx else "",
     )
 
 
@@ -107,6 +124,7 @@ def get_notebook_config():
 def list_notebooks(
     request: Request,
     db: Session = Depends(get_account_db),
+    guard: Guard = Depends(get_guard),
 ):
     """List catalog notebooks visible in the active workspace."""
     from app.catalog.models import (
@@ -131,6 +149,14 @@ def list_notebooks(
         UnifiedCatalogNotebook.schema_name,
         UnifiedCatalogNotebook.name,
     ).all()
+
+    # The workspace binding above narrows this to catalogs bound to the
+    # workspace, which is not the same as what this caller may see.
+    records = guard.filter(
+        Privilege.BROWSE,
+        records,
+        lambda n: Securable.notebook(n.catalog_name, n.schema_name, n.name),
+    )
     workspace_id = workspace.workspace_id if workspace else None
     return {
         "notebooks": [
@@ -160,6 +186,7 @@ def save_notebook_compute(
     notebook_id: str,
     body: NotebookComputeRequest,
     db: Session = Depends(get_account_db),
+    guard: Guard = Depends(get_guard),
 ):
     """Save the last-connected compute resource and kernel name for a notebook."""
     from app.catalog.models import UnifiedCatalogNotebook
@@ -169,6 +196,17 @@ def save_notebook_compute(
     ).first()
     if not notebook:
         raise HTTPException(status_code=404, detail="Notebook not found")
+
+    # This writes to the notebook record, so it takes EDIT — and it also
+    # points the notebook at a compute resource, so the caller must be
+    # entitled to run things there.
+    guard.require(
+        Privilege.EDIT,
+        Securable.notebook(
+            notebook.catalog_name, notebook.schema_name, notebook.name
+        ),
+    )
+    guard.require(Privilege.USE_COMPUTE, Securable.compute(body.resource_id))
 
     notebook.last_compute_resource_id = body.resource_id
     notebook.last_kernel_name = body.kernel_name
@@ -193,6 +231,7 @@ async def create_notebook(
     request: Request,
     db: Session = Depends(get_account_db),
     user: dict = Depends(get_current_user),
+    guard: Guard = Depends(get_guard),
 ):
     """Create and register a notebook in catalog-resolved storage."""
     from app.catalog.models import (
@@ -228,6 +267,10 @@ async def create_notebook(
             )
         catalog_name, schema_name = catalog.name, schema.name
 
+    # Checked after the fallback above resolves a schema, because the caller
+    # may not have named one — the workspace's default binding did.
+    guard.require(Privilege.CREATE, Securable.schema_(catalog_name, schema_name))
+
     import re
     safe_name = re.sub(r"[^a-zA-Z0-9_]", "_", body.name.strip()).strip("_") or "untitled"
     try:
@@ -241,6 +284,10 @@ async def create_notebook(
     except ValueError as exc:
         status = 409 if "already exists" in str(exc) else 400
         raise HTTPException(status_code=status, detail=str(exc)) from exc
+
+    guard.claim_ownership(
+        Securable.notebook(catalog_name, schema_name, notebook.name)
+    )
     return {
         "id": notebook.id,
         "path": notebook.blob_path,
@@ -312,13 +359,36 @@ def _resolve_catalog_notebook(db, path: str):
         raise HTTPException(status_code=500, detail=f"Catalog lookup failed: {exc}")
 
 
-@router.delete("/files/{path:path}")
-async def delete_notebook(path: str, db: Session = Depends(get_account_db)):
-    """Delete a .ipynb file from storage and remove its entry from catalog metadata."""
-    from app.catalog.models import UnifiedCatalogSchema
+def _authorized_notebook(db, guard: Guard, path: str, privilege: Privilege):
+    """Resolve ``path`` to a notebook the caller holds ``privilege`` on.
+
+    Authorisation runs against the *resolved* record rather than the supplied
+    path, because ``_resolve_catalog_notebook`` accepts a bare name and will
+    match it in any catalog. Checking the input string would authorise a path
+    the caller wrote while operating on whichever notebook the lookup landed
+    on — not necessarily the same object.
+    """
     notebook = _resolve_catalog_notebook(db, path)
     if not notebook:
         raise HTTPException(status_code=404, detail="Notebook not found in catalog")
+    guard.require(
+        privilege,
+        Securable.notebook(
+            notebook.catalog_name, notebook.schema_name, notebook.name
+        ),
+    )
+    return notebook
+
+
+@router.delete("/files/{path:path}")
+async def delete_notebook(
+    path: str,
+    db: Session = Depends(get_account_db),
+    guard: Guard = Depends(get_guard),
+):
+    """Delete a .ipynb file from storage and remove its entry from catalog metadata."""
+    from app.catalog.models import UnifiedCatalogSchema
+    notebook = _authorized_notebook(db, guard, path, Privilege.MANAGE)
     schema = db.query(UnifiedCatalogSchema).filter(UnifiedCatalogSchema.id == notebook.schema_id).first()
     from app.catalog.service import _delete_notebook_file
     await _delete_notebook_file(db, schema, notebook.blob_path)
@@ -330,12 +400,16 @@ async def delete_notebook(path: str, db: Session = Depends(get_account_db)):
 # ── File load/save ───────────────────────────────────────────────────────────
 
 @router.get("/files/{path:path}")
-async def load_notebook(path: str, db: Session = Depends(get_account_db)):
+async def load_notebook(
+    path: str,
+    db: Session = Depends(get_account_db),
+    guard: Guard = Depends(get_guard),
+):
     """Load a .ipynb file. Response includes last_compute_resource_id and last_kernel_name in metadata."""
     from app.catalog.models import UnifiedCatalogSchema
-    notebook = _resolve_catalog_notebook(db, path)
-    if not notebook:
-        raise HTTPException(status_code=404, detail="Notebook not found in catalog")
+    # SELECT, not BROWSE: the response is the notebook's full source and
+    # stored cell outputs, which routinely contain query results.
+    notebook = _authorized_notebook(db, guard, path, Privilege.SELECT)
     schema = db.query(UnifiedCatalogSchema).filter(UnifiedCatalogSchema.id == notebook.schema_id).first()
     from app.catalog.service import _notebook_exists, _read_notebook_content
     if not await _notebook_exists(db, schema, notebook.blob_path):
@@ -351,12 +425,15 @@ async def load_notebook(path: str, db: Session = Depends(get_account_db)):
 
 
 @router.put("/files/{path:path}")
-async def save_notebook(path: str, request_body: dict, db: Session = Depends(get_account_db)):
+async def save_notebook(
+    path: str,
+    request_body: dict,
+    db: Session = Depends(get_account_db),
+    guard: Guard = Depends(get_guard),
+):
     """Save a .ipynb file."""
     from app.catalog.models import UnifiedCatalogSchema
-    notebook = _resolve_catalog_notebook(db, path)
-    if not notebook:
-        raise HTTPException(status_code=404, detail="Notebook not found in catalog")
+    notebook = _authorized_notebook(db, guard, path, Privilege.EDIT)
     schema = db.query(UnifiedCatalogSchema).filter(UnifiedCatalogSchema.id == notebook.schema_id).first()
     from app.catalog.service import _write_notebook_content
     await _write_notebook_content(db, schema, notebook.blob_path, request_body)

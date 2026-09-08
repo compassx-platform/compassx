@@ -1,6 +1,7 @@
 import { useState } from 'react';
-import { Check, Play, Square, Trash2, X } from 'lucide-react';
+import { Play, Square, Trash2 } from 'lucide-react';
 import { AppTable } from '@/components/common/AppTable';
+import ConfirmDialog from '@/components/common/ConfirmDialog';
 
 const stateColorMap = {
   Running: '#10b981',
@@ -24,23 +25,32 @@ const runtimeIconMap = {
  * @param {{ resources: any[], onStart: (id: string) => void, onStop: (id: string) => void, onDelete: (id: string) => void, onSelect: (resource: any) => void, loadingId?: string }} props
  */
 export default function ComputeResourcesTable({ resources, onStart, onStop, onDelete, onSelect, loadingId }) {
-  const [confirmDelete, setConfirmDelete] = useState(null);
+  const [resourceToDelete, setResourceToDelete] = useState(null);
 
   const isRunning = (resource) => resource.phase === 'Running';
   const isPending = (resource) => resource.phase === 'Pending';
   const isStarting = (resource) => resource.desired_status === 'running' && !isRunning(resource);
 
+  const handleConfirmDelete = async () => {
+    if (!resourceToDelete) return;
+    try {
+      await onDelete(resourceToDelete.id);
+    } finally {
+      setResourceToDelete(null);
+    }
+  };
+
   const columns = [
     {
-      key: 'state',
-      header: 'State',
-      className: 'app-table-muted',
+      key: 'name',
+      header: 'Name',
       render: (resource) => {
         const phase = resource.phase || 'Unknown';
         return (
-          <span style={{ display: 'inline-flex', alignItems: 'center' }} title={`Status: ${phase}`}>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', fontWeight: 500 }}>
             <span
-              aria-hidden="true"
+              title={`Status: ${phase}`}
+              aria-label={`Status: ${phase}`}
               style={{
                 width: '8px',
                 height: '8px',
@@ -49,19 +59,11 @@ export default function ComputeResourcesTable({ resources, onStart, onStop, onDe
                 flexShrink: 0,
               }}
             />
+            <span>{resource.name}</span>
+            {resource.is_default ? <span className="compute-default-pill">Default</span> : null}
           </span>
         );
       },
-    },
-    {
-      key: 'name',
-      header: 'Name',
-      render: (resource) => (
-        <span style={{ fontWeight: 500 }}>
-          {resource.name}
-          {resource.is_default ? <span className="compute-default-pill">Default</span> : null}
-        </span>
-      ),
     },
     {
       key: 'runtime',
@@ -90,36 +92,7 @@ export default function ComputeResourcesTable({ resources, onStart, onStop, onDe
       header: 'Actions',
       align: 'right',
       className: 'app-table-actions',
-      render: (resource) => confirmDelete === resource.id ? (
-        <>
-          <button
-            className="ghost-icon-btn"
-            onClick={(event) => {
-              event.stopPropagation();
-              setConfirmDelete(null);
-              onDelete(resource.id);
-            }}
-            disabled={loadingId === resource.id}
-            title="Confirm delete"
-            aria-label={`Confirm delete ${resource.name}`}
-            style={{ color: 'var(--color-danger, #ef4444)' }}
-          >
-            {loadingId === resource.id ? '...' : <Check size={13} />}
-          </button>
-          <button
-            className="ghost-icon-btn"
-            onClick={(event) => {
-              event.stopPropagation();
-              setConfirmDelete(null);
-            }}
-            disabled={loadingId === resource.id}
-            title="Cancel"
-            aria-label={`Cancel delete ${resource.name}`}
-          >
-            <X size={13} />
-          </button>
-        </>
-      ) : (
+      render: (resource) => (
         <>
           {isRunning(resource) || isStarting(resource) ? (
             <button
@@ -152,7 +125,7 @@ export default function ComputeResourcesTable({ resources, onStart, onStop, onDe
             className="ghost-icon-btn"
             onClick={(event) => {
               event.stopPropagation();
-              setConfirmDelete(resource.id);
+              setResourceToDelete(resource);
             }}
             disabled={loadingId === resource.id}
             title="Delete"
@@ -166,13 +139,26 @@ export default function ComputeResourcesTable({ resources, onStart, onStop, onDe
   ];
 
   return (
-    <AppTable
-      columns={columns}
-      rows={resources}
-      rowKey={(resource) => resource.id}
-      onRowClick={onSelect}
-      rowClassName={(resource) => confirmDelete === resource.id ? 'is-danger' : undefined}
-      emptyText="No compute resources yet"
-    />
+    <>
+      <AppTable
+        columns={columns}
+        rows={resources}
+        rowKey={(resource) => resource.id}
+        onRowClick={onSelect}
+        emptyText="No compute resources yet"
+      />
+
+      {resourceToDelete && (
+        <ConfirmDialog
+          title="Delete Compute Resource"
+          message={`Are you sure you want to delete "${resourceToDelete.name}"? This action cannot be undone.`}
+          confirmLabel="Delete"
+          onCancel={() => setResourceToDelete(null)}
+          onConfirm={handleConfirmDelete}
+          isLoading={loadingId === resourceToDelete.id}
+          isDestructive
+        />
+      )}
+    </>
   );
 }

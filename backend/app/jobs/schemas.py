@@ -36,7 +36,9 @@ class RetryPolicy(BaseModel):
 class JobCreate(BaseModel):
     name: str
     description: Optional[str] = None
-    workspace_id: Optional[UUID] = None
+    # No workspace_id: a job is created in the workspace the request is
+    # addressed to. Accepting one here let a caller plant a scheduled job in
+    # a workspace they have no access to.
 
 
 class JobUpdate(BaseModel):

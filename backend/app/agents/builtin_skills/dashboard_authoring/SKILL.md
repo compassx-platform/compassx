@@ -5,14 +5,18 @@ This skill provides comprehensive instructions for designing, building, and publ
 
 ---
 
-## 1. The 3-Tier Dashboard Hierarchy
+## 1. Dashboard Structure & Information Architecture
 
-Dashboards in CompassX are structured in 3 strictly ordered layers:
-$$\textbf{Dashboard} \longrightarrow \textbf{Pages} \longrightarrow \textbf{SQL Datasets} \longrightarrow \textbf{Visual Widgets}$$
+Dashboards in CompassX are structured in ordered layers:
+$$\textbf{Dashboard} \longrightarrow \textbf{Pages (1 or more)} \longrightarrow \textbf{SQL Datasets} \longrightarrow \textbf{Visual Widgets}$$
+
+### Page Architecture Guidelines:
+* **Single Page (Focused Views / Default)**: If the dashboard addresses a focused domain topic, operational summary, or standard KPI view, present a clean single-page dashboard. Do not artificially split related metrics across multiple pages.
+* **Multi-Page (Distinct Business Perspectives)**: If the scope spans distinct business perspectives, personas, or analytical depths (e.g., Executive Overview vs. Detailed Diagnostics vs. Financial Impact), structure dedicated, purposeful pages.
 
 ### Step-by-Step Workflow:
-1. **Create Dashboard**: Call `create_dashboard` with a descriptive name.
-2. **Setup Multi-Page Navigation**: Call `update_dashboard(dashboard_id="...", pages=["Page 1 Name", "Page 2 Name", ...])`.
+1. **Create Dashboard**: Call `create_dashboard` with a descriptive name (creates initial page).
+2. **Setup Pages (if multi-page warranted)**: Call `update_dashboard(dashboard_id="...", pages=["Overview", "Diagnostics", ...])`.
 3. **Register SQL Datasets**: Call `add_dataset` for each visual component. Always validate SQL first with `run_query`.
 4. **Bind Widgets to Datasets**: Call `add_widget` with `widget_type: "chart"` and specify `chart_config` (`chartType`, `datasetId`, `xField`, `yFields`).
 5. **Publish**: Call `publish_dashboard` to finalize and register in the Unified Catalog.

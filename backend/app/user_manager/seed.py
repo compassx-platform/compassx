@@ -48,10 +48,10 @@ def seed_workspace_roles(system_db: Session) -> None:
 
 
 def seed_landing_rules(system_db: Session) -> None:
-    # Migration fix: update any legacy landing rules to base /business_center
+    # Migration fix: update any legacy landing rules to platform dashboards
     system_db.query(UmLandingRule).filter(
-        UmLandingRule.target_route.in_(["/business-center/home", "/business-center/documents", "/business_center/documents", "/business_center/business-context", "/business-context", "/business_center/dashboards"])
-    ).update({"target_route": "/business_center"}, synchronize_session=False)
+        UmLandingRule.target_route.in_(["/business_center", "/business-center", "/business-center/home", "/business-center/documents", "/business_center/documents", "/business_center/business-context", "/business-context", "/business_center/dashboards"])
+    ).update({"target_route": "/platform/dashboards"}, synchronize_session=False)
     system_db.flush()
 
     existing = system_db.query(UmLandingRule).filter(UmLandingRule.scope_type == "global").count()
@@ -59,10 +59,10 @@ def seed_landing_rules(system_db: Session) -> None:
         return
 
     global_rules = [
-        # role_id,          target_route,        priority
-        ("workspace_admin", "/platform/notebooks", 10),
-        ("analyst",         "/platform/notebooks", 10),
-        ("business_viewer", "/business_center",    10),
+        # role_id,          target_route,            priority
+        ("workspace_admin", "/platform/notebooks",   10),
+        ("analyst",         "/platform/notebooks",   10),
+        ("business_viewer", "/platform/dashboards",  10),
     ]
     for role_id, route, priority in global_rules:
         system_db.add(UmLandingRule(

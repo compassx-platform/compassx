@@ -128,7 +128,9 @@ class PlatformContainer:
 
         # Attach runtimes to the compose network so they reach platform services.
         network = f"{self.profile.compose_project}_default"
-        return DockerDriver(network=network)
+        return DockerDriver(
+            network=network, project_name=self.profile.compose_project
+        )
 
     def _make_kubernetes_driver(self):
         from compassx.drivers.k8s_client import K8sApiClient

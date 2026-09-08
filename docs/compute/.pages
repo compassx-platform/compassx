@@ -1,0 +1,7 @@
+title: Compute & SQL Warehouses
+nav:
+  - Overview: index.md
+  - SQL Warehouses & Endpoints: sql-warehouses.md
+  - SQL Editor & Execution: sql-editor.md
+  - Compute Clusters & Runtimes: clusters-and-runtimes.md
+  - Query History & Monitoring: history-and-monitoring.md

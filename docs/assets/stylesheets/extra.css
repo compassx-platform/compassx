@@ -186,7 +186,7 @@ html {
 }
 
 .md-nav__link {
-  width: 100% !important;
+  width: 100%;
   border-radius: var(--cx-radius-sm);
   padding: 0.22rem 0.5rem !important; /* Comfortable balanced padding */
   font-size: 0.82rem !important;
@@ -198,6 +198,28 @@ html {
   align-items: center;
   justify-content: space-between;
   box-sizing: border-box;
+}
+
+.md-nav__container {
+  display: flex !important;
+  align-items: center !important;
+  width: 100% !important;
+  justify-content: space-between !important;
+}
+
+.md-nav__container > .md-nav__link {
+  width: auto !important;
+}
+
+.md-nav__container > a.md-nav__link {
+  flex: 1 1 auto !important;
+}
+
+.md-nav__container > label.md-nav__link {
+  flex: 0 0 1.75rem !important;
+  padding: 0.22rem 0.25rem !important;
+  justify-content: center !important;
+  cursor: pointer !important;
 }
 
 .md-nav__link:hover:not(.md-nav__link--active) {
@@ -372,8 +394,12 @@ html {
   transition: transform 0.15s ease, color 0.15s ease;
 }
 
-.md-nav__item--active > .md-nav__link .md-nav__icon {
-  color: var(--cx-active-fg);
+.md-nav__toggle:checked ~ .md-nav__link .md-nav__icon,
+.md-nav__toggle:checked ~ .md-nav__container .md-nav__icon,
+.md-nav__item--active > .md-nav__link .md-nav__icon,
+.md-nav__item--active > .md-nav__container .md-nav__icon {
+  transform: rotate(90deg) !important;
+  color: var(--cx-active-fg) !important;
 }
 
 /* --- Nested Submenus & Hierarchical Tree Guide Lines (0.75rem indentation) --- */

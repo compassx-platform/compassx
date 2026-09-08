@@ -157,6 +157,44 @@ export const AssetChip: React.FC<AssetChipProps> = ({
   );
 };
 
+/**
+ * Transforms `<asset ref="..." type="...">label</asset>` and dotted asset names
+ * into Markdown link format: `[label](asset://fullName?type=objectType)`
+ * so that ReactMarkdown can render them inline using custom components.
+ */
+export function transformAssetTagsToMarkdown(
+  text: string,
+  knownNames?: Set<string>,
+): string {
+  if (!text) return "";
+
+  // 1. Transform explicit <asset ref="..." type="...">label</asset> or self-closing tags
+  const ASSET_RE = /<asset\s+ref="([^"]+)"(?:\s+type="([^"]+)")?\s*(?:\/>|>(.*?)<\/asset>)/gi;
+  let transformed = text.replace(ASSET_RE, (_, fullName, objectType = "table", label) => {
+    const shouldResolve = !knownNames || knownNames.size === 0 || knownNames.has(fullName) || fullName.includes('.');
+    if (shouldResolve) {
+      const displayName = (label && label.trim()) || fullName.split('.').pop() || fullName;
+      return `[${displayName}](asset://${encodeURIComponent(fullName)}?type=${encodeURIComponent(objectType)})`;
+    }
+    return label || fullName;
+  });
+
+  // 2. Transform backticked 3-part dotted paths or known names: `catalog.schema.table`
+  const BACKTICK_PATH_RE = /`([a-zA-Z0-9_]+\.[a-zA-Z0-9_]+\.[a-zA-Z0-9_]+)`/g;
+  transformed = transformed.replace(BACKTICK_PATH_RE, (match, assetPath) => {
+    if (knownNames && knownNames.size > 0 && !knownNames.has(assetPath)) {
+      return match;
+    }
+    const inferredType: AssetObjectType =
+      assetPath.includes('notebook') ? 'notebook' :
+      assetPath.includes('dash') ? 'dashboard' : 'table';
+    const displayName = assetPath.split('.').pop() || assetPath;
+    return `[${displayName}](asset://${encodeURIComponent(assetPath)}?type=${encodeURIComponent(inferredType)})`;
+  });
+
+  return transformed;
+}
+
 /** Parse the model's <asset ref="..." type="...">label</asset> tags from a text string
  *  and return an array of segments (plain string | AssetChipProps).
  *  Unresolvable refs (no match in knownNames set) are returned as plain text. */

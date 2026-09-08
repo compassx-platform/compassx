@@ -34,6 +34,7 @@ import AgentsPage from '@/modules/agents/pages/AgentsPage';
 import AgentToolDetailPage from '@/modules/agents/pages/AgentToolDetailPage';
 import AgentBuilderPage from '@/modules/agents/pages/AgentBuilderPage';
 import AgentChatPage from '@/modules/agents/pages/AgentChatPage';
+import OntologyPage from '@/modules/ontology/pages/OntologyPage';
 import ConnectionsPage from '@/modules/agents/pages/ConnectionsPage';
 import CreateConnectionPage from '@/modules/agents/pages/CreateConnectionPage';
 import LLMConnectionsPage from '@/modules/agents/pages/LLMConnectionsPage';
@@ -45,15 +46,9 @@ import ComputePage from '@/modules/compute/pages/ComputePage';
 import ComputeResourceDetailPage from '@/modules/compute/pages/ComputeResourceDetailPage';
 import DashboardsPage from '@/modules/dashboards/pages/DashboardsPage';
 import DashboardEditorPage from '@/modules/dashboards/pages/DashboardEditorPage';
-import AssetTypeFormPage from '@/modules/asset_manager/pages/AssetTypeFormPage';
-import AssetExplorerPage from '@/modules/asset_manager/pages/AssetExplorerPage';
-import AssetFormPage from '@/modules/asset_manager/pages/AssetFormPage';
-import AssetImportPage from '@/modules/asset_manager/pages/AssetImportPage';
 import JobsListPage from '@/modules/jobs/pages/JobsListPage';
 import JobDetailPage from '@/modules/jobs/pages/JobDetailPage';
 import RunDetailPage from '@/modules/jobs/pages/RunDetailPage';
-import AppsListPage from '@/modules/apps_development/pages/AppsListPage';
-import AppEditorPage from '@/modules/apps_development/pages/AppEditorPage';
 import MonitoringPage from '@/modules/monitoring/pages/MonitoringPage';
 import IngestionConnectionsPage from '@/modules/ingestion/pages/ConnectionsPage';
 import IngestionConnectionDetailPage from '@/modules/ingestion/pages/ConnectionDetailPage';
@@ -62,7 +57,9 @@ import IngestionJobConfigDetailPage from '@/modules/ingestion/pages/JobConfigDet
 import IngestionRunDetailPage from '@/modules/ingestion/pages/IngestionRunDetailPage';
 import LogoShowcasePage from '@/pages/LogoShowcasePage';
 import DesignSystemShowcasePage from '@/pages/DesignSystemShowcasePage';
-import { DEFAULT_APP_ID, isAppId, normalizeAppId, stripAppScope, getDefaultPathForApp } from '@/lib/appNavigation';
+import AppsHomePage from '@/modules/apps/pages/AppsHomePage';
+import AppDetailPage from '@/modules/apps/pages/AppDetailPage';
+import { DEFAULT_APP_ID, isAppId, normalizeAppId, stripAppScope, getDefaultPathForApp, useCurrentAppId } from '@/lib/appNavigation';
 import { useMyWorkspaces } from '@/lib/workspaceApi';
 
 // ── User Manager v1 pages (lazy loaded) ─────────────────────────────────────
@@ -89,12 +86,17 @@ const UMSuspense: React.FC<React.PropsWithChildren> = ({ children }) => (
 );
 
 function RootRedirect() {
-  const { data: workspaces, isLoading, isError } = useMyWorkspaces();
+  const { data: workspaces, isLoading, isError, error } = useMyWorkspaces();
   if (isLoading) return null;
-  if (isError || !workspaces) {
-    return <Navigate to="/login" replace />;
+  if (isError) {
+    const status = (error as any)?.response?.status;
+    if (status === 401 || status === 403) {
+      return <Navigate to="/login" replace />;
+    }
+    // For 500/network errors, fallback to EntryPointGuard to render error screen
+    return <EntryPointGuard />;
   }
-  if (workspaces.length === 0) {
+  if (!workspaces || workspaces.length === 0) {
     return <Navigate to="/no-workspace-access" replace />;
   }
   const lastWs = localStorage.getItem('compassx_last_workspace');
@@ -134,17 +136,22 @@ function EntryPointGuard() {
         navigate('/login', { replace: true });
       }
     } catch (err: any) {
-      if (err?.response?.status === 401 || !isLoggedIn()) {
+      const status = err?.response?.status;
+      // Only redirect to login if explicitly unauthenticated
+      if (status === 401) {
         navigate('/login', { replace: true });
         return;
       }
       // If 404 on UM endpoints (backend running older legacy version without UM routes), fall back to legacy
-      if (err?.response?.status === 404) {
+      if (status === 404) {
         setChecking(false);
         return;
       }
-      // Backend unreachable / network error / 500 error
-      setErrorMsg(err?.message || "Failed to connect to backend server");
+      // Backend unreachable / network error / 500 error: display connection error screen
+      const detailMsg = err?.response?.data?.detail;
+      setErrorMsg(
+        typeof detailMsg === "string" ? detailMsg : (err?.message || "Failed to connect to backend server")
+      );
       setChecking(false);
     }
   }, [navigate]);
@@ -172,7 +179,7 @@ function EntryPointGuard() {
           </p>
           <div style={{ display: 'flex', gap: 12, justifyContent: 'center' }}>
             <button className="btn-primary" style={{ padding: '8px 16px', borderRadius: 8, cursor: 'pointer' }} onClick={() => resolve()}>
-              Retry Connection
+              Retry
             </button>
             <button className="btn-outline" style={{ padding: '8px 16px', borderRadius: 8, cursor: 'pointer' }} onClick={() => navigate('/login')}>
               Go to Login
@@ -187,6 +194,14 @@ function EntryPointGuard() {
   return <RootRedirect />;
 }
 
+function WorkspaceHomePage() {
+  const appId = useCurrentAppId();
+  if (appId === 'apps') {
+    return <AppsHomePage />;
+  }
+  return <LandingPage />;
+}
+
 function WorkspaceIndex() {
   const { workspaceSlug } = useParams<{ workspaceSlug: string }>();
   return <Navigate to={`/w/${workspaceSlug}/${DEFAULT_APP_ID}`} replace />;
@@ -196,45 +211,6 @@ function AppHomeRedirect() {
   const { workspaceSlug, appId } = useParams<{ workspaceSlug: string; appId: string }>();
   const normalized = normalizeAppId(appId);
   if (!normalized) return <Navigate to={`/w/${workspaceSlug}/${DEFAULT_APP_ID}`} replace />;
-
-  if (normalized === 'business_center') {
-    // Scan localStorage for custom Business Center links (by slug, by UUID, or any key)
-    let foundFirstUrl: string | null = null;
-    try {
-      const bySlug = localStorage.getItem(`compassx_bc_links_${workspaceSlug}`);
-      if (bySlug) {
-        const parsed = JSON.parse(bySlug);
-        if (Array.isArray(parsed) && parsed.length > 0 && parsed[0].url) {
-          foundFirstUrl = parsed[0].url;
-        }
-      }
-      if (!foundFirstUrl) {
-        for (let i = 0; i < localStorage.length; i++) {
-          const key = localStorage.key(i);
-          if (key && key.startsWith('compassx_bc_links_')) {
-            const raw = localStorage.getItem(key);
-            if (raw) {
-              const parsed = JSON.parse(raw);
-              if (Array.isArray(parsed) && parsed.length > 0 && parsed[0].url) {
-                foundFirstUrl = parsed[0].url;
-                break;
-              }
-            }
-          }
-        }
-      }
-    } catch (e) {
-      console.error('Failed to parse custom sidebar links for redirect', e);
-    }
-
-    if (foundFirstUrl) {
-      if (foundFirstUrl.startsWith('/w/')) {
-        return <Navigate to={foundFirstUrl} replace />;
-      }
-      const cleanPath = foundFirstUrl.startsWith('/') ? foundFirstUrl : `/${foundFirstUrl}`;
-      return <Navigate to={`/w/${workspaceSlug}/business_center${cleanPath}`} replace />;
-    }
-  }
 
   return <Navigate to={`/w/${workspaceSlug}/${normalized}${getDefaultPathForApp(normalized)}`} replace />;
 }
@@ -292,6 +268,8 @@ export default function App() {
               <Route path="/account"             element={<UMSuspense><AccountConsolePage /></UMSuspense>} />
               <Route path="/account/workspaces/:workspaceId/members" element={<UMSuspense><WorkspaceMembersPage /></UMSuspense>} />
               <Route path="/design-system"        element={<DesignSystemShowcasePage />} />
+              <Route path="/ontology"             element={<OntologyPage />} />
+              <Route path="/topology"             element={<OntologyPage />} />
               {/* Root: try new entry-point resolution, fall back to legacy workspace routing */}
               <Route path="/" element={<EntryPointGuard />} />
               <Route path="workspace/create" element={<CreateWorkspacePage />} />
@@ -299,7 +277,10 @@ export default function App() {
                 <Route index element={<WorkspaceIndex />} />
                 <Route path=":appId" element={<AppScopeGuard />}>
                   <Route index element={<AppHomeRedirect />} />
-                  <Route path="home" element={<LandingPage />} />
+                  <Route path="home" element={<WorkspaceHomePage />} />
+                  <Route path="apps" element={<AppsHomePage />} />
+                  <Route path="apps/:applicationId" element={<AppDetailPage />} />
+                  <Route path="apps/:appId" element={<AppDetailPage />} />
                   <Route path="data-catalog" element={<DataCatalog />} />
                   <Route path="data-catalog/:catalog" element={<DataCatalog />} />
                   <Route path="data-catalog/:catalog/:schema" element={<DataCatalog />} />
@@ -314,12 +295,19 @@ export default function App() {
                   <Route path="sql-warehouse/:tab/:warehouseId" element={<SqlWarehousePage />} />
                   <Route path="sql-warehouse/:tab/:warehouseId/:subtab" element={<SqlWarehousePage />} />
                   <Route path="agents" element={<AgentsPage />} />
-                  <Route path="agents/tools/:toolKey" element={<AgentToolDetailPage />} />
                   <Route path="agents/new" element={<AgentBuilderPage />} />
+                  <Route path="agents/create" element={<AgentBuilderPage />} />
+                  <Route path="agents/tools/:toolKey" element={<AgentToolDetailPage />} />
+                  <Route path="agents/:agentId" element={<AgentChatPage />} />
+                  <Route path="agents/:agentId/sessions" element={<AgentChatPage />} />
+                  <Route path="agents/:agentId/sessions/:sessionId" element={<AgentChatPage />} />
                   <Route path="agents/:agentId/edit" element={<AgentChatPage initialView="customizations" />} />
+                  <Route path="agents/:agentId/builder" element={<AgentBuilderPage />} />
                   <Route path="agents/:agentId/customizations" element={<AgentChatPage initialView="customizations" />} />
                   <Route path="agents/:agentId/chat" element={<AgentChatPage />} />
                   <Route path="agents/:agentId/chat/:sessionId" element={<AgentChatPage />} />
+                  <Route path="ontology" element={<OntologyPage />} />
+                  <Route path="topology" element={<OntologyPage />} />
                   <Route path="connections" element={<ConnectionsPage />} />
                   <Route path="connections/create" element={<CreateConnectionPage />} />
                   <Route path="connections/new" element={<CreateConnectionPage />} />
@@ -334,18 +322,6 @@ export default function App() {
                   <Route path="dashboards" element={<DashboardsPage />} />
                   <Route path="dashboards/:dashboardId" element={<DashboardEditorPage />} />
                   <Route path="dashboards/:dashboardId/edit" element={<DashboardEditorPage />} />
-                  <Route path="assets" element={<AssetExplorerPage />} />
-                  <Route path="assets/search" element={<AssetExplorerPage view="search" />} />
-                  <Route path="assets/new" element={<AssetFormPage />} />
-                  <Route path="assets/import" element={<AssetImportPage />} />
-                  <Route path="assets/import/new" element={<AssetImportPage startNew />} />
-                  <Route path="assets/import/:jobId" element={<AssetImportPage />} />
-                  <Route path="assets/types" element={<AssetExplorerPage view="types" />} />
-                  <Route path="assets/types/hierarchy" element={<Navigate to="../.." replace />} />
-                  <Route path="assets/types/new" element={<AssetTypeFormPage />} />
-                  <Route path="assets/types/:typeId/edit" element={<AssetTypeFormPage />} />
-                  <Route path="assets/:instanceId" element={<AssetExplorerPage />} />
-                  <Route path="assets/:instanceId/edit" element={<AssetFormPage />} />
                   <Route path="jobs" element={<JobsListPage />} />
                   <Route path="jobs/:jobId" element={<JobDetailPage />} />
                   <Route path="jobs/:jobId/runs/:runId" element={<RunDetailPage />} />
@@ -355,9 +331,6 @@ export default function App() {
                   <Route path="ingestion/job-configs" element={<IngestionJobConfigsPage />} />
                   <Route path="ingestion/job-configs/:jobConfigId" element={<IngestionJobConfigDetailPage />} />
                   <Route path="ingestion/runs/:runId" element={<IngestionRunDetailPage />} />
-                  {/* CompassX Apps */}
-                  <Route path="apps_development" element={<AppsListPage />} />
-                  <Route path="apps_development/:compassAppId/:branchId" element={<AppEditorPage />} />
                   {/* Custom Technology & Data Icons Showcase */}
                   <Route path="icons" element={<IconsShowcasePage />} />
                   {/* CompassX Brand & Logo Visualizer */}

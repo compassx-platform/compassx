@@ -87,9 +87,11 @@ export interface NumberFormat {
   type: 'number' | 'currency' | 'percent';
   abbreviation?: 'none' | 'compact' | 'scientific';
   decimals?: number;
+  decimalMode?: 'all' | 'exact' | 'max';
   groupSeparator?: boolean;
   negativeStyle?: 'minus' | 'parens' | 'red';
   currencySymbol?: string;
+  unit?: string;
 }
 
 export interface LegendConfig {
@@ -142,6 +144,7 @@ export interface ChartConfig {
   enableSeriesSwitcher?: boolean;
   // counter
   comparisonField?: string;
+  comparisonTransform?: string;
   showSparkline?: boolean;
   conditionalFormatting?: Array<{ min?: number; max?: number; color: string }>;
   // map
@@ -154,6 +157,15 @@ export interface ChartConfig {
   showSearch?: boolean;
   wrapText?: boolean;
   showRowNumbers?: boolean;
+  titleRowBg?: string;
+  titleRowColor?: string;
+  headerBg?: string;
+  headerColor?: string;
+  headerBackgroundColor?: string;
+  headerFontSize?: 'small' | 'medium' | 'large';
+  headerFontWeight?: 'normal' | 'medium' | 'bold';
+  headerTextTransform?: 'none' | 'uppercase' | 'capitalize';
+  headerAlignment?: 'left' | 'center' | 'right';
   // layout sub-type
   layout?: 'stack' | '100stack' | 'group';
 }
@@ -201,6 +213,7 @@ export interface Widget {
 export interface FilterWidgetConfig {
   scope: FilterScope;
   filterType: FilterWidgetType;
+  placement?: 'bar' | 'canvas' | 'both';
   field?: string;
   datasetIds: string[];
   paramKeyword?: string;

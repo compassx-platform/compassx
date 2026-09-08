@@ -1,5 +1,6 @@
 import path from "path";
 import react from "@vitejs/plugin-react";
+import tailwindcss from "@tailwindcss/vite";
 import { defineConfig, type Plugin } from "vite";
 import federation from '@originjs/vite-plugin-federation';
 import { nodePolyfills } from 'vite-plugin-node-polyfills';
@@ -63,9 +64,10 @@ function patchExposeChunkReact(): Plugin {
 
 export default defineConfig({
   define: {
-    __APP_VERSION__: JSON.stringify(process.env.VITE_APP_VERSION || pkg.version || "0.3.0"),
+    __APP_VERSION__: JSON.stringify(process.env.VITE_APP_VERSION || pkg.version || "0.4.0"),
   },
   plugins: [
+    tailwindcss(),
     nodePolyfills({ include: ['buffer', 'stream', 'util'] }),
     react(),
     federation({
@@ -89,9 +91,6 @@ export default defineConfig({
     }),
     patchExposeChunkReact(),
   ],
-  css: {
-    postcss: "./postcss.config.js",
-  },
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
@@ -122,8 +121,8 @@ export default defineConfig({
     target: "esnext",
     minify: false,
     commonjsOptions: {
-    transformMixedEsModules: true,
-  },
+      transformMixedEsModules: true,
+    },
     rollupOptions: {
       output: {
         manualChunks: {
@@ -133,7 +132,7 @@ export default defineConfig({
     },
     cssCodeSplit: false,
     sourcemap: false,
-    chunkSizeWarningLimit: 1000,
+    chunkSizeWarningLimit: 3000,
   },
   server: {
     proxy: {

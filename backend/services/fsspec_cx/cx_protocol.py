@@ -159,12 +159,23 @@ class CXFileSystem(AbstractFileSystem):
             import s3fs
 
             cred = credential["scoped_credential"]
+            endpoint_url = cred.get("endpoint_url")
+            if endpoint_url and endpoint_url.startswith(("http://localhost", "https://localhost", "http://127.0.0.1", "https://127.0.0.1")):
+                try:
+                    from compassx.lookup import try_resolve_url_container
+                    endpoint_url = try_resolve_url_container("minio", endpoint_url)
+                except Exception:
+                    pass
+                if endpoint_url.startswith(("http://localhost", "https://localhost", "http://127.0.0.1", "https://127.0.0.1")):
+                    host_gateway = os.environ.get("COMPASSX_HOST_GATEWAY", "host.docker.internal")
+                    endpoint_url = endpoint_url.replace("localhost", host_gateway).replace("127.0.0.1", host_gateway)
+
             return s3fs.S3FileSystem(
                 anon=False,
                 key=cred["access_key"],
                 secret=cred["secret_key"],
                 token=cred.get("session_token"),
-                endpoint_url=cred.get("endpoint_url"),
+                endpoint_url=endpoint_url,
                 client_kwargs={"verify": False},
             )
 

@@ -54,13 +54,18 @@ export default function LoginPage() {
       const entryPoint = await fetchEntryPoint();
       navigate(entryPoint.route || "/");
     } catch (err: any) {
+      const status = err.response?.status;
       const detail = err.response?.data?.detail;
       let msg = detail;
-      if (!msg && err.message && !err.message.toLowerCase().includes("refresh token")) {
-        msg = err.message;
-      }
-      if (!msg || msg === "Invalid credentials") {
-        msg = "Invalid email or password. Please try again.";
+      if (status && status >= 500) {
+        msg = `Server Error (${status}): ${detail || "Database or backend service is temporarily unavailable. Please verify that database migrations have been applied."}`;
+      } else {
+        if (!msg && err.message && !err.message.toLowerCase().includes("refresh token")) {
+          msg = err.message;
+        }
+        if (!msg || msg === "Invalid credentials") {
+          msg = "Invalid email or password. Please try again.";
+        }
       }
       setError(msg);
     } finally {
@@ -88,13 +93,18 @@ export default function LoginPage() {
       const entryPoint = await fetchEntryPoint();
       navigate(entryPoint.route || "/");
     } catch (err: any) {
+      const status = err.response?.status;
       const detail = err.response?.data?.detail;
       let msg = detail;
-      if (!msg && err.message && !err.message.toLowerCase().includes("refresh token")) {
-        msg = err.message;
-      }
-      if (!msg || msg === "Invalid credentials") {
-        msg = "Auto-login failed. Please check user credentials.";
+      if (status && status >= 500) {
+        msg = `Server Error (${status}): ${detail || "Database or backend service is temporarily unavailable."}`;
+      } else {
+        if (!msg && err.message && !err.message.toLowerCase().includes("refresh token")) {
+          msg = err.message;
+        }
+        if (!msg || msg === "Invalid credentials") {
+          msg = "Auto-login failed. Please check user credentials.";
+        }
       }
       setError(msg);
     } finally {

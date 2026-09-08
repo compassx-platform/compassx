@@ -98,15 +98,15 @@ Ready-to-use cloud presets and step-by-step guides are provided in the [`deploym
 | `secrets.catalogEncryptionKey` | Fernet 32-byte key for Data Catalog secrets | `""` |
 | `backend.replicaCount` | Replicas for FastAPI backend | `1` |
 | `backend.image.repository` | Backend container image | `ghcr.io/compassx-platform/backend` |
-| `backend.image.tag` | Backend image tag | `v0.2.0` |
+| `backend.image.tag` | Backend image tag | `v0.4.0` |
 | `backend.resources` | Backend CPU/Memory requests & limits | `{requests: 500m/1Gi, limits: 2000m/4Gi}` |
 | `backend.autoscaling.enabled` | Enable Horizontal Pod Autoscaling (HPA) | `false` |
 | `frontend.replicaCount` | Replicas for Frontend UI | `1` |
 | `frontend.image.repository` | Frontend container image | `ghcr.io/compassx-platform/frontend` |
-| `frontend.image.tag` | Frontend image tag | `v0.2.0` |
+| `frontend.image.tag` | Frontend image tag | `v0.4.0` |
 | `enterpriseGateway.replicaCount` | Replicas for Jupyter Enterprise Gateway | `1` |
 | `enterpriseGateway.image.repository` | Enterprise Gateway container image | `ghcr.io/compassx-platform/enterprise-gateway` |
-| `enterpriseGateway.image.tag` | Enterprise Gateway image tag | `v0.1.0` |
+| `enterpriseGateway.image.tag` | Enterprise Gateway image tag | `v0.4.0` |
 | `airflow.enabled` | Enable Apache Airflow stack | `true` |
 | `airflow.image.repository` | Airflow container image | `apache/airflow` |
 | `airflow.image.tag` | Airflow image tag | `2.9.3-python3.11` |

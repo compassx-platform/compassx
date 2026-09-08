@@ -81,21 +81,98 @@ class PlanService:
 
     def get_plans_for_session(self, session_id: int) -> List[Plan]:
         """Return all plans created for a given session, ordered newest first."""
-        if not os.path.exists(self.storage_dir):
-            return []
-        plans: List[Plan] = []
-        for filename in os.listdir(self.storage_dir):
-            if filename.startswith("plan_") and filename.endswith(".json"):
-                filepath = os.path.join(self.storage_dir, filename)
-                try:
-                    with open(filepath, "r", encoding="utf-8") as f:
-                        data = json.load(f)
-                        p = Plan.model_validate(data)
-                        if p.session_id == session_id:
-                            plans.append(p)
-                except Exception:
-                    continue
-        plans.sort(key=lambda p: p.updated_at or p.created_at, reverse=True)
+        plans_map: Dict[str, Plan] = {}
+        if os.path.exists(self.storage_dir):
+            for filename in os.listdir(self.storage_dir):
+                if filename.startswith("plan_") and filename.endswith(".json"):
+                    filepath = os.path.join(self.storage_dir, filename)
+                    try:
+                        with open(filepath, "r", encoding="utf-8") as f:
+                            data = json.load(f)
+                            p = Plan.model_validate(data)
+                            if p.session_id == session_id:
+                                plans_map[p.plan_id] = p
+                    except Exception:
+                        continue
+
+        # Database fallback/supplement to ensure plans are never lost across restarts
+        try:
+            from app.database import SessionLocal
+            from app.models.agents import ChatMessage
+            db = SessionLocal()
+            try:
+                msgs = (
+                    db.query(ChatMessage)
+                    .filter(ChatMessage.session_id == session_id)
+                    .order_by(ChatMessage.created_at.asc())
+                    .all()
+                )
+                current_plan: Optional[Plan] = None
+                for m in msgs:
+                    if m.role == "tool" and m.tool_name == "create_plan" and m.tool_result:
+                        res = m.tool_result.get("result") or {}
+                        args = m.tool_result.get("args") or {}
+                        plan_id = res.get("plan_id") or "plan"
+                        if plan_id not in plans_map:
+                            steps_data = args.get("steps") or res.get("steps") or []
+                            plan_steps = [
+                                PlanStep(
+                                    id=idx + 1 if "id" not in s else s["id"],
+                                    description=s.get("description") or s.get("text") or f"Step {idx + 1}",
+                                    verification=s.get("verification", "Verification check passed"),
+                                    status=StepStatus(s.get("status", "pending")),
+                                )
+                                for idx, s in enumerate(steps_data)
+                            ]
+                            p = Plan(
+                                plan_id=plan_id,
+                                agent_id=str(res.get("agent_id") or "agent"),
+                                session_id=session_id,
+                                goal=args.get("goal") or res.get("goal") or "Execution Plan",
+                                steps=plan_steps,
+                                created_at=m.created_at.isoformat() if m.created_at else None,
+                                updated_at=m.created_at.isoformat() if m.created_at else None,
+                            )
+                            plans_map[plan_id] = p
+                            current_plan = p
+                            # Persist back to storage_dir so disk cache is restored
+                            try:
+                                self.save_plan(p)
+                            except Exception:
+                                pass
+                        else:
+                            current_plan = plans_map[plan_id]
+                    elif m.role == "tool" and m.tool_name == "mark_step" and m.tool_result:
+                        res = m.tool_result.get("result") or {}
+                        args = m.tool_result.get("args") or {}
+                        plan_id = res.get("plan_id") or args.get("plan_id")
+                        target_p = plans_map.get(plan_id) if plan_id else current_plan
+                        if target_p:
+                            step_id = res.get("updated_step") or args.get("step_id")
+                            status = res.get("status") or args.get("status")
+                            if step_id and status:
+                                for st in target_p.steps:
+                                    if st.id == int(step_id):
+                                        st.status = StepStatus(status)
+                                        break
+                                try:
+                                    self.save_plan(target_p)
+                                except Exception:
+                                    pass
+                    elif m.role == "tool" and m.tool_name in ("get_next_step", "mark_step"):
+                        if current_plan and not current_plan.approved_at:
+                            current_plan.approved_at = m.created_at.isoformat() if m.created_at else None
+                            try:
+                                self.save_plan(current_plan)
+                            except Exception:
+                                pass
+            finally:
+                db.close()
+        except Exception as exc:
+            logger.debug("Plan DB recovery skipped: %s", exc)
+
+        plans = list(plans_map.values())
+        plans.sort(key=lambda p: p.updated_at or p.created_at or "", reverse=True)
         return plans
 
     def get_latest_plan_for_session(self, session_id: int) -> Optional[Plan]:

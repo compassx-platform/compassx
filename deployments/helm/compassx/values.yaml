@@ -32,7 +32,7 @@ backend:
   image:
     repository: ghcr.io/compassx-platform/backend
     pullPolicy: IfNotPresent
-    tag: "v0.3.0"
+    tag: \"v0.7.2\"
 
   service:
     type: ClusterIP
@@ -44,7 +44,6 @@ backend:
     COMPASSX_ENV: "production"
     SYSTEM_DB_NAME: "compassx_account"
     DATA_DB_NAME: "compassx_system"
-    ASSET_DB_NAME: "asset_manager"
     STORAGE_BUCKET: "compassx"
     STORAGE_REGION: "us-east-1"
     SKIP_DB_INIT: "false"
@@ -86,6 +85,12 @@ backend:
       timeoutSeconds: 5
       failureThreshold: 3
 
+  # Automated DB Migrations Job (runs pre-install and pre-upgrade hooks)
+  migrationJob:
+    enabled: true
+    backoffLimit: 3
+    ttlSecondsAfterFinished: 300
+
 # ------------------------------------------------------------------------------
 # Frontend UI (React + Vite + Nginx)
 # ------------------------------------------------------------------------------
@@ -95,7 +100,7 @@ frontend:
   image:
     repository: ghcr.io/compassx-platform/frontend
     pullPolicy: IfNotPresent
-    tag: "v0.3.0"
+    tag: \"v0.7.2\"
 
   service:
     type: ClusterIP
@@ -133,7 +138,7 @@ enterpriseGateway:
   image:
     repository: ghcr.io/compassx-platform/enterprise-gateway
     pullPolicy: IfNotPresent
-    tag: "v0.3.0"
+    tag: "v0.6.0"
 
   service:
     type: ClusterIP
@@ -364,7 +369,7 @@ prometheus:
   image:
     repository: prom/prometheus
     pullPolicy: IfNotPresent
-    tag: "v0.3.0"
+    tag: "v2.53.0"
 
   service:
     type: ClusterIP

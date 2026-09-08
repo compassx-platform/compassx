@@ -85,6 +85,7 @@ export function clearPrincipalInfo(): void {
 
 import axios from "axios";
 import { purgeAllClientState } from './queryClient';
+import { resetManagers } from '@/modules/notebooks/lib/jupyter';
 
 const BASE = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.replace(/\/api\/v1\/?$/, "") || "";
 
@@ -97,6 +98,11 @@ export function clearSession(): void {
   clearTokens();
   clearPrincipalInfo();
   purgeAllClientState();
+  try {
+    resetManagers();
+  } catch {
+    // ignore
+  }
 }
 
 // ── Auth state & Refresh ──────────────────────────────────────────────────────
@@ -122,9 +128,13 @@ export function refreshAccessToken(): Promise<string> {
       return newToken;
     })
     .catch((err) => {
-      clearSession();
-      if (typeof window !== "undefined" && !window.location.pathname.startsWith("/login")) {
-        window.location.href = "/login";
+      const status = err?.response?.status;
+      // Only clear session and redirect if token was explicitly rejected (400, 401, 403)
+      if (status && status >= 400 && status < 500) {
+        clearSession();
+        if (typeof window !== "undefined" && !window.location.pathname.startsWith("/login")) {
+          window.location.href = "/login";
+        }
       }
       throw err;
     })

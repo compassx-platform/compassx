@@ -137,9 +137,13 @@ class DefaultResourceManager(ResourceManager):
         logger.info("runtime.delete runtime_id=%s", runtime_id)
 
     async def start_runtime(self, runtime_id: str) -> None:
-        await self._driver_for(runtime_id).start_runtime(runtime_id)
-        self._repository.update(runtime_id, phase=RuntimePhase.PENDING)
-        logger.info("runtime.start runtime_id=%s", runtime_id)
+        try:
+            await self._driver_for(runtime_id).start_runtime(runtime_id)
+            self._repository.update(runtime_id, phase=RuntimePhase.PENDING)
+            logger.info("runtime.start runtime_id=%s", runtime_id)
+        except RuntimeNotFoundError:
+            self._repository.update(runtime_id, phase=RuntimePhase.MISSING, infra_id="")
+            raise
 
     async def stop_runtime(self, runtime_id: str) -> None:
         await self._driver_for(runtime_id).stop_runtime(runtime_id)
@@ -161,6 +165,8 @@ class DefaultResourceManager(ResourceManager):
         try:
             info = await driver.get_status(runtime_id)
         except RuntimeNotFoundError:
+            if record.phase != RuntimePhase.MISSING:
+                self._repository.update(runtime_id, phase=RuntimePhase.MISSING, infra_id="")
             return RuntimeInfo(
                 runtime_id=runtime_id,
                 runtime_type=record.runtime_type,

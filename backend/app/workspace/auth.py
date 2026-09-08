@@ -58,20 +58,35 @@ def require_account_admin(principal: Principal = Depends(get_current_principal))
 
 
 def validate_bearer_token(token: str) -> Principal:
-    """Validate a bearer token and return a default Admin Principal."""
+    """Validate a bearer token and return the Principal."""
+    from app.user_manager.auth_utils import decode_access_token
+    try:
+        payload = decode_access_token(token)
+        user_id = payload.get("sub")
+    except Exception as exc:
+        raise ValueError(f"Invalid or expired token: {exc}")
+
     from app.database import AccountSessionLocal
     if AccountSessionLocal is None:
         raise RuntimeError("Account database not available")
     db = AccountSessionLocal()
     try:
-        principal = (
-            db.query(Principal)
-            .filter(Principal.is_account_admin == True, Principal.is_active == True)
-            .first()
-        )
+        principal = None
+        if user_id:
+            principal = (
+                db.query(Principal)
+                .filter(Principal.id == user_id, Principal.is_active == True)
+                .first()
+            )
+        if principal is None:
+            principal = (
+                db.query(Principal)
+                .filter(Principal.is_account_admin == True, Principal.is_active == True)
+                .first()
+            )
         if principal is None:
             principal = Principal(
-                id="bbbbbbbb-0000-0000-0000-000000000001",
+                id=user_id or "bbbbbbbb-0000-0000-0000-000000000001",
                 account_id="aaaaaaaa-0000-0000-0000-000000000001",
                 type="user",
                 email="admin@compass.internal",

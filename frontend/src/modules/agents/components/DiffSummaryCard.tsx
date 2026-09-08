@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { AssetChip, AssetObjectType } from './AssetChip';
+import api from '@/lib/api';
 
 // G6: Per-turn diff summary card — one row per asset changed, with +X -Y badge
 // and Accept / Reject buttons per row (D20).
@@ -16,6 +17,8 @@ export interface ChangeRecord {
   reverted_by_change_id?: string | null;
   captured_at?: string | null;
   url?: string;
+  before_content?: string | null;
+  after_content?: string | null;
 }
 
 interface DiffSummaryCardProps {
@@ -41,9 +44,13 @@ export const DiffSummaryCard: React.FC<DiffSummaryCardProps> = ({
   useEffect(() => {
     if (initialRecords) return;
     const params = stepId !== undefined ? `?step_id=${stepId}` : '';
-    fetch(`/api/v1/agents/${agentId}/sessions/${sessionId}/changes${params}`)
-      .then(r => r.json())
-      .then(setRecords)
+    api
+      .get(`/agents/${agentId}/sessions/${sessionId}/changes${params}`)
+      .then(res => {
+        if (Array.isArray(res.data)) {
+          setRecords(res.data);
+        }
+      })
       .catch(() => {})
       .finally(() => setLoading(false));
   }, [agentId, sessionId, stepId, initialRecords]);
@@ -54,12 +61,11 @@ export const DiffSummaryCard: React.FC<DiffSummaryCardProps> = ({
   const doAction = async (changeId: string, action: 'accept' | 'reject') => {
     setActioning(a => ({ ...a, [changeId]: true }));
     try {
-      const res = await fetch(
-        `/api/v1/agents/${agentId}/sessions/${sessionId}/changes/${changeId}/${action}`,
-        { method: 'POST' }
+      const res = await api.post(
+        `/agents/${agentId}/sessions/${sessionId}/changes/${changeId}/${action}`
       );
-      if (res.ok) {
-        const data = await res.json();
+      if (res.status === 200) {
+        const data = res.data;
         setRecords(prev =>
           prev.map(r => {
             if (r.change_id === changeId) return { ...r, status: action === 'accept' ? 'accepted' : 'rejected' };
@@ -68,10 +74,12 @@ export const DiffSummaryCard: React.FC<DiffSummaryCardProps> = ({
         );
         // If reject created a revert record, refresh list
         if (action === 'reject' && data.revert_change_id) {
-          const refreshed = await fetch(
-            `/api/v1/agents/${agentId}/sessions/${sessionId}/changes${stepId !== undefined ? `?step_id=${stepId}` : ''}`
-          ).then(r => r.json());
-          setRecords(refreshed);
+          const refreshed = await api
+            .get(`/agents/${agentId}/sessions/${sessionId}/changes${stepId !== undefined ? `?step_id=${stepId}` : ''}`)
+            .then(r => r.data);
+          if (Array.isArray(refreshed)) {
+            setRecords(refreshed);
+          }
         }
       }
     } finally {

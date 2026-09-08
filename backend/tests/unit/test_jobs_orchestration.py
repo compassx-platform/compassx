@@ -8,7 +8,7 @@ from fastapi import HTTPException
 from app.jobs.security import verify_airflow_signature
 from app.jobs.execution_service import task_executors
 from app.jobs.validation import validate_job_spec
-from compassx.runtime.spec_builders import default_spec_builders
+from compassx.runtime.spec_builders import default_spec_builders, NOTEBOOK_JOB_IMAGE
 from services.airflow.client import AirflowSchedulerGateway
 from services.airflow.config import airflow_settings
 
@@ -83,7 +83,7 @@ def test_notebook_job_runtime_is_profile_independent():
     builder = default_spec_builders().get("notebook-job")
     spec = builder.build("job-exec-1", user_id="user-1")
     assert spec.runtime_type == "notebook-job"
-    assert spec.container_image == "compassx-airflow-notebook-runner:latest"
+    assert spec.container_image == NOTEBOOK_JOB_IMAGE
     assert spec.command == ["tail", "-f", "/dev/null"]
 
 

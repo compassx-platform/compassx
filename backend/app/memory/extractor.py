@@ -1,1 +1,0 @@
-"""Deprecated memory extractor."""

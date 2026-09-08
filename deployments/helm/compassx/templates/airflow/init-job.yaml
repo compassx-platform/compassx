@@ -41,15 +41,15 @@ spec:
                 --role Admin \
                 --email {{ .Values.airflow.adminUser.email }} || true
           env:
+            - name: PG_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "compassx.postgresSecretName" . }}
+                  key: {{ include "compassx.postgresSecretKey" . }}
             - name: AIRFLOW__CORE__EXECUTOR
               value: "LocalExecutor"
             - name: AIRFLOW__CORE__LOAD_EXAMPLES
               value: "false"
             - name: AIRFLOW__DATABASE__SQL_ALCHEMY_CONN
               value: {{ printf "postgresql+psycopg2://%s:$(PG_PASSWORD)@%s:%v/airflow_meta?sslmode=require" (include "compassx.postgresUser" .) (include "compassx.postgresHost" .) (include "compassx.postgresPort" .) | quote }}
-            - name: PG_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: {{ include "compassx.postgresSecretName" . }}
-                  key: {{ include "compassx.postgresSecretKey" . }}
 {{- end }}

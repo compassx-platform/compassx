@@ -12,6 +12,7 @@ interface ServerConfig {
   base_url: string;
   ws_url: string;
   token: string;
+  workspace_slug: string;
 }
 
 async function fetchJupyterConfig(): Promise<ServerConfig> {
@@ -59,6 +60,7 @@ export function useKernel(notebookPath: string) {
         baseUrl: resolvedConfig.base_url,
         wsUrl: resolvedConfig.ws_url,
         token: resolvedConfig.token,
+        workspaceSlug: resolvedConfig.workspace_slug,
       };
       const { kernelManager } = getManagers(jupyterConfig);
       await kernelManager.ready;
@@ -143,7 +145,7 @@ export function useKernel(notebookPath: string) {
         });
         setKernelStatus('connecting');
 
-        const kernelResp = await computeApi.startResourceKernel(resourceId, currentUserId) as { id: string; name: string };
+        const kernelResp = await computeApi.startResourceKernel(resourceId) as { id: string; name: string };
         const pod: SelectedPod = {
           resource_id: resourceId,
           runtime_id: null,

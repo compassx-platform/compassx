@@ -110,3 +110,64 @@ def test_change_reject_flow(db_session):
     assert len(all_changes) == 2  # original (rejected) + revert record (accepted)
     assert all_changes[0]["status"] == "rejected"
     assert all_changes[1]["status"] == "accepted"
+
+
+def test_physical_file_reversion_on_reject(tmp_path, db_session):
+    chat_session = db_session.query(ChatSession).first()
+
+    # Create a dummy file on disk
+    test_file = tmp_path / "app_code.py"
+    original_code = "def hello():\n    return 'original'\n"
+    modified_code = "def hello():\n    return 'modified by agent'\n"
+    test_file.write_text(modified_code, encoding="utf-8")
+
+    rec = capture_change(
+        db=db_session,
+        session_id=chat_session.id,
+        full_name=str(test_file),
+        object_type="file",
+        before=original_code,
+        after=modified_code,
+    )
+
+    assert test_file.read_text(encoding="utf-8") == modified_code
+
+    # Reject change -> must physically restore original content
+    res = reject_change(db_session, rec.change_id, session_id=chat_session.id)
+    assert res["ok"] is True
+    assert res["status"] == "rejected"
+    assert test_file.read_text(encoding="utf-8") == original_code
+
+
+def test_bulk_review_changes_flow(db_session):
+    from app.agents.services.agent.change_capture_service import bulk_review_changes
+
+    chat_session = db_session.query(ChatSession).first()
+
+    rec1 = capture_change(
+        db=db_session,
+        session_id=chat_session.id,
+        full_name="file1.py",
+        object_type="file",
+        before="v1",
+        after="v2",
+    )
+    rec2 = capture_change(
+        db=db_session,
+        session_id=chat_session.id,
+        full_name="file2.py",
+        object_type="file",
+        before="a1",
+        after="a2",
+    )
+
+    res = bulk_review_changes(db_session, chat_session.id, action="accept_all")
+    assert res["ok"] is True
+    assert res["count"] == 2
+
+    # Verify both are accepted
+    ch1 = get_change_record(db_session, rec1.change_id)
+    ch2 = get_change_record(db_session, rec2.change_id)
+    assert ch1["status"] == "accepted"
+    assert ch2["status"] == "accepted"
+

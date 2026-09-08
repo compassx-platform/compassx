@@ -6,8 +6,8 @@ import { useJobLogs } from '../hooks/useJobLogs';
  *
  * @param {{ resourceId: string|null }} props
  */
-export default function JobLogViewer({ resourceId, userId }) {
-  const { lines, connected, error, status } = useJobLogs(resourceId, userId);
+export default function JobLogViewer({ resourceId }) {
+  const { lines, connected, error, status } = useJobLogs(resourceId);
   const bottomRef = useRef(null);
 
   // Auto-scroll to bottom as new lines arrive

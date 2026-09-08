@@ -9,7 +9,7 @@ const MAX_LINES = 1000;
  * @param {string|null} resourceId
  * @returns {{ lines: string[], connected: boolean, error: string|null }}
  */
-export function useJobLogs(resourceId, userId) {
+export function useJobLogs(resourceId) {
   const [lines, setLines] = useState([]);
   const [connected, setConnected] = useState(false);
   const [error, setError] = useState(null);
@@ -33,7 +33,6 @@ export function useJobLogs(resourceId, userId) {
 
     const es = computeApi.streamResourceLogs(
       resourceId,
-      userId,
       (line) => {
         receivedLineRef.current = true;
         setLines((prev) => {
@@ -66,7 +65,7 @@ export function useJobLogs(resourceId, userId) {
       setConnected(false);
       setStatus('idle');
     };
-  }, [resourceId, userId]);
+  }, [resourceId]);
 
   return { lines, connected, error, status };
 }

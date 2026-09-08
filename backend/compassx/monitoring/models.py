@@ -32,6 +32,7 @@ class ObservedResource:
     start_time: datetime | None = None
     container_name: str | None = None
     image_version: str | None = None
+    cpu_cores: float = 0.0
 
 
 @dataclass(frozen=True)

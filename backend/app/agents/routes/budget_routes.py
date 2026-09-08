@@ -1,3 +1,19 @@
+"""Budget configuration and running-spend status.
+
+A budget is a spending cap on a workspace or on one agent, and ``on_exceeded``
+decides whether crossing it warns or stops the run. That makes writing one an
+administrative act: raising a cap spends the organisation's money, and lowering
+one halts agents belonging to other people. Budgets are therefore workspace
+configuration rather than a securable — there is nothing to grant on them.
+
+Reading is open to members, because a budget status is what tells someone why
+their agent stopped mid-run.
+
+Every query is scoped to ``guard.workspace_id``. The previous version fell back
+to ``workspace_id == None`` whenever no workspace was resolved, so an unscoped
+request read and wrote the workspace-less budgets rather than being refused.
+"""
+
 from __future__ import annotations
 
 import logging
@@ -8,8 +24,10 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
+from app.agents.routes._authz import authorized_agent
 from app.database import get_system_db as get_db
-from app.dependencies import get_current_user
+from app.governance.dependencies import Guard, get_guard
+from app.governance.privileges import Privilege
 from app.models.agents import Agent, Budget, BudgetStatus
 from app.schemas.agents import BudgetCreate, BudgetResponse, BudgetStatusResponse, BudgetUpdate
 from app.agents.services.budget_service import get_or_create_status, get_org_timezone_str
@@ -18,20 +36,27 @@ router = APIRouter(prefix="/api/v1/budgets", tags=["Budgets"])
 logger = logging.getLogger(__name__)
 
 
+def _get_budget_or_404(db: Session, budget_id: int, guard: Guard) -> Budget:
+    budget = (
+        db.query(Budget)
+        .filter(Budget.id == budget_id, Budget.workspace_id == guard.workspace_id)
+        .first()
+    )
+    if not budget:
+        raise HTTPException(404, "Budget configuration not found")
+    return budget
+
+
 @router.get("", response_model=List[BudgetResponse])
 def list_budgets(
     request: Request,
     scope_type: Optional[str] = None,
     scope_id: Optional[str] = None,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    guard: Guard = Depends(get_guard),
 ):
     """List all budget configurations with optional scope filtering."""
-    workspace_id = getattr(request.state, "workspace", None) and request.state.workspace.workspace_id
-    query = db.query(Budget)
-    if workspace_id:
-        query = query.filter(Budget.workspace_id == workspace_id)
-    else:
-        query = query.filter(Budget.workspace_id == None)
+    query = db.query(Budget).filter(Budget.workspace_id == guard.workspace_id)
 
     if scope_type:
         query = query.filter(Budget.scope_type == scope_type)
@@ -45,45 +70,37 @@ def create_budget(
     request: Request,
     body: BudgetCreate,
     db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user)
+    guard: Guard = Depends(get_guard),
 ):
     """Create a new budget configuration, validating that the referenced scope exists."""
-    workspace_id = getattr(request.state, "workspace", None) and request.state.workspace.workspace_id
+    guard.require_workspace_admin("Creating a budget")
+    workspace_id = guard.workspace_id
+
     # Validate scope target
     if body.scope_type == "agent":
         try:
             agent_id = int(body.scope_id)
-            agent_query = db.query(Agent).filter(Agent.id == agent_id)
-            if workspace_id:
-                agent_query = agent_query.filter(Agent.workspace_id == workspace_id)
-            else:
-                agent_query = agent_query.filter(Agent.workspace_id == None)
-            agent = agent_query.first()
-            if not agent:
-                raise HTTPException(404, f"Agent with ID {body.scope_id} not found")
         except ValueError:
             raise HTTPException(400, f"Invalid agent ID format: {body.scope_id}")
+        # Resolves in this workspace or 404s. A budget naming an agent from
+        # another workspace would silently never apply to anything.
+        authorized_agent(db, guard, agent_id, Privilege.BROWSE)
 
     # Prevent duplicate active budgets for the same scope and period within workspace context
     if body.is_active:
-        dup_query = (
+        existing = (
             db.query(Budget)
             .filter(
+                Budget.workspace_id == workspace_id,
                 Budget.scope_type == body.scope_type,
                 Budget.scope_id == body.scope_id,
                 Budget.period == body.period,
-                Budget.is_active == True
+                Budget.is_active == True,
             )
+            .first()
         )
-        if workspace_id:
-            dup_query = dup_query.filter(Budget.workspace_id == workspace_id)
-        else:
-            dup_query = dup_query.filter(Budget.workspace_id == None)
-        existing = dup_query.first()
         if existing:
             raise HTTPException(400, f"An active {body.period} budget already exists for {body.scope_type} {body.scope_id}")
-
-    username = current_user.get("username") or current_user.get("email") or "system"
 
     budget = Budget(
         workspace_id=workspace_id,
@@ -94,7 +111,7 @@ def create_budget(
         warn_threshold_pct=body.warn_threshold_pct,
         on_exceeded=body.on_exceeded,
         is_active=body.is_active,
-        created_by=username
+        created_by=str(guard.principal.id),
     )
     db.add(budget)
     try:
@@ -111,23 +128,22 @@ def get_budget_statuses(
     request: Request,
     scope_type: str,
     scope_id: Optional[str] = None,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    guard: Guard = Depends(get_guard),
 ):
     """
     Get the running spend status logs for all active budgets of the given scope.
     Lazily creates status records for the current period if they don't exist.
     """
-    workspace_id = getattr(request.state, "workspace", None) and request.state.workspace.workspace_id
-    # Fetch active budgets first
-    query = db.query(Budget).filter(Budget.scope_type == scope_type, Budget.is_active == True)
-    if workspace_id:
-        query = query.filter(Budget.workspace_id == workspace_id)
-    else:
-        query = query.filter(Budget.workspace_id == None)
-
+    workspace_id = guard.workspace_id
+    budgets_q = db.query(Budget).filter(
+        Budget.workspace_id == workspace_id,
+        Budget.scope_type == scope_type,
+        Budget.is_active == True,
+    )
     if scope_id:
-        query = query.filter(Budget.scope_id == scope_id)
-    budgets = query.all()
+        budgets_q = budgets_q.filter(Budget.scope_id == scope_id)
+    budgets = budgets_q.all()
 
     now = datetime.now(timezone.utc)
     tz_str = get_org_timezone_str(db, workspace_id)
@@ -150,38 +166,29 @@ def update_budget(
     request: Request,
     budget_id: int,
     body: BudgetUpdate,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    guard: Guard = Depends(get_guard),
 ):
     """Update a budget configuration."""
-    workspace_id = getattr(request.state, "workspace", None) and request.state.workspace.workspace_id
-    query = db.query(Budget).filter(Budget.id == budget_id)
-    if workspace_id:
-        query = query.filter(Budget.workspace_id == workspace_id)
-    else:
-        query = query.filter(Budget.workspace_id == None)
-    budget = query.first()
-    if not budget:
-        raise HTTPException(404, "Budget configuration not found")
+    guard.require_workspace_admin("Editing a budget")
+    budget = _get_budget_or_404(db, budget_id, guard)
 
     data = body.model_dump(exclude_none=True)
-    
+
     # If activating, ensure no duplicate active budget exists for scope and period within workspace context
     if data.get("is_active"):
-        dup_query = (
+        existing = (
             db.query(Budget)
             .filter(
+                Budget.workspace_id == guard.workspace_id,
                 Budget.scope_type == budget.scope_type,
                 Budget.scope_id == budget.scope_id,
                 Budget.period == budget.period,
                 Budget.is_active == True,
-                Budget.id != budget.id
+                Budget.id != budget.id,
             )
+            .first()
         )
-        if workspace_id:
-            dup_query = dup_query.filter(Budget.workspace_id == workspace_id)
-        else:
-            dup_query = dup_query.filter(Budget.workspace_id == None)
-        existing = dup_query.first()
         if existing:
             raise HTTPException(400, f"Another active {budget.period} budget already exists for this scope")
 
@@ -201,19 +208,17 @@ def update_budget(
 def delete_budget(
     request: Request,
     budget_id: int,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    guard: Guard = Depends(get_guard),
 ):
-    """Delete a budget configuration."""
-    workspace_id = getattr(request.state, "workspace", None) and request.state.workspace.workspace_id
-    query = db.query(Budget).filter(Budget.id == budget_id)
-    if workspace_id:
-        query = query.filter(Budget.workspace_id == workspace_id)
-    else:
-        query = query.filter(Budget.workspace_id == None)
-    budget = query.first()
-    if not budget:
-        raise HTTPException(404, "Budget configuration not found")
-    
+    """Delete a budget configuration.
+
+    Removing a cap is the same act as raising one, so it takes the same
+    privilege as setting it.
+    """
+    guard.require_workspace_admin("Deleting a budget")
+    budget = _get_budget_or_404(db, budget_id, guard)
+
     db.delete(budget)
     try:
         db.commit()

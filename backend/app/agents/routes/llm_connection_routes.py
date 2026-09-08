@@ -9,8 +9,11 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
+from app.agents.routes._authz import authorized_connection, visible_connections
 from app.database import get_account_db
-from app.dependencies import get_current_user
+from app.governance.dependencies import Guard, get_guard
+from app.governance.privileges import Privilege
+from app.governance.securable import Securable
 from app.models.agents import LLMConnection
 from app.schemas.agents import LLMConnectionCreate, LLMConnectionResponse, LLMConnectionUpdate, PingResponse
 from app.services.encryption import decrypt_field, encrypt_field, mask_key
@@ -50,14 +53,23 @@ def _to_response(conn: LLMConnection) -> LLMConnectionResponse:
 
 
 @router.get("", response_model=list[LLMConnectionResponse])
-def list_llm_connections(request: Request, db: Session = Depends(get_account_db)):
-    workspace_id = getattr(request.state, "workspace", None) and request.state.workspace.workspace_id
-    query = db.query(LLMConnection)
-    if workspace_id:
-        query = query.filter(LLMConnection.workspace_id == workspace_id)
-    else:
-        query = query.filter(LLMConnection.workspace_id == None)
-    return [_to_response(r) for r in query.order_by(LLMConnection.name).all()]
+def list_llm_connections(
+    request: Request,
+    db: Session = Depends(get_account_db),
+    guard: Guard = Depends(get_guard),
+):
+    """List the model connections the caller may see.
+
+    The API key comes back masked, never in full — the stored value is only
+    decrypted to compute the mask and when a call is actually made.
+    """
+    rows = (
+        db.query(LLMConnection)
+        .filter(LLMConnection.workspace_id == guard.workspace_id)
+        .order_by(LLMConnection.name)
+        .all()
+    )
+    return [_to_response(r) for r in visible_connections(guard, rows)]
 
 
 @router.post("", response_model=LLMConnectionResponse, status_code=201)
@@ -65,14 +77,20 @@ def create_llm_connection(
     request: Request,
     body: LLMConnectionCreate,
     db: Session = Depends(get_account_db),
-    current_user: dict = Depends(get_current_user)
+    guard: Guard = Depends(get_guard),
 ):
-    workspace_id = getattr(request.state, "workspace", None) and request.state.workspace.workspace_id
+    """Register a model provider.
+
+    Admin, for the same reason as a database connection: it stores a credential
+    that anyone later granted USE_COMPUTE can spend against.
+    """
+    guard.require_workspace_admin("Creating an LLM connection")
+    workspace_id = guard.workspace_id
     if body.use_for_embedding:
         db.query(LLMConnection).filter(LLMConnection.workspace_id == workspace_id).update({LLMConnection.use_for_embedding: False})
-    
-    username = current_user.get("username") or current_user.get("email") or "system"
-    
+
+    username = str(guard.principal.id)
+
     conn = LLMConnection(
         workspace_id=workspace_id,
         name=body.name,
@@ -98,13 +116,18 @@ def create_llm_connection(
     except SQLAlchemyError as exc:
         db.rollback()
         raise HTTPException(400, f"Failed to save LLM connection: {exc}") from exc
+    guard.claim_ownership(Securable.connection(str(conn.id)))
     return _to_response(conn)
 
 
 @router.get("/{connection_id}", response_model=LLMConnectionResponse)
-def get_llm_connection(request: Request, connection_id: int, db: Session = Depends(get_account_db)):
-    workspace_id = getattr(request.state, "workspace", None) and request.state.workspace.workspace_id
-    return _to_response(_get_or_404(db, connection_id, workspace_id))
+def get_llm_connection(
+    request: Request,
+    connection_id: int,
+    db: Session = Depends(get_account_db),
+    guard: Guard = Depends(get_guard),
+):
+    return _to_response(_get_or_404(db, connection_id, guard, Privilege.BROWSE))
 
 
 @router.put("/{connection_id}", response_model=LLMConnectionResponse)
@@ -113,10 +136,15 @@ def update_llm_connection(
     connection_id: int,
     body: LLMConnectionUpdate,
     db: Session = Depends(get_account_db),
-    current_user: dict = Depends(get_current_user)
+    guard: Guard = Depends(get_guard),
 ):
-    workspace_id = getattr(request.state, "workspace", None) and request.state.workspace.workspace_id
-    conn = _get_or_404(db, connection_id, workspace_id)
+    """Change a model connection.
+
+    EDIT: this can repoint the connection at a different provider or key while
+    everyone granted on it keeps calling it.
+    """
+    workspace_id = guard.workspace_id
+    conn = _get_or_404(db, connection_id, guard, Privilege.EDIT)
     data = body.model_dump(exclude_none=True)
     if data.get("use_for_embedding"):
         db.query(LLMConnection).filter(LLMConnection.workspace_id == workspace_id).update({LLMConnection.use_for_embedding: False})
@@ -126,7 +154,7 @@ def update_llm_connection(
     # Check if cost was updated to set metadata
     has_cost_update = "input_cost_per_1k_tokens" in data or "output_cost_per_1k_tokens" in data or "cost_currency" in data
     if has_cost_update:
-        username = current_user.get("username") or current_user.get("email") or "system"
+        username = str(guard.principal.id)
         conn.cost_configured_at = datetime.now(timezone.utc)
         conn.cost_configured_by = username
 
@@ -142,11 +170,23 @@ def update_llm_connection(
 
 
 @router.post("/{connection_id}/set-embedding", response_model=LLMConnectionResponse)
-def set_embedding_llm(request: Request, connection_id: int, db: Session = Depends(get_account_db)):
-    """Mark a single LLM connection as the embedding provider (exclusive toggle)."""
-    workspace_id = getattr(request.state, "workspace", None) and request.state.workspace.workspace_id
+def set_embedding_llm(
+    request: Request,
+    connection_id: int,
+    db: Session = Depends(get_account_db),
+    guard: Guard = Depends(get_guard),
+):
+    """Mark a single LLM connection as the embedding provider (exclusive toggle).
+
+    Admin, not EDIT on the one connection: the toggle is workspace-wide, and it
+    clears the flag on every other connection, including ones the caller may
+    hold no grant on at all. It also decides which provider every future
+    embedding — and so the content of every indexed document — is sent to.
+    """
+    guard.require_workspace_admin("Choosing the embedding model")
+    workspace_id = guard.workspace_id
+    conn = _get_or_404(db, connection_id, guard, Privilege.EDIT)
     db.query(LLMConnection).filter(LLMConnection.workspace_id == workspace_id).update({LLMConnection.use_for_embedding: False})
-    conn = _get_or_404(db, connection_id, workspace_id)
     conn.use_for_embedding = True
     try:
         db.commit()
@@ -158,28 +198,43 @@ def set_embedding_llm(request: Request, connection_id: int, db: Session = Depend
 
 
 @router.delete("/{connection_id}", status_code=204)
-def delete_llm_connection(request: Request, connection_id: int, db: Session = Depends(get_account_db)):
-    workspace_id = getattr(request.state, "workspace", None) and request.state.workspace.workspace_id
-    conn = _get_or_404(db, connection_id, workspace_id)
+def delete_llm_connection(
+    request: Request,
+    connection_id: int,
+    db: Session = Depends(get_account_db),
+    guard: Guard = Depends(get_guard),
+):
+    """Remove a model connection.
+
+    MANAGE: every agent bound to it stops working, and the grants go with it.
+    """
+    conn = _get_or_404(db, connection_id, guard, Privilege.MANAGE)
     db.delete(conn)
     db.commit()
 
 
 @router.post("/{connection_id}/ping", response_model=PingResponse)
-async def ping_llm_connection(request: Request, connection_id: int, db: Session = Depends(get_account_db)):
-    workspace_id = getattr(request.state, "workspace", None) and request.state.workspace.workspace_id
-    conn = _get_or_404(db, connection_id, workspace_id)
+async def ping_llm_connection(
+    request: Request,
+    connection_id: int,
+    db: Session = Depends(get_account_db),
+    guard: Guard = Depends(get_guard),
+):
+    """Send a probe request to the provider.
+
+    USE_COMPUTE: it spends the stored key on a real API call, so it takes the
+    privilege that calling through the connection takes.
+    """
+    conn = _get_or_404(db, connection_id, guard, Privilege.USE_COMPUTE)
     success, error = await llm_ping(conn)
     return PingResponse(success=success, message="Connection successful" if success else f"Connection failed: {error}")
 
 
-def _get_or_404(db: Session, connection_id: int, workspace_id: str | None = None) -> LLMConnection:
-    query = db.query(LLMConnection).filter(LLMConnection.id == connection_id)
-    if workspace_id:
-        query = query.filter(LLMConnection.workspace_id == workspace_id)
-    else:
-        query = query.filter(LLMConnection.workspace_id == None)
-    conn = query.first()
-    if not conn:
-        raise HTTPException(404, "LLM connection not found")
-    return conn
+def _get_or_404(db: Session, connection_id: int, guard: Guard, privilege: Privilege) -> LLMConnection:
+    """Load a model connection the caller holds ``privilege`` on.
+
+    Workspace comes from the guard. The previous version fell back to
+    ``workspace_id == None`` when none was resolved, so an unscoped request
+    reached the workspace-less connections rather than being refused.
+    """
+    return authorized_connection(db, guard, LLMConnection, connection_id, privilege)

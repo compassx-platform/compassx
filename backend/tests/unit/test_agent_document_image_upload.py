@@ -20,7 +20,7 @@ def db_session():
     engine = create_engine(
         "sqlite:///:memory:",
         connect_args={"check_same_thread": False},
-        execution_options={"schema_translate_map": {"jobs": None, "ai": None, "auth": None, "catalog": None}},
+        execution_options={"schema_translate_map": {"jobs": None, "ai": None, "auth": None, "catalog": None, "compute": None, "storage": None, "governance": None, "am": None, "workspace": None}},
         poolclass=StaticPool,
     )
     SystemBase.metadata.create_all(bind=engine)

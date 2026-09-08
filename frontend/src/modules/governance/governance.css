@@ -1,0 +1,342 @@
+/**
+ * Governance UI styles.
+ *
+ * Everything here is scoped under `gov-` and built from the existing theme
+ * variables, so the panel inherits the app's look and follows a theme switch
+ * without carrying its own colour values.
+ */
+
+.gov-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* ── Shared bits ──────────────────────────────────────────────────────────── */
+
+.gov-field-help {
+  margin: 4px 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--color-text-muted);
+}
+
+.gov-warning {
+  color: var(--color-warning);
+}
+
+.gov-section-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 12px;
+}
+
+.gov-inline-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.gov-link-btn {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: 12px;
+  color: var(--color-primary);
+  cursor: pointer;
+}
+
+.gov-link-btn:hover {
+  text-decoration: underline;
+}
+
+.gov-chip-muted {
+  color: var(--color-text-muted);
+  background: var(--color-bg-subtle);
+}
+
+/* Visually hidden, but still announced — used for icon-only column headers. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ── Owner ────────────────────────────────────────────────────────────────── */
+
+.gov-owner-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.gov-owner-icon {
+  display: inline-flex;
+  color: var(--color-primary);
+}
+
+.gov-owner-name {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.gov-owner-none {
+  font-weight: 400;
+  color: var(--color-text-muted);
+}
+
+.gov-transfer-panel {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--color-border);
+}
+
+.gov-owner-callout {
+  margin-bottom: 12px;
+  padding: 8px 12px;
+  font-size: 12.5px;
+  border-radius: 6px;
+  color: var(--color-primary);
+  background: var(--color-primary-bg);
+}
+
+/* ── Principal picker ─────────────────────────────────────────────────────── */
+
+.gov-principal-picker {
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.gov-search-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px;
+  border-bottom: 1px solid var(--color-border);
+  color: var(--color-text-muted);
+}
+
+.gov-search-field input {
+  flex: 1;
+  padding: 8px 0;
+  font-size: 13px;
+  color: var(--color-text);
+  background: none;
+  border: none;
+  outline: none;
+}
+
+.gov-principal-list {
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.gov-principal-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  text-align: left;
+  background: none;
+  border: none;
+  border-bottom: 1px solid var(--color-border-light);
+  cursor: pointer;
+}
+
+.gov-principal-row:last-child {
+  border-bottom: none;
+}
+
+.gov-principal-row:hover {
+  background: var(--color-bg-subtle);
+}
+
+.gov-principal-row.is-selected {
+  background: var(--color-primary-bg);
+}
+
+.gov-principal-icon {
+  display: inline-flex;
+  color: var(--color-text-muted);
+}
+
+.gov-principal-text {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+}
+
+.gov-principal-name {
+  display: block;
+  font-size: 13px;
+  color: var(--color-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gov-principal-detail {
+  display: block;
+  font-size: 11.5px;
+  color: var(--color-text-muted);
+}
+
+/* ── Grant dialog ─────────────────────────────────────────────────────────── */
+
+.gov-grant-modal {
+  width: min(560px, 92vw);
+}
+
+.gov-modal-subtitle {
+  margin: 0 0 16px;
+  font-size: 12.5px;
+  color: var(--color-text-muted);
+}
+
+.gov-bundle-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.gov-bundle-chip {
+  padding: 4px 12px;
+  font-size: 12px;
+  text-transform: capitalize;
+  color: var(--color-text);
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.gov-bundle-chip:hover {
+  border-color: var(--color-primary);
+}
+
+.gov-bundle-chip.is-active {
+  color: var(--color-primary);
+  background: var(--color-primary-bg);
+  border-color: var(--color-primary);
+}
+
+.gov-privilege-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.gov-privilege-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 7px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.gov-privilege-option:hover {
+  background: var(--color-bg-subtle);
+}
+
+.gov-privilege-option input {
+  margin-top: 2px;
+}
+
+.gov-privilege-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.gov-privilege-name {
+  font-size: 12.5px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--color-text);
+}
+
+.gov-privilege-help {
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--color-text-muted);
+}
+
+/* ── Effective access ─────────────────────────────────────────────────────── */
+
+.gov-effective-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 12px;
+}
+
+.gov-effective-picker {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.gov-select-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.gov-select-wrap select {
+  padding: 5px 26px 5px 10px;
+  font-size: 12.5px;
+  color: var(--color-text);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  appearance: none;
+  cursor: pointer;
+}
+
+.gov-select-wrap svg {
+  position: absolute;
+  right: 8px;
+  pointer-events: none;
+  color: var(--color-text-muted);
+}
+
+.gov-effective-table .gov-privilege-cell {
+  font-size: 12.5px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+.gov-effective-table .gov-reason-cell {
+  font-size: 12.5px;
+  color: var(--color-text-muted);
+}
+
+.gov-row-denied .gov-privilege-cell {
+  color: var(--color-text-muted);
+}
+
+.gov-allow-icon {
+  display: inline-flex;
+  color: var(--color-success);
+}
+
+.gov-deny-icon {
+  display: inline-flex;
+  color: var(--color-text-subtle);
+}

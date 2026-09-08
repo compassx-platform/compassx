@@ -71,7 +71,13 @@ async def chat_stream(
 
     Yields dicts: {"type": "text"|"tool_use"|"done", ...}
     """
-    print(f"[DEBUG_CHAT_STREAM] Called with agent_id={agent_id}, session_id={session_id}, conn={getattr(conn, 'name', None)}, provider={getattr(conn, 'provider', None)}", flush=True)
+    logger.debug(
+        "Chat stream called with agent_id=%s, session_id=%s, connection=%s, provider=%s",
+        agent_id,
+        session_id,
+        getattr(conn, "name", None),
+        getattr(conn, "provider", None),
+    )
 
     if agent_id is not None:
         from app.database import SystemSessionLocal as SessionLocal

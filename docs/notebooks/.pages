@@ -1,0 +1,7 @@
+title: Notebooks
+nav:
+  - Overview: index.md
+  - Multi-Language Authoring & Kernels: authoring-and-kernels.md
+  - Data Exploration & Visualizations: visualizations-and-outputs.md
+  - AI-Assisted Development with Nova: nova-notebook-assistant.md
+  - Collaboration, Versioning & Scheduling: collaboration-and-scheduling.md

@@ -17,13 +17,32 @@ from app.sql_warehouse.schemas import WarehouseCreate
 from app.schemas.agents import LLMConnectionCreate, LLMProvider, AgentCreate
 
 
-def _mock_request(workspace_id: str) -> Request:
+def _mock_request(workspace_id: str, workspace_slug: str = "default") -> Request:
     request = MagicMock(spec=Request)
     class MockWorkspaceContext:
-        def __init__(self, ws_id):
+        def __init__(self, ws_id, ws_slug):
             self.workspace_id = ws_id
-    request.state.workspace = MockWorkspaceContext(workspace_id)
+            self.workspace_slug = ws_slug
+    request.state.workspace = MockWorkspaceContext(workspace_id, workspace_slug)
     return request
+
+
+def _permissive_guard(principal_id: str) -> MagicMock:
+    """A guard that allows everything, acting as ``principal_id``.
+
+    This test is about workspace scoping, not access control — that is
+    covered by the governance suite. Calling the handlers directly bypasses
+    FastAPI's dependency injection, so the guard has to be supplied by hand.
+    """
+    guard = MagicMock()
+    guard.principal.id = principal_id
+    guard.require.return_value = None
+    guard.require_workspace_admin.return_value = None
+    guard.can.return_value = True
+    guard.claim_ownership.return_value = None
+    guard.filter.side_effect = lambda priv, items, key_fn=None: list(items)
+    guard.filter_visible.side_effect = lambda priv, items, key_fn=None: list(items)
+    return guard
 
 
 def test_resource_scoping_isolation(db_session: Session):
@@ -76,15 +95,19 @@ def test_resource_scoping_isolation(db_session: Session):
         model_name="gpt-4",
         api_key="secret",
     )
-    create_llm_connection(req1, body_llm, db_session, {"id": principal.id})
+    guard1 = _permissive_guard(principal.id)
+    guard1.workspace_id = ws1.id
+    create_llm_connection(req1, body_llm, db_session, guard=guard1)
 
     # List connections under ws1 context
-    ws1_llms = list_llm_connections(req1, db_session)
+    ws1_llms = list_llm_connections(req1, db_session, guard=guard1)
     assert len(ws1_llms) == 1
     assert ws1_llms[0].name == "WS1 LLM"
 
     # List connections under ws2 context
-    ws2_llms = list_llm_connections(req2, db_session)
+    guard2 = _permissive_guard(principal.id)
+    guard2.workspace_id = ws2.id
+    ws2_llms = list_llm_connections(req2, db_session, guard=guard2)
     assert len(ws2_llms) == 0
 
     # 2. Scope Agents
@@ -103,15 +126,19 @@ def test_resource_scoping_isolation(db_session: Session):
         git_connections=[],
         skills=[],
     )
-    create_agent(req1, body_agent, db_session)
+    guard1 = _permissive_guard(principal.id)
+    guard1.workspace_id = ws1.id
+    create_agent(req1, body_agent, db_session, guard=guard1)
 
     # List agents under ws1 context
-    ws1_agents = list_agents(req1, db_session)
+    ws1_agents = list_agents(req1, db_session, guard=guard1)
     assert len(ws1_agents) == 1
     assert ws1_agents[0].name == "WS1 Agent"
 
     # List agents under ws2 context
-    ws2_agents = list_agents(req2, db_session)
+    guard2 = _permissive_guard(principal.id)
+    guard2.workspace_id = ws2.id
+    ws2_agents = list_agents(req2, db_session, guard=guard2)
     assert len(ws2_agents) == 0
 
     # 3. Scope Compute Resources
@@ -121,15 +148,16 @@ def test_resource_scoping_isolation(db_session: Session):
         profile=ComputeProfileId.LOCAL,
         description="Compute resource in WS1",
     )
-    create_compute_resource(req1, body_compute, user_id=principal.id, created_by=principal.id, db=db_session)
+    guard = _permissive_guard(principal.id)
+    create_compute_resource(req1, body_compute, db=db_session, guard=guard)
 
     # List compute under ws1 context
-    ws1_computes = list_compute_resources(req1, user_id=principal.id, db=db_session)
+    ws1_computes = list_compute_resources(req1, db=db_session, guard=guard)
     assert len(ws1_computes) == 1
     assert ws1_computes[0].name == "WS1 Compute"
 
     # List compute under ws2 context
-    ws2_computes = list_compute_resources(req2, user_id=principal.id, db=db_session)
+    ws2_computes = list_compute_resources(req2, db=db_session, guard=guard)
     assert len(ws2_computes) == 0
 
     # 4. Scope SQL Warehouses
@@ -224,15 +252,19 @@ def test_agent_subsystem_resource_scoping(db_session: Session):
         body="print('hello')",
         trigger_hints=["ws1", "hello"],
     )
-    create_skill(req1, body_skill, db_session)
+    guard1 = _permissive_guard(principal.id)
+    guard1.workspace_id = ws1.id
+    create_skill(req1, body_skill, db_session, guard=guard1)
 
     # List under WS1
-    ws1_skills = list_skills(req1, db=db_session)
+    ws1_skills = list_skills(req1, db=db_session, guard=guard1)
     assert len(ws1_skills) == 1
     assert ws1_skills[0].name == "WS1 Skill"
 
     # List under WS2
-    ws2_skills = list_skills(req2, db=db_session)
+    guard2 = _permissive_guard(principal.id)
+    guard2.workspace_id = ws2.id
+    ws2_skills = list_skills(req2, db=db_session, guard=guard2)
     assert len(ws2_skills) == 0
 
     # 2. Test Budgets Scoping
@@ -244,29 +276,33 @@ def test_agent_subsystem_resource_scoping(db_session: Session):
         warn_threshold_pct=80,
         on_exceeded="alert_only",
     )
-    create_budget(req1, body_budget, db_session, {"username": "system"})
+    guard1 = _permissive_guard(principal.id)
+    guard1.workspace_id = ws1.id
+    create_budget(req1, body_budget, db_session, guard=guard1)
 
     # List under WS1
-    ws1_budgets = list_budgets(req1, db=db_session)
+    ws1_budgets = list_budgets(req1, db=db_session, guard=guard1)
     assert len(ws1_budgets) == 1
     assert float(ws1_budgets[0].limit_amount) == 10.0
 
     # List under WS2
-    ws2_budgets = list_budgets(req2, db=db_session)
+    guard2 = _permissive_guard(principal.id)
+    guard2.workspace_id = ws2.id
+    ws2_budgets = list_budgets(req2, db=db_session, guard=guard2)
     assert len(ws2_budgets) == 0
 
     # 3. Test Chat Sessions Scoping
     body_session = ChatSessionCreate(title="Session in WS1")
-    create_session(req1, agent_ws1.id, body_session, db_session)
+    create_session(req1, agent_ws1.id, body_session, db_session, guard=guard1)
 
     # List sessions under WS1
-    ws1_sessions = list_sessions(req1, agent_ws1.id, db_session)
+    ws1_sessions = list_sessions(req1, agent_ws1.id, db_session, guard=guard1)
     assert len(ws1_sessions) == 1
     assert ws1_sessions[0].title == "Session in WS1"
 
     # List sessions under WS2 should raise 404 because agent is in WS1
     with pytest.raises(Exception):
-        list_sessions(req2, agent_ws1.id, db_session)
+        list_sessions(req2, agent_ws1.id, db_session, guard=guard2)
 
     # 4. Test LLM Call Logs Scoping
     log_ws1 = LlmCallLog(
@@ -290,7 +326,7 @@ def test_agent_subsystem_resource_scoping(db_session: Session):
         limit=50,
         offset=0,
         db=db_session,
-        current_user={"id": principal.id}
+        guard=guard1,
     )
     assert len(ws1_logs) == 1
 
@@ -305,7 +341,7 @@ def test_agent_subsystem_resource_scoping(db_session: Session):
         limit=50,
         offset=0,
         db=db_session,
-        current_user={"id": principal.id}
+        guard=guard2,
     )
     assert len(ws2_logs) == 0
 
@@ -318,12 +354,12 @@ def test_agent_subsystem_resource_scoping(db_session: Session):
     )
     try:
         # List active streams under WS1
-        ws1_streams = list_active_streams(req1, kind=None)["streams"]
+        ws1_streams = list_active_streams(req1, kind=None, guard=guard1)["streams"]
         assert len(ws1_streams) == 1
         assert ws1_streams[0]["id"] == stream_id
 
         # List active streams under WS2
-        ws2_streams = list_active_streams(req2, kind=None)["streams"]
+        ws2_streams = list_active_streams(req2, kind=None, guard=guard2)["streams"]
         assert len(ws2_streams) == 0
     finally:
         stream_registry.finish(stream_id)

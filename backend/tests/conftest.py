@@ -111,10 +111,9 @@ def _compile_create_table_sqlite(element, compiler, **kw):
 # ---------------------------------------------------------------------------
 # Import app models (triggers SQLAlchemy mapper registration).
 # ---------------------------------------------------------------------------
-from app.database import Base, AssetBase  # noqa: E402
+from app.database import Base  # noqa: E402
 from app.workspace import models as workspace_models  # noqa: F401, E402
 from app.models import agents, dataset, data_catalog, unified_catalog  # noqa: E402, F401
-import app.asset_manager.models.asset_manager  # noqa: E402, F401
 
 # ---------------------------------------------------------------------------
 # Test database engine — single shared in-memory SQLite instance.
@@ -196,7 +195,6 @@ class TestAccountSessionLocal:
 import app.database
 app.database.AccountSessionLocal = TestAccountSessionLocal()
 app.database.SystemSessionLocal = TestAccountSessionLocal()
-app.database.AssetSessionLocal = TestAccountSessionLocal()
 
 
 # ---------------------------------------------------------------------------
@@ -210,18 +208,16 @@ def create_tables():
     import app.sql_warehouse.models  # noqa: F401
     import app.user_manager.models.system_models  # noqa: F401
     import app.user_manager.models.account_models  # noqa: F401
-    from app.database import AccountBase, SystemBase, AssetBase
+    import app.governance.models  # noqa: F401
+    from app.database import AccountBase, SystemBase
     if "sqlite" in test_engine.name:
         for table in AccountBase.metadata.tables.values():
             table.schema = None
         for table in SystemBase.metadata.tables.values():
             table.schema = None
-        for table in AssetBase.metadata.tables.values():
-            table.schema = None
     Base.metadata.create_all(bind=test_engine)
     AccountBase.metadata.create_all(bind=test_engine)
     SystemBase.metadata.create_all(bind=test_engine)
-    AssetBase.metadata.create_all(bind=test_engine)
 
     from app.user_manager.models.system_models import UmWorkspaceRole
     with Session(test_engine) as init_session:
@@ -234,7 +230,6 @@ def create_tables():
         Base.metadata.drop_all(bind=test_engine)
         AccountBase.metadata.drop_all(bind=test_engine)
         SystemBase.metadata.drop_all(bind=test_engine)
-        AssetBase.metadata.drop_all(bind=test_engine)
     except OperationalError as error:
         # SQLite schema cleanup can fail if the database state has become inconsistent
         # during a failed test run. Avoid hiding the actual failure, but allow the
@@ -298,10 +293,22 @@ def _make_test_app(db: Session) -> FastAPI:
     from fastapi import FastAPI
     from app.routes import data_catalog_routes, workspace_routes, llm_connection_routes
     from app.catalog import routes as catalog_routes
-    from app.database import get_db, get_system_db, get_account_db, get_asset_db
+    from app.database import get_db, get_system_db, get_account_db
     from app.dependencies import get_current_user
 
     app = FastAPI()
+
+    from app.workspace.models import Account, Workspace, Principal as DbPrincipal
+    ws_id = "11111111-1111-1111-1111-111111111111"
+    acc_id = "aaaaaaaa-0000-0000-0000-000000000001"
+    principal_id = "bbbbbbbb-0000-0000-0000-000000000001"
+    if not db.query(Account).filter(Account.id == acc_id).first():
+        db.add(Account(id=acc_id, name="Test Account", slug="test-account"))
+    if not db.query(DbPrincipal).filter(DbPrincipal.id == principal_id).first():
+        db.add(DbPrincipal(id=principal_id, account_id=acc_id, type="user", email="admin@compass.internal", name="Administrator", is_account_admin=True, is_active=True))
+    if not db.query(Workspace).filter(Workspace.id == ws_id).first():
+        db.add(Workspace(id=ws_id, account_id=acc_id, name="Test Workspace", slug="test-ws", storage_backend="managed", created_by=principal_id))
+    db.flush()
 
     # Override DB dependency
     def _override_get_db():
@@ -311,11 +318,23 @@ def _make_test_app(db: Session) -> FastAPI:
     async def _override_get_current_user():
         return {"id": 1, "email": "test@example.com", "first_name": "Test", "last_name": "User"}
 
+    from app.governance.dependencies import get_guard, Guard
+    from app.governance.resolver import Principal, PermissionSet
+
+    def _override_guard():
+        p = Principal(
+            id="bbbbbbbb-0000-0000-0000-000000000001",
+            is_account_admin=True,
+            workspace_roles={"11111111-1111-1111-1111-111111111111": "admin"},
+        )
+        pset = PermissionSet(p, "11111111-1111-1111-1111-111111111111", (), frozenset())
+        return Guard(pset, db, p, "11111111-1111-1111-1111-111111111111")
+
     app.dependency_overrides[get_db] = _override_get_db
     app.dependency_overrides[get_system_db] = _override_get_db
     app.dependency_overrides[get_account_db] = _override_get_db
-    app.dependency_overrides[get_asset_db] = _override_get_db
     app.dependency_overrides[get_current_user] = _override_get_current_user
+    app.dependency_overrides[get_guard] = _override_guard
 
     app.include_router(data_catalog_routes.router)
     app.include_router(catalog_routes.router)
@@ -363,4 +382,63 @@ def sample_catalog_connection(db_session: Session):
             default_database="testdb",
         ),
     )
+
+
+@pytest.fixture(autouse=True)
+def mock_compute_runtime_manager(monkeypatch):
+    """Prevent unit tests from launching real Docker containers on the host Docker daemon."""
+    from unittest.mock import AsyncMock, MagicMock
+    from compassx.models import RuntimeInfo, RuntimePhase
+    from datetime import datetime, timezone
+
+    mock_rm = MagicMock()
+    mock_rm.create_runtime = AsyncMock(
+        return_value=RuntimeInfo(
+            runtime_id="mock-rt",
+            phase=RuntimePhase.RUNNING,
+            runtime_type="duckdb",
+            infra_id="mock-infra",
+            created_at=datetime.now(timezone.utc),
+        )
+    )
+    mock_rm.start_runtime = AsyncMock(return_value=None)
+    mock_rm.stop_runtime = AsyncMock(return_value=None)
+    mock_rm.delete_runtime = AsyncMock(return_value=None)
+    mock_rm.get_runtime = AsyncMock(
+        return_value=RuntimeInfo(
+            runtime_id="mock-rt",
+            phase=RuntimePhase.RUNNING,
+            runtime_type="duckdb",
+            infra_id="mock-infra",
+            created_at=datetime.now(timezone.utc),
+        )
+    )
+
+    try:
+        from compassx.drivers.docker import DockerDriver
+        async def fake_create_runtime(self, spec):
+            return "mock-container-id"
+        async def fake_start_runtime(self, runtime_id):
+            pass
+        async def fake_stop_runtime(self, runtime_id):
+            pass
+        async def fake_delete_runtime(self, runtime_id):
+            pass
+
+        monkeypatch.setattr(DockerDriver, "create_runtime", fake_create_runtime)
+        monkeypatch.setattr(DockerDriver, "start_runtime", fake_start_runtime)
+        monkeypatch.setattr(DockerDriver, "stop_runtime", fake_stop_runtime)
+        monkeypatch.setattr(DockerDriver, "delete_runtime", fake_delete_runtime)
+    except Exception:
+        pass
+
+    for mod in ("app.compute.services.resource_service", "compute.resource_service"):
+        try:
+            monkeypatch.setattr(
+                f"{mod}.ComputeResourceService.runtime_manager",
+                property(lambda self: mock_rm),
+            )
+        except Exception:
+            pass
+
 

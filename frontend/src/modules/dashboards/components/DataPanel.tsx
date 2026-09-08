@@ -4,6 +4,7 @@
 
 import { useEffect, useState } from 'react';
 import { Database, Plus, MoreVertical, Copy, Trash2, Download, Pencil, ChevronRight, ArrowLeft } from 'lucide-react';
+import { useQueryClient } from '@tanstack/react-query';
 import { useDashboardStore } from '@/modules/dashboards/stores/dashboardStore';
 import { useExportDataset, useSaveDashboard } from '@/modules/dashboards/hooks/useDashboard';
 import { useToast } from '@/lib/toast';
@@ -17,6 +18,7 @@ interface Props {
 
 export default function DataPanel({ onBackToPages }: Props) {
   const toast = useToast();
+  const queryClient = useQueryClient();
   const { activeDashboard, addDataset, updateDataset, deleteDataset, cloneDataset } = useDashboardStore();
   const exportMutation = useExportDataset();
   const saveDashboardMutation = useSaveDashboard();
@@ -65,6 +67,8 @@ export default function DataPanel({ onBackToPages }: Props) {
       return;
     }
     deleteDataset(id);
+    queryClient.invalidateQueries({ queryKey: ['dataset-query', id] });
+    queryClient.invalidateQueries({ queryKey: ['dataset-schema', id] });
   }
 
   async function persistDataset(datasetId: string, patch: Partial<Dataset>) {
@@ -81,6 +85,8 @@ export default function DataPanel({ onBackToPages }: Props) {
         ...activeDashboard,
         datasets: nextDatasets,
       });
+      queryClient.invalidateQueries({ queryKey: ['dataset-query'] });
+      queryClient.invalidateQueries({ queryKey: ['dataset-schema'] });
       toast.success('Dataset saved');
     } catch {
       toast.error('Failed to save dataset');

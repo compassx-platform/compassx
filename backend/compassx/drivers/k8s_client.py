@@ -172,3 +172,6 @@ class K8sApiClient:
 
     def rbac(self):
         return self._apply_ssl(self._client.RbacAuthorizationV1Api())
+
+    def networking(self):
+        return self._apply_ssl(self._client.NetworkingV1Api())

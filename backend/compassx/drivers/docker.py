@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import io
 import logging
+import re
 import tarfile
 from datetime import datetime
 from pathlib import Path
@@ -48,8 +49,14 @@ _STATUS_TO_PHASE = {
 class DockerDriver(ResourceDriver):
     name = "docker"
 
-    def __init__(self, network: str | None = None, client=None) -> None:
-        """network: docker network to attach runtimes to (e.g. compassx_default)."""
+    def __init__(
+        self,
+        network: str | None = None,
+        project_name: str | None = None,
+        client=None,
+    ) -> None:
+        """network: docker network to attach runtimes to (e.g. compassx_default).
+        project_name: docker compose project name for grouping in Docker Desktop."""
         try:
             import docker  # noqa: PLC0415 - optional dependency
             from docker.errors import DockerException
@@ -68,6 +75,7 @@ class DockerDriver(ResourceDriver):
                     f"Docker daemon not reachable: {exc}"
                 ) from exc
         self._network = network
+        self._project_name = project_name
 
     # ── helpers ──────────────────────────────────────────────────────────
 
@@ -107,9 +115,12 @@ class DockerDriver(ResourceDriver):
         message = ""
         if container.status == "exited":
             exit_code = state.get("ExitCode", 0)
-            if exit_code:
+            # Exit codes 0 (clean), 137 (SIGKILL), 143 (SIGTERM), and 130 (SIGINT) are standard stop signals
+            if exit_code not in (0, 137, 143, 130):
                 phase = RuntimePhase.FAILED
                 message = state.get("Error") or f"Container exited with code {exit_code}"
+            else:
+                phase = RuntimePhase.STOPPED
         if state.get("OOMKilled"):
             phase = RuntimePhase.FAILED
             message = "Out of memory. Try a larger compute profile."
@@ -124,6 +135,36 @@ class DockerDriver(ResourceDriver):
             finished_at=_parse_docker_time(state.get("FinishedAt")),
             labels=labels,
         )
+
+    @staticmethod
+    def _build_container_name(spec: RuntimeSpec) -> str:
+        parts = ["compassx"]
+        ws = (
+            spec.metadata.get("workspace_name")
+            or spec.metadata.get("workspace_slug")
+            or spec.workspace_id
+            or ""
+        ).strip()
+        if ws:
+            ws_slug = re.sub(r"[^a-zA-Z0-9_-]+", "-", ws.lower()).strip("-_")[:20]
+            if ws_slug:
+                parts.append(ws_slug)
+
+        name = (
+            spec.metadata.get("resource_name")
+            or spec.metadata.get("name")
+            or spec.labels.get("compassx/resource-name")
+            or ""
+        ).strip()
+        if name:
+            name_slug = re.sub(r"[^a-zA-Z0-9_-]+", "-", name.lower()).strip("-_")[:25]
+            if name_slug:
+                parts.append(name_slug)
+        else:
+            parts.append("runtime")
+
+        parts.append(spec.runtime_id)
+        return "-".join(parts)
 
     # ── lifecycle ────────────────────────────────────────────────────────
 
@@ -143,6 +184,8 @@ class DockerDriver(ResourceDriver):
             RUNTIME_TYPE_LABEL: spec.runtime_type,
             MANAGED_BY_LABEL: MANAGED_BY_VALUE,
         }
+        if self._project_name:
+            labels["com.docker.compose.project"] = self._project_name
         environment = dict(spec.env)
         ports = {
             f"{p.container_port}/{p.protocol.lower()}": p.host_port
@@ -158,7 +201,7 @@ class DockerDriver(ResourceDriver):
 
         run_kwargs: dict = {
             "image": spec.container_image,
-            "name": f"compassx-runtime-{spec.runtime_id}",
+            "name": self._build_container_name(spec),
             "detach": True,
             "labels": labels,
             "environment": environment,

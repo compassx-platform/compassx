@@ -168,6 +168,55 @@ def setup_complete(
         ))
         system_db.flush()
 
+        # Auto-create and bind workspace-specific default catalog
+        try:
+            import re
+            from app.catalog.schemas import CatalogPrivilege
+            from app.catalog.models import UnifiedCatalog, UnifiedCatalogSchema, CatalogWorkspaceBinding
+
+            normalized_name = legacy_ws.name.lower().replace(" ", "_").replace("-", "_")
+            normalized_name = re.sub(r'[^a-z0-9_]', '', normalized_name)
+            if not normalized_name:
+                normalized_name = "workspace"
+            catalog_name = f"{normalized_name}_default"
+
+            catalog = account_db.query(UnifiedCatalog).filter(UnifiedCatalog.name == catalog_name).first()
+            if not catalog:
+                catalog = UnifiedCatalog(
+                    name=catalog_name,
+                    description=f"Default catalog for workspace {legacy_ws.name}",
+                    catalog_type="iceberg",
+                    created_by=admin_user.id,
+                )
+                account_db.add(catalog)
+                account_db.flush()
+
+                schema = UnifiedCatalogSchema(
+                    catalog_id=catalog.id,
+                    name="default",
+                    description="Default schema",
+                    created_by=admin_user.id,
+                )
+                account_db.add(schema)
+                account_db.flush()
+
+            existing_binding = account_db.query(CatalogWorkspaceBinding).filter(
+                CatalogWorkspaceBinding.catalog_id == catalog.id,
+                CatalogWorkspaceBinding.workspace_id == ws_id,
+            ).first()
+            if not existing_binding:
+                binding = CatalogWorkspaceBinding(
+                    catalog_id=catalog.id,
+                    workspace_id=ws_id,
+                    privilege=CatalogPrivilege.READ_WRITE.value,
+                    is_default=True,
+                    bound_by=admin_user.id,
+                )
+                account_db.add(binding)
+                account_db.flush()
+        except Exception as cat_err:
+            logger.warning("Could not auto-create/bind default catalog in setup_complete: %s", cat_err)
+
         # Auto-ensure default DuckDB compute and SQL warehouse for initial workspace
         try:
             from app.compute.services.workspace_defaults import ensure_workspace_default_resources

@@ -7,6 +7,7 @@
 import { useMemo } from 'react';
 import { useDashboardStore } from '@/modules/dashboards/stores/dashboardStore';
 import { useDatasetQuery } from '@/modules/dashboards/hooks/useDashboard';
+import { filterRows } from '@/modules/dashboards/utils/filterUtils';
 import type { Widget } from '@/types/dashboard';
 
 interface Props {
@@ -14,14 +15,16 @@ interface Props {
 }
 
 export default function PivotWidget({ widget }: Props) {
-  const { filterState, paramState } = useDashboardStore();
+  const { activeDashboard, filterState, paramState } = useDashboardStore();
   const cfg = widget.chartConfig;
+  const dataset = activeDashboard?.datasets.find((d) => d.id === cfg?.datasetId);
 
   const { data: queryResult, isLoading } = useDatasetQuery(
     cfg?.datasetId,
     paramState as any,
     filterState as any,
-    !!cfg?.datasetId
+    !!cfg?.datasetId,
+    dataset?.sql
   );
 
   const { rowField, colField, valField } = useMemo(() => ({
@@ -34,7 +37,8 @@ export default function PivotWidget({ widget }: Props) {
     if (!queryResult || !rowField || !colField || !valField) {
       return { rowKeys: [], colKeys: [], pivotMap: {}, maxVal: 1 };
     }
-    const rows = queryResult.rows;
+    const rawRows = queryResult.rows;
+    const rows = filterRows(rawRows, activeDashboard?.widgets, filterState, cfg?.datasetId);
     const rks = Array.from(new Set(rows.map((r) => String(r[rowField]))));
     const cks = Array.from(new Set(rows.map((r) => String(r[colField]))));
     const map: Record<string, Record<string, number>> = {};
@@ -48,7 +52,7 @@ export default function PivotWidget({ widget }: Props) {
       if (map[r][c] > max) max = map[r][c];
     }
     return { rowKeys: rks, colKeys: cks, pivotMap: map, maxVal: max || 1 };
-  }, [queryResult, rowField, colField, valField]);
+  }, [queryResult, rowField, colField, valField, activeDashboard?.widgets, filterState, cfg?.datasetId]);
 
   if (isLoading) {
     return <div style={{ padding: 16, fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>Loading…</div>;

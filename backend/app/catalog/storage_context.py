@@ -16,12 +16,15 @@ Usage
 """
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
     from app.storage.backend import BlobStorageBackend
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -120,28 +123,39 @@ def resolve_catalog_storage(
 
         from app.catalog.models import CatalogWorkspaceBinding
 
-        bindings = db.query(CatalogWorkspaceBinding).filter(
-            CatalogWorkspaceBinding.catalog_id == catalog.id,
-        )
+        # Look up workspace binding for this catalog
+        binding = None
         if workspace_id:
-            binding = bindings.filter(
+            binding = db.query(CatalogWorkspaceBinding).filter(
+                CatalogWorkspaceBinding.catalog_id == catalog.id,
                 CatalogWorkspaceBinding.workspace_id == workspace_id,
             ).first()
+            if not binding:
+                logger.warning("Catalog '%s' is not bound to workspace '%s'", catalog_name, workspace_id)
+                return None
         else:
-            candidates = bindings.all()
-            binding = candidates[0] if len(candidates) == 1 else None
+            # When looking up storage for a catalog without an explicit request workspace (e.g. backend operations),
+            # use the workspace bound to this catalog.
+            candidates = db.query(CatalogWorkspaceBinding).filter(
+                CatalogWorkspaceBinding.catalog_id == catalog.id,
+            ).all()
+            if len(candidates) == 1:
+                binding = candidates[0]
+            elif candidates:
+                binding = next((b for b in candidates if b.is_default), candidates[0])
 
-        # Storage inheritance must be deterministic. Selecting an arbitrary
-        # active workspace can read another tenant's container.
+        if not binding:
+            logger.warning("Catalog '%s' has no bound workspace", catalog_name)
+            return None
+
         workspace = (
             db.query(Workspace).filter(
                 Workspace.id == str(binding.workspace_id),
                 Workspace.status == "active",
             ).first()
-            if binding
-            else None
         )
         if not workspace:
+            logger.warning("Workspace '%s' is not active or does not exist", binding.workspace_id)
             return None
 
         provider, config = resolve_workspace_storage(workspace)

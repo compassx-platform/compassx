@@ -1,4 +1,5 @@
-import { useState, useMemo } from 'react';
+import { useEffect, useState, useMemo } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import {
   Cable,
   Edit2,
@@ -63,7 +64,39 @@ const POPULAR_CONNECTORS = [
 export default function ConnectionsPage() {
   const navigate = useScopedNavigate();
   const toast = useToast();
-  const [tab, setTab] = useState<ConnectionsTab>('all');
+  const [searchParams, setSearchParams] = useSearchParams();
+  const tabParam = searchParams.get('tab');
+  const initialTab: ConnectionsTab =
+    tabParam === 'llm' || tabParam === 'git' || tabParam === 'all'
+      ? tabParam
+      : 'all';
+  const [tab, setTab] = useState<ConnectionsTab>(initialTab);
+
+  useEffect(() => {
+    const t = searchParams.get('tab');
+    if (t === 'llm' || t === 'git' || t === 'all') {
+      setTab(t);
+    } else if (!t) {
+      setTab('all');
+    }
+  }, [searchParams]);
+
+  const handleTabChange = (newTab: ConnectionsTab) => {
+    setTab(newTab);
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        if (newTab === 'all') {
+          next.delete('tab');
+        } else {
+          next.set('tab', newTab);
+        }
+        return next;
+      },
+      { replace: true },
+    );
+  };
+
   const [search, setSearch] = useState('');
   const [categoryFilter, setCategoryFilter] = useState<CategoryFilter>('all');
 
@@ -317,7 +350,7 @@ export default function ConnectionsPage() {
       </div>
 
       {/* Main Tabs */}
-      <PageTabs tabs={CONNECTION_TABS} value={tab} onChange={setTab} />
+      <PageTabs tabs={CONNECTION_TABS} value={tab} onChange={handleTabChange} />
 
       {tab === 'all' && (
         <>

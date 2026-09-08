@@ -56,8 +56,6 @@ spec:
               value: {{ .Values.backend.env.SYSTEM_DB_NAME | quote }}
             - name: DATA_DB_NAME
               value: {{ .Values.backend.env.DATA_DB_NAME | quote }}
-            - name: ASSET_DB_NAME
-              value: {{ .Values.backend.env.ASSET_DB_NAME | quote }}
             - name: REDIS_URL
               value: {{ include "compassx.redisUrl" . | quote }}
             - name: STORAGE_BACKEND

@@ -13,6 +13,7 @@ No Runtime Manager changes required.
 from __future__ import annotations
 
 import logging
+import re
 from abc import ABC, abstractmethod
 from datetime import datetime, timezone
 from pathlib import Path
@@ -32,8 +33,8 @@ logger = logging.getLogger(__name__)
 SPARK_IMAGE = "apache/spark:3.5.0"
 FLINK_IMAGE = "flink:1.18-scala_2.12"
 RAY_IMAGE = "rayproject/ray:2.9.0"
-DUCKDB_IMAGE = "compassx-compute-duckdb:latest"
-NOTEBOOK_JOB_IMAGE = "compassx-airflow-notebook-runner:latest"
+DUCKDB_IMAGE = "ghcr.io/compassx-platform/compute-duckdb:v0.7.2"
+NOTEBOOK_JOB_IMAGE = "ghcr.io/compassx-platform/airflow-notebook-runner:v0.7.2"
 
 DUCKDB_VALID_PROFILES = {"local", "cloud-xs", "cloud-s"}
 
@@ -139,6 +140,15 @@ class BaseSpecBuilder(ABC):
         image = custom_image or self._resolve_image(self.default_image)
 
         env_vars = {**self._minio_env_vars(), **self.runtime_env(options)}
+        if workspace_id:
+            env_vars["WORKSPACE_ID"] = str(workspace_id)
+            env_vars["COMPASSX_WORKSPACE_ID"] = str(workspace_id)
+            env_vars["KERNEL_WORKSPACE_ID"] = str(workspace_id)
+        ws_name = str(options.get("workspace_name") or options.get("workspace_slug") or "").strip()
+        if ws_name:
+            env_vars["WORKSPACE_SLUG"] = ws_name
+            env_vars["COMPASSX_WORKSPACE_SLUG"] = ws_name
+            env_vars["KERNEL_WORKSPACE_SLUG"] = ws_name
         extra_env = options.get("extra_env") or {}
         env_vars.update({str(k): str(v) for k, v in extra_env.items()})
 
@@ -158,6 +168,25 @@ class BaseSpecBuilder(ABC):
                     )
                 )
 
+        resource_name = str(
+            options.get("resource_name") or options.get("name") or ""
+        ).strip()
+        workspace_name = str(
+            options.get("workspace_name") or options.get("workspace_slug") or ""
+        ).strip()
+        deployment_name = str(options.get("deployment_name") or "").strip()
+
+        labels = self._standard_labels(runtime_id, user_id)
+        if resource_name:
+            clean_res = re.sub(r"[^a-zA-Z0-9_-]+", "-", resource_name.lower()).strip("-_")[:63]
+            if clean_res:
+                labels["compassx/resource-name"] = clean_res
+        ws_label_val = workspace_name or workspace_id
+        if ws_label_val:
+            clean_ws = re.sub(r"[^a-zA-Z0-9_-]+", "-", str(ws_label_val).lower()).strip("-_")[:63]
+            if clean_ws:
+                labels["compassx/workspace-id"] = clean_ws
+
         spec = RuntimeSpec(
             runtime_id=runtime_id,
             runtime_type=self.runtime_type,
@@ -167,7 +196,7 @@ class BaseSpecBuilder(ABC):
             env=env_vars,
             ports=self.ports(options),
             volumes=volumes,
-            labels=self._standard_labels(runtime_id, user_id),
+            labels=labels,
             annotations=self._standard_annotations(profile_id, env),
             namespace=namespace,
             user_id=user_id,
@@ -175,6 +204,9 @@ class BaseSpecBuilder(ABC):
             metadata={
                 "profile_id": profile_id,
                 "env": env,
+                "resource_name": resource_name,
+                "workspace_name": workspace_name,
+                "deployment_name": deployment_name,
                 "k8s_extra_limits": {
                     k: v
                     for k, v in (options.get("limits") or {}).items()

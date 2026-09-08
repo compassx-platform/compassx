@@ -20,10 +20,10 @@ def test_backend_service_url_pod_mode(restore_runtime, monkeypatch):
     backend_runtime.compute_settings.COMPASSX_BACKEND_RUNTIME = "pod"
     monkeypatch.setenv("KUBERNETES_SERVICE_HOST", "10.0.0.1")
     assert backend_runtime.backend_service_url("compassx-jobs") == (
-        "http://compassx-backend-service.compassx-jobs.svc.cluster.local:8000"
+        "http://compassx-backend.compassx-jobs.svc.cluster.local:8000"
     )
     assert backend_runtime.backend_catalog_url("compassx-jobs") == (
-        "http://compassx-backend-service.compassx-jobs.svc.cluster.local:8000/api/v1/catalog"
+        "http://compassx-backend.compassx-jobs.svc.cluster.local:8000/api/v1/catalog"
     )
 
 

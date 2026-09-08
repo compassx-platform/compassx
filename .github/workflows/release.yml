@@ -51,8 +51,11 @@ jobs:
         run: |
           TAG="${{ steps.resolve-tag.outputs.tag }}"
           
-          # Find the tag immediately preceding the current tag
-          PREV_TAG=$(git tag --sort=-creatordate | grep -v "^${TAG}$" | head -n 1 || true)
+          # Find the tag immediately preceding the current tag using version sorting
+          PREV_TAG=$(git tag --sort=v:refname | grep -B 1 "^${TAG}$" | head -n 1 || true)
+          if [ "$PREV_TAG" = "$TAG" ]; then
+            PREV_TAG=""
+          fi
           
           if [ -z "$PREV_TAG" ]; then
             echo "Initial release detected (no previous tag). Building all auxiliary images."
@@ -66,14 +69,14 @@ jobs:
             echo "$CHANGED_FILES"
 
             # 1. Enterprise Gateway
-            if echo "$CHANGED_FILES" | grep -qE "^backend/Dockerfile\.eg|^backend/services/enterprise_gateway/|^backend/compassx/"; then
+            if echo "$CHANGED_FILES" | grep -qE "^backend/Dockerfile\.eg|^backend/services/enterprise_gateway/|^backend/docker_kernel_specs/"; then
               echo "build_eg=true" >> "$GITHUB_OUTPUT"
             else
               echo "build_eg=false" >> "$GITHUB_OUTPUT"
             fi
 
             # 2. Notebook Runner
-            if echo "$CHANGED_FILES" | grep -qE "^backend/Dockerfile\.airflow-notebook|^backend/shared/airflow/"; then
+            if echo "$CHANGED_FILES" | grep -qE "^backend/Dockerfile\.airflow-notebook|^backend/requirements-airflow-notebook\.txt|^backend/services/storage/|^backend/services/compassx_sql/|^backend/scripts/upload_notebook_output\.py|^backend/scripts/download_notebook\.py"; then
               echo "build_notebook_runner=true" >> "$GITHUB_OUTPUT"
             else
               echo "build_notebook_runner=false" >> "$GITHUB_OUTPUT"
@@ -87,7 +90,7 @@ jobs:
             fi
 
             # 4. DuckDB Compute
-            if echo "$CHANGED_FILES" | grep -qE "^backend/Dockerfile\.compute-duckdb|^backend/app/compute/"; then
+            if echo "$CHANGED_FILES" | grep -qE "^backend/Dockerfile\.compute-duckdb|^backend/services/__init__\.py|^backend/services/compassx_sql/|^backend/services/fsspec_cx/|^backend/services/compassx_tools/"; then
               echo "build_duckdb=true" >> "$GITHUB_OUTPUT"
             else
               echo "build_duckdb=false" >> "$GITHUB_OUTPUT"
@@ -241,6 +244,10 @@ jobs:
           fi
           if [ "${{ needs.detect-changes.outputs.build_notebook_runner }}" = "true" ]; then
             sed -i -E "s|(ghcr.io/${{ env.OWNER }}/airflow-notebook-runner):[a-zA-Z0-9._-]+|\1:${TAG}|g" "$COMPOSE_FILE"
+            sed -i -E "s|(ghcr.io/${{ env.OWNER }}/airflow-notebook-runner):[a-zA-Z0-9._-]+|\1:${TAG}|g" backend/compassx/runtime/spec_builders.py
+          fi
+          if [ "${{ needs.detect-changes.outputs.build_duckdb }}" = "true" ]; then
+            sed -i -E "s|(ghcr.io/${{ env.OWNER }}/compute-duckdb):[a-zA-Z0-9._-]+|\1:${TAG}|g" backend/app/compute/services/runtimes.py backend/compassx/runtime/spec_builders.py
           fi
 
           # 2. Update Helm Chart.yaml and values.yaml
@@ -251,7 +258,32 @@ jobs:
             sed -i -E "s|^appVersion:.*|appVersion: \"${CLEAN_TAG}\"|g" "$CHART_FILE"
           fi
           if [ -f "$VALUES_FILE" ]; then
-            python3 -c "import re; f=open('$VALUES_FILE', 'r+'); c=f.read(); f.seek(0); f.write(re.sub(r'tag:\s*\"v[^\"]+\"', f'tag: \"${TAG}\"', c)); f.truncate()"
+            python3 -c '
+          import re, sys
+          values_file, tag, owner, build_eg = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
+          with open(values_file, "r") as f:
+              c = f.read()
+
+          c = re.sub(
+              rf"(repository:\s*ghcr\.io/{re.escape(owner)}/backend\s*\n\s*pullPolicy:[^\n]+\n\s*tag:\s*)\"[^\"]+\"",
+              rf"\g<1>\"{tag}\"",
+              c
+          )
+          c = re.sub(
+              rf"(repository:\s*ghcr\.io/{re.escape(owner)}/frontend\s*\n\s*pullPolicy:[^\n]+\n\s*tag:\s*)\"[^\"]+\"",
+              rf"\g<1>\"{tag}\"",
+              c
+          )
+          if build_eg == "true":
+              c = re.sub(
+                  rf"(repository:\s*ghcr\.io/{re.escape(owner)}/enterprise-gateway\s*\n\s*pullPolicy:[^\n]+\n\s*tag:\s*)\"[^\"]+\"",
+                  rf"\g<1>\"{tag}\"",
+                  c
+              )
+
+          with open(values_file, "w") as f:
+              f.write(c)
+          ' "$VALUES_FILE" "$TAG" "${{ env.OWNER }}" "${{ needs.detect-changes.outputs.build_eg }}"
           fi
 
           # 3. Update frontend package.json version
@@ -259,16 +291,16 @@ jobs:
             sed -i -E "s|\"version\": \"[0-9.]+\"|\"version\": \"${CLEAN_TAG}\"|g" "frontend/package.json"
           fi
 
-          git diff deployments/ frontend/package.json
+          git diff deployments/ frontend/package.json backend/app/compute/services/runtimes.py backend/compassx/runtime/spec_builders.py
 
       - name: Commit and push updated deployment manifests
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           
-          if ! git diff --quiet deployments/ frontend/package.json; then
-            git add deployments/ frontend/package.json
-            git commit -m "chore(release): update deployment manifests and frontend version to ${{ needs.detect-changes.outputs.tag }} [skip ci]"
+          git add -A deployments/ frontend/package.json backend/app/compute/services/runtimes.py backend/compassx/runtime/spec_builders.py
+          if ! git diff --cached --quiet; then
+            git commit -m "chore(release): update deployment manifests and versions to ${{ needs.detect-changes.outputs.tag }} [skip ci]"
             git push origin main || echo "Branch push skipped (may have branch protection)"
           else
             echo "Deployment manifests already up to date."

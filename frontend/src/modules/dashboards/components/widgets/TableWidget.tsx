@@ -5,6 +5,7 @@
 import { useState, useMemo } from 'react';
 import { useDashboardStore } from '@/modules/dashboards/stores/dashboardStore';
 import { useDatasetQuery } from '@/modules/dashboards/hooks/useDashboard';
+import { filterRows } from '@/modules/dashboards/utils/filterUtils';
 import type { Widget } from '@/types/dashboard';
 import { Search, ChevronLeft, ChevronRight } from 'lucide-react';
 
@@ -18,9 +19,45 @@ function getColumnTitle(col: string, cfg: any): string {
   return col;
 }
 
+function getContrastColor(colorStr?: string): string {
+  if (!colorStr) return '#334155';
+  const str = colorStr.trim().toLowerCase();
+  if (str === 'transparent' || str === 'inherit' || str === 'initial') return '#334155';
+  if (str === 'white' || str === '#fff' || str === '#ffffff') return '#334155';
+  if (str === 'black' || str === '#000' || str === '#000000') return '#ffffff';
+
+  const rgbMatch = str.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
+  if (rgbMatch) {
+    const r = parseInt(rgbMatch[1], 10);
+    const g = parseInt(rgbMatch[2], 10);
+    const b = parseInt(rgbMatch[3], 10);
+    const yiq = (r * 299 + g * 587 + b * 114) / 1000;
+    return yiq >= 135 ? '#334155' : '#ffffff';
+  }
+
+  const cleanHex = str.replace('#', '').trim();
+  let r = 241, g = 245, b = 249;
+  if (cleanHex.length === 3 || cleanHex.length === 4) {
+    r = parseInt(cleanHex[0] + cleanHex[0], 16);
+    g = parseInt(cleanHex[1] + cleanHex[1], 16);
+    b = parseInt(cleanHex[2] + cleanHex[2], 16);
+  } else if (cleanHex.length >= 6) {
+    r = parseInt(cleanHex.substring(0, 2), 16);
+    g = parseInt(cleanHex.substring(2, 4), 16);
+    b = parseInt(cleanHex.substring(4, 6), 16);
+  } else {
+    return '#334155';
+  }
+
+  if (isNaN(r) || isNaN(g) || isNaN(b)) return '#334155';
+  const yiq = (r * 299 + g * 587 + b * 114) / 1000;
+  return yiq >= 135 ? '#334155' : '#ffffff';
+}
+
 export default function TableWidget({ widget }: Props) {
-  const { filterState, paramState } = useDashboardStore();
+  const { activeDashboard, filterState, paramState } = useDashboardStore();
   const cfg = widget.chartConfig;
+  const dataset = activeDashboard?.datasets.find((d) => d.id === cfg?.datasetId);
   const [searchTerm, setSearchTerm] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
 
@@ -28,7 +65,8 @@ export default function TableWidget({ widget }: Props) {
     cfg?.datasetId,
     paramState as any,
     filterState as any,
-    !!cfg?.datasetId
+    !!cfg?.datasetId,
+    dataset?.sql
   );
 
   const rawCols = queryResult?.columns ?? [];
@@ -39,7 +77,8 @@ export default function TableWidget({ widget }: Props) {
 
   const sortedRows = useMemo(() => {
     if (!queryResult?.rows) return [];
-    const rows = [...queryResult.rows];
+    const baseRows = filterRows(queryResult.rows, activeDashboard?.widgets, filterState, cfg?.datasetId);
+    const rows = [...baseRows];
     const sortField = cfg?.xAxis?.sortByField;
     const sortOrder = cfg?.xAxis?.sortByOrder ?? 'asc';
 
@@ -59,7 +98,7 @@ export default function TableWidget({ widget }: Props) {
       const comp = String(valA).localeCompare(String(valB), undefined, { numeric: true, sensitivity: 'base' });
       return sortOrder === 'desc' ? -comp : comp;
     });
-  }, [queryResult?.rows, cfg?.xAxis?.sortByField, cfg?.xAxis?.sortByOrder]);
+  }, [queryResult?.rows, cfg?.xAxis?.sortByField, cfg?.xAxis?.sortByOrder, activeDashboard?.widgets, filterState, cfg?.datasetId]);
 
   const filteredRows = useMemo(() => {
     if (!searchTerm.trim()) return sortedRows;
@@ -90,6 +129,21 @@ export default function TableWidget({ widget }: Props) {
   const showRowNumbers = cfg?.showRowNumbers ?? false;
   const wrapText = cfg?.wrapText ?? false;
 
+  const titleRowBg = cfg?.titleRowBg ?? cfg?.headerBg ?? cfg?.headerBackgroundColor;
+  const headerBg = titleRowBg || '#f1f5f9';
+  const autoTextColor = getContrastColor(titleRowBg);
+  const headerTextColor = cfg?.titleRowColor ?? cfg?.headerColor ?? autoTextColor;
+  const isDarkHeader = autoTextColor === '#ffffff';
+  const headerBorderBottom = isDarkHeader ? '2px solid rgba(255, 255, 255, 0.25)' : '2px solid #cbd5e1';
+  const rowNumberHeaderColor = isDarkHeader ? 'rgba(255, 255, 255, 0.75)' : '#64748b';
+
+  const headerFontSize =
+    cfg?.headerFontSize === 'small' ? '0.70rem' : cfg?.headerFontSize === 'large' ? '0.84rem' : '0.76rem';
+  const headerFontWeight =
+    cfg?.headerFontWeight === 'normal' ? 400 : cfg?.headerFontWeight === 'medium' ? 500 : 600;
+  const headerTextTransform = cfg?.headerTextTransform ?? 'none';
+  const headerAlignment = cfg?.headerAlignment ?? 'left';
+
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden', background: '#ffffff' }}>
       {/* Search Bar */}
@@ -119,20 +173,32 @@ export default function TableWidget({ widget }: Props) {
       {/* Table Surface */}
       <div style={{ flex: 1, overflow: 'auto', minHeight: 0 }}>
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.76rem', color: '#1e293b' }}>
-          <thead style={{ position: 'sticky', top: 0, background: '#f1f5f9', zIndex: 2 }}>
+          <thead style={{ position: 'sticky', top: 0, background: headerBg, zIndex: 2 }}>
             <tr>
               {showRowNumbers && (
-                <th style={{ padding: '6px 8px', width: 36, textAlign: 'center', fontWeight: 600, borderBottom: '2px solid #cbd5e1', color: '#64748b' }}>
+                <th style={{
+                  padding: '6px 8px',
+                  width: 36,
+                  textAlign: 'center',
+                  fontWeight: headerFontWeight,
+                  fontSize: headerFontSize,
+                  borderBottom: headerBorderBottom,
+                  color: rowNumberHeaderColor,
+                  background: headerBg,
+                }}>
                   #
                 </th>
               )}
               {visibleCols.map((col) => (
                 <th key={col} style={{
                   padding: '6px 10px',
-                  textAlign: 'left',
-                  fontWeight: 600,
-                  borderBottom: '2px solid #cbd5e1',
-                  color: '#334155',
+                  textAlign: headerAlignment,
+                  fontWeight: headerFontWeight,
+                  fontSize: headerFontSize,
+                  textTransform: headerTextTransform,
+                  borderBottom: headerBorderBottom,
+                  color: headerTextColor,
+                  background: headerBg,
                   whiteSpace: 'nowrap',
                 }}>
                   {getColumnTitle(col, cfg)}

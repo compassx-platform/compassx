@@ -1,7 +1,7 @@
 ARG REGISTRY_PREFIX
 FROM python:3.11-slim
 ARG PIP_INDEX_URL
-# RUN adduser -D -u 1002 python
+RUN apt-get update && apt-get install -y --no-install-recommends git curl ca-certificates && rm -rf /var/lib/apt/lists/*
 WORKDIR /ms-home
 COPY requirements.txt .
 # Install CPU-only PyTorch first to prevent downloading ~2GB CUDA binaries

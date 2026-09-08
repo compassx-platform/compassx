@@ -7,6 +7,7 @@
 import { useEffect, useMemo, useRef } from 'react';
 import { useDashboardStore } from '@/modules/dashboards/stores/dashboardStore';
 import { useDatasetQuery } from '@/modules/dashboards/hooks/useDashboard';
+import { filterRows } from '@/modules/dashboards/utils/filterUtils';
 import type { Widget } from '@/types/dashboard';
 
 interface Props {
@@ -127,15 +128,23 @@ function buildSrcDoc(html: string, initialDatasets: Record<string, unknown>) {
 export default function HtmlWidget({ widget }: Props) {
   const { filterState, paramState, activeDashboard } = useDashboardStore();
   const cfg = widget.htmlConfig;
-  const { data: queryResult, isLoading } = useDatasetQuery(cfg?.datasetId, paramState as any, filterState as any, !!cfg?.datasetId);
+  const dataset = activeDashboard?.datasets.find((d) => d.id === cfg?.datasetId);
+  const { data: queryResult, isLoading } = useDatasetQuery(
+    cfg?.datasetId,
+    paramState as any,
+    filterState as any,
+    !!cfg?.datasetId,
+    dataset?.sql
+  );
 
   const iframeRef = useRef<HTMLIFrameElement>(null);
 
   const rawHtml = normalizeHtml(widget.content);
   const columns = queryResult?.columns ?? [];
-  const rows = queryResult?.rows ?? [];
-
-  const dataset = activeDashboard?.datasets.find((d) => d.id === cfg?.datasetId);
+  const rows = useMemo(() => {
+    const rawRows = queryResult?.rows ?? [];
+    return filterRows(rawRows, activeDashboard?.widgets, filterState, cfg?.datasetId);
+  }, [queryResult?.rows, activeDashboard?.widgets, filterState, cfg?.datasetId]);
   const datasetName = dataset?.name;
 
   const html = useMemo(() => {

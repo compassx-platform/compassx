@@ -11,10 +11,11 @@ const RUN_BASE = '/job-runs';
 
 // ── Jobs ─────────────────────────────────────────────────────────────────────
 
+// The workspace is taken from the X-Workspace-Slug header the api interceptor
+// attaches, not from a parameter the caller chooses.
 export async function listJobs(params?: {
   search?: string;
   status?: string;
-  workspace_id?: string;
 }): Promise<Job[]> {
   const res = await api.get(BASE, { params });
   return res.data;
@@ -25,7 +26,7 @@ export async function getJob(jobId: string): Promise<Job> {
   return res.data;
 }
 
-export async function createJob(body: { name: string; description?: string; workspace_id?: string }): Promise<Job> {
+export async function createJob(body: { name: string; description?: string }): Promise<Job> {
   const res = await api.post(BASE, body);
   return res.data;
 }

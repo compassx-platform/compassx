@@ -15,8 +15,10 @@ from typing import Any, AsyncIterator, Callable
 from compassx.interfaces.resource_manager import ResourceManager
 from compassx.interfaces.runtime_manager import RuntimeManager
 from compassx.models import (
+    DriverUnavailableError,
     RuntimeAlreadyExistsError,
     RuntimeInfo,
+    RuntimeNotFoundError,
     RuntimePhase,
 )
 from compassx.runtime.repository import RuntimeRepository
@@ -52,6 +54,10 @@ class DefaultRuntimeManager(RuntimeManager):
     def resource_manager(self) -> ResourceManager:
         return self._resources
 
+    @property
+    def driver_policy(self) -> Callable[[str], str]:
+        return self._driver_policy
+
     async def create_runtime(
         self,
         runtime_type: str,
@@ -69,7 +75,17 @@ class DefaultRuntimeManager(RuntimeManager):
             RuntimePhase.STOPPED,
             RuntimePhase.MISSING,
         ):
-            raise RuntimeAlreadyExistsError(f"Runtime already exists: {runtime_id}")
+            # Check if the backing runtime truly exists in the driver (e.g. after daemon restart, cluster rebuild, or profile switch)
+            try:
+                drivers = getattr(self._resources, "_drivers", None)
+                if drivers:
+                    d = drivers.get(existing.driver)
+                    await d.get_status(runtime_id)
+                    raise RuntimeAlreadyExistsError(f"Runtime already exists: {runtime_id}")
+                else:
+                    raise RuntimeAlreadyExistsError(f"Runtime already exists: {runtime_id}")
+            except (RuntimeNotFoundError, DriverUnavailableError):
+                self._repository.update(runtime_id, phase=RuntimePhase.MISSING, infra_id="")
 
         builder = self._builders.get(runtime_type)
         spec = builder.build(

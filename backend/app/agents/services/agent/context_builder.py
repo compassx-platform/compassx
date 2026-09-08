@@ -92,23 +92,6 @@ def _build_runtime_context_section(runtime_context: dict[str, Any]) -> str | Non
     """Build the runtime frontend context prompt section."""
     if not runtime_context:
         return None
-
-    if runtime_context.get("source") == "asset_manager":
-        selected_asset_id = runtime_context.get("selected_asset_id")
-        selected_asset_type_id = runtime_context.get("selected_asset_type_id")
-        lines = [
-            "## Current Asset Manager Context",
-            f"Selected asset id: {selected_asset_id if selected_asset_id else 'none'}",
-            f"Selected asset type id: {selected_asset_type_id if selected_asset_type_id else 'none'}",
-        ]
-        if selected_asset_id:
-            lines.append(
-                "When the user says 'this asset' or 'selected asset', treat it as "
-                f"asset_id={selected_asset_id}. Use the asset_manager tool to fetch "
-                "the asset details before explaining it."
-            )
-        return "\n".join(lines)
-
     return f"## Current Frontend Context\n{json.dumps(runtime_context, default=str)[:2000]}"
 
 

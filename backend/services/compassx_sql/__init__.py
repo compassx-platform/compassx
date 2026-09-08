@@ -1,5 +1,8 @@
 from .client import sql, write, write_table, CompassXQueryError, CompassXSchemaError
-from .magic import load_ipython_extension
+try:
+    from .magic import load_ipython_extension
+except ImportError:
+    load_ipython_extension = None
 
 # Provide unified access to compassx_tools via the default `cx` namespace in notebooks
 try:

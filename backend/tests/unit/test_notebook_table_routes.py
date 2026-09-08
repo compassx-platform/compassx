@@ -19,6 +19,21 @@ from app.catalog.models import (
 from app.catalog.routes import create_table_from_notebook, write_table_from_notebook
 
 
+def _permissive_guard() -> MagicMock:
+    """A guard that allows everything.
+
+    These tests exercise table creation and schema validation, not access
+    control — that is covered by the governance suite. Calling the handlers
+    directly bypasses FastAPI's dependency injection, so the guard has to be
+    supplied by hand.
+    """
+    guard = MagicMock()
+    guard.require.return_value = None
+    guard.can.return_value = True
+    guard.claim_ownership.return_value = None
+    return guard
+
+
 def test_create_table_iceberg_route(monkeypatch):
     async def _test():
         mock_db = MagicMock()
@@ -54,7 +69,7 @@ def test_create_table_iceberg_route(monkeypatch):
             description="Test Iceberg Table",
         )
 
-        result = await create_table_from_notebook(mock_request, req, db=mock_db, user=user)
+        result = await create_table_from_notebook(mock_request, req, db=mock_db, user=user, guard=_permissive_guard())
         assert result["status"] == "ok"
         assert result["table_ref"] == "test_cat.test_sch.my_table"
         assert result["engine"] == "iceberg"
@@ -97,7 +112,7 @@ def test_write_table_schema_mismatch_route():
         )
 
         with pytest.raises(HTTPException) as exc_info:
-            await write_table_from_notebook(mock_request, req, db=mock_db, user=user)
+            await write_table_from_notebook(mock_request, req, db=mock_db, user=user, guard=_permissive_guard())
 
         assert exc_info.value.status_code == 422
         detail = exc_info.value.detail
@@ -130,7 +145,7 @@ def test_write_table_not_found_route():
         )
 
         with pytest.raises(HTTPException) as exc_info:
-            await write_table_from_notebook(mock_request, req, db=mock_db, user=user)
+            await write_table_from_notebook(mock_request, req, db=mock_db, user=user, guard=_permissive_guard())
 
         assert exc_info.value.status_code == 404
         assert exc_info.value.detail["error_type"] == "table_not_found"

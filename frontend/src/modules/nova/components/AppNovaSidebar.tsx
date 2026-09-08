@@ -99,35 +99,10 @@ function getContextMeta(pathname: string, notebookPath: string) {
     };
   }
 
-  if (pathname.startsWith('/assets')) {
-    return {
-      subtitle: 'Asset Manager Assistant',
-      pill: 'Asset context',
-      placeholder: 'Ask an asset agent about assets...',
-    };
-  }
-
   return {
     subtitle: 'App Assistant',
     pill: 'Navigation aware',
     placeholder: 'Select an agent to use this Nova shell.',
-  };
-}
-
-function getAssetManagerMode(pathname: string) {
-  if (pathname === '/assets/types' || pathname.startsWith('/assets/types/')) return 'asset_types';
-  if (pathname.endsWith('/edit')) return 'edit_asset';
-  if (pathname === '/assets/new') return 'create_asset';
-  if (pathname === '/assets/search') return 'search_assets';
-  return 'assets';
-}
-
-function getAssetRouteSelection(pathname: string) {
-  const assetMatch = pathname.match(/^\/assets\/(\d+)(?:\/edit)?$/);
-  const assetTypeMatch = pathname.match(/^\/assets\/types\/(\d+)\/edit$/);
-  return {
-    selected_asset_id: assetMatch ? Number(assetMatch[1]) : null,
-    selected_asset_type_id: assetTypeMatch ? Number(assetTypeMatch[1]) : null,
   };
 }
 
@@ -269,7 +244,6 @@ export default function AppNovaSidebar() {
   }
 
   function buildAgentContextPayload() {
-    const assetSelection = getAssetRouteSelection(scopedPathname);
     const currentCells = useNotebookStore.getState().cells;
     const currentFocusedCellId = useNotebookStore.getState().focusedCellId;
     const currentFocusedCellIndex = currentCells.findIndex((cell) => cell.id === currentFocusedCellId);
@@ -330,15 +304,6 @@ export default function AppNovaSidebar() {
             attached_kernel: 'python3',
             kernel_id: useNotebookStore.getState().kernelRef?.id || null,
             cell_states: buildCellStates(currentCells),
-          }
-        : null,
-      asset_manager: scopedPathname.startsWith('/assets')
-        ? {
-            route: scopedPathname,
-            mode: getAssetManagerMode(scopedPathname),
-            ...assetSelection,
-            filters: Object.fromEntries(searchParams.entries()),
-            view_state: {},
           }
         : null,
       dashboard: dashboardContext,

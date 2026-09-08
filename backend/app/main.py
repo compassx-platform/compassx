@@ -43,7 +43,6 @@ from app.catalog import models as unified_catalog_models  # noqa: E402, F401
 from app.agents.models import agents as agents_models  # noqa: E402, F401
 from app.compute.models import compute_resources  # noqa: E402, F401
 from app.dashboards.models import dashboard  # noqa: E402, F401
-from app.asset_manager.models import asset_manager as asset_manager_models  # noqa: E402, F401
 from app.jobs.models import job as jobs_job_models  # noqa: E402, F401
 from app.jobs.models import run_trace as jobs_run_trace_models  # noqa: E402, F401
 from app.storage import db_models as storage_db_models  # noqa: E402, F401
@@ -51,8 +50,8 @@ from app.sql_warehouse import models as sql_warehouse_models  # noqa: E402, F401
 from app.workspace import models as workspace_models  # noqa: E402, F401
 from app.workspace import data_models as workspace_data_models  # noqa: E402, F401
 from app.catalog import search_models as catalog_search_models  # noqa: E402, F401  (catalog_search_*)
-from app.apps.models import apps as apps_models  # noqa: E402, F401
 from app.ingestion import models as ingestion_models  # noqa: E402, F401
+from app.ontology.models import ontology as ontology_models  # noqa: E402, F401
 from app.monitoring import routes as monitoring_routes  # noqa: E402
 
 # User Manager v1 models (registers tables with AccountBase / SystemBase)
@@ -74,7 +73,6 @@ from app.agents.routes import (  # noqa: E402
     skill_routes,
     llm_call_routes,
     budget_routes,
-    research_engine_routes,
     document_routes,
     artifact_routes,
     external_connection_routes,
@@ -89,6 +87,8 @@ from app.sql_warehouse import routes as sql_warehouse_routes  # noqa: E402
 from app.workspace import auth_routes as workspace_auth_routes  # noqa: E402
 from app.workspace import account_routes as workspace_account_routes  # noqa: E402
 from app.workspace import workspace_routes as workspace_ws_routes  # noqa: E402
+from app.routes import app_routes  # noqa: E402
+from app.routes import app_dev_routes  # noqa: E402
 
 # User Manager v1 routes
 from app.user_manager.routes import setup_routes as um_setup_routes  # noqa: E402
@@ -279,6 +279,28 @@ async def lifespan(app: FastAPI):
     except Exception as _um_err:
         logger.warning("User Manager startup warning (non-fatal): %s", _um_err)
 
+    # Initialize Ontology & Knowledge Graph tables and default seed
+    try:
+        from app.database import AccountBase, account_engine, AccountSessionLocal
+        from app.ontology.services import OntologyService
+        from app.config import settings as _settings
+        if not _settings.SKIP_DB_INIT and account_engine is not None and AccountSessionLocal is not None:
+            AccountBase.metadata.create_all(bind=account_engine, tables=[
+                ontology_models.OntologyType.__table__,
+                ontology_models.OntologyTypeRelation.__table__,
+                ontology_models.OntologyGraph.__table__,
+                ontology_models.OntologyNode.__table__,
+                ontology_models.OntologyEdge.__table__,
+            ])
+            _ont_db = AccountSessionLocal()
+            try:
+                OntologyService.ensure_default_seed(_ont_db)
+                logger.info("Ontology tables and default seed verified/created")
+            finally:
+                _ont_db.close()
+    except Exception as _ont_init_err:
+        logger.warning("Ontology startup warning (non-fatal): %s", _ont_init_err)
+
     # Start catalog embedding worker (daemon thread — exits with the process)
     try:
         from app.catalog.embedding_worker import start_embedding_worker
@@ -323,7 +345,7 @@ app = FastAPI(
     lifespan=lifespan,
     title="CompassX API",
     description="CompassX Platform API",
-    version="0.1.0",
+    version="0.7.2",
     docs_url="/api/swagger/docs",
     openapi_url="/api/swagger.json",
 )
@@ -387,7 +409,6 @@ app.include_router(chat_routes.router)
 app.include_router(stream_routes.router)
 app.include_router(llm_call_routes.router)
 app.include_router(budget_routes.router)
-app.include_router(research_engine_routes.router)
 app.include_router(document_routes.router)
 app.include_router(artifact_routes.router)
 app.include_router(external_connection_routes.router)
@@ -400,6 +421,8 @@ app.include_router(jupyter_proxy.router)
 app.include_router(dashboard_routes.router)
 app.include_router(monitoring_routes.router)
 app.include_router(sql_warehouse_routes.router)
+app.include_router(app_routes.router)
+app.include_router(app_dev_routes.router)
 
 # Workspace / account / auth routes (legacy - kept for backward compat)
 app.include_router(workspace_auth_routes.router)
@@ -417,37 +440,12 @@ app.include_router(um_entry_point_routes.router)
 # User Manager v1 routes now include the /api/um prefix directly so they
 # match the rest of the API surface.
 
+# Governance — grants, ownership, and effective-permission inspection.
+from app.governance import routes as governance_routes  # noqa: E402
+app.include_router(governance_routes.router)
+
 from app.compute.routes.router import router as compute_router  # noqa: E402
 app.include_router(compute_router, prefix="/api/v1/compute")
-
-# Apps (CompassX Apps — FastAPI+React app builder)
-from app.apps.routes import app_routes, branch_routes, publish_routes, file_routes  # noqa: E402
-from app.apps.routes import terminal_routes, agent_routes  # noqa: E402
-app.include_router(app_routes.router)
-app.include_router(branch_routes.router)
-app.include_router(publish_routes.router)
-app.include_router(file_routes.router)
-app.include_router(terminal_routes.router)
-app.include_router(agent_routes.router)
-
-from app.asset_manager.routes import (  # noqa: E402
-    asset_type_routes,
-    asset_instance_routes,
-    asset_hierarchy_routes,
-    asset_relationship_routes,
-    asset_event_routes,
-    asset_tag_routes,
-    asset_document_routes,
-    asset_import_routes,
-)
-app.include_router(asset_type_routes.router)
-app.include_router(asset_instance_routes.router)
-app.include_router(asset_hierarchy_routes.router)
-app.include_router(asset_relationship_routes.router)
-app.include_router(asset_event_routes.router)
-app.include_router(asset_tag_routes.router)
-app.include_router(asset_document_routes.router)
-app.include_router(asset_import_routes.router)
 
 from app.jobs.routes import router as jobs_router, run_router as job_runs_router, webhook_router as airflow_webhook_router  # noqa: E402
 from app.jobs.execution_routes import execution_router as job_execution_router, internal_router as jobs_internal_router  # noqa: E402
@@ -460,12 +458,18 @@ app.include_router(jobs_internal_router)
 from app.ingestion.routes import router as ingestion_router  # noqa: E402
 app.include_router(ingestion_router)
 
+from app.ontology.routes import router as ontology_router  # noqa: E402
+app.include_router(ontology_router)
+
 from services.enterprise_gateway.router import router as eg_router  # noqa: E402
 from services.airflow.router import router as airflow_router  # noqa: E402
 from services.jupyter_server.router import router as js_router  # noqa: E402
+from services.omnigent.router import router as omnigent_router  # noqa: E402
 app.include_router(eg_router, prefix="/api/v1/services/enterprise-gateway")
 app.include_router(airflow_router, prefix="/api/v1/services/airflow")
 app.include_router(js_router, prefix="/api/v1/services/jupyter-server")
+app.include_router(omnigent_router, prefix="/api/v1/services/omnigent")
+
 
 
 @app.get("/")

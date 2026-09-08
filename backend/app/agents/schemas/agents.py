@@ -541,13 +541,30 @@ class ChatSessionResponse(BaseModel):
     id: int
     agent_id: int
     title: str | None
+    summary: str | None = None
+    summary_updated_at: datetime | None = None
     archived: bool
     created_at: datetime
     updated_at: datetime
     last_message: str | None = None
     message_count: int | None = 0
+    has_changes: bool | None = False
+    files_changed_count: int | None = 0
 
     model_config = {"from_attributes": True}
+
+
+class ContextUsageResponse(BaseModel):
+    total_tokens: int
+    context_window: int
+    high_watermark: int
+    usage_percent: float
+    total_turns: int
+    retained_turns: int
+    has_summary: bool
+    summary: str | None = None
+    summary_updated_at: datetime | None = None
+    model_name: str | None = None
 
 
 class ChatMessageResponse(BaseModel):

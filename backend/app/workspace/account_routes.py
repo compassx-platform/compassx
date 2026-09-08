@@ -189,6 +189,89 @@ async def create_workspace(
             ),
             bound_by="system",
         )
+
+        # Auto-create default schema
+        from app.catalog.models import UnifiedCatalogNotebook, UnifiedCatalogSchema, UnifiedCatalogVolume
+        schema = db.query(UnifiedCatalogSchema).filter(
+            UnifiedCatalogSchema.catalog_id == catalog.id,
+            UnifiedCatalogSchema.name == "default",
+        ).first()
+        if not schema:
+            schema = UnifiedCatalogSchema(
+                catalog_id=catalog.id,
+                name="default",
+                description="Default schema",
+                created_by=admin.id,
+            )
+            db.add(schema)
+            db.flush()
+
+        # Auto-create default volume for files and datasets
+        volume = db.query(UnifiedCatalogVolume).filter(
+            UnifiedCatalogVolume.schema_id == schema.id,
+            UnifiedCatalogVolume.name == "sample_data",
+        ).first()
+        if not volume:
+            volume = UnifiedCatalogVolume(
+                schema_id=schema.id,
+                name="sample_data",
+                description="Default storage volume for files and datasets",
+                owner=admin.name or admin.email or admin.id,
+                created_by=admin.id,
+            )
+            db.add(volume)
+            db.flush()
+
+        # Auto-create getting-started notebook with platform code references
+        existing_nb = db.query(UnifiedCatalogNotebook).filter(
+            UnifiedCatalogNotebook.schema_id == schema.id,
+            UnifiedCatalogNotebook.name == "getting_started",
+        ).first()
+        if not existing_nb:
+            from app.catalog.service import _write_notebook_content
+            from app.workspace.starter_notebook import build_getting_started_notebook
+
+            nb_id = str(uuid4())
+            rel_path = f"{nb_id}.ipynb"
+            nb_content = build_getting_started_notebook(
+                catalog_name=catalog_name,
+                schema_name="default",
+                volume_name="sample_data",
+            )
+            try:
+                await _write_notebook_content(db, schema, rel_path, nb_content)
+            except Exception as nb_write_err:
+                logger.warning("Could not write starter notebook content to storage: %s", nb_write_err)
+
+            starter_nb = UnifiedCatalogNotebook(
+                id=nb_id,
+                schema_id=schema.id,
+                catalog_name=catalog_name,
+                schema_name="default",
+                name="getting_started",
+                blob_path=rel_path,
+                owner=admin.name or admin.email or admin.id,
+                comment="Platform reference guide: Volumes (read/write), AI Agent Tools, and SQL querying",
+                created_by=admin.id,
+                updated_by=admin.id,
+            )
+            db.add(starter_nb)
+            db.flush()
+
+            try:
+                from app.catalog.search_indexer import enqueue_asset_for_embedding
+                enqueue_asset_for_embedding(
+                    db,
+                    object_type="notebook",
+                    source_object_id=starter_nb.id,
+                    catalog_name=catalog_name,
+                    schema_name="default",
+                    object_name=starter_nb.name,
+                    description=starter_nb.comment,
+                )
+            except Exception:
+                pass
+
         db.commit()
     except Exception as exc:
         db.rollback()
@@ -197,6 +280,15 @@ async def create_workspace(
             detail=f"Failed to create workspace due to catalog creation/binding error: {exc}"
         )
     db.refresh(ws)
+    result = WorkspaceOut(
+        id=ws.id,
+        name=ws.name,
+        slug=ws.slug,
+        status=ws.status,
+        storage_backend=ws.storage_backend,
+        url=f"/w/{ws.slug}",
+        created_at=ws.created_at,
+    )
 
     # Auto-ensure default DuckDB compute and SQL warehouse for the new workspace
     try:
@@ -227,12 +319,7 @@ async def create_workspace(
     except Exception:
         pass
 
-    return WorkspaceOut(
-        id=ws.id, name=ws.name, slug=ws.slug, status=ws.status,
-        storage_backend=ws.storage_backend,
-        url=f"/w/{ws.slug}",
-        created_at=ws.created_at,
-    )
+    return result
 
 
 @router.get("/workspaces/{workspace_id}", response_model=WorkspaceOut)

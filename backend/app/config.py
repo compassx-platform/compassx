@@ -28,9 +28,24 @@ class Settings(BaseSettings):
     # Skip initial database connection tests (useful for fast startup if DB temporarily unavailable)
     SKIP_DB_INIT: bool = False
 
-    # External services
-    ASSET_MANAGER_BASE_URL: str = "http://localhost:8001"
+    # External services & Omnigent
     USER_MANAGER_BASE_URL: str = "http://localhost:8002"
+    OMNIGENT_SERVER_URL: str = "http://localhost:6767"
+    OMNIGENT_PUBLIC_URL: str = ""
+    OMNIGENT_INTERNAL_URL: str = ""
+
+    # Multi-Mode App & Ingress Routing
+    APP_RUNNER_MODE: str = ""  # auto-detected (local, docker, kubernetes) if empty
+    APP_BASE_DOMAIN: str = "compassx.internal"
+    APP_DOMAIN_TEMPLATE: str = "{slug}.{base_domain}"
+    OMNIGENT_DOMAIN_TEMPLATE: str = "devstudio.{base_domain}"
+    K8S_NAMESPACE: str = "compassx"
+    K8S_INGRESS_CLASS: str = "nginx"
+    K8S_INGRESS_HOST: str = ""
+    K8S_INGRESS_TLS_SECRET: str = ""
+    K8S_INGRESS_CLUSTER_ISSUER: str = "letsencrypt-prod"
+    K8S_ENABLE_AUTO_TLS: bool = True
+    K8S_USE_HTTPS: bool = True
 
     # CORS
     FRONTEND_ORIGIN: str = "http://localhost:5173"
@@ -44,8 +59,8 @@ class Settings(BaseSettings):
     #   postgresql://{PG_USER}:{PG_PASSWORD}@{PG_HOST}:{PG_PORT}/compassx_account
     SYSTEM_DB_NAME: str = "compassx_account"   # override to use different DB name
     SYSTEM_DB_URL: str = ""                   # set this to override entirely
-    SYSTEM_DB_POOL_MIN: int = 2
-    SYSTEM_DB_POOL_MAX: int = 10
+    SYSTEM_DB_POOL_MIN: int = 5
+    SYSTEM_DB_POOL_MAX: int = 20
 
     # Workspace data plane (data DB).
     # If left empty, derived from PG_* settings as:
@@ -54,14 +69,6 @@ class Settings(BaseSettings):
     DATA_DB_URL: str = ""                     # set this to override entirely
     DATA_DB_POOL_MIN: int = 5
     DATA_DB_POOL_MAX: int = 20
-
-    # Asset Manager database.
-    # If left empty, derived from PG_* settings as:
-    #   postgresql://{PG_USER}:{PG_PASSWORD}@{PG_HOST}:{PG_PORT}/asset_manager
-    ASSET_DB_NAME: str = "asset_manager"       # override to use different DB name
-    ASSET_DB_URL: str = ""                     # set this to override entirely
-    ASSET_DB_POOL_MIN: int = 2
-    ASSET_DB_POOL_MAX: int = 10
 
     # Redis for workspace slug cache and session cache
     REDIS_URL: str = ""
@@ -109,16 +116,6 @@ class Settings(BaseSettings):
         return (
             f"postgresql://{self.PG_USER}:{self.PG_PASSWORD}"
             f"@{self.PG_HOST}:{self.PG_PORT}/{self.DATA_DB_NAME}"
-        )
-
-    @property
-    def resolved_asset_db_url(self) -> str:
-        """Return ASSET_DB_URL if set, otherwise derive from PG_* settings."""
-        if self.ASSET_DB_URL:
-            return self.ASSET_DB_URL
-        return (
-            f"postgresql://{self.PG_USER}:{self.PG_PASSWORD}"
-            f"@{self.PG_HOST}:{self.PG_PORT}/{self.ASSET_DB_NAME}"
         )
 
     @property

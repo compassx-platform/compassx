@@ -142,8 +142,8 @@ def _get_user_workspace_ids(user_id: str, system_db: Session, account_db: Sessio
 def _normalize_landing_route(route: str) -> str:
     if not route:
         return "/platform/notebooks"
-    if route.startswith("/business-center"):
-        route = "/business_center" + route[16:]
+    if route.startswith("/business-center") or route.startswith("/business_center"):
+        route = "/platform/dashboards"
     if route.endswith("/") and len(route) > 1:
         route = route[:-1]
     if not route.startswith("/"):

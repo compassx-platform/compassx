@@ -6,11 +6,6 @@ export interface AgentTool {
   tool_name: string;
 }
 
-export interface AgentDBConnection {
-  db_connection_id: number;
-  allowed_tables?: string[];
-}
-
 export interface AgentListItem {
   id: number;
   name: string;
@@ -46,15 +41,18 @@ export interface Agent {
   created_at: string;
   updated_at: string;
   tools: AgentTool[];
-  db_connections: AgentDBConnection[];
   skills?: any[];
 }
+
+import { useWorkspaceContext } from "@/lib/workspaceContext";
 
 // ── Agents ────────────────────────────────────────────────────────────────────
 
 export function useAgents() {
+  const workspace = useWorkspaceContext();
+  const wsKey = workspace?.id || workspace?.slug || "";
   return useQuery({
-    queryKey: ["agents"],
+    queryKey: ["agents", wsKey],
     queryFn: async () => {
       const { data } = await api.get<AgentListItem[]>("/agents");
       return data;
@@ -94,7 +92,7 @@ export function useCreateAgent() {
         manifest?: Record<string, any>;
         llm_connection_id?: number;
         tools?: { tool_name: string }[];
-        db_connections?: AgentDBConnection[];
+        skills?: { skill_id: number; position: number }[];
       };
     }) => {
       const { data } = await api.post<Agent>("/agents", payload);
@@ -127,7 +125,7 @@ export function useUpdateAgent() {
         manifest?: Record<string, any>;
         llm_connection_id?: number | null;
         tools?: { tool_name: string }[];
-        db_connections?: AgentDBConnection[];
+        skills?: { skill_id: number; position: number }[];
       };
     }) => {
       const { data } = await api.put<Agent>(`/agents/${agentId}`, payload);

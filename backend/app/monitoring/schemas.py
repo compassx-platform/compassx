@@ -32,6 +32,7 @@ class Resource(BaseModel):
 
 class Overview(BaseModel):
     total_nodes: int
+    total_cores: int = 1
     total_services: int
     running_services: int
     cpu_utilization: float

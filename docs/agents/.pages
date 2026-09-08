@@ -1,0 +1,8 @@
+title: AI Agents & Nova
+nav:
+  - Overview: index.md
+  - Nova Built-In Data Engineer: nova-data-engineer.md
+  - Agent Builder & Custom Personas: agent-builder-and-personas.md
+  - Agent Tools & Connectors: tools-and-integrations.md
+  - Knowledge Bases & Vector Grounding: knowledge-bases-and-rag.md
+  - Safety, Governance & Cost: governance-and-safety.md

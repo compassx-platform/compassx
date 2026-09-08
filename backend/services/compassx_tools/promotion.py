@@ -135,12 +135,12 @@ def promote(
     for url in urls:
         try:
             req = urllib.request.Request(url, data=body_bytes, headers=headers, method="POST")
-            with urllib.request.urlopen(req, timeout=5) as resp:
+            with urllib.request.urlopen(req, timeout=2) as resp:
                 if resp.status in (200, 201):
                     data = json.loads(resp.read().decode("utf-8"))
                     result = PromotionResult(data)
                     print(
-                        f"✓ Promoted tool '{result.full_name}' (v{result.version}) to Unified Catalog!"
+                        f"[OK] Promoted tool '{result.full_name}' (v{result.version}) to Unified Catalog!"
                     )
                     return result
         except urllib.error.HTTPError as exc:
@@ -173,7 +173,7 @@ def promote(
             }
             result = PromotionResult(data)
             print(
-                f"✓ Promoted tool '{result.full_name}' (v{result.version}) to Unified Catalog!"
+                f"[OK] Promoted tool '{result.full_name}' (v{result.version}) to Unified Catalog!"
             )
             return result
         finally:

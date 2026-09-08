@@ -11,6 +11,8 @@ import {
   Database,
   HardDrive,
   Layers,
+  Minus,
+  Plus,
   RefreshCw,
   Search,
   Server,
@@ -44,7 +46,9 @@ type Resource = {
 };
 
 type Overview = {
-  platform_status: string;
+  total_nodes?: number;
+  total_cores?: number;
+  platform_status?: string;
   running_services: number;
   total_services: number;
   cpu_utilization: number;
@@ -134,6 +138,11 @@ export default function MonitoringPage() {
   const [useLocalTime, setUseLocalTime] = useState(true);
   const [singleSeries, setSingleSeries] = useState<Record<string, SingleSeries>>({});
   const [groupedSeries, setGroupedSeries] = useState<Record<string, GroupedSeries>>({});
+  const [memLimitGrouped, setMemLimitGrouped] = useState<GroupedSeries | null>(null);
+  const [memLimitSingle, setMemLimitSingle] = useState<SingleSeries | null>(null);
+  const [nodeTimeseries, setNodeTimeseries] = useState<GroupedSeries | null>(null);
+  const [expandedLegends, setExpandedLegends] = useState<Record<string, boolean>>({});
+  const [hiddenTraces, setHiddenTraces] = useState<Record<string, boolean>>({});
 
   const localTz = useMemo(() => {
     try {
@@ -185,36 +194,69 @@ export default function MonitoringPage() {
 
     try {
       if (chartResource === 'ALL') {
-        const results = await Promise.all(
-          CHART_CONFIGS.map((c) =>
-            api
-              .get<GroupedSeries>('/monitoring/timeseries/services', {
-                params: { metric: c.key, start, end, resolution },
-              })
-              .then((res) => [c.key, res.data] as const)
-              .catch(() => [c.key, { unit: c.unit, series: [] }] as const)
-          )
-        );
+        const [results, memLimitRes, nodeRes] = await Promise.all([
+          Promise.all(
+            CHART_CONFIGS.map((c) =>
+              api
+                .get<GroupedSeries>('/monitoring/timeseries/services', {
+                  params: { metric: c.key, start, end, resolution },
+                })
+                .then((res) => [c.key, res.data] as const)
+                .catch(() => [c.key, { unit: c.unit, series: [] }] as const)
+            )
+          ),
+          api
+            .get<GroupedSeries>('/monitoring/timeseries/services', {
+              params: { metric: 'memory_limit', start, end, resolution },
+            })
+            .then((res) => res.data)
+            .catch(() => null),
+          api
+            .get<GroupedSeries>('/monitoring/timeseries/nodes', {
+              params: { metric: 'cpu', start, end, resolution },
+            })
+            .then((res) => res.data)
+            .catch(() => null),
+        ]);
         setGroupedSeries(Object.fromEntries(results));
+        setMemLimitGrouped(memLimitRes);
+        setNodeTimeseries(nodeRes);
       } else {
-        const results = await Promise.all(
-          CHART_CONFIGS.map((c) =>
-            api
-              .get<SingleSeries>('/monitoring/timeseries', {
-                params: {
-                  resource_type: 'service',
-                  resource_id: chartResource,
-                  metric: c.key,
-                  start,
-                  end,
-                  resolution,
-                },
-              })
-              .then((res) => [c.key, res.data] as const)
-              .catch(() => [c.key, { unit: c.unit, points: [] }] as const)
-          )
-        );
+        setNodeTimeseries(null);
+        const [results, memLimitRes] = await Promise.all([
+          Promise.all(
+            CHART_CONFIGS.map((c) =>
+              api
+                .get<SingleSeries>('/monitoring/timeseries', {
+                  params: {
+                    resource_type: 'service',
+                    resource_id: chartResource,
+                    metric: c.key,
+                    start,
+                    end,
+                    resolution,
+                  },
+                })
+                .then((res) => [c.key, res.data] as const)
+                .catch(() => [c.key, { unit: c.unit, points: [] }] as const)
+            )
+          ),
+          api
+            .get<SingleSeries>('/monitoring/timeseries', {
+              params: {
+                resource_type: 'service',
+                resource_id: chartResource,
+                metric: 'memory_limit',
+                start,
+                end,
+                resolution,
+              },
+            })
+            .then((res) => res.data)
+            .catch(() => null),
+        ]);
         setSingleSeries(Object.fromEntries(results));
+        setMemLimitSingle(memLimitRes);
       }
     } catch {
       console.warn('Failed to load metric history from Prometheus');
@@ -534,6 +576,21 @@ export default function MonitoringPage() {
             <div className="summary-strip-divider" />
 
             <div className="summary-strip-item">
+              <span className="strip-label">User Nodes</span>
+              <div className="strip-value-row">
+                <Server size={15} style={{ color: '#8b5cf6', alignSelf: 'center' }} />
+                <span className="strip-value-main">
+                  {overview ? (overview.total_nodes || 1) : '--'}
+                </span>
+                <span className="strip-sub">
+                  ({overview ? `${overview.total_nodes || 1} Active, ${overview.total_cores || 1} Cores` : ''})
+                </span>
+              </div>
+            </div>
+
+            <div className="summary-strip-divider" />
+
+            <div className="summary-strip-item">
               <span className="strip-label">Avg CPU</span>
               <div className="strip-value-row">
                 <Cpu size={15} style={{ color: '#2563eb', alignSelf: 'center' }} />
@@ -541,6 +598,9 @@ export default function MonitoringPage() {
                   {overview ? overview.cpu_utilization : 0}
                 </span>
                 <span className="strip-unit">%</span>
+                <span className="strip-sub">
+                  ({overview?.total_cores || 1} Cores)
+                </span>
               </div>
             </div>
 
@@ -555,7 +615,32 @@ export default function MonitoringPage() {
                 </span>
                 <span className="strip-unit">%</span>
                 <span className="strip-sub">
-                  ({services.reduce((acc, s) => acc + s.memory_mb, 0).toFixed(0)} MB)
+                  ({services.reduce((acc, s) => acc + s.memory_mb, 0).toFixed(0)} MB / {
+                    (() => {
+                      const userNodes = nodes.filter(
+                        (n) =>
+                          !n.runtime?.toLowerCase().includes('system') &&
+                          !n.name?.toLowerCase().includes('system')
+                      );
+                      const targetNodes = userNodes.length > 0 ? userNodes : nodes;
+                      const totalLimit = targetNodes.reduce(
+                        (acc, n) => acc + (n.memory_limit_mb ?? 0),
+                        0
+                      );
+                      if (totalLimit > 0) {
+                        return `${(totalLimit / 1024).toFixed(1)} GB`;
+                      }
+                      const totalServiceLimit = services.reduce(
+                        (acc, s) => acc + (s.memory_limit_mb || 0),
+                        0
+                      );
+                      if (totalServiceLimit > 0) {
+                        return `${(totalServiceLimit / 1024).toFixed(1)} GB`;
+                      }
+                      const totalUsed = services.reduce((acc, s) => acc + s.memory_mb, 0);
+                      return `${(totalUsed / 1024).toFixed(1)} GB`;
+                    })()
+                  })
                 </span>
               </div>
             </div>
@@ -642,201 +727,357 @@ export default function MonitoringPage() {
                   .replace('spark-worker', 'spark-w');
               };
 
+              // Build pod limits map for rich tooltip annotations
+              const podLimitMap = new Map<string, number>();
+              services.forEach((svc) => {
+                if (svc.memory_limit_mb && svc.memory_limit_mb > 0) {
+                  podLimitMap.set(svc.id, svc.memory_limit_mb);
+                }
+              });
+              (memLimitGrouped?.series || []).forEach((ls) => {
+                const lastPt = (ls.points || []).filter((p) => p.value > 0).pop();
+                if (lastPt && !podLimitMap.has(ls.resource_id)) {
+                  podLimitMap.set(ls.resource_id, lastPt.value);
+                }
+              });
+
+              const totalCores = Math.max(1, overview?.total_cores || 1);
+              const isCpu = config.key === 'cpu';
+              const isMemory = config.key === 'memory';
+
+              // Pure simple bar traces using standard ISO timestamps
               const plotData: Data[] = isStacked
-                ? (groupData?.series || []).map((s, idx) => ({
-                    x: s.points.map((p) => formatPlotlyTimestamp(p.timestamp, useLocalTime)),
-                    y: s.points.map((p) => p.value),
-                    type: 'bar',
-                    name: cleanServiceName(s.name),
-                    marker: { color: PALETTE[idx % PALETTE.length] },
-                    hovertemplate: `${s.name.replace(/^docker:/, '').replace(/^compassx-/, '')}: %{y:.2f} ${config.unit}<extra></extra>`,
-                  }))
+                ? (groupData?.series || []).map((s, idx) => {
+                    const podLimit = podLimitMap.get(s.resource_id) || 0;
+
+                    // Normalize CPU values by total cluster cores so the stacked total is bounded between 0-100%
+                    const yValues = (s.points || []).map((p) => {
+                      if (isCpu) {
+                        return Math.max(0, Math.round((p.value / totalCores) * 100) / 100);
+                      }
+                      return p.value;
+                    });
+
+                    const customdata = (s.points || []).map((p) => {
+                      if (isCpu) {
+                        const rawCores = (p.value / 100).toFixed(2);
+                        const normPct = (p.value / totalCores).toFixed(1);
+                        return `Cluster CPU: ${normPct}% (${rawCores} cores / ${totalCores} total)`;
+                      }
+                      if (isMemory) {
+                        if (podLimit > 0) {
+                          const pct = ((p.value / podLimit) * 100).toFixed(1);
+                          return `Limit: ${podLimit.toLocaleString()} MB (${pct}% used)`;
+                        }
+                        return 'Limit: Uncapped';
+                      }
+                      return '';
+                    });
+
+                    return {
+                      x: (s.points || []).map((p) =>
+                        formatPlotlyTimestamp(p.timestamp, useLocalTime)
+                      ),
+                      y: yValues,
+                      type: 'bar',
+                      name: cleanServiceName(s.name),
+                      marker: { color: PALETTE[idx % PALETTE.length] },
+                      customdata,
+                      hovertemplate: isCpu
+                        ? `<b>${cleanServiceName(s.name)}</b><br>%{customdata}<extra></extra>`
+                        : isMemory
+                        ? `<b>${cleanServiceName(s.name)}</b><br>Used: %{y:.1f} MB<br>%{customdata}<extra></extra>`
+                        : `${cleanServiceName(s.name)}: %{y:.2f} ${config.unit}<extra></extra>`,
+                    };
+                  })
                 : [
-                    {
+                    (() => {
+                      const selectedServiceObj = services.find((s) => s.id === chartResource);
+                      const staticLimit = selectedServiceObj?.memory_limit_mb || 0;
+
+                      const yValues = (singleData?.points || []).map((p) => {
+                        if (isCpu) {
+                          return Math.max(0, Math.round((p.value / totalCores) * 100) / 100);
+                        }
+                        return p.value;
+                      });
+
+                      const customdata = (singleData?.points || []).map((p) => {
+                        if (isCpu) {
+                          const rawCores = (p.value / 100).toFixed(2);
+                          const normPct = (p.value / totalCores).toFixed(1);
+                          return `Cluster CPU: ${normPct}% (${rawCores} cores / ${totalCores} total)`;
+                        }
+                        if (isMemory) {
+                          if (staticLimit > 0) {
+                            const pct = ((p.value / staticLimit) * 100).toFixed(1);
+                            return `Limit: ${staticLimit.toLocaleString()} MB (${pct}% used)`;
+                          }
+                          return 'Limit: Uncapped';
+                        }
+                        return '';
+                      });
+
+                      return {
+                        x: (singleData?.points || []).map((p) =>
+                          formatPlotlyTimestamp(p.timestamp, useLocalTime)
+                        ),
+                        y: yValues,
+                        type: 'bar',
+                        name: selectedServiceObj?.name || 'Service',
+                        marker: { color: config.color },
+                        customdata,
+                        hovertemplate: isCpu
+                          ? `<b>${selectedServiceObj?.name || 'Service'}</b><br>%{customdata}<extra></extra>`
+                          : isMemory
+                          ? `<b>${selectedServiceObj?.name || 'Service'}</b><br>Used: %{y:.1f} MB<br>%{customdata}<extra></extra>`
+                          : `${selectedServiceObj?.name || 'Service'}: %{y:.2f} ${config.unit}<extra></extra>`,
+                      };
+                    })(),
+                  ];
+
+              // Dynamic Memory Limit Time Series (Only for Memory Usage Chart)
+              if (config.key === 'memory') {
+                if (isStacked) {
+                  // Aggregate all pod limits bucketed by timestamp for an accurate time series
+                  const limitSeries = memLimitGrouped?.series || [];
+                  const limitByTimestamp = new Map<string, number>();
+
+                  for (const s of limitSeries) {
+                    for (const pt of s.points || []) {
+                      if (pt.value > 0) {
+                        const current = limitByTimestamp.get(pt.timestamp) || 0;
+                        limitByTimestamp.set(pt.timestamp, current + pt.value);
+                      }
+                    }
+                  }
+
+                  const sortedTimestamps = Array.from(limitByTimestamp.keys()).sort();
+                  const limitPoints = sortedTimestamps
+                    .map((ts) => ({ timestamp: ts, value: limitByTimestamp.get(ts)! }))
+                    .filter((p) => p.value > 0);
+
+                  // Fallback to current live pod limits if Prometheus timeseries has not accumulated points yet
+                  if (limitPoints.length === 0) {
+                    const currentTotalLimit = services.reduce((acc, s) => acc + (s.memory_limit_mb || 0), 0);
+                    if (currentTotalLimit > 0) {
+                      const allTimestamps = (groupData?.series || []).flatMap((s) => (s.points || []).map((p) => p.timestamp));
+                      const uniqueTimestamps = Array.from(new Set(allTimestamps)).sort();
+                      uniqueTimestamps.forEach((ts) => {
+                        limitPoints.push({ timestamp: ts, value: currentTotalLimit });
+                      });
+                    }
+                  }
+
+                  if (limitPoints.length > 0) {
+                    plotData.push({
+                      x: limitPoints.map((p) =>
+                        formatPlotlyTimestamp(p.timestamp, useLocalTime)
+                      ),
+                      y: limitPoints.map((p) => p.value),
+                      type: 'scatter',
+                      mode: 'lines',
+                      name: 'Total Allocated Limit',
+                      line: { color: '#ef4444', width: 2, dash: 'dash' },
+                      hovertemplate: 'Total Allocated Limit: %{y:.1f} MB<extra></extra>',
+                    });
+                  }
+                } else {
+                  // Single service view: plot exact time series for that pod's limit
+                  const limitPoints = (memLimitSingle?.points || []).filter((p) => p.value > 0);
+                  const selectedServiceObj = services.find((s) => s.id === chartResource);
+                  const staticLimit = selectedServiceObj?.memory_limit_mb || 0;
+
+                  if (limitPoints.length > 0) {
+                    plotData.push({
+                      x: limitPoints.map((p) =>
+                        formatPlotlyTimestamp(p.timestamp, useLocalTime)
+                      ),
+                      y: limitPoints.map((p) => p.value),
+                      type: 'scatter',
+                      mode: 'lines',
+                      name: 'Pod Memory Limit',
+                      line: { color: '#ef4444', width: 2, dash: 'dash' },
+                      hovertemplate: 'Pod Memory Limit: %{y:.1f} MB<extra></extra>',
+                    });
+                  } else if (staticLimit > 0 && (singleData?.points || []).length > 0) {
+                    plotData.push({
                       x: (singleData?.points || []).map((p) =>
                         formatPlotlyTimestamp(p.timestamp, useLocalTime)
                       ),
-                      y: (singleData?.points || []).map((p) => p.value),
-                      type: 'bar',
-                      name: services.find((s) => s.id === chartResource)?.name || 'Service',
-                      marker: { color: config.color },
-                      hovertemplate: `${services.find((s) => s.id === chartResource)?.name || 'Service'}: %{y:.2f} ${config.unit}<extra></extra>`,
-                    },
-                  ];
-
-              // Memory limit calculation for memory chart
-              let memLimit = 0;
-              if (config.key === 'memory') {
-                if (chartResource !== 'ALL') {
-                  const selectedServiceObj = services.find((s) => s.id === chartResource);
-                  if (selectedServiceObj) {
-                    memLimit =
-                      selectedServiceObj.memory_limit_mb ||
-                      (selectedServiceObj.memory_percent > 0
-                        ? (selectedServiceObj.memory_mb / selectedServiceObj.memory_percent) * 100
-                        : 0);
-                  }
-                } else if (services.length > 0) {
-                  const validLimits = services
-                    .map(
-                      (s) =>
-                        s.memory_limit_mb ||
-                        (s.memory_percent > 0 ? (s.memory_mb / s.memory_percent) * 100 : 0)
-                    )
-                    .filter((l) => l > 0);
-                  if (validLimits.length > 0) {
-                    memLimit = Math.max(...validLimits);
+                      y: (singleData?.points || []).map(() => staticLimit),
+                      type: 'scatter',
+                      mode: 'lines',
+                      name: 'Pod Memory Limit',
+                      line: { color: '#ef4444', width: 2, dash: 'dash' },
+                      hovertemplate: `Pod Memory Limit: ${staticLimit} MB<extra></extra>`,
+                    });
                   }
                 }
               }
 
-              // Compute maximum Y across points to properly scale Y-axis with limit
-              let maxDataY = 0;
-              if (isStacked) {
-                const seriesList = groupData?.series || [];
-                if (seriesList.length > 0 && seriesList[0].points.length > 0) {
-                  for (let i = 0; i < seriesList[0].points.length; i++) {
-                    let sum = 0;
-                    for (const s of seriesList) {
-                      sum += s.points[i]?.value || 0;
+              // Secondary Y-Axis: Active Node Count Time Series (Only for CPU Chart in Stacked View)
+              if (config.key === 'cpu' && isStacked) {
+                const nodeCountMap = new Map<string, number>();
+                if (nodeTimeseries && nodeTimeseries.series && nodeTimeseries.series.length > 0) {
+                  for (const s of nodeTimeseries.series) {
+                    for (const pt of s.points || []) {
+                      nodeCountMap.set(pt.timestamp, (nodeCountMap.get(pt.timestamp) || 0) + 1);
                     }
-                    if (sum > maxDataY) maxDataY = sum;
                   }
                 }
-              } else {
-                const pts = singleData?.points || [];
-                maxDataY = pts.reduce((max, p) => Math.max(max, p.value), 0);
+
+                let nodePoints: { timestamp: string; value: number }[] = [];
+                if (nodeCountMap.size > 0) {
+                  const sortedTs = Array.from(nodeCountMap.keys()).sort();
+                  nodePoints = sortedTs.map((ts) => ({ timestamp: ts, value: nodeCountMap.get(ts)! }));
+                } else {
+                  const fallbackNodes = Math.max(1, overview?.total_nodes || 1);
+                  const allTimestamps = (groupData?.series || []).flatMap((s) => (s.points || []).map((p) => p.timestamp));
+                  const uniqueTs = Array.from(new Set(allTimestamps)).sort();
+                  nodePoints = uniqueTs.map((ts) => ({ timestamp: ts, value: fallbackNodes }));
+                }
+
+                if (nodePoints.length > 0) {
+                  plotData.push({
+                    x: nodePoints.map((p) =>
+                      formatPlotlyTimestamp(p.timestamp, useLocalTime)
+                    ),
+                    y: nodePoints.map((p) => p.value),
+                    type: 'scatter',
+                    mode: 'lines',
+                    line: { shape: 'hv', color: '#8b5cf6', width: 2, dash: 'dot' },
+                    name: 'Active Nodes',
+                    yaxis: 'y2',
+                    hovertemplate: 'Active Nodes: %{y:.0f}<extra></extra>',
+                  });
+                }
               }
 
-              const yRange =
-                config.key === 'memory' && memLimit > 0
-                  ? [0, Math.max(maxDataY * 1.15, memLimit * 1.08)]
-                  : undefined;
+                  const visiblePlotData = plotData.map((trace) => ({
+                    ...trace,
+                    visible: hiddenTraces[trace.name as string]
+                      ? ('legendonly' as const)
+                      : true,
+                  }));
 
-              return (
-                <div key={config.key} className="monitoring-chart-card">
-                  <div className="chart-card-header">
-                    <h3 className="chart-card-title">
-                      {config.title} ({config.unit})
-                      {config.key === 'memory' && memLimit > 0 && (
-                        <span
-                          style={{
-                            fontSize: '11px',
-                            fontWeight: 500,
-                            color: '#ef4444',
-                            marginLeft: '8px',
-                          }}
-                        >
-                          • Limit:{' '}
-                          {memLimit >= 1024
-                            ? `${(memLimit / 1024).toFixed(1)} GB`
-                            : `${Math.round(memLimit)} MB`}
-                        </span>
-                      )}
-                    </h3>
-                  </div>
+                  return (
+                    <div key={config.key} className="monitoring-chart-card">
+                      <div className="chart-card-header">
+                        <h3 className="chart-card-title">
+                          {config.key === 'cpu'
+                            ? `CPU Utilization (% of ${totalCores} Cores)`
+                            : `${config.title} (${config.unit})`}
+                        </h3>
+                      </div>
 
-                  <Plot
-                    data={plotData}
-                    layout={{
-                      autosize: true,
-                      height: 360,
-                      margin: { l: 28, r: 0, t: 10, b: 64 },
-                      paper_bgcolor: 'transparent',
-                      plot_bgcolor: 'transparent',
-                      bargap: 0.25,
-                      barmode: isStacked ? 'stack' : 'group',
-                      showlegend: isStacked,
-                      shapes:
-                        memLimit > 0
-                          ? [
-                              {
-                                type: 'line',
-                                xref: 'paper',
-                                x0: 0,
-                                x1: 1,
-                                yref: 'y',
-                                y0: memLimit,
-                                y1: memLimit,
-                                line: {
-                                  color: '#ef4444',
-                                  width: 1.5,
-                                  dash: 'dash',
+                      <Plot
+                        data={visiblePlotData}
+                        layout={{
+                          autosize: true,
+                          height: 290,
+                          margin: { l: 50, r: config.key === 'cpu' ? 45 : 20, t: 15, b: 35 },
+                          barmode: isStacked ? 'stack' : 'group',
+                          showlegend: false,
+                          xaxis: {
+                            type: 'date',
+                          },
+                          yaxis: {
+                            title: { text: config.unit, font: { size: 11 } },
+                            rangemode: 'tozero',
+                            autorange: true,
+                          },
+                          ...(config.key === 'cpu'
+                            ? {
+                                yaxis2: {
+                                  title: { text: 'Nodes', font: { size: 11, color: '#8b5cf6' } },
+                                  overlaying: 'y',
+                                  side: 'right',
+                                  rangemode: 'tozero',
+                                  dtick: 1,
+                                  tickformat: 'd',
+                                  showgrid: false,
+                                  tickfont: { size: 10, color: '#8b5cf6' },
                                 },
-                              },
-                            ]
-                          : undefined,
-                      annotations:
-                        memLimit > 0
-                          ? [
-                              {
-                                xref: 'paper',
-                                x: 0.98,
-                                yref: 'y',
-                                y: memLimit,
-                                xanchor: 'right',
-                                yanchor: 'bottom',
-                                text: `Limit: ${
-                                  memLimit >= 1024
-                                    ? `${(memLimit / 1024).toFixed(1)} GB`
-                                    : `${Math.round(memLimit)} MB`
-                                }`,
-                                showarrow: false,
-                                font: { size: 10, color: '#dc2626' },
-                                bgcolor: 'rgba(254, 242, 242, 0.9)',
-                                bordercolor: '#fca5a5',
-                                borderwidth: 1,
-                                borderpad: 3,
-                              },
-                            ]
-                          : undefined,
-                      legend: {
-                        orientation: 'h',
-                        x: -0.06,
-                        xanchor: 'left',
-                        y: -0.28,
-                        yanchor: 'top',
-                        font: { size: 9.5, color: '#334155' },
-                        itemgap: 4,
-                      },
-                      xaxis: {
-                        showgrid: false,
-                        showline: true,
-                        linecolor: '#64748b',
-                        linewidth: 1.5,
-                        tickfont: { size: 10, color: '#475569' },
-                        ticks: '',
-                        nticks: 6,
-                        tickformat:
-                          timeRange?.label?.includes('d') || timeRange?.label?.includes('w')
-                            ? '%m/%d %H:%M'
-                            : '%H:%M',
-                      },
-                      yaxis: {
-                        showgrid: true,
-                        gridcolor: '#e2e8f0',
-                        gridwidth: 1,
-                        showline: false,
-                        zeroline: true,
-                        zerolinecolor: '#64748b',
-                        zerolinewidth: 1.5,
-                        rangemode: yRange ? undefined : 'tozero',
-                        range: yRange,
-                        tickfont: { size: 10, color: '#64748b' },
-                      },
-                      hovermode: 'x unified',
-                      hoverlabel: {
-                        bgcolor: '#1e293b',
-                        bordercolor: '#334155',
-                        font: { color: '#ffffff', size: 11 },
-                      },
-                    }}
-                    config={{ displaylogo: false, responsive: true }}
-                    style={{ width: '100%' }}
-                    useResizeHandler
-                  />
-                </div>
-              );
+                              }
+                            : {}),
+                        }}
+                        config={{ responsive: true, displayModeBar: false }}
+                        style={{ width: '100%', height: '290px' }}
+                        useResizeHandler
+                      />
+
+                      {plotData.length > 0 && (
+                        <div className="chart-legend-container">
+                          <div
+                            className={`chart-legend-items ${
+                              expandedLegends[config.key] ? 'expanded' : 'collapsed'
+                            }`}
+                          >
+                            {plotData.map((trace) => {
+                              const traceName = trace.name as string;
+                              const isHidden = !!hiddenTraces[traceName];
+                              const isLine = trace.type === 'scatter';
+                              const traceObj = trace as Record<string, any>;
+                              const color =
+                                traceObj.marker?.color ||
+                                traceObj.line?.color ||
+                                '#64748b';
+
+                              return (
+                                <div
+                                  key={traceName}
+                                  className={`chart-legend-item ${isHidden ? 'hidden' : ''}`}
+                                  title={`Click to ${isHidden ? 'show' : 'hide'} ${traceName}`}
+                                  onClick={() =>
+                                    setHiddenTraces((prev) => ({
+                                      ...prev,
+                                      [traceName]: !prev[traceName],
+                                    }))
+                                  }
+                                >
+                                  <span
+                                    className={`chart-legend-dot ${isLine ? 'is-line' : ''}`}
+                                    style={{
+                                      backgroundColor: isLine ? undefined : color,
+                                      borderColor: isLine ? color : undefined,
+                                    }}
+                                  />
+                                  <span className="chart-legend-label">{traceName}</span>
+                                </div>
+                              );
+                            })}
+                            {expandedLegends[config.key] && plotData.length > 2 && (
+                              <button
+                                className="chart-legend-toggle-btn inline-end"
+                                onClick={() =>
+                                  setExpandedLegends((prev) => ({
+                                    ...prev,
+                                    [config.key]: false,
+                                  }))
+                                }
+                              >
+                                <Minus size={11} strokeWidth={2.5} /> Show less
+                              </button>
+                            )}
+                          </div>
+                          {!expandedLegends[config.key] && plotData.length > 2 && (
+                            <button
+                              className="chart-legend-toggle-btn"
+                              onClick={() =>
+                                setExpandedLegends((prev) => ({
+                                  ...prev,
+                                  [config.key]: true,
+                                }))
+                              }
+                            >
+                              <Plus size={11} strokeWidth={2.5} /> Show more
+                            </button>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
             })}
           </div>
         </section>

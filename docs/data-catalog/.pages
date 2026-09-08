@@ -1,0 +1,8 @@
+title: Data Catalog
+nav:
+  - Overview: index.md
+  - Catalogs & Schemas: catalogs-and-schemas.md
+  - Tables, Views & Schema Explorer: tables-and-views.md
+  - Storage Volumes & Files: storage-volumes.md
+  - Discovery, Lineage & Search: lineage-and-discovery.md
+  - Governance & Access Control: governance-and-permissions.md

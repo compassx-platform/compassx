@@ -100,7 +100,7 @@ class TestUsesExistingSession:
                 with patch("app.agents.services.agent.orchestrator.get_tool_definitions", return_value=[]):
                     from app.agents.services.agent.orchestrator import orchestrate_subagent_stream
 
-                    events = asyncio.get_event_loop().run_until_complete(
+                    events = asyncio.run(
                         _run_stream(
                             orchestrate_subagent_stream(
                                 session_id=10,
@@ -132,7 +132,7 @@ class TestUsesExistingSession:
                 with patch("app.agents.services.agent.orchestrator.get_tool_definitions", return_value=[]):
                     from app.agents.services.agent.orchestrator import orchestrate_subagent_stream
 
-                    asyncio.get_event_loop().run_until_complete(
+                    asyncio.run(
                         _run_stream(
                             orchestrate_subagent_stream(
                                 session_id=10,
@@ -163,7 +163,7 @@ class TestMessagesTaggedWithAgent:
                 with patch("app.agents.services.agent.orchestrator.get_tool_definitions", return_value=[]):
                     from app.agents.services.agent.orchestrator import orchestrate_subagent_stream
 
-                    events = asyncio.get_event_loop().run_until_complete(
+                    events = asyncio.run(
                         _run_stream(
                             orchestrate_subagent_stream(
                                 session_id=10,
@@ -207,7 +207,7 @@ class TestMessagesTaggedWithAgent:
                 with patch("app.agents.services.agent.orchestrator.get_tool_definitions", return_value=[]):
                     from app.agents.services.agent.orchestrator import orchestrate_subagent_stream
 
-                    asyncio.get_event_loop().run_until_complete(
+                    asyncio.run(
                         _run_stream(
                             orchestrate_subagent_stream(
                                 session_id=10,
@@ -243,7 +243,7 @@ class TestSingleAgentFlowUnchanged:
                 with patch("app.agents.services.agent.orchestrator.get_tool_definitions", return_value=[]):
                     from app.agents.services.agent.orchestrator import orchestrate_stream
 
-                    events = asyncio.get_event_loop().run_until_complete(
+                    events = asyncio.run(
                         _run_stream(
                             orchestrate_stream(
                                 session_id=10,
@@ -274,7 +274,7 @@ class TestSingleAgentFlowUnchanged:
                 with patch("app.agents.services.agent.orchestrator.get_tool_definitions", return_value=[]):
                     from app.agents.services.agent.orchestrator import orchestrate_stream
 
-                    asyncio.get_event_loop().run_until_complete(
+                    asyncio.run(
                         _run_stream(
                             orchestrate_stream(
                                 session_id=10,

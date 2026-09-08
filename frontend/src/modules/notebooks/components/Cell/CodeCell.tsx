@@ -1,50 +1,118 @@
 import { useRef, useCallback, useMemo } from 'react';
-import { EditorView, keymap, lineNumbers, Decoration } from '@codemirror/view';
-import { EditorState, RangeSetBuilder } from '@codemirror/state';
+import { EditorView, keymap, lineNumbers, Decoration, WidgetType } from '@codemirror/view';
+import { RangeSetBuilder } from '@codemirror/state';
 import { indentMore, indentLess } from '@codemirror/commands';
 import { python } from '@codemirror/lang-python';
 import { syntaxHighlighting } from '@codemirror/language';
 import { oneDarkHighlightStyle } from '@codemirror/theme-one-dark';
 import { tags } from '@lezer/highlight';
 import { HighlightStyle } from '@codemirror/language';
-import { ChevronDown, ChevronRight } from 'lucide-react';
+import { ChevronDown, ChevronRight, Check, X } from 'lucide-react';
 import ReactCodeMirror from '@uiw/react-codemirror';
 import { useNotebookStore, hasDatabaseSideEffects } from '../../store/notebookStore';
-
-type DiffLine = {
-  kind: 'context' | 'added' | 'removed';
-  text: string;
-};
 
 function splitLines(source: string) {
   return source.length ? source.split('\n') : [];
 }
 
-function buildDiff(originalSource: string, proposedSource: string): DiffLine[] {
-  const original = splitLines(originalSource);
-  const proposed = splitLines(proposedSource);
-  let prefix = 0;
-  while (prefix < original.length && prefix < proposed.length && original[prefix] === proposed[prefix]) {
-    prefix += 1;
+class RemovedLinesWidget extends WidgetType {
+  constructor(readonly lines: string[]) {
+    super();
   }
 
-  let originalSuffix = original.length - 1;
-  let proposedSuffix = proposed.length - 1;
-  while (
-    originalSuffix >= prefix &&
-    proposedSuffix >= prefix &&
-    original[originalSuffix] === proposed[proposedSuffix]
-  ) {
-    originalSuffix -= 1;
-    proposedSuffix -= 1;
+  toDOM() {
+    const container = document.createElement('div');
+    container.className = 'cm-diff-removed-container';
+    this.lines.forEach((line) => {
+      const div = document.createElement('div');
+      div.className = 'cm-diff-removed-line';
+      div.textContent = '- ' + (line || ' ');
+      container.appendChild(div);
+    });
+    return container;
   }
 
-  const lines: DiffLine[] = [];
-  original.slice(0, prefix).forEach((text) => lines.push({ kind: 'context', text }));
-  original.slice(prefix, originalSuffix + 1).forEach((text) => lines.push({ kind: 'removed', text }));
-  proposed.slice(prefix, proposedSuffix + 1).forEach((text) => lines.push({ kind: 'added', text }));
-  original.slice(originalSuffix + 1).forEach((text) => lines.push({ kind: 'context', text }));
-  return lines.length ? lines : [{ kind: 'context', text: '' }];
+  eq(other: RemovedLinesWidget) {
+    return this.lines.join('\n') === other.lines.join('\n');
+  }
+
+  ignoreEvent() {
+    return true;
+  }
+}
+
+type DiffOp =
+  | { type: 'equal'; line: string; currentIdx: number }
+  | { type: 'delete'; line: string }
+  | { type: 'insert'; line: string; currentIdx: number };
+
+function computeLineDiff(original: string[], current: string[]): {
+  addedLineIndices: Set<number>;
+  removedWidgets: { currentIdx: number; lines: string[] }[];
+} {
+  const m = original.length;
+  const n = current.length;
+
+  if (m === 0) {
+    const addedLineIndices = new Set<number>();
+    for (let j = 0; j < n; j++) addedLineIndices.add(j);
+    return { addedLineIndices, removedWidgets: [] };
+  }
+
+  const dp: number[][] = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0));
+  for (let i = 0; i < m; i++) {
+    for (let j = 0; j < n; j++) {
+      if (original[i] === current[j]) {
+        dp[i + 1][j + 1] = dp[i][j] + 1;
+      } else {
+        dp[i + 1][j + 1] = Math.max(dp[i + 1][j], dp[i][j + 1]);
+      }
+    }
+  }
+
+  let i = m;
+  let j = n;
+  const ops: DiffOp[] = [];
+  while (i > 0 || j > 0) {
+    if (i > 0 && j > 0 && original[i - 1] === current[j - 1]) {
+      ops.unshift({ type: 'equal', line: original[i - 1], currentIdx: j - 1 });
+      i--;
+      j--;
+    } else if (j > 0 && (i === 0 || dp[i][j - 1] >= dp[i - 1][j])) {
+      ops.unshift({ type: 'insert', line: current[j - 1], currentIdx: j - 1 });
+      j--;
+    } else if (i > 0) {
+      ops.unshift({ type: 'delete', line: original[i - 1] });
+      i--;
+    }
+  }
+
+  const addedLineIndices = new Set<number>();
+  const removedWidgets: { currentIdx: number; lines: string[] }[] = [];
+  let pendingRemoved: string[] = [];
+
+  for (const op of ops) {
+    if (op.type === 'delete') {
+      pendingRemoved.push(op.line);
+    } else if (op.type === 'insert') {
+      addedLineIndices.add(op.currentIdx);
+      if (pendingRemoved.length > 0) {
+        removedWidgets.push({ currentIdx: op.currentIdx, lines: pendingRemoved });
+        pendingRemoved = [];
+      }
+    } else if (op.type === 'equal') {
+      if (pendingRemoved.length > 0) {
+        removedWidgets.push({ currentIdx: op.currentIdx, lines: pendingRemoved });
+        pendingRemoved = [];
+      }
+    }
+  }
+
+  if (pendingRemoved.length > 0) {
+    removedWidgets.push({ currentIdx: n, lines: pendingRemoved });
+  }
+
+  return { addedLineIndices, removedWidgets };
 }
 import { useExecuteCell } from '../../hooks/useExecuteCell';
 import CellOutput from './CellOutput';
@@ -181,83 +249,96 @@ export default function CodeCell({ cellId, cellIndex }: Props) {
   runCellRef.current = runCell;
 
   const isPending = cell?.cellStatus === 'pending';
+  const docText = cell?.pendingSource ?? cell?.source ?? '';
 
-  /* ── Build diff decorations for pending edits ── */
-  const { docText, diffExtensions } = useMemo(() => {
+  /* ── Build diff decorations for pending edits (allowing live editing) ── */
+  const diffExtensions = useMemo(() => {
     if (!isPending) {
-      return { docText: cell?.source ?? '', diffExtensions: [] as any[] };
+      return [] as any[];
     }
 
-    const diffLines = buildDiff(cell?.committedSource || '', cell?.pendingSource || '');
-    const text = diffLines.map(l => l.text).join('\n');
+    const currentLines = splitLines(docText);
+    const originalLines = splitLines(cell?.committedSource || '');
+    const { addedLineIndices, removedWidgets } = computeLineDiff(originalLines, currentLines);
 
-    const lineNumbersMap: string[] = [];
-    let proposedLineCount = 0;
-    diffLines.forEach((line) => {
-      if (line.kind === 'removed') {
-        lineNumbersMap.push('');
-      } else {
-        proposedLineCount += 1;
-        lineNumbersMap.push(String(proposedLineCount));
-      }
-    });
+    // Compute line start character offsets in docText
+    const lineStarts: number[] = [];
+    let offset = 0;
+    for (let idx = 0; idx < currentLines.length; idx++) {
+      lineStarts.push(offset);
+      offset += currentLines[idx].length + 1;
+    }
 
     const builder = new RangeSetBuilder<Decoration>();
-    let pos = 0;
-    diffLines.forEach((line) => {
-      if (line.kind === 'added' || line.kind === 'removed') {
-        builder.add(pos, pos, Decoration.line({
-          attributes: { class: `cm-diff-${line.kind}` }
-        }));
+
+    for (let idx = 0; idx <= currentLines.length; idx++) {
+      // 1. Any removed lines before this line (red block widget)
+      const widgetItem = removedWidgets.find((rw) => rw.currentIdx === idx);
+      const pos = idx < currentLines.length ? lineStarts[idx] : docText.length;
+
+      if (widgetItem) {
+        builder.add(
+          pos,
+          pos,
+          Decoration.widget({
+            widget: new RemovedLinesWidget(widgetItem.lines),
+            block: true,
+            side: -1,
+          })
+        );
       }
-      pos += line.text.length + 1;
-    });
+
+      // 2. Added / modified line decoration (green)
+      if (idx < currentLines.length && addedLineIndices.has(idx)) {
+        builder.add(
+          pos,
+          pos,
+          Decoration.line({
+            attributes: { class: 'cm-diff-added' },
+          })
+        );
+      }
+    }
+
     const diffDecorations = builder.finish();
 
-    return {
-      docText: text,
-      diffExtensions: [
-        lineNumbers({ formatNumber: (lineNo: number) => lineNumbersMap[lineNo - 1] ?? '' }),
-        EditorState.readOnly.of(true),
-        EditorView.decorations.of(diffDecorations),
-        keymap.of([
-          {
-            key: 'Escape',
-            run: () => {
-              useNotebookStore.getState().rejectAgentCellEdit(cellId);
-              return true;
-            },
+    return [
+      EditorView.decorations.of(diffDecorations),
+      keymap.of([
+        {
+          key: 'Escape',
+          run: () => {
+            useNotebookStore.getState().rejectAgentCellEdit(cellId);
+            return true;
           },
-          {
-            key: 'Ctrl-Enter',
-            run: () => {
-              useNotebookStore.getState().acceptAgentCellEdit(cellId);
-              return true;
-            },
+        },
+        {
+          key: 'Ctrl-Enter',
+          run: () => {
+            useNotebookStore.getState().acceptAgentCellEdit(cellId);
+            return true;
           },
-        ]),
-      ],
-    };
-  }, [isPending, cell?.source, cell?.committedSource, cell?.pendingSource, cellId]);
+        },
+      ]),
+    ];
+  }, [isPending, docText, cell?.committedSource, cellId]);
 
   /* ── Assemble extensions ── */
   const extensions = useMemo(() => [
     python(),
     syntaxHighlighting(pythonHighlightStyle),
-    ...(showLineNumbers && !isPending ? [lineNumbers()] : []),
+    ...(showLineNumbers ? [lineNumbers()] : []),
     keymap.of([
       { key: 'Tab', run: indentMore },
       { key: 'Shift-Tab', run: indentLess },
       { key: 'Shift-Enter', run: () => { runCellRef.current(); return true; } },
     ]),
     ...diffExtensions,
-  ], [showLineNumbers, isPending, diffExtensions]);
+  ], [showLineNumbers, diffExtensions]);
 
   const handleChange = useCallback((value: string) => {
-    if (!isPending) {
-      updateCellSource(cellId, value);
-    }
-  }, [cellId, isPending, updateCellSource]);
+    updateCellSource(cellId, value);
+  }, [cellId, updateCellSource]);
 
   const handleFocus = useCallback(() => {
     setFocusedCell(cellId);
@@ -310,6 +391,91 @@ export default function CodeCell({ cellId, cellIndex }: Props) {
             </div>
           )}
         <div style={{ display: isCellCollapsed ? 'none' : 'block' }}>
+          {/* ── Pending Diff Actions: Only the two subtle buttons ── */}
+          {cell.cellStatus === 'pending' && (
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'flex-end',
+                padding: '4px 12px 2px',
+                gap: 6,
+              }}
+            >
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  useNotebookStore.getState().rejectAgentCellEdit(cellId);
+                }}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 4,
+                  padding: '2px 8px',
+                  fontSize: '0.72rem',
+                  fontWeight: 500,
+                  color: '#64748b',
+                  background: '#ffffff',
+                  border: '1px solid #e2e8f0',
+                  borderRadius: 4,
+                  cursor: 'pointer',
+                  lineHeight: 1.4,
+                  transition: 'all 0.15s ease',
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.color = '#dc2626';
+                  e.currentTarget.style.borderColor = '#fecaca';
+                  e.currentTarget.style.background = '#fef2f2';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.color = '#64748b';
+                  e.currentTarget.style.borderColor = '#e2e8f0';
+                  e.currentTarget.style.background = '#ffffff';
+                }}
+                title="Reject proposed change (Esc)"
+              >
+                <X size={11} />
+                <span>Reject</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  useNotebookStore.getState().acceptAgentCellEdit(cellId);
+                }}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 4,
+                  padding: '2px 8px',
+                  fontSize: '0.72rem',
+                  fontWeight: 500,
+                  color: '#15803d',
+                  background: '#f0fdf4',
+                  border: '1px solid #bbf7d0',
+                  borderRadius: 4,
+                  cursor: 'pointer',
+                  lineHeight: 1.4,
+                  transition: 'all 0.15s ease',
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.background = '#dcfce7';
+                  e.currentTarget.style.borderColor = '#86efac';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = '#f0fdf4';
+                  e.currentTarget.style.borderColor = '#bbf7d0';
+                }}
+                title="Accept proposed change (Ctrl+Enter)"
+              >
+                <Check size={11} />
+                <span>Accept</span>
+              </button>
+            </div>
+          )}
+
           <div className="notebook-editor-container" style={{ position: 'relative' }}>
             <div className="notebook-cell-editor">
               <ReactCodeMirror
@@ -317,8 +483,8 @@ export default function CodeCell({ cellId, cellIndex }: Props) {
                 extensions={extensions}
                 onChange={handleChange}
                 onFocus={handleFocus}
-                readOnly={isPending}
-                editable={!isPending}
+                readOnly={false}
+                editable={true}
                 theme={editorTheme}
                 basicSetup={{
                   lineNumbers: false,
@@ -329,26 +495,7 @@ export default function CodeCell({ cellId, cellIndex }: Props) {
                 }}
               />
             </div>
-          {cell.cellStatus === 'pending' && (
-            <div className="notebook-inline-diff-actions">
-              <button
-                type="button"
-                className="notebook-inline-reject"
-                onClick={() => useNotebookStore.getState().rejectAgentCellEdit(cell.id)}
-                title="Reject proposed changes"
-              >
-                Reject <kbd>Esc</kbd>
-              </button>
-              <button
-                type="button"
-                className="notebook-inline-accept"
-                onClick={() => useNotebookStore.getState().acceptAgentCellEdit(cell.id)}
-                title="Accept proposed changes"
-              >
-                Accept <kbd>CTRL</kbd>
-              </button>
-            </div>
-          )}
+          </div>
         </div>
         {cell.outputs.length > 0 && (
           <button
@@ -370,7 +517,6 @@ export default function CodeCell({ cellId, cellIndex }: Props) {
             <CellOutput outputs={cell.outputs} />
           </div>
         )}
-        </div>
       </div>
     </div>
   );

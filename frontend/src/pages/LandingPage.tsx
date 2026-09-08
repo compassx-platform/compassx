@@ -53,16 +53,18 @@ export default function LandingPage() {
   const workspace = useWorkspaceContext();
   const { data: me } = useMe();
 
+  const wsKey = workspace?.id || workspace?.slug || '';
+
   // Queries
   const { data: agents = [] } = useAgents();
   const { data: dashboards = [] } = useDashboards();
   const { data: jobs = [] } = useQuery({
-    queryKey: ['jobs'],
+    queryKey: ['jobs', wsKey],
     queryFn: () => jobsApi.listJobs(),
     staleTime: 30_000,
   });
   const { data: notebooksData } = useQuery({
-    queryKey: ['notebooks-list'],
+    queryKey: ['notebooks-list', wsKey],
     queryFn: async () => {
       try {
         const res = await api.get<{ notebooks: { path: string; name: string }[] }>('/notebook/list');
@@ -232,7 +234,7 @@ export default function LandingPage() {
     return list;
   }, [dashboards, jobs, agents, notebooks]);
 
-  // Filter items based on active tab
+  // Filter and sort items based on active tab
   const filteredItems = useMemo(() => {
     switch (activeTab) {
       case 'favorites':
@@ -246,11 +248,35 @@ export default function LandingPage() {
       case 'dashboards':
         return allItems.filter((item) => item.type === 'Dashboard');
       case 'recent':
+        // For recent, provide a reversed sequence or recent chronological ordering
+        return [...allItems].reverse();
       case 'suggested':
       default:
-        return allItems;
+        // For suggested, prioritize active agents, published dashboards, and jobs
+        return [...allItems].sort((a, b) => {
+          const scoreA = a.type === 'Agent' ? 4 : a.type === 'Dashboard' ? 3 : a.type === 'Job' ? 2 : 1;
+          const scoreB = b.type === 'Agent' ? 4 : b.type === 'Dashboard' ? 3 : b.type === 'Job' ? 2 : 1;
+          return scoreB - scoreA;
+        });
     }
   }, [allItems, activeTab, favorites]);
+
+  const getEmptyStateMessage = (tab: TabId) => {
+    switch (tab) {
+      case 'favorites':
+        return 'No favorites yet. Click the star icon on any workspace item to pin it here.';
+      case 'agents':
+        return 'No autonomous agents found. Create an agent to automate workflows.';
+      case 'jobs':
+        return 'No scheduled jobs found in this workspace.';
+      case 'notebooks':
+        return 'No Python notebooks found in this workspace.';
+      case 'dashboards':
+        return 'No BI dashboards created yet in this workspace.';
+      default:
+        return 'No items found in this section.';
+    }
+  };
 
   if (chatActive) {
     return (
@@ -311,6 +337,7 @@ export default function LandingPage() {
               className="landing-omnibar-submit-btn"
               onClick={handlePromptSubmit}
               disabled={!draft.trim()}
+              aria-label="Ask CompassX"
             >
               <span>Ask CompassX</span>
               <ExternalLink size={13} />
@@ -320,7 +347,7 @@ export default function LandingPage() {
       </section>
 
       {/* ── 3. Filter Tabs Row ────────────────────────────────────────────── */}
-      <div className="landing-tabs-row">
+      <div className="landing-tabs-row" role="tablist">
         {TABS.map((tab) => {
           const Icon = tab.icon;
           const isActive = activeTab === tab.id;
@@ -328,8 +355,13 @@ export default function LandingPage() {
             <button
               key={tab.id}
               type="button"
+              role="tab"
+              aria-selected={isActive}
               className={`landing-tab-btn ${isActive ? 'active' : ''}`}
-              onClick={() => setActiveTab(tab.id)}
+              onClick={() => {
+                setActiveTab(tab.id);
+                setLimit(8);
+              }}
             >
               <Icon size={14} />
               <span>{tab.label}</span>
@@ -391,7 +423,7 @@ export default function LandingPage() {
           </div>
         ) : (
           <div className="landing-empty-state">
-            <span>No items found in this tab.</span>
+            <span>{getEmptyStateMessage(activeTab)}</span>
           </div>
         )}
       </section>
@@ -404,7 +436,7 @@ export default function LandingPage() {
             className="landing-show-more-btn"
             onClick={() => setLimit((prev) => prev + 10)}
           >
-            Show more
+            Show more ({filteredItems.length - limit} remaining)
           </button>
         </div>
       )}

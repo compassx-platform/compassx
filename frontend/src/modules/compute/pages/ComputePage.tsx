@@ -50,15 +50,18 @@ export default function ComputePage() {
   }, []);
 
   useEffect(() => {
-    fetch('/api/v1/compute/health')
-      .then((r) => r.json())
+    computeApi.getHealth()
       .then((data) => {
         if (data.status !== 'ok') {
-          setK8sWarning(data.message || 'Kubernetes not connected. Start minikube.');
+          setK8sWarning(data.message || 'Compute infrastructure not connected.');
+        } else {
+          setK8sWarning(null);
         }
       })
-      .catch(() => {
-        setK8sWarning('Kubernetes not connected. Start minikube.');
+      .catch((err) => {
+        if (err.response?.status === 503 && err.response?.data?.message) {
+          setK8sWarning(err.response.data.message);
+        }
       });
 
     computeApi.getProfiles().then(setProfiles).catch(() => {});
@@ -67,7 +70,7 @@ export default function ComputePage() {
   const fetchResources = useCallback(async () => {
     try {
 
-      const list = await computeApi.listResources(currentUserId);
+      const list = await computeApi.listResources();
       setResources(list);
 
     } catch (e) {
@@ -108,7 +111,7 @@ export default function ComputePage() {
   const handleCreateResource = useCallback(async (data) => {
     try {
       setLoadingId('creating');
-      await computeApi.createResource(data, currentUserId, 'current-user');
+      await computeApi.createResource(data);
       await fetchResources();
       setShowCreateModal(false);
     } finally {
@@ -119,7 +122,7 @@ export default function ComputePage() {
   const handleStartResource = useCallback(async (resourceId) => {
     try {
       setLoadingId(resourceId);
-      await computeApi.startResource(resourceId, currentUserId);
+      await computeApi.startResource(resourceId);
       await fetchResources();
     } catch (e) {
       console.error('[ComputePage] start resource error:', e);
@@ -131,7 +134,7 @@ export default function ComputePage() {
   const handleStopResource = useCallback(async (resourceId) => {
     try {
       setLoadingId(resourceId);
-      await computeApi.stopResource(resourceId, currentUserId);
+      await computeApi.stopResource(resourceId);
       await fetchResources();
     } catch (e) {
       console.error('[ComputePage] stop resource error:', e);
@@ -143,7 +146,7 @@ export default function ComputePage() {
   const handleDeleteResource = useCallback(async (resourceId) => {
     try {
       setLoadingId(resourceId);
-      await computeApi.deleteResource(resourceId, currentUserId);
+      await computeApi.deleteResource(resourceId);
       await fetchResources();
     } catch (e) {
       console.error('[ComputePage] delete resource error:', e);

@@ -1,4 +1,14 @@
-"""API routes for LLM Call Inspector."""
+"""API routes for LLM Call Inspector.
+
+A call log is the whole of one model call: the system prompt, the message
+history, the tools offered, and the response. That is the transcript of an
+agent run in its rawest form, so it is governed by the agent — ``BROWSE``, the
+same privilege as reading the session it came from.
+
+The list endpoint filters rather than refusing, so a caller sees the calls made
+by the agents they may browse and nothing else. It previously returned every
+log in the workspace, plus every log with a null workspace, to anyone.
+"""
 
 from __future__ import annotations
 
@@ -7,8 +17,11 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.orm import Session
 
+from app.agents.routes._authz import authorized_agent
 from app.database import get_system_db as get_db
-from app.dependencies import get_current_user
+from app.governance.dependencies import Guard, get_guard
+from app.governance.privileges import Privilege
+from app.governance.securable import Securable
 from app.models.agents import Agent, ChatMessage
 from app.agents.models.agents import LlmCallLog
 from app.agents.schemas.llm_call import LlmCallLogListItemResponse, LlmCallLogDetailResponse
@@ -27,16 +40,15 @@ def list_llm_call_logs(
     limit: int = Query(50, ge=1, le=100),
     offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user),
+    guard: Guard = Depends(get_guard),
 ):
-    workspace_id = getattr(request.state, "workspace", None) and request.state.workspace.workspace_id
-    query = db.query(LlmCallLog)
-    if workspace_id:
-        query = query.filter((LlmCallLog.workspace_id == workspace_id) | (LlmCallLog.workspace_id.is_(None)))
-    else:
-        query = query.filter(LlmCallLog.workspace_id.is_(None))
+    query = db.query(LlmCallLog).filter(LlmCallLog.workspace_id == guard.workspace_id)
 
     if isinstance(agent_id, int):
+        # Named explicitly: refuse rather than silently return nothing, so the
+        # caller is told they lack access instead of believing the agent made
+        # no calls.
+        authorized_agent(db, guard, agent_id, Privilege.BROWSE)
         query = query.filter(LlmCallLog.agent_id == agent_id)
     if isinstance(session_id, int):
         query = query.filter(LlmCallLog.session_id == session_id)
@@ -48,6 +60,13 @@ def list_llm_call_logs(
         query = query.filter(LlmCallLog.created_at <= end_date)
 
     logs = query.order_by(LlmCallLog.created_at.desc()).offset(offset).limit(limit).all()
+
+    # Narrow to the agents the caller may browse. Done after the page is
+    # fetched rather than in SQL because visibility is computed from grants,
+    # not stored on the row; the page may therefore come back short.
+    logs = guard.filter(
+        Privilege.BROWSE, logs, lambda log: Securable.agent(str(log.agent_id))
+    )
 
     # Pre-load agents mapping to avoid N+1 queries
     agent_ids = {log.agent_id for log in logs}
@@ -98,19 +117,21 @@ def get_llm_call_log_detail(
     request: Request,
     call_id: int,
     db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user),
+    guard: Guard = Depends(get_guard),
 ):
-    workspace_id = getattr(request.state, "workspace", None) and request.state.workspace.workspace_id
-    query = db.query(LlmCallLog).filter(LlmCallLog.id == call_id)
-    if workspace_id:
-        query = query.filter((LlmCallLog.workspace_id == workspace_id) | (LlmCallLog.workspace_id.is_(None)))
-    else:
-        query = query.filter(LlmCallLog.workspace_id.is_(None))
-    log = query.first()
+    """Return one call in full: prompt, history, tools, and response."""
+    log = (
+        db.query(LlmCallLog)
+        .filter(
+            LlmCallLog.id == call_id,
+            LlmCallLog.workspace_id == guard.workspace_id,
+        )
+        .first()
+    )
     if not log:
         raise HTTPException(status_code=404, detail="LLM call log not found")
 
-    agent = db.query(Agent).filter(Agent.id == log.agent_id).first()
+    agent = authorized_agent(db, guard, log.agent_id, Privilege.BROWSE)
     agent_name = agent.name if agent else None
 
     # Resolve message history

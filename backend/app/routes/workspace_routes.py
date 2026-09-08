@@ -1,3 +1,3 @@
-from app.agents.routes.workspace_routes import _require_member, _require_role, router
+from app.workspace.workspace_routes import router
 
-__all__ = ["router", "_require_member", "_require_role"]
+__all__ = ["router"]

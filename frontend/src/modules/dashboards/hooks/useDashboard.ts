@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '@/lib/api';
+import { useWorkspaceContext } from '@/lib/workspaceContext';
 import type { Dashboard, DashboardMeta, Dataset } from '@/types/dashboard';
 
 // ── Keys ──────────────────────────────────────────────────────────────────────
@@ -14,8 +15,10 @@ const KEYS = {
 // ── List ──────────────────────────────────────────────────────────────────────
 
 export function useDashboards() {
+  const workspace = useWorkspaceContext();
+  const wsKey = workspace?.id || workspace?.slug || '';
   return useQuery<DashboardMeta[]>({
-    queryKey: KEYS.list,
+    queryKey: ['dashboards', wsKey],
     queryFn: async () => {
       const { data } = await api.get('/dashboards');
       return data;
@@ -60,6 +63,8 @@ export function useSaveDashboard() {
     },
     onSuccess: (d) => {
       qc.setQueryData(KEYS.detail(d.id), d);
+      qc.invalidateQueries({ queryKey: ['dataset-query'] });
+      qc.invalidateQueries({ queryKey: ['dataset-schema'] });
     },
   });
 }
@@ -76,6 +81,7 @@ export function usePublishDashboard() {
     onSuccess: (d) => {
       qc.setQueryData(KEYS.detail(d.id), d);
       qc.invalidateQueries({ queryKey: KEYS.list });
+      qc.invalidateQueries({ queryKey: ['dataset-query'] });
     },
   });
 }
@@ -91,6 +97,7 @@ export function useDiscardDraft() {
     },
     onSuccess: (d) => {
       qc.setQueryData(KEYS.detail(d.id), d);
+      qc.invalidateQueries({ queryKey: ['dataset-query'] });
     },
   });
 }
@@ -166,7 +173,7 @@ export function useDatasetQuery(
       const { data } = await api.post(`/dashboards/datasets/${datasetId}/query`, { params, filters, sql });
       return normalizeDatasetQueryResult(data);
     },
-    staleTime: 30_000,
+    staleTime: 0,
   });
 }
 
