@@ -5,6 +5,21 @@ All notable changes to the CompassX Platform will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.2] - 2026-09-08
+
+### 🚀 Highlights
+
+CompassX `0.7.2` introduces the full-stack **App Deployments & Live Build Logs Terminal**, dynamic **Kubernetes Dev Sandbox & Omnigent Integration** with hot-reloading and workspace sync, plus automated TLS and WebSocket-enabled Ingress routing for deployed user applications.
+
+### ✨ Features & Enhancements
+
+#### Apps Runtime & Omnigent Dev Sandbox
+- **Kubernetes Dev Sandbox**: Added dynamic dev sandbox pod provisioning integrating Omnigent Server with hot-reloading, Git workspace synchronization, and internal cluster IP routing.
+- **Dynamic Ingress & WebSocket Support**: Automated host routing, TLS certificate assignment, and WebSocket annotations for responsive real-time dev server sessions.
+- **Deployments & Build Logs Console**: Full-stack build history sidebar and real-time streaming terminal with log level filtering, auto-scroll, copy, and log export utilities.
+
+---
+
 ## [0.7.1] - 2026-09-07
 
 ### 🚀 Highlights

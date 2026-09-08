@@ -45,6 +45,22 @@ def build_omnigent_deployment(namespace: str, env: str, llm_env: dict = None) ->
     elif getattr(settings, "PG_HOST", None) and settings.PG_HOST != "localhost":
         db_url = f"postgresql://{settings.PG_USER}:{settings.PG_PASSWORD}@{settings.PG_HOST}:{settings.PG_PORT}/omnigent"
 
+    ws_origins = [
+        "http://localhost:6767",
+        "http://localhost:5173",
+        "http://localhost:8000",
+        "http://localhost:3000",
+    ]
+    if getattr(settings, "APP_BASE_DOMAIN", None):
+        base = settings.APP_BASE_DOMAIN
+        ws_origins.extend([
+            f"http://devstudio.{base}",
+            f"https://devstudio.{base}",
+            f"http://{base}",
+            f"https://{base}",
+        ])
+    ws_origins_str = ",".join(ws_origins)
+
     env_vars = [
         client.V1EnvVar(name="PORT", value="6767"),
         client.V1EnvVar(name="HOST", value="0.0.0.0"),
@@ -52,6 +68,7 @@ def build_omnigent_deployment(namespace: str, env: str, llm_env: dict = None) ->
         client.V1EnvVar(name="OMNIGENT_AUTH_PROVIDER", value="header"),
         client.V1EnvVar(name="OMNIGENT_LOCAL_SINGLE_USER", value="1"),
         client.V1EnvVar(name="ARTIFACT_DIR", value="/data/artifacts"),
+        client.V1EnvVar(name="OMNIGENT_WS_ALLOWED_ORIGINS", value=ws_origins_str),
     ]
 
     if llm_env:
@@ -165,10 +182,22 @@ def build_omnigent_ingress(namespace: str, env: str, host: str) -> client.V1Ingr
         ingress_class_name=settings.K8S_INGRESS_CLASS,
         rules=[rule_host, rule_universal],
     )
-    if settings.K8S_INGRESS_TLS_SECRET:
+    tls_secret = settings.K8S_INGRESS_TLS_SECRET or ("devstudio-tls" if settings.K8S_ENABLE_AUTO_TLS else "")
+    if tls_secret:
         ingress_spec.tls = [
-            client.V1IngressTLS(hosts=[host], secret_name=settings.K8S_INGRESS_TLS_SECRET)
+            client.V1IngressTLS(hosts=[host], secret_name=tls_secret)
         ]
+
+    annotations = {
+        "nginx.ingress.kubernetes.io/ssl-redirect": "false",
+        "nginx.ingress.kubernetes.io/proxy-read-timeout": "3600",
+        "nginx.ingress.kubernetes.io/proxy-send-timeout": "3600",
+        "nginx.ingress.kubernetes.io/websocket-services": omnigent_settings.OMNIGENT_CONTAINER_NAME,
+        "nginx.ingress.kubernetes.io/rewrite-target": "/$2",
+        "nginx.ingress.kubernetes.io/use-regex": "true",
+    }
+    if settings.K8S_INGRESS_CLUSTER_ISSUER:
+        annotations["cert-manager.io/cluster-issuer"] = settings.K8S_INGRESS_CLUSTER_ISSUER
 
     return client.V1Ingress(
         api_version="networking.k8s.io/v1",
@@ -177,14 +206,7 @@ def build_omnigent_ingress(namespace: str, env: str, host: str) -> client.V1Ingr
             name=f"{omnigent_settings.OMNIGENT_CONTAINER_NAME}-ingress",
             namespace=namespace,
             labels={"app": "compassx", "compassx/service": "omnigent-server"},
-            annotations={
-                "nginx.ingress.kubernetes.io/ssl-redirect": "false",
-                "nginx.ingress.kubernetes.io/proxy-read-timeout": "3600",
-                "nginx.ingress.kubernetes.io/proxy-send-timeout": "3600",
-                "nginx.ingress.kubernetes.io/websocket-services": omnigent_settings.OMNIGENT_CONTAINER_NAME,
-                "nginx.ingress.kubernetes.io/rewrite-target": "/$2",
-                "nginx.ingress.kubernetes.io/use-regex": "true",
-            },
+            annotations=annotations,
         ),
         spec=ingress_spec,
     )

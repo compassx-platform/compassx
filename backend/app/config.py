@@ -43,6 +43,8 @@ class Settings(BaseSettings):
     K8S_INGRESS_CLASS: str = "nginx"
     K8S_INGRESS_HOST: str = ""
     K8S_INGRESS_TLS_SECRET: str = ""
+    K8S_INGRESS_CLUSTER_ISSUER: str = "letsencrypt-prod"
+    K8S_ENABLE_AUTO_TLS: bool = True
     K8S_USE_HTTPS: bool = True
 
     # CORS

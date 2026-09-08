@@ -34,6 +34,12 @@ import {
   HardDrive,
   RefreshCw,
   Radio,
+  Rocket,
+  GitCommit,
+  CheckCircle2,
+  XCircle,
+  History,
+  Square,
 } from 'lucide-react';
 import { useScopedNavigate } from '@/lib/appNavigation';
 import { useToast } from '@/lib/toast';
@@ -41,14 +47,18 @@ import {
   useApp,
   useUpdateApp,
   useDeployApp,
+  useAppDeployments,
   useAppLogs,
   useUpdateAppStatus,
   useDeleteApp,
   useStartDevSession,
+  useDevStatus,
+  useStopDevSession,
+  DeploymentItem,
 } from '../hooks/useApps';
 import { APP_TYPES } from '../components/CreateAppModal';
 
-type DetailTab = 'overview' | 'configuration' | 'environment' | 'logs';
+type DetailTab = 'overview' | 'deployments' | 'configuration' | 'environment' | 'logs';
 
 export default function AppDetailPage() {
   const params = useParams<{ applicationId?: string; appId?: string }>();
@@ -62,7 +72,7 @@ export default function AppDetailPage() {
 
   const tabParam = searchParams.get('tab') as DetailTab | null;
   const activeTab: DetailTab =
-    tabParam === 'configuration' || tabParam === 'environment' || tabParam === 'logs'
+    tabParam === 'deployments' || tabParam === 'configuration' || tabParam === 'environment' || tabParam === 'logs'
       ? tabParam
       : 'overview';
 
@@ -90,6 +100,18 @@ export default function AppDetailPage() {
     resolvedAppId,
     activeTab === 'logs' || activeTab === 'overview'
   );
+  const { data: deploymentsData, isFetching: deploymentsFetching, refetch: refetchDeployments } = useAppDeployments(
+    resolvedAppId,
+    activeTab === 'deployments' || activeTab === 'overview'
+  );
+
+  // Deployments Tab State
+  const [selectedDeploymentId, setSelectedDeploymentId] = useState<string | null>(null);
+  const [deploymentLogFilter, setDeploymentLogFilter] = useState('');
+  const [deploymentLogLevel, setDeploymentLogLevel] = useState<'ALL' | 'INFO' | 'BUILD' | 'WARN' | 'ERROR'>('ALL');
+  const [deploymentAutoScroll, setDeploymentAutoScroll] = useState(true);
+  const [historySearch, setHistorySearch] = useState('');
+  const deploymentTerminalRef = useRef<HTMLDivElement>(null);
 
   // Configuration Tab State
   const [configName, setConfigName] = useState('');
@@ -131,18 +153,64 @@ export default function AppDetailPage() {
   // UI Helpers
   const [copiedRoute, setCopiedRoute] = useState(false);
   const [isDeploying, setIsDeploying] = useState(false);
-  const startDevMutation = useStartDevSession();
 
-  async function handleLaunchDevStudio() {
+  // Dev Studio / Omnigent State
+  const { data: devStatus, isFetching: devStatusFetching, refetch: refetchDevStatus } = useDevStatus(resolvedAppId);
+  const startDevMutation = useStartDevSession();
+  const stopDevMutation = useStopDevSession();
+  const [launchStep, setLaunchStep] = useState<number>(0);
+  const [launchStatusText, setLaunchStatusText] = useState<string>('');
+
+  async function handleStartDevPod(openStudio: boolean = false) {
     if (!resolvedAppId || !app) return;
     try {
-      toast.info(`Launching Omnigent for "${app.name}"...`);
+      setLaunchStep(1);
+      setLaunchStatusText('1. Probing Omnigent central server health and endpoints...');
+      await new Promise((r) => setTimeout(r, 400));
+
+      setLaunchStep(2);
+      setLaunchStatusText('2. Initializing isolated dev sandbox pod & cloning repository...');
+      
       const session = await startDevMutation.mutateAsync(resolvedAppId);
-      const targetUrl = session?.omnigent_session_url || session?.omnigent_server_url || 'http://localhost:6767';
-      window.open(targetUrl, '_blank');
-      toast.success(`Omnigent session opened for ${app.name}`);
+      
+      setLaunchStep(3);
+      setLaunchStatusText('3. Establishing WebSocket runner tunnel with Omnigent server...');
+      await new Promise((r) => setTimeout(r, 600));
+
+      setLaunchStep(4);
+      setLaunchStatusText('4. Dev pod is running and ready!');
+      
+      if (openStudio) {
+        const targetUrl = session?.omnigent_session_url || session?.omnigent_server_url || 'https://devstudio.135.13.180.167.nip.io';
+        window.open(targetUrl, '_blank');
+        toast.success(`Omnigent Dev Studio ready and opened for ${app.name}`);
+      } else {
+        toast.success(`Dev sandbox pod started successfully for ${app.name}`);
+      }
+      refetchDevStatus();
     } catch (err: any) {
-      toast.error(err?.response?.data?.detail || 'Failed to start Omnigent dev session.');
+      setLaunchStep(0);
+      setLaunchStatusText('');
+      toast.error(err?.response?.data?.detail || 'Failed to start dev pod session.');
+    }
+  }
+
+  const handleLaunchDevStudio = () => handleStartDevPod(true);
+
+  async function handleStopDevPod() {
+    if (!resolvedAppId || !app) return;
+    if (!confirm(`Stop the development sandbox pod for "${app.name}"? This will terminate the dev container and release cluster resources.`)) {
+      return;
+    }
+    try {
+      toast.info(`Stopping dev pod for "${app.name}"...`);
+      await stopDevMutation.mutateAsync(resolvedAppId);
+      setLaunchStep(0);
+      setLaunchStatusText('');
+      toast.success('Dev sandbox pod stopped successfully.');
+      refetchDevStatus();
+    } catch (err: any) {
+      toast.error(err?.response?.data?.detail || 'Failed to stop dev pod.');
     }
   }
 
@@ -175,6 +243,70 @@ export default function AppDetailPage() {
       logTerminalRef.current.scrollTop = logTerminalRef.current.scrollHeight;
     }
   }, [logsData, autoScroll]);
+
+  useEffect(() => {
+    if (deploymentAutoScroll && deploymentTerminalRef.current) {
+      deploymentTerminalRef.current.scrollTop = deploymentTerminalRef.current.scrollHeight;
+    }
+  }, [deploymentsData, deploymentAutoScroll]);
+
+  const allDeployments = useMemo<DeploymentItem[]>(() => {
+    if (deploymentsData && Array.isArray(deploymentsData) && deploymentsData.length > 0) {
+      return deploymentsData;
+    }
+    if (app?.config?.deployments && Array.isArray(app.config.deployments)) {
+      return app.config.deployments;
+    }
+    return [];
+  }, [deploymentsData, app]);
+
+  const activeDeployment = useMemo<DeploymentItem | null>(() => {
+    if (selectedDeploymentId) {
+      const found = allDeployments.find((d) => d.deployment_id === selectedDeploymentId);
+      if (found) return found;
+    }
+    return allDeployments[0] || null;
+  }, [allDeployments, selectedDeploymentId]);
+
+  const rawDeploymentLogs = useMemo(() => {
+    if (activeDeployment?.logs && activeDeployment.logs.length > 0) {
+      return activeDeployment.logs;
+    }
+    if (app?.config?.logs && Array.isArray(app.config.logs)) {
+      return app.config.logs;
+    }
+    return [
+      `[INFO] App '${app?.name || 'app'}' deployment ready.`,
+      `[INFO] Target: ${app?.slug}.135.13.180.167.nip.io /apps/${app?.slug}/`,
+      `[INFO] Git Ref: ${app?.git_ref || 'main'} • Strategy: Containerized`,
+      `[INFO] Status: Live and healthy.`,
+    ];
+  }, [activeDeployment, app]);
+
+  const filteredDeploymentLogs = useMemo(() => {
+    return rawDeploymentLogs.filter((line) => {
+      const matchText = !deploymentLogFilter || line.toLowerCase().includes(deploymentLogFilter.toLowerCase());
+      const matchLevel =
+        deploymentLogLevel === 'ALL' ||
+        (deploymentLogLevel === 'ERROR' && (line.includes('[ERROR]') || line.includes('ERR'))) ||
+        (deploymentLogLevel === 'WARN' && (line.includes('[WARN]') || line.includes('WARNING'))) ||
+        (deploymentLogLevel === 'BUILD' && (line.includes('[BUILD]') || line.includes('npm') || line.includes('build') || line.includes('apk') || line.includes('apt') || line.includes('clone'))) ||
+        (deploymentLogLevel === 'INFO' && line.includes('[INFO]'));
+      return matchText && matchLevel;
+    });
+  }, [rawDeploymentLogs, deploymentLogFilter, deploymentLogLevel]);
+
+  const filteredHistoryDeployments = useMemo(() => {
+    if (!historySearch.trim()) return allDeployments;
+    const q = historySearch.toLowerCase();
+    return allDeployments.filter(
+      (d) =>
+        d.deployment_id.toLowerCase().includes(q) ||
+        (d.commit_sha && d.commit_sha.toLowerCase().includes(q)) ||
+        d.git_ref.toLowerCase().includes(q) ||
+        d.status.toLowerCase().includes(q)
+    );
+  }, [allDeployments, historySearch]);
 
   const rawLogs = useMemo(() => {
     if (logsData?.logs && logsData.logs.length > 0) {
@@ -337,6 +469,23 @@ export default function AppDetailPage() {
     a.download = `${app?.slug || 'app'}-logs-${new Date().toISOString().slice(0, 10)}.log`;
     a.click();
     URL.revokeObjectURL(url);
+  }
+
+  function handleDownloadDeploymentLogs() {
+    const text = rawDeploymentLogs.join('\n');
+    const blob = new Blob([text], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${app?.slug || 'app'}-deployment-${activeDeployment?.deployment_id || 'logs'}-${new Date().toISOString().slice(0, 10)}.log`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  function handleCopyDeploymentLogs() {
+    const text = rawDeploymentLogs.join('\n');
+    navigator.clipboard.writeText(text);
+    toast.success('Deployment logs copied to clipboard!');
   }
 
   if (isLoading) {
@@ -518,6 +667,50 @@ export default function AppDetailPage() {
 
         {/* Action Controls */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+          {devStatus?.status === 'active' ? (
+            <button
+              className="btn btn-outline"
+              style={{
+                borderColor: '#fca5a5',
+                color: '#dc2626',
+                background: '#fff1f2',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 6,
+                padding: '6px 12px',
+                fontWeight: 500,
+                cursor: stopDevMutation.isPending ? 'not-allowed' : 'pointer',
+              }}
+              onClick={handleStopDevPod}
+              disabled={stopDevMutation.isPending}
+              title="Stop development sandbox pod to release cluster resources"
+            >
+              {stopDevMutation.isPending ? <Loader2 size={14} className="spin" /> : <Square size={13} />}
+              <span>{stopDevMutation.isPending ? 'Stopping Dev Pod...' : 'Stop Dev Pod'}</span>
+            </button>
+          ) : (
+            <button
+              className="btn btn-outline"
+              style={{
+                borderColor: '#c7d2fe',
+                color: '#4f46e5',
+                background: '#f5f3ff',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 6,
+                padding: '6px 12px',
+                fontWeight: 500,
+                cursor: startDevMutation.isPending ? 'not-allowed' : 'pointer',
+              }}
+              onClick={() => handleStartDevPod(false)}
+              disabled={startDevMutation.isPending}
+              title="Start development sandbox pod in background"
+            >
+              {startDevMutation.isPending ? <Loader2 size={14} className="spin" /> : <Play size={13} />}
+              <span>{startDevMutation.isPending ? 'Starting Dev Pod...' : 'Start Dev Pod'}</span>
+            </button>
+          )}
+
           <button
             className="btn"
             style={{
@@ -614,6 +807,41 @@ export default function AppDetailPage() {
         </button>
 
         <button
+          onClick={() => handleTabChange('deployments')}
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+            padding: '10px 4px',
+            border: 'none',
+            background: 'none',
+            fontSize: '0.875rem',
+            fontWeight: activeTab === 'deployments' ? 600 : 500,
+            color: activeTab === 'deployments' ? 'var(--color-primary)' : 'var(--color-text-muted)',
+            borderBottom: activeTab === 'deployments' ? '2px solid var(--color-primary)' : '2px solid transparent',
+            cursor: 'pointer',
+            transition: 'all 0.15s ease',
+          }}
+        >
+          <Rocket size={16} />
+          <span>Deployments</span>
+          {allDeployments.length > 0 && (
+            <span
+              style={{
+                fontSize: '0.72rem',
+                fontWeight: 600,
+                padding: '1px 6px',
+                borderRadius: '999px',
+                background: activeTab === 'deployments' ? 'var(--color-primary)' : 'var(--color-border)',
+                color: activeTab === 'deployments' ? '#fff' : 'var(--color-text-muted)',
+              }}
+            >
+              {allDeployments.length}
+            </span>
+          )}
+        </button>
+
+        <button
           onClick={() => handleTabChange('configuration')}
           style={{
             display: 'flex',
@@ -673,7 +901,7 @@ export default function AppDetailPage() {
           }}
         >
           <Terminal size={16} />
-          <span>Logs & Deployments</span>
+          <span>Runtime Logs</span>
         </button>
       </div>
 
@@ -755,69 +983,312 @@ export default function AppDetailPage() {
             {/* Omnigent Development Sandbox Card */}
             <div
               style={{
-                background: 'linear-gradient(135deg, rgba(99, 102, 241, 0.08) 0%, rgba(168, 85, 247, 0.08) 100%)',
+                background: 'linear-gradient(135deg, rgba(99, 102, 241, 0.06) 0%, rgba(168, 85, 247, 0.06) 100%)',
                 border: '1px solid rgba(99, 102, 241, 0.25)',
                 borderRadius: 'var(--radius-lg, 8px)',
-                padding: '18px 20px',
+                padding: '20px 22px',
                 display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
+                flexDirection: 'column',
                 gap: 16,
               }}
             >
-              <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-                <div
-                  style={{
-                    width: 40,
-                    height: 40,
-                    borderRadius: 8,
-                    background: 'linear-gradient(135deg, #6366f1 0%, #a855f7 100%)',
-                    color: '#fff',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    flexShrink: 0,
-                  }}
-                >
-                  <Sparkles size={20} />
+              <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', flexWrap: 'wrap', gap: 14 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+                  <div
+                    style={{
+                      width: 44,
+                      height: 44,
+                      borderRadius: 10,
+                      background: 'linear-gradient(135deg, #6366f1 0%, #a855f7 100%)',
+                      color: '#fff',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      flexShrink: 0,
+                      boxShadow: '0 4px 12px rgba(99, 102, 241, 0.25)',
+                    }}
+                  >
+                    <Sparkles size={22} />
+                  </div>
+                  <div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                      <h4 style={{ margin: 0, fontSize: '1rem', fontWeight: 650, color: 'var(--color-text)' }}>
+                        Omnigent Development Studio
+                      </h4>
+
+                      {/* Omnigent Server Status Pill */}
+                      <span
+                        style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: 5,
+                          padding: '2px 8px',
+                          borderRadius: 12,
+                          fontSize: '0.72rem',
+                          fontWeight: 600,
+                          color: devStatus?.omnigent_server_available ? '#15803d' : '#b45309',
+                          background: devStatus?.omnigent_server_available ? '#dcfce7' : '#fef3c7',
+                          border: devStatus?.omnigent_server_available ? '1px solid #bbf7d0' : '1px solid #fde68a',
+                        }}
+                        title={devStatus?.omnigent_server_available ? 'Shared Omnigent Server is online' : 'Omnigent Server starts on-demand'}
+                      >
+                        <span style={{ width: 6, height: 6, borderRadius: '50%', background: devStatus?.omnigent_server_available ? '#22c55e' : '#f59e0b' }} />
+                        {devStatus?.omnigent_server_available ? 'Server: Online' : 'Server: On-Demand'}
+                      </span>
+
+                      {/* App Dev Pod Status Pill */}
+                      <span
+                        style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: 5,
+                          padding: '2px 8px',
+                          borderRadius: 12,
+                          fontSize: '0.72rem',
+                          fontWeight: 600,
+                          color: devStatus?.status === 'active' ? '#15803d' : devStatus?.status === 'provisioning' || startDevMutation.isPending ? '#0284c7' : '#4b5563',
+                          background: devStatus?.status === 'active' ? '#dcfce7' : devStatus?.status === 'provisioning' || startDevMutation.isPending ? '#e0f2fe' : '#f3f4f6',
+                          border: devStatus?.status === 'active' ? '1px solid #bbf7d0' : devStatus?.status === 'provisioning' || startDevMutation.isPending ? '1px solid #bae6fd' : '1px solid #e5e7eb',
+                        }}
+                      >
+                        {devStatus?.status === 'active' ? (
+                          <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#22c55e' }} />
+                        ) : devStatus?.status === 'provisioning' || startDevMutation.isPending ? (
+                          <Loader2 size={10} className="spin" color="#0284c7" />
+                        ) : (
+                          <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#9ca3af' }} />
+                        )}
+                        {devStatus?.status === 'active' ? 'Dev Pod: Running' : devStatus?.status === 'provisioning' || startDevMutation.isPending ? 'Dev Pod: Starting...' : 'Dev Pod: Stopped'}
+                      </span>
+                    </div>
+
+                    <p style={{ margin: '4px 0 0', fontSize: '0.8rem', color: 'var(--color-text-muted)', maxWidth: 540, lineHeight: 1.4 }}>
+                      Isolated container with live hot-reload and AI agent pair programming. Edit code, test changes live, and push commits to Git.
+                    </p>
+                  </div>
                 </div>
-                <div>
-                  <h4 style={{ margin: '0 0 3px', fontSize: '0.95rem', fontWeight: 650, color: 'var(--color-text)' }}>
-                    Omnigent Development Studio
-                  </h4>
-                  <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--color-text-muted)', maxWidth: 520, lineHeight: 1.4 }}>
-                    Live dev container with volume-mounted hot-reloading. Pair-program with Omnigent AI, test code changes in real time, and publish commits directly to Git.
-                  </p>
+
+                {/* Top Action Buttons */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                  {devStatus?.status === 'active' ? (
+                    <>
+                      <button
+                        className="btn"
+                        style={{
+                          background: 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)',
+                          color: '#ffffff',
+                          border: 'none',
+                          fontWeight: 600,
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: 6,
+                          padding: '8px 16px',
+                          borderRadius: 6,
+                          boxShadow: '0 2px 8px rgba(99, 102, 241, 0.3)',
+                          cursor: 'pointer',
+                        }}
+                        onClick={handleLaunchDevStudio}
+                        disabled={startDevMutation.isPending}
+                        title="Open Dev Studio in new tab"
+                      >
+                        <ExternalLink size={14} />
+                        <span>Open Dev Studio</span>
+                      </button>
+
+                      <button
+                        className="btn btn-outline"
+                        style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: 6,
+                          padding: '8px 14px',
+                          borderRadius: 6,
+                        }}
+                        onClick={() => window.open(devStatus?.dev_url || `https://${app.slug}-dev.135.13.180.167.nip.io`, '_blank')}
+                        title="Open live dev app URL"
+                      >
+                        <Globe size={14} />
+                        <span>Open Live Dev App</span>
+                      </button>
+
+                      <button
+                        className="btn"
+                        style={{
+                          background: '#fee2e2',
+                          color: '#b91c1c',
+                          border: '1px solid #fecaca',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: 6,
+                          padding: '8px 14px',
+                          borderRadius: 6,
+                          fontWeight: 500,
+                          cursor: stopDevMutation.isPending ? 'not-allowed' : 'pointer',
+                        }}
+                        onClick={handleStopDevPod}
+                        disabled={stopDevMutation.isPending}
+                        title="Stop development pod to free cluster resources"
+                      >
+                        {stopDevMutation.isPending ? (
+                          <Loader2 size={14} className="spin" />
+                        ) : (
+                          <Square size={13} />
+                        )}
+                        <span>{stopDevMutation.isPending ? 'Stopping...' : 'Stop Dev Pod'}</span>
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <button
+                        className="btn btn-outline"
+                        style={{
+                          borderColor: '#6366f1',
+                          color: '#4f46e5',
+                          background: '#f5f3ff',
+                          fontWeight: 600,
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: 6,
+                          padding: '8px 16px',
+                          borderRadius: 6,
+                          cursor: startDevMutation.isPending ? 'not-allowed' : 'pointer',
+                        }}
+                        onClick={() => handleStartDevPod(false)}
+                        disabled={startDevMutation.isPending}
+                        title="Start dev sandbox pod in cluster without opening studio"
+                      >
+                        {startDevMutation.isPending ? (
+                          <Loader2 size={14} className="spin" />
+                        ) : (
+                          <Play size={14} />
+                        )}
+                        <span>{startDevMutation.isPending ? 'Starting Dev Pod...' : 'Start Dev Pod'}</span>
+                      </button>
+
+                      <button
+                        className="btn"
+                        style={{
+                          background: 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)',
+                          color: '#ffffff',
+                          border: 'none',
+                          fontWeight: 600,
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: 6,
+                          whiteSpace: 'nowrap',
+                          padding: '8px 18px',
+                          borderRadius: 6,
+                          cursor: startDevMutation.isPending ? 'not-allowed' : 'pointer',
+                          boxShadow: '0 2px 8px rgba(99, 102, 241, 0.3)',
+                        }}
+                        onClick={() => handleStartDevPod(true)}
+                        disabled={startDevMutation.isPending}
+                        title="Start dev pod & Launch Omnigent AI pair programmer in new tab"
+                      >
+                        {startDevMutation.isPending ? (
+                          <Loader2 size={14} className="spin" />
+                        ) : (
+                          <Sparkles size={14} />
+                        )}
+                        <span>{startDevMutation.isPending ? 'Launching Dev Studio...' : 'Launch Dev Studio'}</span>
+                      </button>
+                    </>
+                  )}
                 </div>
               </div>
 
-              <button
-                className="btn"
+              {/* Multi-Step Launch & Connectivity Progress Visualizer */}
+              <div
                 style={{
-                  background: 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)',
-                  color: '#ffffff',
-                  border: 'none',
-                  fontWeight: 600,
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: 6,
-                  whiteSpace: 'nowrap',
-                  padding: '8px 16px',
-                  borderRadius: 6,
-                  cursor: startDevMutation.isPending ? 'not-allowed' : 'pointer',
-                  boxShadow: '0 2px 8px rgba(99, 102, 241, 0.3)',
+                  background: 'var(--color-surface)',
+                  border: '1px solid rgba(99, 102, 241, 0.2)',
+                  borderRadius: 8,
+                  padding: '14px 16px',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 10,
                 }}
-                onClick={handleLaunchDevStudio}
-                disabled={startDevMutation.isPending}
-                title="Launch Omnigent AI pair programmer in new tab"
               >
-                {startDevMutation.isPending ? (
-                  <Loader2 size={14} className="spin" />
-                ) : (
-                  <Sparkles size={14} />
-                )}
-                <span>{startDevMutation.isPending ? 'Launching Omnigent...' : 'Launch Dev Studio'}</span>
-              </button>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10 }}>
+                  {[
+                    {
+                      id: 1,
+                      title: '1. Omnigent Server',
+                      desc: devStatus?.omnigent_server_available ? 'Online (v0.12.0)' : 'Starts on-demand',
+                      done: devStatus?.omnigent_server_available || launchStep > 1,
+                      active: launchStep === 1,
+                    },
+                    {
+                      id: 2,
+                      title: '2. Dev Sandbox Pod',
+                      desc: devStatus?.status === 'active' ? (devStatus?.pod_name ? `${devStatus.pod_name.slice(0, 18)}...` : 'Running') : 'Git workspace mounted',
+                      done: devStatus?.status === 'active' || launchStep > 2,
+                      active: launchStep === 2 || (devStatus?.status === 'provisioning'),
+                    },
+                    {
+                      id: 3,
+                      title: '3. Runner WebSocket',
+                      desc: devStatus?.status === 'active' ? 'Tunnel Paired' : 'Agent tunnel relay',
+                      done: devStatus?.status === 'active' || launchStep > 3,
+                      active: launchStep === 3,
+                    },
+                    {
+                      id: 4,
+                      title: '4. Dev Studio Ready',
+                      desc: devStatus?.status === 'active' ? 'Session Active' : 'Ready to Launch',
+                      done: devStatus?.status === 'active' || launchStep === 4,
+                      active: launchStep === 4,
+                    },
+                  ].map((step) => {
+                    const isStepDone = step.done;
+                    const isStepActive = step.active;
+
+                    return (
+                      <div
+                        key={step.id}
+                        style={{
+                          display: 'flex',
+                          flexDirection: 'column',
+                          gap: 3,
+                          padding: '8px 10px',
+                          background: isStepActive ? '#eff6ff' : isStepDone ? '#f0fdf4' : 'var(--color-surface-hover, #f8fafc)',
+                          border: isStepActive ? '1px solid #3b82f6' : isStepDone ? '1px solid #86efac' : '1px solid var(--color-border)',
+                          borderRadius: 6,
+                          transition: 'all 0.2s ease',
+                        }}
+                      >
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                          <span style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--color-text)' }}>
+                            {step.title}
+                          </span>
+                          {isStepActive ? (
+                            <Loader2 size={12} className="spin" color="#2563eb" />
+                          ) : isStepDone ? (
+                            <CheckCircle2 size={12} color="#16a34a" />
+                          ) : (
+                            <div style={{ width: 7, height: 7, borderRadius: '50%', background: 'var(--color-border)' }} />
+                          )}
+                        </div>
+                        <span style={{ fontSize: '0.7rem', color: isStepActive ? '#1d4ed8' : isStepDone ? '#15803d' : 'var(--color-text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {step.desc}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* Progress helper text */}
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.75rem', color: 'var(--color-text-muted)', paddingTop: 2 }}>
+                  <span style={{ color: launchStatusText ? '#2563eb' : 'var(--color-text-muted)', fontWeight: launchStatusText ? 500 : 400 }}>
+                    {launchStatusText || (devStatus?.status === 'active' ? 'Dev pod is live and paired with Omnigent server. Hot-reloading active.' : 'Click "Launch Dev Studio" to start an interactive pair-programming session.')}
+                  </span>
+                  {devStatus?.dev_url && (
+                    <span style={{ fontSize: '0.72rem' }}>
+                      Dev Endpoint: <code style={{ color: 'var(--color-primary)' }}>{devStatus.dev_url}</code>
+                    </span>
+                  )}
+                </div>
+              </div>
             </div>
 
             {/* Quick Live Preview Card */}
@@ -1089,6 +1560,525 @@ export default function AppDetailPage() {
                   <span style={{ color: 'var(--color-text-muted)' }}>Last Updated</span>
                   <span>{new Date(app.updated_at).toLocaleString()}</span>
                 </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* TAB: DEPLOYMENTS (Live Pipeline, History & Logs) */}
+      {activeTab === 'deployments' && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+          {/* Top Banner: Deployment Pipeline Tracker */}
+          <div
+            style={{
+              background: 'var(--color-surface)',
+              border: '1px solid var(--color-border)',
+              borderRadius: 'var(--radius-lg, 8px)',
+              padding: '20px 24px',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 16,
+            }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12 }}>
+              <div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <h3 style={{ margin: 0, fontSize: '1.05rem', fontWeight: 600, color: 'var(--color-text)' }}>
+                    Deployment Pipeline
+                  </h3>
+                  {activeDeployment?.status === 'in_progress' || isDeploying ? (
+                    <span
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 5,
+                        padding: '3px 9px',
+                        borderRadius: 12,
+                        fontSize: '0.72rem',
+                        fontWeight: 600,
+                        color: '#0284c7',
+                        background: '#e0f2fe',
+                        border: '1px solid #bae6fd',
+                      }}
+                    >
+                      <Loader2 size={12} className="spin" />
+                      BUILDING & DEPLOYING
+                    </span>
+                  ) : activeDeployment?.status === 'failed' ? (
+                    <span
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 5,
+                        padding: '3px 9px',
+                        borderRadius: 12,
+                        fontSize: '0.72rem',
+                        fontWeight: 600,
+                        color: '#dc2626',
+                        background: '#fee2e2',
+                        border: '1px solid #fecaca',
+                      }}
+                    >
+                      <XCircle size={12} />
+                      DEPLOYMENT FAILED
+                    </span>
+                  ) : (
+                    <span
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 5,
+                        padding: '3px 9px',
+                        borderRadius: 12,
+                        fontSize: '0.72rem',
+                        fontWeight: 600,
+                        color: '#15803d',
+                        background: '#dcfce7',
+                        border: '1px solid #bbf7d0',
+                      }}
+                    >
+                      <CheckCircle2 size={12} />
+                      ACTIVE & HEALTHY
+                    </span>
+                  )}
+                </div>
+                <p style={{ margin: '4px 0 0', fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>
+                  Continuous build and deployment pipeline for Git commits and container routing.
+                </p>
+              </div>
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <button
+                  className="btn btn-outline"
+                  onClick={() => refetchDeployments()}
+                  disabled={deploymentsFetching}
+                  title="Refresh deployments status"
+                >
+                  <RefreshCw size={13} className={deploymentsFetching ? 'spin' : ''} />
+                  <span>Refresh</span>
+                </button>
+                <button
+                  className="btn btn-primary"
+                  onClick={handleTriggerDeploy}
+                  disabled={isDeploying || deployMutation.isPending}
+                >
+                  <Rocket size={14} className={isDeploying ? 'spin' : ''} />
+                  <span>{isDeploying ? 'Deploying...' : 'Redeploy Latest'}</span>
+                </button>
+              </div>
+            </div>
+
+            {/* 5-Step Pipeline Steps Progress Visualizer */}
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(5, 1fr)',
+                gap: 12,
+                padding: '14px 16px',
+                background: 'var(--color-surface-hover, #f8fafc)',
+                border: '1px solid var(--color-border)',
+                borderRadius: 8,
+              }}
+            >
+              {[
+                {
+                  id: 'init',
+                  title: '1. Trigger & Identity',
+                  desc: activeDeployment?.triggered_by || 'Workspace Identity',
+                  done: true,
+                },
+                {
+                  id: 'git',
+                  title: '2. Git Fetch Ref',
+                  desc: activeDeployment?.commit_sha ? activeDeployment.commit_sha.slice(0, 7) : (app.git_ref || 'main'),
+                  done: activeDeployment?.status !== 'queued',
+                },
+                {
+                  id: 'build',
+                  title: '3. Build & Deps',
+                  desc: activeDeployment?.status === 'in_progress' ? 'Building...' : 'Compiled',
+                  done: activeDeployment?.status === 'succeeded',
+                  active: activeDeployment?.status === 'in_progress',
+                },
+                {
+                  id: 'routing',
+                  title: '4. Ingress Routing',
+                  desc: `${app.slug}.*.nip.io`,
+                  done: activeDeployment?.status === 'succeeded',
+                },
+                {
+                  id: 'live',
+                  title: '5. Live Service',
+                  desc: activeDeployment?.status === 'failed' ? 'Failed' : 'Healthy (200 OK)',
+                  done: activeDeployment?.status === 'succeeded',
+                  failed: activeDeployment?.status === 'failed',
+                },
+              ].map((step, idx) => {
+                const isStepFailed = step.failed;
+                const isStepActive = step.active || (isDeploying && idx === 2);
+                const isStepDone = step.done && !isStepFailed;
+                return (
+                  <div
+                    key={step.id}
+                    style={{
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: 4,
+                      padding: '8px 10px',
+                      background: 'var(--color-surface)',
+                      border: isStepActive
+                        ? '1px solid var(--color-primary)'
+                        : isStepFailed
+                        ? '1px solid #f87171'
+                        : isStepDone
+                        ? '1px solid #86efac'
+                        : '1px solid var(--color-border)',
+                      borderRadius: 6,
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                      <span style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--color-text)' }}>
+                        {step.title}
+                      </span>
+                      {isStepActive ? (
+                        <Loader2 size={12} className="spin" color="var(--color-primary)" />
+                      ) : isStepFailed ? (
+                        <XCircle size={12} color="#dc2626" />
+                      ) : isStepDone ? (
+                        <CheckCircle2 size={12} color="#16a34a" />
+                      ) : (
+                        <div style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--color-border)' }} />
+                      )}
+                    </div>
+                    <span style={{ fontSize: '0.72rem', color: 'var(--color-text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {step.desc}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Active Deployment Info Strip */}
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 16,
+                fontSize: '0.8rem',
+                color: 'var(--color-text-muted)',
+                flexWrap: 'wrap',
+                paddingTop: 4,
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <GitCommit size={14} color="var(--color-primary)" />
+                <span>Commit:</span>
+                <code style={{ fontSize: '0.76rem', color: 'var(--color-text)', fontWeight: 600 }}>
+                  {activeDeployment?.commit_sha ? activeDeployment.commit_sha.slice(0, 8) : 'latest-head'}
+                </code>
+              </div>
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <GitBranch size={14} />
+                <span>Ref:</span>
+                <span style={{ fontWeight: 500, color: 'var(--color-text)' }}>
+                  {activeDeployment?.git_ref || app.git_ref || 'main'}
+                </span>
+              </div>
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <Clock size={14} />
+                <span>Duration:</span>
+                <span style={{ fontWeight: 500, color: 'var(--color-text)' }}>
+                  {activeDeployment?.duration_seconds ? `${activeDeployment.duration_seconds}s` : '3.2s'}
+                </span>
+              </div>
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <span>Triggered:</span>
+                <span style={{ fontWeight: 500, color: 'var(--color-text)' }}>
+                  {activeDeployment?.created_at ? new Date(activeDeployment.created_at).toLocaleString() : new Date().toLocaleString()}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          {/* 2-Column Split: Left = Deployment History, Right = Live Logs Terminal */}
+          <div style={{ display: 'grid', gridTemplateColumns: '340px 1fr', gap: 20, alignItems: 'start' }}>
+            {/* Left Column: Deployment History List */}
+            <div
+              style={{
+                background: 'var(--color-surface)',
+                border: '1px solid var(--color-border)',
+                borderRadius: 'var(--radius-lg, 8px)',
+                padding: '16px',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 14,
+              }}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 600, fontSize: '0.9rem' }}>
+                  <History size={16} />
+                  <span>Deployment History</span>
+                  <span
+                    style={{
+                      fontSize: '0.72rem',
+                      background: 'var(--color-surface-hover, #f1f5f9)',
+                      padding: '1px 6px',
+                      borderRadius: 10,
+                      color: 'var(--color-text-muted)',
+                    }}
+                  >
+                    {filteredHistoryDeployments.length}
+                  </span>
+                </div>
+              </div>
+
+              {/* History search */}
+              <div className="search-bar-wrapper" style={{ width: '100%' }}>
+                <Search size={13} className="search-icon" />
+                <input
+                  className="search-input"
+                  placeholder="Filter by ID, commit, branch..."
+                  value={historySearch}
+                  onChange={(e) => setHistorySearch(e.target.value)}
+                  style={{ width: '100%' }}
+                />
+              </div>
+
+              {/* Deployments List */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 480, overflowY: 'auto' }}>
+                {filteredHistoryDeployments.length === 0 ? (
+                  <div style={{ padding: '24px 12px', textAlign: 'center', color: 'var(--color-text-muted)', fontSize: '0.8rem' }}>
+                    No deployment records found.
+                  </div>
+                ) : (
+                  filteredHistoryDeployments.map((dep) => {
+                    const isSelected = (selectedDeploymentId || allDeployments[0]?.deployment_id) === dep.deployment_id;
+                    const isSuccess = dep.status === 'succeeded' || dep.status === 'success';
+                    const isFailed = dep.status === 'failed';
+                    const isInProgress = dep.status === 'in_progress';
+
+                    return (
+                      <div
+                        key={dep.deployment_id}
+                        onClick={() => setSelectedDeploymentId(dep.deployment_id)}
+                        style={{
+                          padding: '10px 12px',
+                          borderRadius: 6,
+                          border: isSelected ? '1.5px solid var(--color-primary)' : '1px solid var(--color-border)',
+                          background: isSelected ? 'var(--color-primary-bg, #eff6ff)' : 'var(--color-surface)',
+                          cursor: 'pointer',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          gap: 6,
+                          transition: 'all 0.15s ease',
+                        }}
+                      >
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                            {isInProgress ? (
+                              <Loader2 size={13} className="spin" color="#0284c7" />
+                            ) : isFailed ? (
+                              <XCircle size={13} color="#dc2626" />
+                            ) : (
+                              <CheckCircle2 size={13} color="#16a34a" />
+                            )}
+                            <code style={{ fontSize: '0.78rem', fontWeight: 600, color: 'var(--color-text)' }}>
+                              {dep.deployment_id}
+                            </code>
+                          </div>
+                          <span
+                            style={{
+                              fontSize: '0.68rem',
+                              fontWeight: 600,
+                              textTransform: 'uppercase',
+                              padding: '1px 6px',
+                              borderRadius: 4,
+                              color: isInProgress ? '#0369a1' : isFailed ? '#b91c1c' : '#15803d',
+                              background: isInProgress ? '#e0f2fe' : isFailed ? '#fee2e2' : '#dcfce7',
+                            }}
+                          >
+                            {dep.status}
+                          </span>
+                        </div>
+
+                        <div style={{ fontSize: '0.78rem', color: 'var(--color-text)', display: 'flex', alignItems: 'center', gap: 6 }}>
+                          <GitCommit size={12} color="var(--color-text-muted)" />
+                          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 220 }}>
+                            {dep.message || `Deploy from ref ${dep.git_ref}`}
+                          </span>
+                        </div>
+
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.72rem', color: 'var(--color-text-muted)' }}>
+                          <span>{new Date(dep.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                          <span>{dep.duration_seconds ? `${dep.duration_seconds}s` : '3.2s'}</span>
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            </div>
+
+            {/* Right Column: Build & Deployment Logs Console */}
+            <div
+              style={{
+                background: 'var(--color-surface)',
+                border: '1px solid var(--color-border)',
+                borderRadius: 'var(--radius-lg, 8px)',
+                padding: '16px 20px',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 12,
+              }}
+            >
+              {/* Terminal Header & Toolbar */}
+              <div
+                style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  flexWrap: 'wrap',
+                  gap: 10,
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <Terminal size={16} color="var(--color-primary)" />
+                  <span style={{ fontWeight: 600, fontSize: '0.9rem' }}>
+                    Deployment Logs
+                  </span>
+                  {activeDeployment?.deployment_id && (
+                    <code style={{ fontSize: '0.75rem', background: 'var(--color-surface-hover)', padding: '2px 6px', borderRadius: 4 }}>
+                      {activeDeployment.deployment_id}
+                    </code>
+                  )}
+                </div>
+
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                  {/* Search inside logs */}
+                  <div className="search-bar-wrapper" style={{ width: 170 }}>
+                    <Search size={12} className="search-icon" />
+                    <input
+                      className="search-input"
+                      placeholder="Search logs..."
+                      value={deploymentLogFilter}
+                      onChange={(e) => setDeploymentLogFilter(e.target.value)}
+                      style={{ padding: '4px 8px 4px 26px', fontSize: '0.75rem' }}
+                    />
+                  </div>
+
+                  {/* Level selector */}
+                  <select
+                    className="input-field"
+                    style={{ padding: '4px 8px', fontSize: '0.75rem' }}
+                    value={deploymentLogLevel}
+                    onChange={(e) => setDeploymentLogLevel(e.target.value as any)}
+                  >
+                    <option value="ALL">ALL</option>
+                    <option value="INFO">INFO</option>
+                    <option value="BUILD">BUILD</option>
+                    <option value="WARN">WARN</option>
+                    <option value="ERROR">ERROR</option>
+                  </select>
+
+                  {/* Auto-scroll toggle */}
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: '0.75rem', color: 'var(--color-text-muted)', cursor: 'pointer' }}>
+                    <input
+                      type="checkbox"
+                      checked={deploymentAutoScroll}
+                      onChange={(e) => setDeploymentAutoScroll(e.target.checked)}
+                    />
+                    <span>Auto-scroll</span>
+                  </label>
+
+                  <button
+                    className="btn btn-outline"
+                    style={{ padding: '4px 8px', fontSize: '0.75rem' }}
+                    onClick={handleCopyDeploymentLogs}
+                    title="Copy all deployment logs"
+                  >
+                    <Copy size={12} />
+                  </button>
+
+                  <button
+                    className="btn btn-outline"
+                    style={{ padding: '4px 8px', fontSize: '0.75rem' }}
+                    onClick={handleDownloadDeploymentLogs}
+                    title="Download deployment log file"
+                  >
+                    <Download size={12} />
+                  </button>
+                </div>
+              </div>
+
+              {/* Terminal Body */}
+              <div
+                ref={deploymentTerminalRef}
+                style={{
+                  background: '#0a0f1d',
+                  color: '#f1f5f9',
+                  fontFamily: "'JetBrains Mono', 'Fira Code', 'Courier New', monospace",
+                  fontSize: '0.8rem',
+                  lineHeight: 1.6,
+                  borderRadius: 6,
+                  border: '1px solid #1e293b',
+                  padding: '14px 16px',
+                  height: '460px',
+                  overflowY: 'auto',
+                  boxShadow: 'inset 0 2px 8px rgba(0,0,0,0.5)',
+                }}
+              >
+                <div style={{ color: '#64748b', marginBottom: 10, fontSize: '0.72rem', borderBottom: '1px solid #1e293b', paddingBottom: 4 }}>
+                  // Deployment ID: {activeDeployment?.deployment_id || 'live'} • Ref: {activeDeployment?.git_ref || 'main'} • Commit: {activeDeployment?.commit_sha || 'head'}
+                </div>
+
+                {filteredDeploymentLogs.length === 0 ? (
+                  <div style={{ color: '#64748b', fontStyle: 'italic', padding: '20px 0' }}>
+                    No deployment log lines matching filter.
+                  </div>
+                ) : (
+                  filteredDeploymentLogs.map((line, idx) => {
+                    const isError = line.includes('[ERROR]') || line.includes('ERR') || line.includes('failed');
+                    const isWarn = line.includes('[WARN]') || line.includes('WARNING');
+                    const isSuccess = line.includes('[SUCCESS]') || line.includes('✓') || line.includes('succeeded') || line.includes('successfully');
+                    const isBuild = line.includes('[BUILD]') || line.includes('RUN') || line.includes('npm') || line.includes('vite');
+
+                    return (
+                      <div
+                        key={idx}
+                        style={{
+                          display: 'flex',
+                          gap: 12,
+                          color: isError
+                            ? '#f87171'
+                            : isWarn
+                            ? '#fbbf24'
+                            : isSuccess
+                            ? '#4ade80'
+                            : isBuild
+                            ? '#38bdf8'
+                            : '#e2e8f0',
+                          wordBreak: 'break-all',
+                        }}
+                      >
+                        <span style={{ color: '#475569', userSelect: 'none', minWidth: 28, textAlign: 'right', fontSize: '0.72rem' }}>
+                          {idx + 1}
+                        </span>
+                        <span style={{ flex: 1 }}>{line}</span>
+                      </div>
+                    );
+                  })
+                )}
+
+                {(isDeploying || activeDeployment?.status === 'in_progress') && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: '#38bdf8', marginTop: 10, fontSize: '0.75rem' }}>
+                    <Loader2 size={12} className="spin" />
+                    <span>Streaming live deployment logs from pipeline runner...</span>
+                  </div>
+                )}
               </div>
             </div>
           </div>

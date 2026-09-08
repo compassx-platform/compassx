@@ -306,6 +306,49 @@ def deploy_app(
     return AppDeployResponse(**deployment_record)
 
 
+@router.get("/{app_id}/deployments", response_model=List[AppDeployResponse])
+def get_app_deployments(
+    app_id: str,
+    db: Session = Depends(get_system_db),
+    guard: Guard = Depends(get_guard),
+):
+    """Retrieve historical deployment records for an application."""
+    app = db.query(App).filter(App.id == app_id).first()
+    if not app:
+        raise HTTPException(status_code=404, detail=f"App '{app_id}' not found.")
+
+    if guard.workspace_id and app.workspace_id != guard.workspace_id:
+        raise HTTPException(status_code=403, detail="Cannot access app from another workspace.")
+
+    cfg = dict(app.config or {})
+    deployments = cfg.get("deployments", [])
+    return [AppDeployResponse(**d) for d in deployments]
+
+
+@router.get("/{app_id}/deployments/{deployment_id}", response_model=AppDeployResponse)
+def get_app_deployment(
+    app_id: str,
+    deployment_id: str,
+    db: Session = Depends(get_system_db),
+    guard: Guard = Depends(get_guard),
+):
+    """Retrieve a specific deployment record by deployment ID."""
+    app = db.query(App).filter(App.id == app_id).first()
+    if not app:
+        raise HTTPException(status_code=404, detail=f"App '{app_id}' not found.")
+
+    if guard.workspace_id and app.workspace_id != guard.workspace_id:
+        raise HTTPException(status_code=403, detail="Cannot access app from another workspace.")
+
+    cfg = dict(app.config or {})
+    deployments = cfg.get("deployments", [])
+    for dep in deployments:
+        if dep.get("deployment_id") == deployment_id:
+            return AppDeployResponse(**dep)
+
+    raise HTTPException(status_code=404, detail=f"Deployment '{deployment_id}' not found.")
+
+
 @router.get("/{app_id}/logs", response_model=AppLogsResponse)
 def get_app_logs(
     app_id: str,

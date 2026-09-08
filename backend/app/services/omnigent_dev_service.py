@@ -358,23 +358,41 @@ class OmnigentDevService:
         return session_info
 
     def get_dev_session(self, app) -> Dict[str, Any]:
-        """Get current status of dev session."""
+        """Get current status of dev session and Omnigent server."""
         repo_dir = self.get_repo_dir(app)
         expected_host_id, expected_host_name = self.get_app_host_identity(app)
+        server_status = self.check_omnigent_server()
+        dev_driver = driver_factory.get_dev_driver()
+        dev_status = dev_driver.get_dev_status(app)
+
+        dev_url = ingress_service.get_app_dev_url(app, 9201)
+        sess_id = f"sess_omnigent_{app.id}"
+        session_url = ingress_service.get_omnigent_session_url(sess_id)
 
         if app.id in _DEV_SESSIONS:
             sess = _DEV_SESSIONS[app.id]
-            dev_driver = driver_factory.get_dev_driver(sess.get("mode"))
-            status = dev_driver.get_dev_status(app)
-            is_active = status.get("status") == "active"
-            sess["status"] = "active" if is_active else "stopped"
+            sess["status"] = dev_status.get("status", "inactive")
+            sess["omnigent_server_available"] = server_status.get("available", False)
+            sess["omnigent_server_url"] = server_status.get("server_url") or self.get_omnigent_server_url()
+            sess["omnigent_session_url"] = sess.get("omnigent_session_url") or session_url
+            sess["phase"] = dev_status.get("phase")
+            sess["pod_name"] = dev_status.get("pod_name")
             return sess
 
         return {
             "app_id": app.id,
-            "status": "inactive",
+            "status": dev_status.get("status", "inactive"),
+            "dev_url": dev_url,
             "repo_dir": repo_dir,
-            "omnigent_attached": False,
+            "omnigent_attached": dev_status.get("status") == "active",
+            "omnigent_server_available": server_status.get("available", False),
+            "omnigent_server_url": server_status.get("server_url") or self.get_omnigent_server_url(),
+            "omnigent_session_url": session_url,
+            "host_id": expected_host_id,
+            "host_name": expected_host_name,
+            "pod_name": dev_status.get("pod_name"),
+            "phase": dev_status.get("phase"),
+            "mode": dev_status.get("mode", "docker"),
         }
 
     def stop_dev_session(self, app) -> Dict[str, Any]:

@@ -88,24 +88,51 @@ class KubernetesAppDriver(BaseAppDriver):
         elif "streamlit" in app_type or "python" in app_type:
             image_tag = "python:3.11-slim"
             container_cmd = ["/bin/sh", "-c"]
+            subdir = (getattr(app, "git_subdir", "") or "").strip("/")
             run_cmd = (
                 f"apt-get update && apt-get install -y --no-install-recommends git curl && "
                 f"mkdir -p /app_src && cd /app_src && "
                 f"(git clone --branch '{git_ref}' '{auth_url}' . || git clone '{auth_url}' . || true) && "
+                f"APP_DIR='/app_src'; "
+                f"if [ -n '{subdir}' ] && [ -d '/app_src/{subdir}' ]; then APP_DIR='/app_src/{subdir}'; "
+                f"elif [ -d '/app_src/backend' ]; then APP_DIR='/app_src/backend'; "
+                f"fi; "
+                f"cd \"$APP_DIR\" && "
                 f"(if [ -f requirements.txt ]; then pip install --no-cache-dir -r requirements.txt; fi) && "
-                f"pip install --no-cache-dir streamlit && "
-                f"(if [ ! -f '{entrypoint}' ]; then echo \"import streamlit as st\\nst.set_page_config(page_title='{app.name}', layout='wide')\\nst.title('{app.name}')\\nst.success('Application running successfully on CompassX Platform.')\\nst.info('Deploy your custom Streamlit app by connecting your Git repository.')\" > '{entrypoint}'; fi) && "
-                f"exec streamlit run '{entrypoint}' --server.port=8080 --server.address=0.0.0.0 --server.headless=true"
+                f"(if [ -f app.py ] || [ -f main.py ] || [ -f '{entrypoint}' ]; then "
+                f"  if [ -f '{entrypoint}' ]; then TARGET='{entrypoint}'; elif [ -f app.py ]; then TARGET='app.py'; else TARGET='main.py'; fi; "
+                f"  if grep -q 'streamlit' \"$TARGET\" 2>/dev/null || [ '{app_type}' = 'streamlit' ]; then "
+                f"    pip install --no-cache-dir streamlit && exec streamlit run \"$TARGET\" --server.port=8080 --server.address=0.0.0.0 --server.headless=true; "
+                f"  elif grep -q 'FastAPI' \"$TARGET\" 2>/dev/null || grep -q 'fastapi' \"$TARGET\" 2>/dev/null; then "
+                f"    pip install --no-cache-dir uvicorn fastapi && exec uvicorn ${{TARGET%.py}}:app --host 0.0.0.0 --port 8080; "
+                f"  else "
+                f"    exec python \"$TARGET\"; "
+                f"  fi; "
+                f"else "
+                f"  pip install --no-cache-dir streamlit && "
+                f"  echo \"import streamlit as st\\nst.set_page_config(page_title='{app.name}', layout='wide')\\nst.title('{app.name}')\\nst.success('Application running successfully on CompassX Platform.')\" > '{entrypoint}' && "
+                f"  exec streamlit run '{entrypoint}' --server.port=8080 --server.address=0.0.0.0 --server.headless=true; "
+                f"fi)"
             )
             container_args = [run_cmd]
-        elif "node" in app_type or "next" in app_type or "vite" in app_type:
+        elif "node" in app_type or "next" in app_type or "vite" in app_type or "custom" in app_type or "web" in app_type or "react" in app_type:
             image_tag = "node:20-alpine"
             container_cmd = ["/bin/sh", "-c"]
+            subdir = (getattr(app, "git_subdir", "") or "").strip("/")
             run_cmd = (
                 f"apk add --no-cache git && "
                 f"mkdir -p /app_src && cd /app_src && "
                 f"(git clone --branch '{git_ref}' '{auth_url}' . || git clone '{auth_url}' . || true) && "
-                f"(if [ -f package.json ]; then npm install && npm run build --if-present && exec npm start -- -p 8080; else echo '<!DOCTYPE html><html><body><h1>{app.name}</h1><p>Running on CompassX</p></body></html>' > index.html && npx serve -l 8080 .; fi)"
+                f"APP_DIR='/app_src'; "
+                f"if [ -n '{subdir}' ] && [ -d '/app_src/{subdir}' ]; then APP_DIR='/app_src/{subdir}'; "
+                f"elif [ ! -f '/app_src/package.json' ] && [ -d '/app_src/frontend' ] && [ -f '/app_src/frontend/package.json' ]; then APP_DIR='/app_src/frontend'; "
+                f"elif [ ! -f '/app_src/package.json' ] && [ -d '/app_src/web' ] && [ -f '/app_src/web/package.json' ]; then APP_DIR='/app_src/web'; "
+                f"elif [ ! -f '/app_src/package.json' ] && [ -d '/app_src/client' ] && [ -f '/app_src/client/package.json' ]; then APP_DIR='/app_src/client'; "
+                f"fi; "
+                f"cd \"$APP_DIR\" && "
+                f"(if [ -f package.json ]; then npm install && npm run build --if-present && (npm start -- -p 8080 || ( [ -d dist ] && npx --yes serve -l 8080 dist ) || ( [ -d build ] && npx --yes serve -l 8080 build ) || ( [ -d out ] && npx --yes serve -l 8080 out ) || npx --yes serve -l 8080 .); "
+                f"elif [ -f index.html ]; then npx --yes serve -l 8080 .; "
+                f"else echo '<!DOCTYPE html><html><body><h1>{app.name}</h1><p>Running on CompassX</p></body></html>' > index.html && npx --yes serve -l 8080 .; fi)"
             )
             container_args = [run_cmd]
         else:
@@ -192,10 +219,22 @@ class KubernetesAppDriver(BaseAppDriver):
             ingress_class_name=settings.K8S_INGRESS_CLASS,
             rules=ingress_rules,
         )
-        if settings.K8S_INGRESS_TLS_SECRET:
+        tls_secret = settings.K8S_INGRESS_TLS_SECRET or (f"{app.slug}-tls" if settings.K8S_ENABLE_AUTO_TLS else "")
+        if tls_secret:
             ingress_spec.tls = [
-                client.V1IngressTLS(hosts=[subdomain], secret_name=settings.K8S_INGRESS_TLS_SECRET)
+                client.V1IngressTLS(hosts=[subdomain], secret_name=tls_secret)
             ]
+
+        prod_annotations = {
+            "nginx.ingress.kubernetes.io/ssl-redirect": "false",
+            "nginx.ingress.kubernetes.io/force-ssl-redirect": "false",
+            "nginx.ingress.kubernetes.io/proxy-read-timeout": "3600",
+            "nginx.ingress.kubernetes.io/proxy-send-timeout": "3600",
+            "nginx.ingress.kubernetes.io/rewrite-target": "/$2",
+            "nginx.ingress.kubernetes.io/use-regex": "true",
+        }
+        if settings.K8S_INGRESS_CLUSTER_ISSUER:
+            prod_annotations["cert-manager.io/cluster-issuer"] = settings.K8S_INGRESS_CLUSTER_ISSUER
 
         ingress = client.V1Ingress(
             api_version="networking.k8s.io/v1",
@@ -204,14 +243,7 @@ class KubernetesAppDriver(BaseAppDriver):
                 name=f"{name}-ingress",
                 namespace=ns,
                 labels=labels,
-                annotations={
-                    "nginx.ingress.kubernetes.io/ssl-redirect": "false",
-                    "nginx.ingress.kubernetes.io/force-ssl-redirect": "false",
-                    "nginx.ingress.kubernetes.io/proxy-read-timeout": "3600",
-                    "nginx.ingress.kubernetes.io/proxy-send-timeout": "3600",
-                    "nginx.ingress.kubernetes.io/rewrite-target": "/$2",
-                    "nginx.ingress.kubernetes.io/use-regex": "true",
-                },
+                annotations=prod_annotations,
             ),
             spec=ingress_spec,
         )
@@ -355,13 +387,42 @@ class KubernetesDevDriver(BaseDevDriver):
         if k8s:
             try:
                 # 1. Dev Pod
+                git_url = getattr(app, "git_repo_url", None)
+                git_token = None
+                if hasattr(app, "git_pat_enc") and app.git_pat_enc:
+                    try:
+                        from app.services.encryption import decrypt_field
+                        git_token = decrypt_field(app.git_pat_enc)
+                    except Exception:
+                        pass
+                auth_url = git_url
+                if git_token and git_url and "github.com" in git_url and not ("@" in git_url.split("//")[-1]):
+                    auth_url = git_url.replace("https://", f"https://x-access-token:{git_token}@")
+                git_ref = getattr(app, "git_ref", None) or getattr(app, "git_branch", None) or "main"
+
+                clone_snippet = ""
+                if auth_url:
+                    clone_snippet = (
+                        f"if [ ! -d .git ]; then "
+                        f"(git clone --branch '{git_ref}' '{auth_url}' . || git clone '{auth_url}' . || true); "
+                        f"fi; "
+                        f"if [ -d frontend ] && [ ! -d frontend/dist ]; then "
+                        f"(cd frontend && npm install && npm run build) || true; "
+                        f"fi; "
+                    )
+
                 dev_cmd = (
                     f"mkdir -p /root/.omnigent && printf 'host:\\n  host_id: {host_id}\\n  name: \"{host_name}\"\\n' > /root/.omnigent/config.yaml; "
                     f"export OMNIGENT_HOST_ID={host_id} OMNIGENT_HOST_NAME=\"{host_name}\" "
                     f"NODE_TLS_REJECT_UNAUTHORIZED=0 NPM_CONFIG_STRICT_SSL=false PYTHONHTTPSVERIFY=0 GIT_SSL_NO_VERIFY=true CURL_INSECURE=1; "
-                    f"omnigent host --server {omnigent_internal_url} --background --non-interactive || true; "
-                    f"mkdir -p /app && cd /app && echo '<!DOCTYPE html><html><body><h1>Dev Sandbox for {app.name}</h1><p>Connected to Omnigent Dev Studio</p></body></html>' > index.html && "
-                    f"npx serve -l 8080 . || python -m http.server 8080"
+                    f"(which opencode >/dev/null 2>&1 || npm install -g opencode-ai@1.18.0 || true); "
+                    f"mkdir -p /app && cd /app && "
+                    f"{clone_snippet}"
+                    f"if [ ! -f index.html ] && [ ! -d frontend ]; then echo '<!DOCTYPE html><html><head><title>Dev Sandbox for {app.name}</title></head><body style=\"font-family:sans-serif;padding:2rem;\"><h1>Dev Sandbox for {app.name}</h1><p style=\"color:green;font-weight:bold;\">Connected to Omnigent Dev Studio</p></body></html>' > index.html; fi; "
+                    f"SERVE_DIR=\"/app\"; "
+                    f"if [ -d /app/frontend/dist ]; then SERVE_DIR=\"/app/frontend/dist\"; elif [ -d /app/frontend ]; then SERVE_DIR=\"/app/frontend\"; fi; "
+                    f"(python3 -m http.server 8080 --directory \"$SERVE_DIR\" || python -m http.server 8080 || npx --yes serve -l 8080 \"$SERVE_DIR\") & "
+                    f"exec omnigent host --server {omnigent_internal_url} --non-interactive"
                 )
                 pod = client.V1Pod(
                     api_version="v1",
@@ -386,8 +447,8 @@ class KubernetesDevDriver(BaseDevDriver):
                                     client.V1EnvVar(name="OMNIGENT_SERVER_URL", value=str(omnigent_internal_url)),
                                 ],
                                 resources=client.V1ResourceRequirements(
-                                    requests={"cpu": "50m", "memory": "128Mi"},
-                                    limits={"cpu": "500m", "memory": "512Mi"},
+                                    requests={"cpu": "100m", "memory": "256Mi"},
+                                    limits={"cpu": "1", "memory": "2Gi"},
                                 ),
                             )
                         ],
@@ -420,6 +481,20 @@ class KubernetesDevDriver(BaseDevDriver):
                         raise
 
                 # 3. Dev Ingress with Dual Routing
+                dev_tls_secret = settings.K8S_INGRESS_TLS_SECRET or (f"{app.slug}-dev-tls" if settings.K8S_ENABLE_AUTO_TLS else "")
+                dev_tls = [client.V1IngressTLS(hosts=[dev_subdomain], secret_name=dev_tls_secret)] if dev_tls_secret else None
+
+                dev_annotations = {
+                    "nginx.ingress.kubernetes.io/ssl-redirect": "false",
+                    "nginx.ingress.kubernetes.io/force-ssl-redirect": "false",
+                    "nginx.ingress.kubernetes.io/proxy-read-timeout": "3600",
+                    "nginx.ingress.kubernetes.io/proxy-send-timeout": "3600",
+                    "nginx.ingress.kubernetes.io/rewrite-target": "/$2",
+                    "nginx.ingress.kubernetes.io/use-regex": "true",
+                }
+                if settings.K8S_INGRESS_CLUSTER_ISSUER:
+                    dev_annotations["cert-manager.io/cluster-issuer"] = settings.K8S_INGRESS_CLUSTER_ISSUER
+
                 dev_ingress = client.V1Ingress(
                     api_version="networking.k8s.io/v1",
                     kind="Ingress",
@@ -427,17 +502,11 @@ class KubernetesDevDriver(BaseDevDriver):
                         name=f"{dev_name}-ingress",
                         namespace=ns,
                         labels=labels,
-                        annotations={
-                            "nginx.ingress.kubernetes.io/ssl-redirect": "false",
-                            "nginx.ingress.kubernetes.io/force-ssl-redirect": "false",
-                            "nginx.ingress.kubernetes.io/proxy-read-timeout": "3600",
-                            "nginx.ingress.kubernetes.io/proxy-send-timeout": "3600",
-                            "nginx.ingress.kubernetes.io/rewrite-target": "/$2",
-                            "nginx.ingress.kubernetes.io/use-regex": "true",
-                        },
+                        annotations=dev_annotations,
                     ),
                     spec=client.V1IngressSpec(
                         ingress_class_name=settings.K8S_INGRESS_CLASS,
+                        tls=dev_tls,
                         rules=[
                             client.V1IngressRule(
                                 host=dev_subdomain,
@@ -512,7 +581,23 @@ class KubernetesDevDriver(BaseDevDriver):
     def get_dev_status(self, app) -> Dict[str, Any]:
         clean_id = re.sub(r"[^a-z0-9-]", "-", app.id.lower()).strip("-")
         dev_name = f"compassx-app-dev-{clean_id}"
-        return {"status": "active", "pod_name": dev_name, "mode": "kubernetes"}
+        k8s = self._get_k8s_client()
+        if k8s:
+            try:
+                pod = k8s.core().read_namespaced_pod(name=dev_name, namespace=settings.K8S_NAMESPACE)
+                phase = pod.status.phase if pod.status else "Unknown"
+                is_running = phase == "Running"
+                is_pending = phase == "Pending"
+                return {
+                    "status": "active" if is_running else "provisioning" if is_pending else "stopped",
+                    "pod_name": dev_name,
+                    "mode": "kubernetes",
+                    "phase": phase,
+                    "pod_ip": pod.status.pod_ip if pod.status else None,
+                }
+            except Exception:
+                return {"status": "inactive", "pod_name": dev_name, "mode": "kubernetes"}
+        return {"status": "inactive", "pod_name": dev_name, "mode": "kubernetes"}
 
     def get_dev_url(self, app) -> str:
         return ingress_service.get_app_dev_url(app)

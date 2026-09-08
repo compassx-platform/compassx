@@ -119,6 +119,19 @@ export function useUpdateApp() {
   });
 }
 
+export interface DeploymentItem {
+  deployment_id: string;
+  app_id: string;
+  status: 'success' | 'failed' | 'building' | 'pending' | string;
+  commit_sha?: string;
+  git_ref: string;
+  message?: string;
+  duration_seconds?: number;
+  triggered_by?: string;
+  created_at: string;
+  logs: string[];
+}
+
 export function useDeployApp() {
   const qc = useQueryClient();
   const workspace = useWorkspaceContext();
@@ -126,14 +139,28 @@ export function useDeployApp() {
 
   return useMutation({
     mutationFn: async (appId: string) => {
-      const res = await api.post(`/apps/${appId}/deploy`);
+      const res = await api.post<DeploymentItem>(`/apps/${appId}/deploy`);
       return res.data;
     },
     onSuccess: (_, appId) => {
       qc.invalidateQueries({ queryKey: ['app-detail', appId] });
+      qc.invalidateQueries({ queryKey: ['app-deployments', appId] });
       qc.invalidateQueries({ queryKey: ['app-logs', appId] });
       qc.invalidateQueries({ queryKey: ['apps-list', wsId] });
     },
+  });
+}
+
+export function useAppDeployments(appId?: string, enabled = true) {
+  return useQuery({
+    queryKey: ['app-deployments', appId],
+    queryFn: async () => {
+      if (!appId) throw new Error('App ID required');
+      const res = await api.get<DeploymentItem[]>(`/apps/${appId}/deployments`);
+      return res.data;
+    },
+    enabled: !!appId && enabled,
+    refetchInterval: enabled ? 5000 : false,
   });
 }
 
@@ -189,24 +216,27 @@ export function useDeleteApp() {
 
 export interface DevSessionStatus {
   app_id: string;
-  status: 'active' | 'inactive' | 'stopped';
-  mode?: 'docker' | 'local';
+  status: 'active' | 'provisioning' | 'stopped' | 'inactive' | string;
+  mode?: 'docker' | 'kubernetes' | 'local' | string;
   container_id?: string;
   container_name?: string;
+  pod_name?: string;
+  phase?: string;
   dev_port?: number;
   dev_url?: string;
   repo_dir?: string;
   omnigent_attached?: boolean;
+  omnigent_server_available?: boolean;
   omnigent_server_url?: string;
   omnigent_server_connected?: boolean;
   omnigent_session_id?: string;
   omnigent_session_url?: string;
   host_id?: string;
+  host_name?: string;
   host_online?: boolean;
   workspace?: string;
   started_at?: string;
 }
-
 
 export function useDevStatus(appId?: string, enabled = true) {
   return useQuery({
@@ -217,7 +247,10 @@ export function useDevStatus(appId?: string, enabled = true) {
       return res.data;
     },
     enabled: !!appId && enabled,
-    refetchInterval: (query) => (query.state.data?.status === 'active' ? 5000 : false),
+    refetchInterval: (query) => {
+      const st = query.state.data?.status;
+      return st === 'active' || st === 'provisioning' ? 4000 : 8000;
+    },
   });
 }
 
