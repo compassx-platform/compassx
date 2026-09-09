@@ -26,6 +26,7 @@ services:
   enterprise-gateway: { mode: docker }
   prometheus: { mode: docker }
   omnigent-server: { mode: docker }
+  mlflow: { mode: docker }
 
 compute:
   # Driver used by the Runtime Manager for user runtimes in this profile.

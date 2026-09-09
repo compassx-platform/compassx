@@ -4,6 +4,7 @@ CREATE DATABASE compassx_system;
 CREATE DATABASE airflow_meta;
 CREATE DATABASE test;
 CREATE DATABASE omnigent;
+CREATE DATABASE mlflow;
 
 \c compassx_account;
 CREATE EXTENSION IF NOT EXISTS vector;
