@@ -1030,7 +1030,7 @@ def _build_gemini_tool_content(message: dict, tool_call_names: dict[str, str], t
     tool_name = tool_call_names.get(tool_call_id, "tool")
     response_payload = _build_gemini_tool_response(message.get("content"))
     return types_module.Content(
-        role="tool",
+        role="user",
         parts=[
             types_module.Part.from_function_response(
                 name=tool_name,
