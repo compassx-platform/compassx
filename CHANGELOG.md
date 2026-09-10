@@ -5,6 +5,36 @@ All notable changes to the CompassX Platform will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0] - 2026-09-10
+
+### 🚀 Highlights
+
+CompassX `0.8.0` delivers major platform expansions including **End-to-End Dev Workspace Management in Omnigent**, native **MLflow Tool Integration & Platform Connections**, baked MLflow notebook kernel runtimes, and critical Gemini LLM function-calling compatibility.
+
+### ✨ Features & Enhancements
+
+#### Omnigent Dev Workspace Management
+- **Multi-Workspace Lifecycle**: Full support for creating, listing, and deleting isolated development workspaces per application with dedicated database persistence (`DevWorkspace` model and Alembic migration `0006_dev_workspaces.py`).
+- **Kubernetes & Docker Dev Drivers**: Enhanced dev sandbox container management with unique workspace IDs, dynamic session handling, and robust resource allocation.
+- **Frontend App Dev Studio**: Integrated workspace lifecycle controls directly into `AppDetailPage` with intuitive workspace cards, loading indicators, and delete confirmation dialogs.
+
+#### MLflow Integration & MLOps Tooling
+- **Platform Tool & Connection Provider**: Added `MlflowTool` for experiment tracking, run logging, metric/parameter queries, and model registry management via direct asynchronous REST API dispatch.
+- **Catalog Connections**: Added MLflow tracking connection provider in the Catalog Connections registry.
+- **Frontend Agent Tool Catalog**: Registered `mlflow` in the agent tool registry for agent capability assignment.
+- **Notebook Runtime Support**: Baked `mlflow` into the DuckDB kernel image (`Dockerfile.compute-duckdb`) for zero-setup experiment tracking directly in interactive notebooks.
+- **Docker Compose Stack**: Integrated MLflow tracking server container backed by PostgreSQL and MinIO object storage.
+
+### 🧹 Bug Fixes & Improvements
+
+#### LLM Client
+- **Gemini Tool Call Formatting**: Corrected tool result message role from `tool` to `user`, resolving 400 INVALID_ARGUMENT errors in Gemini agent function execution loops.
+
+#### Multi-Architecture Local Development
+- **ARM64 / Apple Silicon Support**: Configured local build fallbacks for auxiliary services (`enterprise-gateway`, `airflow-notebook-runner`) in `local-dev` profile to eliminate platform architecture incompatibilities.
+
+---
+
 ## [0.7.2] - 2026-09-08
 
 ### 🚀 Highlights
