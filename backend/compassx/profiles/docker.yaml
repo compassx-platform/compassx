@@ -16,6 +16,7 @@ services:
   jupyter-server: { mode: docker }
   prometheus: { mode: docker }
   omnigent-server: { mode: docker }
+  mlflow: { mode: docker }
 
 compute:
   driver: docker

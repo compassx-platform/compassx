@@ -24,6 +24,7 @@ from app.catalog.connections.providers.observability_providers import (
     LokiProvider,
     PrometheusProvider,
 )
+from app.catalog.connections.providers.ml_providers import MlflowProvider
 
 logger = logging.getLogger(__name__)
 
@@ -83,6 +84,9 @@ registry.register(CustomWebhookProvider())
 # Register Observability providers
 registry.register(LokiProvider())
 registry.register(PrometheusProvider())
+
+# Register ML platform providers
+registry.register(MlflowProvider())
 
 
 def get_provider(type_id: str) -> BaseConnectionProvider:

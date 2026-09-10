@@ -233,6 +233,55 @@ services:
       retries: 12
       start_period: 20s
 
+  mlflow-init:
+    image: minio/mc:latest
+    profiles:
+      - mlflow
+      - on-demand
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: /bin/sh
+    command:
+      - -c
+      - |
+        mc alias set local http://minio:9000 minioadmin minioadmin &&
+        mc mb --ignore-existing local/mlflow-artifacts
+    restart: "no"
+
+  mlflow:
+    image: ghcr.io/mlflow/mlflow:v3.16.0
+    profiles:
+      - mlflow
+      - on-demand
+    command:
+      - mlflow
+      - server
+      - --host=0.0.0.0
+      - --port=5000
+      - --backend-store-uri=postgresql://postgres:postgres@postgres:5432/mlflow
+      - --artifacts-destination=s3://mlflow-artifacts
+      - --serve-artifacts
+      - --allowed-hosts=mlflow,mlflow:5000,localhost:5555
+    environment:
+      MLFLOW_S3_ENDPOINT_URL: http://minio:9000
+      AWS_ACCESS_KEY_ID: minioadmin
+      AWS_SECRET_ACCESS_KEY: minioadmin
+      AWS_DEFAULT_REGION: us-east-1
+    ports:
+      - "5555:5000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mlflow-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:5000/health', timeout=3)\" || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
 volumes:
   postgres-data:
   redis-data:
