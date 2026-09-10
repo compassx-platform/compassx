@@ -8,7 +8,7 @@ import logging
 from datetime import datetime, timezone
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, status
 from sqlalchemy.orm import Session
 
 from app.database import get_system_db
@@ -248,6 +248,7 @@ def delete_app(
 @router.post("/{app_id}/deploy", response_model=AppDeployResponse)
 def deploy_app(
     app_id: str,
+    background_tasks: BackgroundTasks,
     runner_mode: Optional[str] = Query(None, description="Execution target mode: docker | local"),
     db: Session = Depends(get_system_db),
     guard: Guard = Depends(get_guard),
@@ -268,7 +269,7 @@ def deploy_app(
         runner_res = app_runner_service.deploy_app(app, runner_mode=runner_mode)
         runtime_info = runner_res["runtime_info"]
         logs = runner_res["build_logs"]
-        deploy_status = "success"
+        deploy_status = "in_progress" if runtime_info.get("mode") == "kubernetes" else "success"
     except Exception as e:
         logger.exception("App deployment failed for %s: %s", app.name, e)
         logs = [f"[ERROR] Deployment failed: {str(e)}"]
@@ -296,12 +297,16 @@ def deploy_app(
     cfg["runtime"] = runtime_info
 
     app.config = cfg
-    app.status = "active" if deploy_status == "success" else "error"
+    app.status = "active" if deploy_status in ("success", "in_progress") else "error"
     db.commit()
     db.refresh(app)
 
-    if deploy_status != "success":
+    if deploy_status == "failed":
         raise HTTPException(status_code=500, detail=f"Deployment failed: {runtime_info.get('error')}")
+
+    # Dispatch background worker to capture and isolate container build logs
+    if runtime_info.get("mode") == "kubernetes":
+        background_tasks.add_task(app_runner_service.capture_deployment_build_logs, app.id, deployment_id)
 
     return AppDeployResponse(**deployment_record)
 

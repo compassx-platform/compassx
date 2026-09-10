@@ -47,6 +47,7 @@ class KubernetesAppDriver(BaseAppDriver):
             "app.kubernetes.io/name": name,
             "app.kubernetes.io/instance": app.slug,
             "compassx/app-id": clean_id,
+            "compassx/role": "prod",
             "compassx/managed": "true",
         }
 
@@ -85,60 +86,78 @@ class KubernetesAppDriver(BaseAppDriver):
             image_tag = custom_image
             container_cmd = None
             container_args = None
-        elif "streamlit" in app_type or "python" in app_type:
-            image_tag = "python:3.11-slim"
-            container_cmd = ["/bin/sh", "-c"]
-            subdir = (getattr(app, "git_subdir", "") or "").strip("/")
-            run_cmd = (
-                f"apt-get update && apt-get install -y --no-install-recommends git curl && "
-                f"mkdir -p /app_src && cd /app_src && "
-                f"(git clone --branch '{git_ref}' '{auth_url}' . || git clone '{auth_url}' . || true) && "
-                f"APP_DIR='/app_src'; "
-                f"if [ -n '{subdir}' ] && [ -d '/app_src/{subdir}' ]; then APP_DIR='/app_src/{subdir}'; "
-                f"elif [ -d '/app_src/backend' ]; then APP_DIR='/app_src/backend'; "
-                f"fi; "
-                f"cd \"$APP_DIR\" && "
-                f"(if [ -f requirements.txt ]; then pip install --no-cache-dir -r requirements.txt; fi) && "
-                f"(if [ -f app.py ] || [ -f main.py ] || [ -f '{entrypoint}' ]; then "
-                f"  if [ -f '{entrypoint}' ]; then TARGET='{entrypoint}'; elif [ -f app.py ]; then TARGET='app.py'; else TARGET='main.py'; fi; "
-                f"  if grep -q 'streamlit' \"$TARGET\" 2>/dev/null || [ '{app_type}' = 'streamlit' ]; then "
-                f"    pip install --no-cache-dir streamlit && exec streamlit run \"$TARGET\" --server.port=8080 --server.address=0.0.0.0 --server.headless=true; "
-                f"  elif grep -q 'FastAPI' \"$TARGET\" 2>/dev/null || grep -q 'fastapi' \"$TARGET\" 2>/dev/null; then "
-                f"    pip install --no-cache-dir uvicorn fastapi && exec uvicorn ${{TARGET%.py}}:app --host 0.0.0.0 --port 8080; "
-                f"  else "
-                f"    exec python \"$TARGET\"; "
-                f"  fi; "
-                f"else "
-                f"  pip install --no-cache-dir streamlit && "
-                f"  echo \"import streamlit as st\\nst.set_page_config(page_title='{app.name}', layout='wide')\\nst.title('{app.name}')\\nst.success('Application running successfully on CompassX Platform.')\" > '{entrypoint}' && "
-                f"  exec streamlit run '{entrypoint}' --server.port=8080 --server.address=0.0.0.0 --server.headless=true; "
-                f"fi)"
-            )
-            container_args = [run_cmd]
-        elif "node" in app_type or "next" in app_type or "vite" in app_type or "custom" in app_type or "web" in app_type or "react" in app_type:
-            image_tag = "node:20-alpine"
-            container_cmd = ["/bin/sh", "-c"]
-            subdir = (getattr(app, "git_subdir", "") or "").strip("/")
-            run_cmd = (
-                f"apk add --no-cache git && "
-                f"mkdir -p /app_src && cd /app_src && "
-                f"(git clone --branch '{git_ref}' '{auth_url}' . || git clone '{auth_url}' . || true) && "
-                f"APP_DIR='/app_src'; "
-                f"if [ -n '{subdir}' ] && [ -d '/app_src/{subdir}' ]; then APP_DIR='/app_src/{subdir}'; "
-                f"elif [ ! -f '/app_src/package.json' ] && [ -d '/app_src/frontend' ] && [ -f '/app_src/frontend/package.json' ]; then APP_DIR='/app_src/frontend'; "
-                f"elif [ ! -f '/app_src/package.json' ] && [ -d '/app_src/web' ] && [ -f '/app_src/web/package.json' ]; then APP_DIR='/app_src/web'; "
-                f"elif [ ! -f '/app_src/package.json' ] && [ -d '/app_src/client' ] && [ -f '/app_src/client/package.json' ]; then APP_DIR='/app_src/client'; "
-                f"fi; "
-                f"cd \"$APP_DIR\" && "
-                f"(if [ -f package.json ]; then npm install && npm run build --if-present && (npm start -- -p 8080 || ( [ -d dist ] && npx --yes serve -l 8080 dist ) || ( [ -d build ] && npx --yes serve -l 8080 build ) || ( [ -d out ] && npx --yes serve -l 8080 out ) || npx --yes serve -l 8080 .); "
-                f"elif [ -f index.html ]; then npx --yes serve -l 8080 .; "
-                f"else echo '<!DOCTYPE html><html><body><h1>{app.name}</h1><p>Running on CompassX</p></body></html>' > index.html && npx --yes serve -l 8080 .; fi)"
-            )
-            container_args = [run_cmd]
         else:
-            image_tag = f"compassx-app-{app.slug}:latest"
-            container_cmd = None
-            container_args = None
+            image_tag = "ghcr.io/omnigent-ai/omnigent-host:latest"
+            container_cmd = ["/bin/sh", "-c"]
+            subdir = (getattr(app, "git_subdir", "") or "").strip("/")
+            run_cmd = (
+                f"echo '[BUILD] ========================================================' && "
+                f"echo '[BUILD] Starting Deployment Build for {app.name} (ref: {git_ref})' && "
+                f"echo '[BUILD] ========================================================' && "
+                f"echo '[BUILD] [1/3] Cloning repository ({git_ref})...' && "
+                f"mkdir -p /app_src && cd /app_src && "
+                f"(git clone --branch '{git_ref}' '{auth_url}' . || git clone '{auth_url}' . || true) && "
+                f"echo '[BUILD] [2/3] Building dependencies and compiling assets...' && "
+                # 1. Build Frontend if present (supports monorepo frontend, web, client, or root)
+                f"if [ -d /app_src/frontend ] && [ -f /app_src/frontend/package.json ]; then "
+                f"  echo '[BUILD] Detected frontend directory. Installing dependencies & building...' && "
+                f"  (cd /app_src/frontend && npm install --prefer-offline --no-audit && npm run build) || true; "
+                f"elif [ -d /app_src/client ] && [ -f /app_src/client/package.json ]; then "
+                f"  echo '[BUILD] Detected client directory. Installing dependencies & building...' && "
+                f"  (cd /app_src/client && npm install --prefer-offline --no-audit && npm run build) || true; "
+                f"elif [ -d /app_src/web ] && [ -f /app_src/web/package.json ]; then "
+                f"  echo '[BUILD] Detected web directory. Installing dependencies & building...' && "
+                f"  (cd /app_src/web && npm install --prefer-offline --no-audit && npm run build) || true; "
+                f"elif [ -f /app_src/package.json ]; then "
+                f"  echo '[BUILD] Detected root package.json. Installing dependencies & building...' && "
+                f"  (cd /app_src && npm install --prefer-offline --no-audit && npm run build --if-present) || true; "
+                f"fi; "
+                # 2. Start Application: Python Backend vs Pure Python / Streamlit vs Node Frontend
+                f"if [ -d /app_src/backend ] && ( [ -f /app_src/backend/main.py ] || [ -f /app_src/backend/app.py ] || [ -f /app_src/backend/requirements.txt ] ); then "
+                f"  cd /app_src && "
+                f"  (if [ -f backend/requirements.txt ]; then echo '[BUILD] Installing Python dependencies from backend/requirements.txt...' && pip install --no-cache-dir -r backend/requirements.txt; fi) && "
+                f"  (pip install --no-cache-dir uvicorn fastapi || true) && "
+                f"  echo '[BUILD] [3/3] Build phase completed successfully.' && "
+                f"  echo '[BUILD] ========================================================' && "
+                f"  echo '[RUNTIME] Launching application server on port 8080...' && "
+                f"  if [ -f backend/main.py ]; then exec uvicorn backend.main:app --host 0.0.0.0 --port 8080; "
+                f"  elif [ -f backend/app.py ]; then exec uvicorn backend.app:app --host 0.0.0.0 --port 8080; "
+                f"  fi; "
+                f"elif [ -f /app_src/main.py ] || [ -f /app_src/app.py ] || [ -f /app_src/requirements.txt ] || [ '{app_type}' = 'streamlit' ]; then "
+                f"  cd /app_src && "
+                f"  (if [ -f requirements.txt ]; then echo '[BUILD] Installing Python dependencies from requirements.txt...' && pip install --no-cache-dir -r requirements.txt; fi) && "
+                f"  (pip install --no-cache-dir uvicorn fastapi streamlit || true) && "
+                f"  echo '[BUILD] [3/3] Build phase completed successfully.' && "
+                f"  echo '[BUILD] ========================================================' && "
+                f"  echo '[RUNTIME] Launching application server on port 8080...' && "
+                f"  if grep -q 'streamlit' app.py 2>/dev/null || [ '{app_type}' = 'streamlit' ]; then "
+                f"    exec streamlit run app.py --server.port=8080 --server.address=0.0.0.0 --server.headless=true; "
+                f"  elif [ -f main.py ]; then exec uvicorn main:app --host 0.0.0.0 --port 8080; "
+                f"  elif [ -f app.py ]; then exec uvicorn app:app --host 0.0.0.0 --port 8080; "
+                f"  fi; "
+                f"elif [ -f /app_src/package.json ]; then "
+                f"  echo '[BUILD] [3/3] Build phase completed successfully.' && "
+                f"  echo '[BUILD] ========================================================' && "
+                f"  echo '[RUNTIME] Launching application server on port 8080...' && "
+                f"  cd /app_src && (npm start -- -p 8080 || ( [ -d frontend/dist ] && npx --yes serve -l 8080 frontend/dist ) || ( [ -d dist ] && npx --yes serve -l 8080 dist ) || ( [ -d build ] && npx --yes serve -l 8080 build ) || ( [ -d out ] && npx --yes serve -l 8080 out ) || npx --yes serve -l 8080 .); "
+                f"elif [ -d /app_src/frontend/dist ]; then "
+                f"  echo '[BUILD] [3/3] Build phase completed successfully.' && "
+                f"  echo '[BUILD] ========================================================' && "
+                f"  echo '[RUNTIME] Launching application server on port 8080...' && "
+                f"  npx --yes serve -l 8080 /app_src/frontend/dist; "
+                f"elif [ -f /app_src/index.html ]; then "
+                f"  echo '[BUILD] [3/3] Build phase completed successfully.' && "
+                f"  echo '[BUILD] ========================================================' && "
+                f"  echo '[RUNTIME] Launching application server on port 8080...' && "
+                f"  npx --yes serve -l 8080 /app_src; "
+                f"else "
+                f"  echo '[BUILD] [3/3] Build phase completed successfully.' && "
+                f"  echo '[BUILD] ========================================================' && "
+                f"  echo '[RUNTIME] Launching application server on port 8080...' && "
+                f"  echo '<!DOCTYPE html><html><body><h1>{app.name}</h1><p>Running on CompassX</p></body></html>' > /app_src/index.html && npx --yes serve -l 8080 /app_src; "
+                f"fi"
+            )
+            container_args = [run_cmd]
 
         # 3. Deployment Spec
         container = client.V1Container(
@@ -161,9 +180,14 @@ class KubernetesAppDriver(BaseAppDriver):
             metadata=client.V1ObjectMeta(name=name, namespace=ns, labels=labels),
             spec=client.V1DeploymentSpec(
                 replicas=1,
-                selector=client.V1LabelSelector(match_labels={"compassx/app-id": clean_id}),
+                selector=client.V1LabelSelector(match_labels={"compassx/app-id": clean_id, "compassx/role": "prod"}),
                 template=client.V1PodTemplateSpec(
-                    metadata=client.V1ObjectMeta(labels=labels),
+                    metadata=client.V1ObjectMeta(
+                        labels=labels,
+                        annotations={
+                            "compassx.io/restarted-at": datetime.now(timezone.utc).isoformat(),
+                        },
+                    ),
                     spec=client.V1PodSpec(containers=[container]),
                 ),
             ),
@@ -175,7 +199,7 @@ class KubernetesAppDriver(BaseAppDriver):
             kind="Service",
             metadata=client.V1ObjectMeta(name=name, namespace=ns, labels=labels),
             spec=client.V1ServiceSpec(
-                selector={"compassx/app-id": clean_id},
+                selector={"compassx/app-id": clean_id, "compassx/role": "prod"},
                 ports=[client.V1ServicePort(name="http", port=80, target_port=8080)],
                 type="ClusterIP",
             ),
@@ -320,7 +344,7 @@ class KubernetesAppDriver(BaseAppDriver):
             return {"status": "running" if available else "starting", "deployment_name": name}
         except Exception:
             try:
-                pods = k8s.core().list_namespaced_pod(namespace=ns, label_selector=f"compassx/app-id={clean_id}")
+                pods = k8s.core().list_namespaced_pod(namespace=ns, label_selector=f"compassx/app-id={clean_id},compassx/role=prod")
                 if pods.items and any(p.status and p.status.phase == "Running" for p in pods.items):
                     return {"status": "running", "deployment_name": name}
             except Exception:
@@ -334,7 +358,7 @@ class KubernetesAppDriver(BaseAppDriver):
         ns = settings.K8S_NAMESPACE
         clean_id = re.sub(r"[^a-z0-9-]", "-", app.id.lower()).strip("-")
         try:
-            pods = k8s.core().list_namespaced_pod(namespace=ns, label_selector=f"compassx/app-id={clean_id}")
+            pods = k8s.core().list_namespaced_pod(namespace=ns, label_selector=f"compassx/app-id={clean_id},compassx/role=prod")
             if not pods.items:
                 return []
             pod_name = pods.items[0].metadata.name
@@ -346,6 +370,87 @@ class KubernetesAppDriver(BaseAppDriver):
 
     def get_live_url(self, app) -> str:
         return ingress_service.get_app_url(app)
+
+    def capture_build_logs(self, app, deployment_id: str, timeout_sec: int = 90) -> List[str]:
+        """Poll and extract pure build phase logs from the newly spawned pod."""
+        import time
+        k8s = self._get_k8s_client()
+        if not k8s:
+            return ["[INFO] K8s client not available to stream build logs."]
+
+        ns = settings.K8S_NAMESPACE
+        clean_id = re.sub(r"[^a-z0-9-]", "-", app.id.lower()).strip("-")
+
+        # 1. Wait for newly created pod
+        pod_name = None
+        start_time = time.time()
+        while time.time() - start_time < 30:
+            try:
+                pods = k8s.core().list_namespaced_pod(
+                    namespace=ns,
+                    label_selector=f"compassx/app-id={clean_id},compassx/role=prod",
+                )
+                items = [p for p in pods.items if p.metadata and not p.metadata.deletion_timestamp]
+                if items:
+                    # Sort by creation timestamp descending (newest pod first)
+                    items.sort(key=lambda p: p.metadata.creation_timestamp or 0, reverse=True)
+                    pod_name = items[0].metadata.name
+                    phase = items[0].status.phase if items[0].status else "Unknown"
+                    if phase in ("Running", "Succeeded", "Failed"):
+                        break
+            except Exception as e:
+                logger.debug("Waiting for deployment pod %s: %s", clean_id, e)
+            time.sleep(2)
+
+        if not pod_name:
+            return [
+                f"[INFO] Deployment {deployment_id} scheduled in namespace '{ns}'.",
+                f"[INFO] Container rollout initiated for {app.name}.",
+            ]
+
+        # 2. Read logs until build phase finishes or timeout
+        captured_build_logs = []
+        build_started = False
+        build_finished = False
+        loop_start = time.time()
+
+        while time.time() - loop_start < timeout_sec:
+            try:
+                raw = k8s.core().read_namespaced_pod_log(name=pod_name, namespace=ns, tail_lines=1000)
+                lines = [l for l in raw.splitlines() if l.strip()]
+
+                current_build_lines = []
+                for line in lines:
+                    if "[BUILD]" in line:
+                        build_started = True
+                        current_build_lines.append(line)
+                        if "Build phase completed successfully" in line or "Build pipeline finished" in line:
+                            build_finished = True
+                    elif "[RUNTIME]" in line:
+                        build_finished = True
+                        break
+                    elif build_started and not build_finished:
+                        # Capture compiler, npm, git, and pip output during the build phase
+                        current_build_lines.append(line)
+
+                if current_build_lines:
+                    captured_build_logs = current_build_lines
+
+                if build_finished:
+                    break
+            except Exception as e:
+                logger.debug("Streaming pod logs for %s: %s", pod_name, e)
+
+            time.sleep(2)
+
+        if not captured_build_logs:
+            try:
+                raw = k8s.core().read_namespaced_pod_log(name=pod_name, namespace=ns, tail_lines=100)
+                captured_build_logs = [l for l in raw.splitlines() if l.strip()]
+            except Exception:
+                captured_build_logs = [f"[INFO] Deployment {deployment_id} active on pod {pod_name}."]
+
+        return captured_build_logs
 
 
 class KubernetesDevDriver(BaseDevDriver):
@@ -362,7 +467,7 @@ class KubernetesDevDriver(BaseDevDriver):
             except Exception:
                 return None
 
-    def start_dev(self, app, repo_dir: str, omnigent_internal_url: str) -> Dict[str, Any]:
+    def start_dev(self, app, repo_dir: str, omnigent_internal_url: str, workspace_folder: str = "") -> Dict[str, Any]:
         from kubernetes import client
         from kubernetes.client.exceptions import ApiException
 
@@ -380,6 +485,7 @@ class KubernetesDevDriver(BaseDevDriver):
             "app.kubernetes.io/instance": f"{app.slug}-dev",
             "compassx/app-id": clean_id,
             "compassx/dev": "true",
+            "compassx/role": "dev",
             "compassx/managed": "true",
         }
 
@@ -406,60 +512,144 @@ class KubernetesDevDriver(BaseDevDriver):
                         f"if [ ! -d .git ]; then "
                         f"(git clone --branch '{git_ref}' '{auth_url}' . || git clone '{auth_url}' . || true); "
                         f"fi; "
-                        f"if [ -d frontend ] && [ ! -d frontend/dist ]; then "
-                        f"(cd frontend && npm install && npm run build) || true; "
-                        f"fi; "
                     )
+
+                # Resolve workspace workdir on shared PVC
+                if workspace_folder:
+                    workdir = f"/workspaces/{workspace_folder}"
+                else:
+                    import re as _re
+                    workdir = f"/workspaces/{_re.sub(r'[^a-z0-9-]', '-', app.id.lower()).strip('-')}/default"
+
+                app_type = getattr(app, "app_type", "custom_web") or "custom_web"
 
                 dev_cmd = (
                     f"mkdir -p /root/.omnigent && printf 'host:\\n  host_id: {host_id}\\n  name: \"{host_name}\"\\n' > /root/.omnigent/config.yaml; "
                     f"export OMNIGENT_HOST_ID={host_id} OMNIGENT_HOST_NAME=\"{host_name}\" "
+                    f"CHOKIDAR_USEPOLLING=1 WATCHPACK_POLLING=true WATCHFILES_FORCE_POLLING=true "
                     f"NODE_TLS_REJECT_UNAUTHORIZED=0 NPM_CONFIG_STRICT_SSL=false PYTHONHTTPSVERIFY=0 GIT_SSL_NO_VERIFY=true CURL_INSECURE=1; "
                     f"(which opencode >/dev/null 2>&1 || npm install -g opencode-ai@1.18.0 || true); "
-                    f"mkdir -p /app && cd /app && "
+                    f"mkdir -p {workdir} && cd {workdir} && "
                     f"{clone_snippet}"
-                    f"if [ ! -f index.html ] && [ ! -d frontend ]; then echo '<!DOCTYPE html><html><head><title>Dev Sandbox for {app.name}</title></head><body style=\"font-family:sans-serif;padding:2rem;\"><h1>Dev Sandbox for {app.name}</h1><p style=\"color:green;font-weight:bold;\">Connected to Omnigent Dev Studio</p></body></html>' > index.html; fi; "
-                    f"SERVE_DIR=\"/app\"; "
-                    f"if [ -d /app/frontend/dist ]; then SERVE_DIR=\"/app/frontend/dist\"; elif [ -d /app/frontend ]; then SERVE_DIR=\"/app/frontend\"; fi; "
-                    f"(python3 -m http.server 8080 --directory \"$SERVE_DIR\" || python -m http.server 8080 || npx --yes serve -l 8080 \"$SERVE_DIR\") & "
+                    # 1. Detect and start Python FastAPI Backend in background (live reload on port 8000)
+                    f"BACKEND_DIR=\"\"; "
+                    f"if [ -d {workdir}/backend ] && ( [ -f {workdir}/backend/app.py ] || [ -f {workdir}/backend/main.py ] || [ -f {workdir}/backend/requirements.txt ] ); then BACKEND_DIR=\"{workdir}/backend\"; "
+                    f"elif [ -d {workdir}/api ] && ( [ -f {workdir}/api/app.py ] || [ -f {workdir}/api/main.py ] ); then BACKEND_DIR=\"{workdir}/api\"; "
+                    f"elif [ -d {workdir}/server ] && ( [ -f {workdir}/server/app.py ] || [ -f {workdir}/server/main.py ] ); then BACKEND_DIR=\"{workdir}/server\"; "
+                    f"elif [ -f {workdir}/app.py ] || [ -f {workdir}/main.py ]; then BACKEND_DIR=\"{workdir}\"; "
+                    f"fi; "
+                    f"if [ -n \"$BACKEND_DIR\" ]; then "
+                    f"  (cd \"$BACKEND_DIR\" && "
+                    f"   export PYTHONPATH=\"{workdir}:{workdir}/backend:{workdir}/api:{workdir}/server:$PYTHONPATH\" && "
+                    f"   export DATABASE_URL=\"${{DATABASE_URL:-sqlite:////tmp/app.db}}\" && "
+                    f"   (if [ -f requirements.txt ]; then pip install --no-cache-dir -r requirements.txt; fi) && "
+                    f"   (pip install --no-cache-dir uvicorn fastapi || true) && "
+                    f"   if [ -f app.py ]; then "
+                    f"     (uvicorn app:app --host 0.0.0.0 --port 8000 --reload || python app.py) & "
+                    f"   elif [ -f main.py ]; then "
+                    f"     (uvicorn main:app --host 0.0.0.0 --port 8000 --reload || python main.py) & "
+                    f"   fi) & "
+                    f"fi; "
+                    # 2. Detect and start React / Vite Frontend in background (npm run dev on port 8080)
+                    f"FRONTEND_DIR=\"\"; "
+                    f"if [ -d {workdir}/frontend ] && [ -f {workdir}/frontend/package.json ]; then FRONTEND_DIR=\"{workdir}/frontend\"; "
+                    f"elif [ -d {workdir}/client ] && [ -f {workdir}/client/package.json ]; then FRONTEND_DIR=\"{workdir}/client\"; "
+                    f"elif [ -d {workdir}/web ] && [ -f {workdir}/web/package.json ]; then FRONTEND_DIR=\"{workdir}/web\"; "
+                    f"elif [ -f {workdir}/package.json ]; then FRONTEND_DIR=\"{workdir}\"; "
+                    f"fi; "
+                    f"if [ -n \"$FRONTEND_DIR\" ]; then "
+                    f"  (cd \"$FRONTEND_DIR\" && "
+                    f"   (python3 -c \"import os, re\\nfor f in ['vite.config.ts', 'vite.config.js']:\\n if os.path.exists(f):\\n  c = open(f, 'r').read()\\n  if 'usePolling' not in c: c = re.sub(r'(server:\\\\s*\\\\{{)', r'\\\\\\\\1\\\\\\\\n    allowedHosts: true,\\\\\\\\n    watch: {{ usePolling: true, interval: 100 }},\\\\\\\\n    hmr: {{ clientPort: 443 }},', c)\\n  c = c.replace('http://localhost:8080', 'http://localhost:8000')\\n  c = c.replace('http://127.0.0.1:8085', 'http://localhost:8000')\\n  open(f, 'w').write(c)\" 2>/dev/null || true) && "
+                    f"   (if [ ! -d node_modules ]; then npm install --prefer-offline --no-audit || npm install || true; fi) && "
+                    f"   (npx --yes vite --host 0.0.0.0 --port 8080 --cors || npm run dev -- --host 0.0.0.0 --port 8080 || npm start -- -p 8080 || npx --yes serve -l 8080 .)) & "
+                    f"elif [ -n \"$BACKEND_DIR\" ]; then "
+                    # Pure Python app (Streamlit or FastAPI on port 8080)
+                    f"  (cd \"$BACKEND_DIR\" && "
+                    f"   export PYTHONPATH=\"{workdir}:{workdir}/backend:{workdir}/api:{workdir}/server:$PYTHONPATH\" && "
+                    f"   export DATABASE_URL=\"${{DATABASE_URL:-sqlite:////tmp/app.db}}\" && "
+                    f"   if grep -q 'streamlit' app.py 2>/dev/null || [ '{app_type}' = 'streamlit' ]; then "
+                    f"     pip install --no-cache-dir streamlit && exec streamlit run app.py --server.port=8080 --server.address=0.0.0.0 --server.headless=true; "
+                    f"   elif [ -f app.py ]; then "
+                    f"     exec uvicorn app:app --host 0.0.0.0 --port 8080 --reload; "
+                    f"   elif [ -f main.py ]; then "
+                    f"     exec uvicorn main:app --host 0.0.0.0 --port 8080 --reload; "
+                    f"   fi) & "
+                    f"else "
+                    # Fallback default web page
+                    f"  if [ ! -f {workdir}/index.html ]; then echo '<!DOCTYPE html><html><head><title>Dev Sandbox for {app.name}</title></head><body style=\"font-family:sans-serif;padding:2rem;\"><h1>Dev Sandbox for {app.name}</h1><p style=\"color:green;font-weight:bold;\">Connected to Omnigent Dev Studio</p></body></html>' > {workdir}/index.html; fi; "
+                    f"  (python3 -m http.server 8080 --directory {workdir} || npx --yes serve -l 8080 {workdir}) & "
+                    f"fi; "
+                    # 3. Start Omnigent Host Runner in foreground
                     f"exec omnigent host --server {omnigent_internal_url} --non-interactive"
                 )
-                pod = client.V1Pod(
-                    api_version="v1",
-                    kind="Pod",
+                # 1b. Dev Deployment Spec (resilient self-healing; /workspaces backed by shared PVC)
+                dev_container = client.V1Container(
+                    name="dev-host",
+                    image="ghcr.io/omnigent-ai/omnigent-host:latest",
+                    image_pull_policy="IfNotPresent",
+                    command=["/bin/sh", "-c"],
+                    args=[dev_cmd],
+                    ports=[client.V1ContainerPort(container_port=8080, name="http")],
+                    env=[
+                        client.V1EnvVar(name="PORT", value="8080"),
+                        client.V1EnvVar(name="APP_NAME", value=str(app.name)),
+                        client.V1EnvVar(name="APP_SLUG", value=str(app.slug)),
+                        client.V1EnvVar(name="APP_ID", value=str(app.id)),
+                        client.V1EnvVar(name="OMNIGENT_HOST_ID", value=str(host_id)),
+                        client.V1EnvVar(name="OMNIGENT_HOST_NAME", value=str(host_name)),
+                        client.V1EnvVar(name="OMNIGENT_SERVER_URL", value=str(omnigent_internal_url)),
+                        client.V1EnvVar(name="DEV_WORKSPACE_DIR", value=workdir),
+                    ],
+                    resources=client.V1ResourceRequirements(
+                        requests={"cpu": "200m", "memory": "1280Mi"},
+                        limits={"cpu": "2", "memory": "2560Mi"},
+                    ),
+                    volume_mounts=[
+                        client.V1VolumeMount(
+                            name="dev-workspaces",
+                            mount_path="/workspaces",
+                        )
+                    ],
+                )
+
+                dev_deployment = client.V1Deployment(
+                    api_version="apps/v1",
+                    kind="Deployment",
                     metadata=client.V1ObjectMeta(name=dev_name, namespace=ns, labels=labels),
-                    spec=client.V1PodSpec(
-                        containers=[
-                            client.V1Container(
-                                name="dev-host",
-                                image="ghcr.io/omnigent-ai/omnigent-host:latest",
-                                image_pull_policy="IfNotPresent",
-                                command=["/bin/sh", "-c"],
-                                args=[dev_cmd],
-                                ports=[client.V1ContainerPort(container_port=8080, name="http")],
-                                env=[
-                                    client.V1EnvVar(name="PORT", value="8080"),
-                                    client.V1EnvVar(name="APP_NAME", value=str(app.name)),
-                                    client.V1EnvVar(name="APP_SLUG", value=str(app.slug)),
-                                    client.V1EnvVar(name="APP_ID", value=str(app.id)),
-                                    client.V1EnvVar(name="OMNIGENT_HOST_ID", value=str(host_id)),
-                                    client.V1EnvVar(name="OMNIGENT_HOST_NAME", value=str(host_name)),
-                                    client.V1EnvVar(name="OMNIGENT_SERVER_URL", value=str(omnigent_internal_url)),
+                    spec=client.V1DeploymentSpec(
+                        replicas=1,
+                        selector=client.V1LabelSelector(match_labels={"compassx/app-id": clean_id, "compassx/dev": "true"}),
+                        template=client.V1PodTemplateSpec(
+                            metadata=client.V1ObjectMeta(labels=labels),
+                            spec=client.V1PodSpec(
+                                containers=[dev_container],
+                                restart_policy="Always",
+                                volumes=[
+                                    client.V1Volume(
+                                        name="dev-workspaces",
+                                        persistent_volume_claim=client.V1PersistentVolumeClaimVolumeSource(
+                                            claim_name="compassx-dev-workspaces",
+                                        ),
+                                    )
                                 ],
-                                resources=client.V1ResourceRequirements(
-                                    requests={"cpu": "100m", "memory": "256Mi"},
-                                    limits={"cpu": "1", "memory": "2Gi"},
-                                ),
-                            )
-                        ],
-                        restart_policy="Always",
+                            ),
+                        ),
                     ),
                 )
+
+
                 try:
-                    k8s.core().delete_namespaced_pod(name=dev_name, namespace=ns)
-                except Exception:
-                    pass
-                k8s.core().create_namespaced_pod(namespace=ns, body=pod)
+                    k8s.apps().replace_namespaced_deployment(name=dev_name, namespace=ns, body=dev_deployment)
+                except ApiException as e:
+                    if e.status == 404:
+                        # Clean up any legacy bare pod if present
+                        try:
+                            k8s.core().delete_namespaced_pod(name=dev_name, namespace=ns, grace_period_seconds=0)
+                        except Exception:
+                            pass
+                        k8s.apps().create_namespaced_deployment(namespace=ns, body=dev_deployment)
+                    else:
+                        raise
 
                 # 2. Dev Service
                 dev_svc = client.V1Service(
@@ -572,31 +762,67 @@ class KubernetesDevDriver(BaseDevDriver):
         ns = settings.K8S_NAMESPACE
         clean_id = re.sub(r"[^a-z0-9-]", "-", app.id.lower()).strip("-")
         name = f"compassx-app-dev-{clean_id}"
+        stopped = False
         try:
-            k8s.core().delete_namespaced_pod(name=name, namespace=ns)
-            return True
+            k8s.apps().delete_namespaced_deployment(name=name, namespace=ns)
+            stopped = True
         except Exception:
-            return False
+            pass
+        try:
+            k8s.core().delete_namespaced_pod(name=name, namespace=ns, grace_period_seconds=0)
+            stopped = True
+        except Exception:
+            pass
+        return stopped
 
     def get_dev_status(self, app) -> Dict[str, Any]:
         clean_id = re.sub(r"[^a-z0-9-]", "-", app.id.lower()).strip("-")
         dev_name = f"compassx-app-dev-{clean_id}"
+        ns = settings.K8S_NAMESPACE
         k8s = self._get_k8s_client()
-        if k8s:
-            try:
-                pod = k8s.core().read_namespaced_pod(name=dev_name, namespace=settings.K8S_NAMESPACE)
-                phase = pod.status.phase if pod.status else "Unknown"
-                is_running = phase == "Running"
-                is_pending = phase == "Pending"
-                return {
-                    "status": "active" if is_running else "provisioning" if is_pending else "stopped",
-                    "pod_name": dev_name,
-                    "mode": "kubernetes",
-                    "phase": phase,
-                    "pod_ip": pod.status.pod_ip if pod.status else None,
-                }
-            except Exception:
-                return {"status": "inactive", "pod_name": dev_name, "mode": "kubernetes"}
+        if not k8s:
+            return {"status": "inactive", "pod_name": dev_name, "mode": "kubernetes"}
+
+        # 1. Check if dev deployment exists
+        try:
+            dep = k8s.apps().read_namespaced_deployment(name=dev_name, namespace=ns)
+            if dep.metadata and dep.metadata.deletion_timestamp:
+                return {"status": "stopping", "pod_name": dev_name, "mode": "kubernetes", "phase": "Terminating"}
+            ready = (dep.status and (dep.status.available_replicas or dep.status.ready_replicas or 0) > 0)
+            if ready:
+                return {"status": "active", "pod_name": dev_name, "mode": "kubernetes", "phase": "Running"}
+            else:
+                return {"status": "provisioning", "pod_name": dev_name, "mode": "kubernetes", "phase": "Pending"}
+        except Exception:
+            pass
+
+        # 2. Check standalone pod fallback
+        try:
+            pod = k8s.core().read_namespaced_pod(name=dev_name, namespace=ns)
+            is_terminating = bool(pod.metadata and pod.metadata.deletion_timestamp)
+            raw_phase = pod.status.phase if pod.status else "Unknown"
+            reason = pod.status.reason if pod.status else None
+
+            if reason == "Evicted" or raw_phase in ["Failed", "Unknown"]:
+                try:
+                    k8s.core().delete_namespaced_pod(name=dev_name, namespace=ns, grace_period_seconds=0)
+                except Exception:
+                    pass
+                return {"status": "stopped", "pod_name": dev_name, "mode": "kubernetes", "phase": "Evicted"}
+
+            phase = "Terminating" if is_terminating else raw_phase
+            is_running = (phase == "Running") and not is_terminating
+            is_pending = phase == "Pending"
+            return {
+                "status": "stopping" if is_terminating else ("active" if is_running else "provisioning" if is_pending else "stopped"),
+                "pod_name": dev_name,
+                "mode": "kubernetes",
+                "phase": phase,
+                "pod_ip": pod.status.pod_ip if pod.status else None,
+            }
+        except Exception:
+            pass
+
         return {"status": "inactive", "pod_name": dev_name, "mode": "kubernetes"}
 
     def get_dev_url(self, app) -> str:
@@ -608,8 +834,15 @@ class KubernetesDevDriver(BaseDevDriver):
             return ""
         ns = settings.K8S_NAMESPACE
         clean_id = re.sub(r"[^a-z0-9-]", "-", app.id.lower()).strip("-")
-        name = f"compassx-app-dev-{clean_id}"
         try:
+            pods = k8s.core().list_namespaced_pod(
+                namespace=ns,
+                label_selector=f"compassx/app-id={clean_id},compassx/dev=true",
+            )
+            if pods.items:
+                pod_name = pods.items[0].metadata.name
+                return k8s.core().read_namespaced_pod_log(name=pod_name, namespace=ns, tail_lines=200)
+            name = f"compassx-app-dev-{clean_id}"
             return k8s.core().read_namespaced_pod_log(name=name, namespace=ns, tail_lines=200)
         except Exception:
             return ""

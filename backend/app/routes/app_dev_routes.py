@@ -24,14 +24,52 @@ class CreateSessionRequest(BaseModel):
     agent_name: Optional[str] = "polly"
     title: Optional[str] = None
 
+class StartDevRequest(BaseModel):
+    workspace_id: Optional[str] = None  # if provided, resume this workspace; otherwise create new
 
-@router.post("/start")
-def start_dev_session(
+
+@router.get("/workspaces")
+def list_dev_workspaces(
     app_id: str,
     db: Session = Depends(get_system_db),
     guard: Guard = Depends(get_guard),
 ):
-    """Start or attach to a development sandbox container with hot reload on a dedicated dev port."""
+    """List all dev workspaces (folders) for this app."""
+    app = db.query(App).filter(App.id == app_id).first()
+    if not app:
+        raise HTTPException(status_code=404, detail=f"App '{app_id}' not found.")
+    if guard.workspace_id and app.workspace_id != guard.workspace_id:
+        raise HTTPException(status_code=403, detail="Cannot access app in another workspace.")
+    return omnigent_dev_service.list_dev_workspaces(app)
+
+
+@router.delete("/workspaces/{workspace_id}")
+def delete_dev_workspace(
+    app_id: str,
+    workspace_id: str,
+    db: Session = Depends(get_system_db),
+    guard: Guard = Depends(get_guard),
+):
+    """Delete a dev workspace folder and its DB record."""
+    app = db.query(App).filter(App.id == app_id).first()
+    if not app:
+        raise HTTPException(status_code=404, detail=f"App '{app_id}' not found.")
+    if guard.workspace_id and app.workspace_id != guard.workspace_id:
+        raise HTTPException(status_code=403, detail="Cannot access app in another workspace.")
+    result = omnigent_dev_service.delete_dev_workspace(app, workspace_id)
+    if not result.get("deleted") and result.get("reason") == "not_found":
+        raise HTTPException(status_code=404, detail=f"Workspace '{workspace_id}' not found.")
+    return result
+
+
+@router.post("/start")
+def start_dev_session(
+    app_id: str,
+    body: Optional[StartDevRequest] = None,
+    db: Session = Depends(get_system_db),
+    guard: Guard = Depends(get_guard),
+):
+    """Start or attach to a development sandbox. Pass workspace_id to resume an existing workspace."""
     app = db.query(App).filter(App.id == app_id).first()
     if not app:
         raise HTTPException(status_code=404, detail=f"App '{app_id}' not found.")
@@ -39,8 +77,9 @@ def start_dev_session(
     if guard.workspace_id and app.workspace_id != guard.workspace_id:
         raise HTTPException(status_code=403, detail="Cannot access app in another workspace.")
 
+    workspace_id = body.workspace_id if body else None
     try:
-        session = omnigent_dev_service.start_dev_session(app)
+        session = omnigent_dev_service.start_dev_session(app, workspace_id=workspace_id)
         return session
     except Exception as e:
         logger.exception("Failed to start dev session for app %s: %s", app.name, e)

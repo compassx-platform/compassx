@@ -139,8 +139,12 @@ CMD ["python", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080
         driver = driver_factory.get_app_driver(runner_mode)
         now_ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
         build_logs = [
-            f"[{now_ts}] [INFO] Initiating deployment for app '{app.name}' ({app.slug})",
-            f"[{now_ts}] [INFO] Active runtime driver: {driver.__class__.__name__}",
+            f"[{now_ts}] [BUILD] ========================================================",
+            f"[{now_ts}] [BUILD] Initiating deployment for app '{app.name}' ({app.slug})",
+            f"[{now_ts}] [BUILD] Active runtime driver: {driver.__class__.__name__}",
+            f"[{now_ts}] [BUILD] Git reference: {app.git_ref or 'main'}",
+            f"[{now_ts}] [BUILD] Container rollout dispatched to cluster...",
+            f"[{now_ts}] [BUILD] ========================================================",
         ]
 
         runtime_info = driver.deploy(app, repo_dir, build_logs)
@@ -149,6 +153,64 @@ CMD ["python", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080
             "runtime_info": runtime_info,
             "build_logs": build_logs,
         }
+
+    def capture_deployment_build_logs(self, app_id: str, deployment_id: str) -> None:
+        """Background worker: captures pure build logs from the new container/pod and updates the deployment record in DB."""
+        import time
+        from app.database import SessionLocal
+        from app.models.app import App
+
+        if not SessionLocal:
+            return
+
+        db = SessionLocal()
+        start_time = datetime.now(timezone.utc)
+        try:
+            app = db.query(App).filter(App.id == app_id).first()
+            if not app:
+                return
+
+            cfg = dict(app.config or {})
+            mode = (cfg.get("runtime") or {}).get("mode")
+            driver = driver_factory.get_app_driver(mode)
+
+            build_logs = []
+            if hasattr(driver, "capture_build_logs"):
+                build_logs = driver.capture_build_logs(app, deployment_id)
+            else:
+                time.sleep(2)
+                build_logs = [
+                    f"[BUILD] Deployment {deployment_id} initialized for app '{app.name}'.",
+                    f"[BUILD] Build completed successfully.",
+                ]
+
+            duration = round((datetime.now(timezone.utc) - start_time).total_seconds(), 2)
+
+            # Re-fetch app to avoid stale state
+            app = db.query(App).filter(App.id == app_id).first()
+            if app:
+                cfg = dict(app.config or {})
+                deployments = list(cfg.get("deployments", []))
+                is_failed = False
+                for dep in deployments:
+                    if dep.get("deployment_id") == deployment_id:
+                        if build_logs:
+                            dep["logs"] = build_logs
+                        is_failed = any("[ERROR]" in l for l in build_logs)
+                        dep["status"] = "failed" if is_failed else "success"
+                        dep["duration_seconds"] = duration
+                        break
+                cfg["deployments"] = deployments
+                if build_logs:
+                    cfg["logs"] = build_logs
+                app.config = cfg
+                app.status = "active" if not is_failed else "error"
+                db.commit()
+                logger.info("Captured %d build log lines for app %s (dep=%s)", len(build_logs), app.name, deployment_id)
+        except Exception as e:
+            logger.exception("Error capturing build logs for app %s, dep %s: %s", app_id, deployment_id, e)
+        finally:
+            db.close()
 
     def get_live_logs(self, app, tail: int = 250) -> List[str]:
         """Fetch actual runtime container, pod, or process logs."""

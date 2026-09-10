@@ -54,6 +54,9 @@ import {
   useStartDevSession,
   useDevStatus,
   useStopDevSession,
+  useDevWorkspaces,
+  useDeleteDevWorkspace,
+  DevWorkspace,
   DeploymentItem,
 } from '../hooks/useApps';
 import { APP_TYPES } from '../components/CreateAppModal';
@@ -156,13 +159,28 @@ export default function AppDetailPage() {
 
   // Dev Studio / Omnigent State
   const { data: devStatus, isFetching: devStatusFetching, refetch: refetchDevStatus } = useDevStatus(resolvedAppId);
+  const { data: devWorkspaces, refetch: refetchDevWorkspaces } = useDevWorkspaces(resolvedAppId);
   const startDevMutation = useStartDevSession();
   const stopDevMutation = useStopDevSession();
-  const [launchStep, setLaunchStep] = useState<number>(0);
-  const [launchStatusText, setLaunchStatusText] = useState<string>('');
+  const deleteWorkspaceMutation = useDeleteDevWorkspace();
+  const [isStoppingDevPod, setIsStoppingDevPod] = useState<boolean>(false);
+  const [launchStep, setLaunchStep] = useState(0);
+  const [launchStatusText, setLaunchStatusText] = useState('');
 
-  async function handleStartDevPod(openStudio: boolean = false) {
+  const isDevPodStopping = isStoppingDevPod || stopDevMutation.isPending || devStatus?.status === 'stopping' || devStatus?.phase === 'Terminating';
+  const isDevPodStarting = startDevMutation.isPending || devStatus?.status === 'provisioning' || (launchStep > 0 && launchStep < 4);
+  const isDevPodRunning = (devStatus?.status === 'active' || devStatus?.phase === 'Running') && !isDevPodStopping;
+
+  async function handleStartDevPod(arg1?: string | boolean, arg2?: boolean) {
     if (!resolvedAppId || !app) return;
+    let workspaceId: string | undefined = undefined;
+    let openStudio: boolean = false;
+    if (typeof arg1 === 'string') {
+      workspaceId = arg1;
+      openStudio = arg2 ?? true;
+    } else if (typeof arg1 === 'boolean') {
+      openStudio = arg1;
+    }
     try {
       setLaunchStep(1);
       setLaunchStatusText('1. Probing Omnigent central server health and endpoints...');
@@ -170,16 +188,16 @@ export default function AppDetailPage() {
 
       setLaunchStep(2);
       setLaunchStatusText('2. Initializing isolated dev sandbox pod & cloning repository...');
-      
-      const session = await startDevMutation.mutateAsync(resolvedAppId);
-      
+
+      const session = await startDevMutation.mutateAsync({ appId: resolvedAppId, workspaceId });
+
       setLaunchStep(3);
       setLaunchStatusText('3. Establishing WebSocket runner tunnel with Omnigent server...');
       await new Promise((r) => setTimeout(r, 600));
 
       setLaunchStep(4);
       setLaunchStatusText('4. Dev pod is running and ready!');
-      
+
       if (openStudio) {
         const targetUrl = session?.omnigent_session_url || session?.omnigent_server_url || 'https://devstudio.135.13.180.167.nip.io';
         window.open(targetUrl, '_blank');
@@ -188,6 +206,7 @@ export default function AppDetailPage() {
         toast.success(`Dev sandbox pod started successfully for ${app.name}`);
       }
       refetchDevStatus();
+      refetchDevWorkspaces();
     } catch (err: any) {
       setLaunchStep(0);
       setLaunchStatusText('');
@@ -195,22 +214,53 @@ export default function AppDetailPage() {
     }
   }
 
-  const handleLaunchDevStudio = () => handleStartDevPod(true);
+  const handleLaunchDevStudio = () => handleStartDevPod(undefined, true);
+  const handleLaunchWorkspace = (ws: DevWorkspace) => handleStartDevPod(ws.id, true);
+  const handleNewWorkspace = () => handleStartDevPod(undefined, true);
+
+  async function handleDeleteWorkspace(ws: DevWorkspace) {
+    if (!resolvedAppId) return;
+    if (!confirm(`Delete workspace "${ws.name}"? The folder and all its files will be removed.`)) return;
+    try {
+      await deleteWorkspaceMutation.mutateAsync({ appId: resolvedAppId, workspaceId: ws.id });
+      toast.success(`Workspace "${ws.name}" deleted.`);
+    } catch {
+      toast.error('Failed to delete workspace.');
+    }
+  }
+
 
   async function handleStopDevPod() {
     if (!resolvedAppId || !app) return;
     if (!confirm(`Stop the development sandbox pod for "${app.name}"? This will terminate the dev container and release cluster resources.`)) {
       return;
     }
+    setIsStoppingDevPod(true);
+    setLaunchStep(0);
+    setLaunchStatusText('Shutting down dev container and releasing cluster resources...');
     try {
-      toast.info(`Stopping dev pod for "${app.name}"...`);
+      toast.info(`Shutting down dev pod for "${app.name}"...`);
       await stopDevMutation.mutateAsync(resolvedAppId);
-      setLaunchStep(0);
+      
+      // Poll every 1.5s until the pod is completely removed from Kubernetes
+      const maxAttempts = 10;
+      for (let i = 0; i < maxAttempts; i++) {
+        await new Promise((r) => setTimeout(r, 1500));
+        const res = await refetchDevStatus();
+        const curStatus = res.data?.status;
+        const curPhase = res.data?.phase;
+        if (!curStatus || curStatus === 'stopped' || curStatus === 'inactive' || curStatus === 'not_found' || curPhase === 'NotFound' || curPhase === 'Unknown') {
+          break;
+        }
+      }
+      
       setLaunchStatusText('');
-      toast.success('Dev sandbox pod stopped successfully.');
+      toast.success('Dev sandbox pod shut down successfully.');
       refetchDevStatus();
     } catch (err: any) {
       toast.error(err?.response?.data?.detail || 'Failed to stop dev pod.');
+    } finally {
+      setIsStoppingDevPod(false);
     }
   }
 
@@ -667,7 +717,7 @@ export default function AppDetailPage() {
 
         {/* Action Controls */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-          {devStatus?.status === 'active' ? (
+          {isDevPodStopping ? (
             <button
               className="btn btn-outline"
               style={{
@@ -679,14 +729,34 @@ export default function AppDetailPage() {
                 gap: 6,
                 padding: '6px 12px',
                 fontWeight: 500,
-                cursor: stopDevMutation.isPending ? 'not-allowed' : 'pointer',
+                cursor: 'not-allowed',
+              }}
+              disabled={true}
+              title="Development sandbox pod is shutting down..."
+            >
+              <Loader2 size={14} className="spin" color="#dc2626" />
+              <span>Shutting down Dev Pod...</span>
+            </button>
+          ) : isDevPodRunning ? (
+            <button
+              className="btn btn-outline"
+              style={{
+                borderColor: '#fca5a5',
+                color: '#dc2626',
+                background: '#fff1f2',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 6,
+                padding: '6px 12px',
+                fontWeight: 500,
+                cursor: 'pointer',
               }}
               onClick={handleStopDevPod}
-              disabled={stopDevMutation.isPending}
+              disabled={isDevPodStarting}
               title="Stop development sandbox pod to release cluster resources"
             >
-              {stopDevMutation.isPending ? <Loader2 size={14} className="spin" /> : <Square size={13} />}
-              <span>{stopDevMutation.isPending ? 'Stopping Dev Pod...' : 'Stop Dev Pod'}</span>
+              <Square size={13} />
+              <span>Stop Dev Pod</span>
             </button>
           ) : (
             <button
@@ -700,14 +770,14 @@ export default function AppDetailPage() {
                 gap: 6,
                 padding: '6px 12px',
                 fontWeight: 500,
-                cursor: startDevMutation.isPending ? 'not-allowed' : 'pointer',
+                cursor: isDevPodStarting ? 'not-allowed' : 'pointer',
               }}
               onClick={() => handleStartDevPod(false)}
-              disabled={startDevMutation.isPending}
+              disabled={isDevPodStarting}
               title="Start development sandbox pod in background"
             >
-              {startDevMutation.isPending ? <Loader2 size={14} className="spin" /> : <Play size={13} />}
-              <span>{startDevMutation.isPending ? 'Starting Dev Pod...' : 'Start Dev Pod'}</span>
+              {isDevPodStarting ? <Loader2 size={14} className="spin" /> : <Play size={13} />}
+              <span>{isDevPodStarting ? 'Starting Dev Pod...' : 'Start Dev Pod'}</span>
             </button>
           )}
 
@@ -1046,19 +1116,21 @@ export default function AppDetailPage() {
                           borderRadius: 12,
                           fontSize: '0.72rem',
                           fontWeight: 600,
-                          color: devStatus?.status === 'active' ? '#15803d' : devStatus?.status === 'provisioning' || startDevMutation.isPending ? '#0284c7' : '#4b5563',
-                          background: devStatus?.status === 'active' ? '#dcfce7' : devStatus?.status === 'provisioning' || startDevMutation.isPending ? '#e0f2fe' : '#f3f4f6',
-                          border: devStatus?.status === 'active' ? '1px solid #bbf7d0' : devStatus?.status === 'provisioning' || startDevMutation.isPending ? '1px solid #bae6fd' : '1px solid #e5e7eb',
+                          color: isDevPodRunning ? '#15803d' : isDevPodStopping ? '#b91c1c' : isDevPodStarting ? '#0284c7' : '#4b5563',
+                          background: isDevPodRunning ? '#dcfce7' : isDevPodStopping ? '#fee2e2' : isDevPodStarting ? '#e0f2fe' : '#f3f4f6',
+                          border: isDevPodRunning ? '1px solid #bbf7d0' : isDevPodStopping ? '1px solid #fecaca' : isDevPodStarting ? '1px solid #bae6fd' : '1px solid #e5e7eb',
                         }}
                       >
-                        {devStatus?.status === 'active' ? (
+                        {isDevPodRunning ? (
                           <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#22c55e' }} />
-                        ) : devStatus?.status === 'provisioning' || startDevMutation.isPending ? (
+                        ) : isDevPodStopping ? (
+                          <Loader2 size={10} className="spin" color="#b91c1c" />
+                        ) : isDevPodStarting ? (
                           <Loader2 size={10} className="spin" color="#0284c7" />
                         ) : (
                           <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#9ca3af' }} />
                         )}
-                        {devStatus?.status === 'active' ? 'Dev Pod: Running' : devStatus?.status === 'provisioning' || startDevMutation.isPending ? 'Dev Pod: Starting...' : 'Dev Pod: Stopped'}
+                        {isDevPodRunning ? 'Dev Pod: Running' : isDevPodStopping ? 'Dev Pod: Shutting Down...' : isDevPodStarting ? 'Dev Pod: Starting...' : 'Dev Pod: Stopped'}
                       </span>
                     </div>
 
@@ -1070,7 +1142,27 @@ export default function AppDetailPage() {
 
                 {/* Top Action Buttons */}
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-                  {devStatus?.status === 'active' ? (
+                  {isDevPodStopping ? (
+                    <button
+                      className="btn"
+                      style={{
+                        background: '#fee2e2',
+                        color: '#b91c1c',
+                        border: '1px solid #fecaca',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 6,
+                        padding: '8px 16px',
+                        borderRadius: 6,
+                        fontWeight: 600,
+                        cursor: 'not-allowed',
+                      }}
+                      disabled={true}
+                    >
+                      <Loader2 size={14} className="spin" color="#b91c1c" />
+                      <span>Shutting down Dev Pod...</span>
+                    </button>
+                  ) : isDevPodRunning ? (
                     <>
                       <button
                         className="btn"
@@ -1123,18 +1215,13 @@ export default function AppDetailPage() {
                           padding: '8px 14px',
                           borderRadius: 6,
                           fontWeight: 500,
-                          cursor: stopDevMutation.isPending ? 'not-allowed' : 'pointer',
+                          cursor: 'pointer',
                         }}
                         onClick={handleStopDevPod}
-                        disabled={stopDevMutation.isPending}
                         title="Stop development pod to free cluster resources"
                       >
-                        {stopDevMutation.isPending ? (
-                          <Loader2 size={14} className="spin" />
-                        ) : (
-                          <Square size={13} />
-                        )}
-                        <span>{stopDevMutation.isPending ? 'Stopping...' : 'Stop Dev Pod'}</span>
+                        <Square size={13} />
+                        <span>Stop Dev Pod</span>
                       </button>
                     </>
                   ) : (
@@ -1151,18 +1238,18 @@ export default function AppDetailPage() {
                           gap: 6,
                           padding: '8px 16px',
                           borderRadius: 6,
-                          cursor: startDevMutation.isPending ? 'not-allowed' : 'pointer',
+                          cursor: isDevPodStarting ? 'not-allowed' : 'pointer',
                         }}
                         onClick={() => handleStartDevPod(false)}
-                        disabled={startDevMutation.isPending}
+                        disabled={isDevPodStarting}
                         title="Start dev sandbox pod in cluster without opening studio"
                       >
-                        {startDevMutation.isPending ? (
+                        {isDevPodStarting ? (
                           <Loader2 size={14} className="spin" />
                         ) : (
                           <Play size={14} />
                         )}
-                        <span>{startDevMutation.isPending ? 'Starting Dev Pod...' : 'Start Dev Pod'}</span>
+                        <span>{isDevPodStarting ? 'Starting Dev Pod...' : 'Start Dev Pod'}</span>
                       </button>
 
                       <button
@@ -1178,24 +1265,49 @@ export default function AppDetailPage() {
                           whiteSpace: 'nowrap',
                           padding: '8px 18px',
                           borderRadius: 6,
-                          cursor: startDevMutation.isPending ? 'not-allowed' : 'pointer',
+                          cursor: isDevPodStarting ? 'not-allowed' : 'pointer',
                           boxShadow: '0 2px 8px rgba(99, 102, 241, 0.3)',
                         }}
                         onClick={() => handleStartDevPod(true)}
-                        disabled={startDevMutation.isPending}
+                        disabled={isDevPodStarting}
                         title="Start dev pod & Launch Omnigent AI pair programmer in new tab"
                       >
-                        {startDevMutation.isPending ? (
+                        {isDevPodStarting ? (
                           <Loader2 size={14} className="spin" />
                         ) : (
                           <Sparkles size={14} />
                         )}
-                        <span>{startDevMutation.isPending ? 'Launching Dev Studio...' : 'Launch Dev Studio'}</span>
+                        <span>{isDevPodStarting ? 'Launching Dev Studio...' : 'Launch Dev Studio'}</span>
                       </button>
                     </>
                   )}
                 </div>
               </div>
+
+              {/* Shutdown Alert / Progress Banner */}
+              {isDevPodStopping && (
+                <div
+                  style={{
+                    background: 'linear-gradient(90deg, #fef2f2 0%, #fff1f2 100%)',
+                    border: '1px solid #fecaca',
+                    borderRadius: 8,
+                    padding: '12px 16px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 12,
+                  }}
+                >
+                  <Loader2 size={18} className="spin" color="#dc2626" />
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontWeight: 600, color: '#b91c1c', fontSize: '0.88rem' }}>
+                      Dev Pod Shutdown in Progress
+                    </div>
+                    <div style={{ fontSize: '0.78rem', color: '#7f1d1d', marginTop: 2 }}>
+                      Gracefully stopping dev container, terminating WebSocket runners, and releasing AKS CPU/Memory resources...
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {/* Multi-Step Launch & Connectivity Progress Visualizer */}
               <div
@@ -1289,6 +1401,119 @@ export default function AppDetailPage() {
                   )}
                 </div>
               </div>
+            </div>
+
+            {/* Dev Workspaces Panel */}
+            <div
+              style={{
+                background: 'var(--color-surface)',
+                border: '1px solid var(--color-border)',
+                borderRadius: 'var(--radius-lg, 8px)',
+                padding: '18px 20px',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontWeight: 650, fontSize: '0.95rem' }}>
+                  <HardDrive size={18} color="var(--color-primary)" />
+                  <span>Dev Workspaces</span>
+                  {devWorkspaces && devWorkspaces.length > 0 && (
+                    <span style={{ background: 'var(--color-primary)', color: '#fff', borderRadius: 10, padding: '1px 7px', fontSize: '0.72rem', fontWeight: 600 }}>
+                      {devWorkspaces.length}
+                    </span>
+                  )}
+                </div>
+                <button
+                  onClick={handleNewWorkspace}
+                  disabled={isDevPodStarting}
+                  style={{
+                    display: 'inline-flex', alignItems: 'center', gap: 5, padding: '5px 12px',
+                    background: 'var(--color-primary)', color: '#fff', border: 'none',
+                    borderRadius: 6, cursor: isDevPodStarting ? 'not-allowed' : 'pointer',
+                    fontSize: '0.8rem', fontWeight: 600, opacity: isDevPodStarting ? 0.6 : 1,
+                  }}
+                >
+                  <Plus size={14} />
+                  New Workspace
+                </button>
+              </div>
+
+              {(!devWorkspaces || devWorkspaces.length === 0) ? (
+                <div style={{ textAlign: 'center', padding: '24px 0', color: 'var(--color-text-muted)', fontSize: '0.85rem' }}>
+                  <HardDrive size={32} style={{ opacity: 0.3, marginBottom: 8 }} />
+                  <p style={{ margin: 0 }}>No workspaces yet. Click <strong>New Workspace</strong> to clone the repo and start coding.</p>
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  {devWorkspaces.map((ws) => (
+                    <div
+                      key={ws.id}
+                      style={{
+                        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                        padding: '10px 14px',
+                        background: ws.status === 'active' ? 'rgba(34,197,94,0.06)' : 'var(--color-surface-alt, rgba(0,0,0,0.02))',
+                        border: ws.status === 'active' ? '1px solid rgba(34,197,94,0.3)' : '1px solid var(--color-border)',
+                        borderRadius: 8, gap: 12, flexWrap: 'wrap',
+                      }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0, flex: 1 }}>
+                        <HardDrive size={16} color={ws.status === 'active' ? '#16a34a' : 'var(--color-text-muted)'} />
+                        <div style={{ minWidth: 0 }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                            <span style={{ fontWeight: 600, fontSize: '0.875rem', color: 'var(--color-text)' }}>{ws.name}</span>
+                            {ws.status === 'active' && (
+                              <span style={{ background: '#dcfce7', color: '#15803d', border: '1px solid #bbf7d0', borderRadius: 10, padding: '1px 7px', fontSize: '0.7rem', fontWeight: 600 }}>
+                                ● Active
+                              </span>
+                            )}
+                            {ws.git_branch && (
+                              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, color: 'var(--color-text-muted)', fontSize: '0.75rem' }}>
+                                <GitBranch size={11} /> {ws.git_branch}
+                              </span>
+                            )}
+                          </div>
+                          <div style={{ fontSize: '0.72rem', color: 'var(--color-text-muted)', marginTop: 2 }}>
+                            {ws.last_active_at
+                              ? `Last active: ${new Date(ws.last_active_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}`
+                              : `Created: ${new Date(ws.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`}
+                            {ws.size_bytes ? `  ·  ${(ws.size_bytes / 1024 / 1024).toFixed(0)} MB` : ''}
+                          </div>
+                        </div>
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+                        <button
+                          onClick={() => handleLaunchWorkspace(ws)}
+                          disabled={isDevPodStarting}
+                          title="Launch Dev Studio with this workspace"
+                          style={{
+                            display: 'inline-flex', alignItems: 'center', gap: 5, padding: '5px 12px',
+                            background: 'var(--color-primary)', color: '#fff', border: 'none',
+                            borderRadius: 6, cursor: isDevPodStarting ? 'not-allowed' : 'pointer',
+                            fontSize: '0.78rem', fontWeight: 600, opacity: isDevPodStarting ? 0.6 : 1,
+                          }}
+                        >
+                          <Play size={12} />
+                          Launch
+                        </button>
+                        <button
+                          onClick={() => handleDeleteWorkspace(ws)}
+                          disabled={ws.status === 'active'}
+                          title={ws.status === 'active' ? 'Stop the dev pod before deleting' : 'Delete this workspace'}
+                          style={{
+                            display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                            padding: '5px 8px', background: 'transparent',
+                            color: ws.status === 'active' ? 'var(--color-text-muted)' : '#dc2626',
+                            border: '1px solid var(--color-border)',
+                            borderRadius: 6, cursor: ws.status === 'active' ? 'not-allowed' : 'pointer',
+                            opacity: ws.status === 'active' ? 0.4 : 1,
+                          }}
+                        >
+                          <Trash2 size={13} />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
 
             {/* Quick Live Preview Card */}

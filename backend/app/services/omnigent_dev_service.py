@@ -6,6 +6,7 @@ import shutil
 import logging
 import subprocess
 import difflib
+import uuid
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Any, Tuple
 
@@ -17,6 +18,16 @@ logger = logging.getLogger(__name__)
 
 # Active in-memory dev sessions
 _DEV_SESSIONS: Dict[str, Dict[str, Any]] = {}
+
+
+def _get_system_db():
+    """Get a system DB session for workspace operations."""
+    from app.database import SystemSessionLocal
+    return SystemSessionLocal()
+
+
+def _clean_id(raw_id: str) -> str:
+    return re.sub(r"[^a-z0-9-]", "-", raw_id.lower()).strip("-")
 
 
 class OmnigentDevService:
@@ -229,7 +240,7 @@ class OmnigentDevService:
             }
             if host_id:
                 payload_dict["host_id"] = host_id
-                payload_dict["workspace"] = "/app"
+                payload_dict["workspace"] = "/workspaces"
 
             payload = json.dumps(payload_dict).encode("utf-8")
             session_id = None
@@ -305,14 +316,62 @@ class OmnigentDevService:
                 "mode": "databricks_server",
             }
 
-    def start_dev_session(self, app) -> Dict[str, Any]:
+    def start_dev_session(self, app, workspace_id: Optional[str] = None) -> Dict[str, Any]:
         """Start or retrieve the development sandbox using active runtime driver."""
         repo_dir = self.get_repo_dir(app)
         expected_host_id, expected_host_name = self.get_app_host_identity(app)
 
-        # If already running in memory, return existing session
-        if app.id in _DEV_SESSIONS:
-            sess = _DEV_SESSIONS[app.id]
+        # ── Resolve or create DevWorkspace record ──────────────────────────────
+        from app.models.dev_workspace import DevWorkspace
+        ws_record = None
+        try:
+            with _get_system_db() as db:
+                if workspace_id:
+                    ws_record = db.query(DevWorkspace).filter(
+                        DevWorkspace.id == workspace_id,
+                        DevWorkspace.app_id == app.id,
+                    ).first()
+                if not ws_record:
+                    # Auto-generate a new workspace
+                    ws_id = f"ws_{uuid.uuid4().hex[:16]}"
+                    clean_app_id = _clean_id(app.id)
+                    folder_path = f"{clean_app_id}/{ws_id}"
+                    branch = getattr(app, "git_branch", None) or "main"
+                    ts = datetime.now(timezone.utc).strftime("%b%d-%H%M")
+                    ws_record = DevWorkspace(
+                        id=ws_id,
+                        app_id=app.id,
+                        workspace_id=getattr(app, "workspace_id", ""),
+                        name=f"ws-{ts}",
+                        folder_path=folder_path,
+                        git_branch=branch,
+                        status="active",
+                        created_by=None,
+                        last_active_at=datetime.now(timezone.utc),
+                    )
+                    db.add(ws_record)
+                    db.commit()
+                    db.refresh(ws_record)
+                else:
+                    ws_record.status = "active"
+                    ws_record.last_active_at = datetime.now(timezone.utc)
+                    db.commit()
+                    db.refresh(ws_record)
+                # Detach from session so we can use fields after close
+                folder_path = ws_record.folder_path
+                ws_id = ws_record.id
+                ws_name = ws_record.name
+        except Exception as ws_err:
+            logger.warning("Could not manage DevWorkspace record: %s", ws_err)
+            clean_app_id = _clean_id(app.id)
+            ws_id = f"ws_{uuid.uuid4().hex[:8]}"
+            folder_path = f"{clean_app_id}/{ws_id}"
+            ws_name = f"ws-default"
+
+        # If already running in memory for this workspace, return existing session
+        session_key = f"{app.id}:{ws_id}"
+        if session_key in _DEV_SESSIONS:
+            sess = _DEV_SESSIONS[session_key]
             dev_driver = driver_factory.get_dev_driver(sess.get("mode"))
             status = dev_driver.get_dev_status(app)
             if status.get("status") == "active":
@@ -322,9 +381,9 @@ class OmnigentDevService:
         self.ensure_omnigent_server()
         omnigent_internal_url = self.get_omnigent_internal_url()
 
-        # 2. Start dev sandbox via driver
+        # 2. Start dev sandbox via driver (pass workspace folder)
         dev_driver = driver_factory.get_dev_driver()
-        raw_driver_res = dev_driver.start_dev(app, repo_dir, omnigent_internal_url)
+        raw_driver_res = dev_driver.start_dev(app, repo_dir, omnigent_internal_url, workspace_folder=folder_path)
 
         dev_port = raw_driver_res.get("dev_port") or 9201
         dev_url = raw_driver_res.get("dev_url") or ingress_service.get_app_dev_url(app, dev_port)
@@ -342,6 +401,9 @@ class OmnigentDevService:
             "dev_port": dev_port,
             "dev_url": dev_url,
             "repo_dir": repo_dir,
+            "workspace_id": ws_id,
+            "workspace_name": ws_name,
+            "workspace_folder": folder_path,
             "started_at": datetime.now(timezone.utc).isoformat(),
             "omnigent_attached": True,
             "omnigent_server_url": omnigent_link.get("server_url"),
@@ -351,11 +413,14 @@ class OmnigentDevService:
             "host_id": omnigent_link.get("host_id") or expected_host_id,
             "host_name": expected_host_name,
             "host_online": omnigent_link.get("host_online", True),
-            "workspace": omnigent_link.get("workspace", "/app"),
+            "workspace": omnigent_link.get("workspace", f"/workspaces/{folder_path}"),
         }
 
+        _DEV_SESSIONS[session_key] = session_info
+        # Also store by app_id for backward compat
         _DEV_SESSIONS[app.id] = session_info
         return session_info
+
 
     def get_dev_session(self, app) -> Dict[str, Any]:
         """Get current status of dev session and Omnigent server."""
@@ -396,13 +461,88 @@ class OmnigentDevService:
         }
 
     def stop_dev_session(self, app) -> Dict[str, Any]:
-        """Stop and clean up development sandbox."""
+        """Stop and clean up development sandbox. Workspace folder is kept on PVC."""
         sess = _DEV_SESSIONS.pop(app.id, None)
         mode = sess.get("mode") if sess else None
+        ws_id = sess.get("workspace_id") if sess else None
+
         dev_driver = driver_factory.get_dev_driver(mode)
         dev_driver.stop_dev(app)
 
+        # Mark workspace as stopped in DB
+        if ws_id:
+            try:
+                from app.models.dev_workspace import DevWorkspace
+                with _get_system_db() as db:
+                    ws = db.query(DevWorkspace).filter(DevWorkspace.id == ws_id).first()
+                    if ws:
+                        ws.status = "stopped"
+                        db.commit()
+            except Exception as e:
+                logger.warning("Could not update DevWorkspace status: %s", e)
+
+        # Clean composite key too
+        if ws_id:
+            _DEV_SESSIONS.pop(f"{app.id}:{ws_id}", None)
+
         return {"status": "stopped", "app_id": app.id}
+
+    def list_dev_workspaces(self, app) -> List[Dict[str, Any]]:
+        """List all dev workspaces for an app."""
+        from app.models.dev_workspace import DevWorkspace
+        try:
+            with _get_system_db() as db:
+                workspaces = (
+                    db.query(DevWorkspace)
+                    .filter(DevWorkspace.app_id == app.id)
+                    .order_by(DevWorkspace.last_active_at.desc().nullslast(), DevWorkspace.created_at.desc())
+                    .all()
+                )
+                return [
+                    {
+                        "id": ws.id,
+                        "name": ws.name,
+                        "folder_path": ws.folder_path,
+                        "git_branch": ws.git_branch,
+                        "status": ws.status,
+                        "size_bytes": ws.size_bytes,
+                        "created_by": ws.created_by,
+                        "created_at": ws.created_at.isoformat() if ws.created_at else None,
+                        "last_active_at": ws.last_active_at.isoformat() if ws.last_active_at else None,
+                    }
+                    for ws in workspaces
+                ]
+        except Exception as e:
+            logger.warning("Could not list DevWorkspaces: %s", e)
+            return []
+
+    def delete_dev_workspace(self, app, workspace_id: str) -> Dict[str, Any]:
+        """Delete a dev workspace: remove DB record (folder on PVC is cleaned up by background job or on-demand)."""
+        from app.models.dev_workspace import DevWorkspace
+        try:
+            with _get_system_db() as db:
+                ws = db.query(DevWorkspace).filter(
+                    DevWorkspace.id == workspace_id,
+                    DevWorkspace.app_id == app.id,
+                ).first()
+                if not ws:
+                    return {"deleted": False, "reason": "not_found"}
+                folder_path = ws.folder_path
+                db.delete(ws)
+                db.commit()
+            # Best-effort: delete folder from shared PVC via driver
+            try:
+                dev_driver = driver_factory.get_dev_driver()
+                if hasattr(dev_driver, "delete_workspace_folder"):
+                    dev_driver.delete_workspace_folder(folder_path)
+            except Exception:
+                pass
+            # Clean in-memory session
+            _DEV_SESSIONS.pop(f"{app.id}:{workspace_id}", None)
+            return {"deleted": True, "workspace_id": workspace_id, "folder_path": folder_path}
+        except Exception as e:
+            logger.warning("Could not delete DevWorkspace %s: %s", workspace_id, e)
+            return {"deleted": False, "reason": str(e)}
 
     def get_dev_logs(self, app, tail: int = 200) -> Dict[str, Any]:
         """Fetch runtime logs from dev sandbox."""
@@ -415,6 +555,7 @@ class OmnigentDevService:
             "logs": logs or "Sandbox running. No output logged yet.",
             "status": "active" if sess else "inactive",
         }
+
 
     # ── Workspace File Operations ──────────────────────────────────────────
 

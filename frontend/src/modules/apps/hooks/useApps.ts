@@ -160,7 +160,12 @@ export function useAppDeployments(appId?: string, enabled = true) {
       return res.data;
     },
     enabled: !!appId && enabled,
-    refetchInterval: enabled ? 5000 : false,
+    refetchInterval: (query) => {
+      if (!enabled) return false;
+      const data = query.state.data;
+      const hasInProgress = Array.isArray(data) && data.some((d: any) => d.status === 'in_progress' || d.status === 'building');
+      return hasInProgress ? 2000 : 5000;
+    },
   });
 }
 
@@ -214,9 +219,21 @@ export function useDeleteApp() {
 
 // ── Omnigent Dev Studio Hooks ──────────────────────────────────────────
 
+export interface DevWorkspace {
+  id: string;
+  name: string;
+  folder_path: string;
+  git_branch?: string;
+  status: 'active' | 'stopped' | string;
+  size_bytes?: number;
+  created_by?: string;
+  created_at: string;
+  last_active_at?: string;
+}
+
 export interface DevSessionStatus {
   app_id: string;
-  status: 'active' | 'provisioning' | 'stopped' | 'inactive' | string;
+  status: 'active' | 'provisioning' | 'stopping' | 'stopped' | 'inactive' | string;
   mode?: 'docker' | 'kubernetes' | 'local' | string;
   container_id?: string;
   container_name?: string;
@@ -225,6 +242,9 @@ export interface DevSessionStatus {
   dev_port?: number;
   dev_url?: string;
   repo_dir?: string;
+  workspace_id?: string;
+  workspace_name?: string;
+  workspace_folder?: string;
   omnigent_attached?: boolean;
   omnigent_server_available?: boolean;
   omnigent_server_url?: string;
@@ -236,6 +256,19 @@ export interface DevSessionStatus {
   host_online?: boolean;
   workspace?: string;
   started_at?: string;
+}
+
+export function useDevWorkspaces(appId?: string) {
+  return useQuery({
+    queryKey: ['app-dev-workspaces', appId],
+    queryFn: async () => {
+      if (!appId) throw new Error('App ID required');
+      const res = await api.get<DevWorkspace[]>(`/apps/${appId}/dev/workspaces`);
+      return res.data;
+    },
+    enabled: !!appId,
+    staleTime: 10_000,
+  });
 }
 
 export function useDevStatus(appId?: string, enabled = true) {
@@ -257,13 +290,16 @@ export function useDevStatus(appId?: string, enabled = true) {
 export function useStartDevSession() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (appId: string) => {
-      const res = await api.post<DevSessionStatus>(`/apps/${appId}/dev/start`);
+    mutationFn: async ({ appId, workspaceId }: { appId: string; workspaceId?: string }) => {
+      const res = await api.post<DevSessionStatus>(`/apps/${appId}/dev/start`, {
+        workspace_id: workspaceId ?? null,
+      });
       return res.data;
     },
-    onSuccess: (data, appId) => {
+    onSuccess: (data, { appId }) => {
       qc.setQueryData(['app-dev-status', appId], data);
       qc.invalidateQueries({ queryKey: ['app-dev-status', appId] });
+      qc.invalidateQueries({ queryKey: ['app-dev-workspaces', appId] });
     },
   });
 }
@@ -277,9 +313,20 @@ export function useStopDevSession() {
     },
     onSuccess: (_, appId) => {
       qc.invalidateQueries({ queryKey: ['app-dev-status', appId] });
+      qc.invalidateQueries({ queryKey: ['app-dev-workspaces', appId] });
     },
   });
 }
 
-
-
+export function useDeleteDevWorkspace() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ appId, workspaceId }: { appId: string; workspaceId: string }) => {
+      const res = await api.delete(`/apps/${appId}/dev/workspaces/${workspaceId}`);
+      return res.data;
+    },
+    onSuccess: (_, { appId }) => {
+      qc.invalidateQueries({ queryKey: ['app-dev-workspaces', appId] });
+    },
+  });
+}

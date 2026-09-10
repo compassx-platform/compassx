@@ -39,11 +39,7 @@ def build_omnigent_deployment(namespace: str, env: str, llm_env: dict = None) ->
         )
     )
 
-    db_url = "sqlite:////data/omnigent.db"
-    if getattr(settings, "DATA_DB_URL", None):
-        db_url = settings.DATA_DB_URL
-    elif getattr(settings, "PG_HOST", None) and settings.PG_HOST != "localhost":
-        db_url = f"postgresql://{settings.PG_USER}:{settings.PG_PASSWORD}@{settings.PG_HOST}:{settings.PG_PORT}/omnigent"
+    db_url = getattr(settings, "OMNIGENT_DATABASE_URL", None) or getattr(settings, "DATA_DB_URL", None) or "sqlite:////data/omnigent.db"
 
     ws_origins = [
         "http://localhost:6767",

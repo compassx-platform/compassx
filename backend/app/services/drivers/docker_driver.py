@@ -150,29 +150,60 @@ class DockerDevDriver(BaseDevDriver):
         host_id = uuid.uuid5(uuid.NAMESPACE_DNS, f"compassx-app-{app.id}").hex
         host_name = str(app.name or app.slug or app.id).strip()
 
-        # Workdir and command
-        backend_path = os.path.join(repo_dir, "backend")
-        if os.path.exists(os.path.join(backend_path, "main.py")):
-            work_dir = "/app/backend"
-            app_cmd = "python main.py"
-        elif os.path.exists(os.path.join(repo_dir, "app.py")):
-            work_dir = "/app"
-            app_cmd = "python app.py"
-        elif os.path.exists(os.path.join(repo_dir, "main.py")):
-            work_dir = "/app"
-            app_cmd = "python main.py"
-        else:
-            work_dir = "/app"
-            app_cmd = "python -m uvicorn main:app --reload --host 0.0.0.0 --port 8080"
+        app_type = getattr(app, "app_type", "custom_web") or "custom_web"
 
-        # Container boot script: writes config.yaml with app identity, configures TLS, starts Omnigent host daemon, starts app
+        # Container boot script: writes config.yaml with app identity, configures TLS, starts FastAPI and React/Vite, then runs Omnigent host runner
         container_cmd = (
             f"mkdir -p /root/.omnigent && printf 'host:\\n  host_id: {host_id}\\n  name: \"{host_name}\"\\n' > /root/.omnigent/config.yaml; "
             f"export OMNIGENT_HOST_ID={host_id} OMNIGENT_HOST_NAME=\"{host_name}\" "
+            f"CHOKIDAR_USEPOLLING=1 WATCHPACK_POLLING=true WATCHFILES_FORCE_POLLING=true "
             f"NODE_TLS_REJECT_UNAUTHORIZED=0 NPM_CONFIG_STRICT_SSL=false PYTHONHTTPSVERIFY=0 GIT_SSL_NO_VERIFY=true CURL_INSECURE=1; "
-            f"(which opencode >/dev/null 2>&1 || npm install -g opencode-ai@1.18.0); "
-            f"omnigent host --server {omnigent_internal_url} --background --non-interactive; "
-            f"{app_cmd}"
+            f"(which opencode >/dev/null 2>&1 || npm install -g opencode-ai@1.18.0 || true); "
+            f"mkdir -p /app && cd /app && "
+            # 1. Detect and start Python FastAPI Backend in background (live reload on port 8000)
+            f"BACKEND_DIR=\"\"; "
+            f"if [ -d /app/backend ] && ( [ -f /app/backend/app.py ] || [ -f /app/backend/main.py ] || [ -f /app/backend/requirements.txt ] ); then BACKEND_DIR=\"/app/backend\"; "
+            f"elif [ -d /app/api ] && ( [ -f /app/api/app.py ] || [ -f /app/api/main.py ] ); then BACKEND_DIR=\"/app/api\"; "
+            f"elif [ -d /app/server ] && ( [ -f /app/server/app.py ] || [ -f /app/server/main.py ] ); then BACKEND_DIR=\"/app/server\"; "
+            f"elif [ -f /app/app.py ] || [ -f /app/main.py ]; then BACKEND_DIR=\"/app\"; "
+            f"fi; "
+            f"if [ -n \"$BACKEND_DIR\" ]; then "
+            f"  (cd \"$BACKEND_DIR\" && "
+            f"   (if [ -f requirements.txt ]; then pip install --no-cache-dir -r requirements.txt; fi) && "
+            f"   (pip install --no-cache-dir uvicorn fastapi || true) && "
+            f"   if [ -f app.py ]; then "
+            f"     (uvicorn app:app --host 0.0.0.0 --port 8000 --reload || python app.py) & "
+            f"   elif [ -f main.py ]; then "
+            f"     (uvicorn main:app --host 0.0.0.0 --port 8000 --reload || python main.py) & "
+            f"   fi) & "
+            f"fi; "
+            # 2. Detect and start React / Vite Frontend in background (npm run dev on port 8080)
+            f"FRONTEND_DIR=\"\"; "
+            f"if [ -d /app/frontend ] && [ -f /app/frontend/package.json ]; then FRONTEND_DIR=\"/app/frontend\"; "
+            f"elif [ -d /app/client ] && [ -f /app/client/package.json ]; then FRONTEND_DIR=\"/app/client\"; "
+            f"elif [ -d /app/web ] && [ -f /app/web/package.json ]; then FRONTEND_DIR=\"/app/web\"; "
+            f"elif [ -f /app/package.json ]; then FRONTEND_DIR=\"/app\"; "
+            f"fi; "
+            f"if [ -n \"$FRONTEND_DIR\" ]; then "
+            f"  (cd \"$FRONTEND_DIR\" && "
+            f"   (python3 -c \"import os, re\nfor f in ['vite.config.ts', 'vite.config.js']:\n if os.path.exists(f):\n  c = open(f, 'r').read()\n  if 'usePolling' not in c: c = re.sub(r'(server:\\s*\\{{)', r'\\\\1\\\\n    allowedHosts: true,\\\\n    watch: {{ usePolling: true, interval: 100 }},\\\\n    hmr: {{ clientPort: 443 }},', c)\n  c = c.replace('http://localhost:8080', 'http://localhost:8000')\n  c = c.replace('http://127.0.0.1:8085', 'http://localhost:8000')\n  open(f, 'w').write(c)\" 2>/dev/null || true) && "
+            f"   (if [ ! -d node_modules ]; then npm install --prefer-offline --no-audit || npm install || true; fi) && "
+            f"   (npx --yes vite --host 0.0.0.0 --port 8080 --cors || npm run dev -- --host 0.0.0.0 --port 8080 || npm start -- -p 8080 || npx --yes serve -l 8080 .)) & "
+            f"elif [ -n \"$BACKEND_DIR\" ]; then "
+            # Pure Python app (Streamlit or FastAPI on port 8080)
+            f"  (cd \"$BACKEND_DIR\" && "
+            f"   if grep -q 'streamlit' app.py 2>/dev/null || [ '{app_type}' = 'streamlit' ]; then "
+            f"     pip install --no-cache-dir streamlit && exec streamlit run app.py --server.port=8080 --server.address=0.0.0.0 --server.headless=true; "
+            f"   elif [ -f app.py ]; then "
+            f"     exec uvicorn app:app --host 0.0.0.0 --port 8080 --reload; "
+            f"   elif [ -f main.py ]; then "
+            f"     exec uvicorn main:app --host 0.0.0.0 --port 8080 --reload; "
+            f"   fi) & "
+            f"else "
+            f"  if [ ! -f /app/index.html ]; then echo '<!DOCTYPE html><html><head><title>Dev Sandbox for {app.name}</title></head><body style=\"font-family:sans-serif;padding:2rem;\"><h1>Dev Sandbox for {app.name}</h1><p style=\"color:green;font-weight:bold;\">Connected to Omnigent Dev Studio</p></body></html>' > /app/index.html; fi; "
+            f"  npx --yes serve -l 8080 /app & "
+            f"fi; "
+            f"omnigent host --server {omnigent_internal_url} --non-interactive"
         )
 
         dev_host_image = "compassx-dev-host:latest" if self._image_exists("compassx-dev-host:latest") else "ghcr.io/omnigent-ai/omnigent-host:latest"
@@ -184,7 +215,7 @@ class DockerDevDriver(BaseDevDriver):
             "--network", network,
             "-p", f"{dev_port}:8080",
             "-v", f"{repo_dir}:/app",
-            "-w", work_dir,
+            "-w", "/app",
             "-e", "PORT=8080",
             "-e", "DEV_MODE=true",
             "-e", f"APP_NAME={app.name}",
@@ -224,8 +255,14 @@ class DockerDevDriver(BaseDevDriver):
     def get_dev_status(self, app) -> Dict[str, Any]:
         dev_container_name = f"compassx-app-dev-{app.id}"
         res = subprocess.run(["docker", "inspect", "-f", "{{.State.Status}}", dev_container_name], capture_output=True, text=True, check=False)
-        is_running = (res.stdout or "").strip().lower() == "running"
-        return {"status": "active" if is_running else "stopped", "container_name": dev_container_name}
+        state_status = (res.stdout or "").strip().lower()
+        if state_status == "running":
+            status = "active"
+        elif state_status in ["removing", "restarting", "dead"]:
+            status = "stopping"
+        else:
+            status = "stopped"
+        return {"status": status, "container_name": dev_container_name}
 
     def get_dev_url(self, app) -> str:
         return ingress_service.get_app_dev_url(app)
