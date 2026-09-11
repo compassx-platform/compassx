@@ -95,6 +95,84 @@ class AppRunnerService:
 
         return repo_dir
 
+    def get_latest_git_commit(self, app) -> Dict[str, Any]:
+        """Fetch true latest commit SHA, commit message, and author from GitHub API or git ls-remote."""
+        import json
+        import re
+        import urllib.request
+
+        git_url = getattr(app, "git_repo_url", None)
+        if not git_url:
+            return {"sha": "local", "message": "Manual deployment", "author": "system"}
+
+        git_ref = getattr(app, "git_ref", None) or getattr(app, "git_branch", None) or "main"
+        git_token = None
+        if hasattr(app, "git_pat_enc") and app.git_pat_enc:
+            try:
+                from app.services.encryption import decrypt_field
+                git_token = decrypt_field(app.git_pat_enc)
+            except Exception:
+                pass
+
+        # 1. Try GitHub REST API
+        m = re.search(r"github\.com[:/]([^/]+)/([^/.]+)(?:\.git)?", git_url)
+        if m:
+            owner, repo = m.group(1), m.group(2)
+            api_url = f"https://api.github.com/repos/{owner}/{repo}/commits/{git_ref}"
+            headers = {
+                "Accept": "application/vnd.github.v3+json",
+                "User-Agent": "CompassX-Platform",
+            }
+            if git_token:
+                headers["Authorization"] = f"token {git_token}"
+            try:
+                req = urllib.request.Request(api_url, headers=headers)
+                with urllib.request.urlopen(req, timeout=5) as resp:
+                    data = json.loads(resp.read().decode())
+                    sha = data.get("sha", "")
+                    commit_msg = data.get("commit", {}).get("message", "").splitlines()[0]
+                    author = data.get("commit", {}).get("author", {}).get("name", "")
+                    return {
+                        "sha": sha[:7] if sha else "latest",
+                        "full_sha": sha,
+                        "message": commit_msg,
+                        "author": author,
+                        "branch": git_ref,
+                    }
+            except Exception as e:
+                logger.debug("GitHub API commit fetch failed for %s: %s", git_url, e)
+
+        # 2. Fallback to git ls-remote
+        auth_url = git_url
+        if git_token and "github.com" in git_url and "@" not in git_url.split("//")[-1]:
+            auth_url = git_url.replace("https://", f"https://x-access-token:{git_token}@")
+        try:
+            res = subprocess.run(
+                ["git", "ls-remote", auth_url, git_ref],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            if res.returncode == 0 and res.stdout.strip():
+                full_sha = res.stdout.strip().split()[0]
+                return {
+                    "sha": full_sha[:7],
+                    "full_sha": full_sha,
+                    "message": f"Commit {full_sha[:7]}",
+                    "author": "Git Remote",
+                    "branch": git_ref,
+                }
+        except Exception as e:
+            logger.debug("git ls-remote failed for %s: %s", git_url, e)
+
+        return {
+            "sha": "latest",
+            "full_sha": "",
+            "message": "Latest commit",
+            "author": "system",
+            "branch": git_ref,
+        }
+
     def ensure_dockerfile(self, repo_dir: str, app) -> None:
         """Generate a suitable Dockerfile if none exists in the repository."""
         dockerfile_path = os.path.join(repo_dir, "Dockerfile")

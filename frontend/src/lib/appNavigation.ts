@@ -102,6 +102,8 @@ export const APP_DEFINITIONS: Record<AppId, AppDefinition> = {
       '/logo',
       '/brand-logo',
       '/design-system',
+      '/settings',
+      '/workspace-settings',
     ],
   },
   apps: {
@@ -117,6 +119,8 @@ export const APP_DEFINITIONS: Record<AppId, AppDefinition> = {
       '/logo',
       '/brand-logo',
       '/design-system',
+      '/settings',
+      '/workspace-settings',
     ],
   },
 };

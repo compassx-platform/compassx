@@ -42,21 +42,27 @@ class DockerComposeLauncher(Launcher):
         self._profile = profile
         self._repo_root = repo_root
         self._backend_dir = repo_root / "backend"
-        self._compose_file = repo_root / profile.compose_file
+        files = profile.compose_files or ([profile.compose_file] if profile.compose_file else [])
+        self._compose_files = [repo_root / f for f in files]
+        self._compose_file = (
+            self._compose_files[0]
+            if self._compose_files
+            else repo_root / "deployments/docker-compose/docker-compose.yml"
+        )
         self._project = profile.compose_project
 
     def _base_cmd(self) -> list[str]:
-        return [
-            "docker",
-            "compose",
-            "-f",
-            str(self._compose_file),
+        cmd = ["docker", "compose"]
+        for f in self._compose_files:
+            cmd.extend(["-f", str(f)])
+        cmd.extend([
             "-p",
             self._project,
             # Enable all compose profiles; service selection is explicit.
             "--profile",
             "full",
-        ]
+        ])
+        return cmd
 
     async def _image_exists(self, tag: str) -> bool:
         result = await asyncio.to_thread(
@@ -116,11 +122,12 @@ class DockerComposeLauncher(Launcher):
                 progress.update(task, completed=1, description=f"{tag} done")
 
     async def _run(self, args: list[str], *, check: bool = True) -> subprocess.CompletedProcess:
-        if not self._compose_file.exists():
-            raise LauncherError(
-                f"Compose file not found: {self._compose_file}. "
-                f"Check docker.compose_file in profile '{self._profile.name}'."
-            )
+        for f in self._compose_files:
+            if not f.exists():
+                raise LauncherError(
+                    f"Compose file not found: {f}. "
+                    f"Check docker.compose_file in profile '{self._profile.name}'."
+                )
         cmd = self._base_cmd() + args
         logger.info("compose: %s", " ".join(cmd))
         result = await asyncio.to_thread(

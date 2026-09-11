@@ -265,6 +265,11 @@ def deploy_app(
     now_iso = datetime.now(timezone.utc).isoformat()
     start_time = datetime.now(timezone.utc)
 
+    # Fetch real latest Git commit info
+    git_info = app_runner_service.get_latest_git_commit(app)
+    commit_sha = git_info.get("sha") or "latest"
+    commit_msg = git_info.get("message")
+
     try:
         runner_res = app_runner_service.deploy_app(app, runner_mode=runner_mode)
         runtime_info = runner_res["runtime_info"]
@@ -284,8 +289,9 @@ def deploy_app(
         "deployment_id": deployment_id,
         "app_id": app.id,
         "status": deploy_status,
-        "commit_sha": uuid.uuid4().hex[:7],
-        "git_ref": app.git_ref or "main",
+        "commit_sha": commit_sha,
+        "commit_message": commit_msg,
+        "git_ref": app.git_ref or app.git_branch or "main",
         "duration_seconds": duration,
         "triggered_by": str(guard.principal.id) if guard.principal else "system",
         "created_at": now_iso,

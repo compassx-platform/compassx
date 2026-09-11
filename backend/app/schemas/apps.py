@@ -100,6 +100,7 @@ class AppDeployResponse(BaseModel):
     app_id: str
     status: str
     commit_sha: Optional[str] = None
+    commit_message: Optional[str] = None
     git_ref: str
     duration_seconds: Optional[float] = None
     triggered_by: Optional[str] = None

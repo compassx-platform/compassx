@@ -61,6 +61,7 @@ class MonitoringResourceManager:
         collectors: list[ResourceCollector] = []
         modes = set(profile.service_modes().values()) | {profile.default_mode}
         if profile.name == "local-dev":
+            collectors.append(HostCollector())
             try:
                 collectors.append(DockerComposeCollector(profile.compose_project))
             except Exception as exc:

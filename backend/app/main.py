@@ -52,6 +52,7 @@ from app.workspace import data_models as workspace_data_models  # noqa: E402, F4
 from app.catalog import search_models as catalog_search_models  # noqa: E402, F401  (catalog_search_*)
 from app.ingestion import models as ingestion_models  # noqa: E402, F401
 from app.ontology.models import ontology as ontology_models  # noqa: E402, F401
+from app.models import app as _app_models, app_task as _app_task_models, dev_workspace as _dev_workspace_models  # noqa: E402, F401
 from app.monitoring import routes as monitoring_routes  # noqa: E402
 
 # User Manager v1 models (registers tables with AccountBase / SystemBase)
@@ -89,6 +90,7 @@ from app.workspace import account_routes as workspace_account_routes  # noqa: E4
 from app.workspace import workspace_routes as workspace_ws_routes  # noqa: E402
 from app.routes import app_routes  # noqa: E402
 from app.routes import app_dev_routes  # noqa: E402
+from app.routes import app_task_routes  # noqa: E402
 
 # User Manager v1 routes
 from app.user_manager.routes import setup_routes as um_setup_routes  # noqa: E402
@@ -345,7 +347,7 @@ app = FastAPI(
     lifespan=lifespan,
     title="CompassX API",
     description="CompassX Platform API",
-    version="0.8.0",
+    version="0.8.1",
     docs_url="/api/swagger/docs",
     openapi_url="/api/swagger.json",
 )
@@ -423,6 +425,7 @@ app.include_router(monitoring_routes.router)
 app.include_router(sql_warehouse_routes.router)
 app.include_router(app_routes.router)
 app.include_router(app_dev_routes.router)
+app.include_router(app_task_routes.router)
 
 # Workspace / account / auth routes (legacy - kept for backward compat)
 app.include_router(workspace_auth_routes.router)

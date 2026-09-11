@@ -5,6 +5,33 @@ All notable changes to the CompassX Platform will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.1] - 2026-09-11
+
+### 🚀 Highlights
+
+CompassX `0.8.1` introduces **App Background Tasks & Long-Running Job Execution**, a dedicated **Workspace Settings UI & Management Suite**, enhanced **Real-Time Resource Monitoring & Metrics Collection**, and expanded **Kubernetes Driver & Sandbox Lifecycle Handling**.
+
+### ✨ Features & Enhancements
+
+#### App Background Tasks & Job Lifecycle
+- **App Tasks Architecture**: Added database persistence and lifecycle tracking for asynchronous background tasks and job executions per application (`AppTask` model and Alembic migration `0007_app_tasks.py`).
+- **Task Management API**: REST endpoints for initiating, monitoring, and canceling long-running application background tasks (`/api/v1/apps/{app_id}/tasks`).
+- **Frontend App Task Studio**: Built-in task monitoring console in `AppDetailPage` with task execution states, duration timers, status badges, and logs inspection.
+
+#### Workspace Settings & Administration
+- **Workspace Settings Page**: Dedicated configuration view (`WorkspaceSettingsPage`) for managing workspace details, general preferences, quotas, and metadata.
+- **Backend Workspace Management**: Added workspace configuration and update endpoints in `workspace_routes.py`.
+
+#### Real-Time Platform Monitoring & Collectors
+- **Enhanced Resource Metrics**: Platform collectors (`collectors.py`) and manager (`manager.py`) updates for tracking live CPU, memory, and container workload utilization.
+- **Monitoring Console Updates**: Dynamic metric charts and status cards in `MonitoringPage.tsx`.
+
+#### Kubernetes Driver & Local-Dev Enhancements
+- **Dynamic Status & Lifecycle**: Enhanced container status resolution and sandboxed runner management in `kubernetes_driver.py` and `app_runner.py`.
+- **Local Development Profile**: Extended `docker-compose.local-dev.yml` override mappings and profile registry support for streamlined local development.
+
+---
+
 ## [0.8.0] - 2026-09-10
 
 ### 🚀 Highlights

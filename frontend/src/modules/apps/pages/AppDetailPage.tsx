@@ -40,6 +40,7 @@ import {
   XCircle,
   History,
   Square,
+  ListTodo,
 } from 'lucide-react';
 import { useScopedNavigate } from '@/lib/appNavigation';
 import { useToast } from '@/lib/toast';
@@ -59,9 +60,11 @@ import {
   DevWorkspace,
   DeploymentItem,
 } from '../hooks/useApps';
+import { useAppTasks } from '../hooks/useAppTasks';
 import { APP_TYPES } from '../components/CreateAppModal';
+import { AppTasksKanban } from '../components/tasks/AppTasksKanban';
 
-type DetailTab = 'overview' | 'deployments' | 'configuration' | 'environment' | 'logs';
+type DetailTab = 'overview' | 'deployments' | 'configuration' | 'environment' | 'logs' | 'tasks';
 
 export default function AppDetailPage() {
   const params = useParams<{ applicationId?: string; appId?: string }>();
@@ -75,7 +78,11 @@ export default function AppDetailPage() {
 
   const tabParam = searchParams.get('tab') as DetailTab | null;
   const activeTab: DetailTab =
-    tabParam === 'deployments' || tabParam === 'configuration' || tabParam === 'environment' || tabParam === 'logs'
+    tabParam === 'deployments' ||
+    tabParam === 'configuration' ||
+    tabParam === 'environment' ||
+    tabParam === 'logs' ||
+    tabParam === 'tasks'
       ? tabParam
       : 'overview';
 
@@ -106,6 +113,10 @@ export default function AppDetailPage() {
   const { data: deploymentsData, isFetching: deploymentsFetching, refetch: refetchDeployments } = useAppDeployments(
     resolvedAppId,
     activeTab === 'deployments' || activeTab === 'overview'
+  );
+  const { data: tasksData } = useAppTasks(
+    resolvedAppId,
+    activeTab === 'tasks' || activeTab === 'overview'
   );
 
   // Deployments Tab State
@@ -972,6 +983,41 @@ export default function AppDetailPage() {
         >
           <Terminal size={16} />
           <span>Runtime Logs</span>
+        </button>
+
+        <button
+          onClick={() => handleTabChange('tasks')}
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+            padding: '10px 4px',
+            border: 'none',
+            background: 'none',
+            fontSize: '0.875rem',
+            fontWeight: activeTab === 'tasks' ? 600 : 500,
+            color: activeTab === 'tasks' ? 'var(--color-primary)' : 'var(--color-text-muted)',
+            borderBottom: activeTab === 'tasks' ? '2px solid var(--color-primary)' : '2px solid transparent',
+            cursor: 'pointer',
+            transition: 'all 0.15s ease',
+          }}
+        >
+          <ListTodo size={16} />
+          <span>Tasks</span>
+          {tasksData && tasksData.length > 0 && (
+            <span
+              style={{
+                fontSize: '0.72rem',
+                fontWeight: 600,
+                padding: '1px 6px',
+                borderRadius: '999px',
+                background: activeTab === 'tasks' ? 'var(--color-primary)' : 'var(--color-border)',
+                color: activeTab === 'tasks' ? '#fff' : 'var(--color-text-muted)',
+              }}
+            >
+              {tasksData.length}
+            </span>
+          )}
         </button>
       </div>
 
@@ -1923,20 +1969,20 @@ export default function AppDetailPage() {
                   id: 'build',
                   title: '3. Build & Deps',
                   desc: activeDeployment?.status === 'in_progress' ? 'Building...' : 'Compiled',
-                  done: activeDeployment?.status === 'succeeded',
+                  done: activeDeployment?.status === 'success' || activeDeployment?.status === 'succeeded',
                   active: activeDeployment?.status === 'in_progress',
                 },
                 {
                   id: 'routing',
                   title: '4. Ingress Routing',
                   desc: `${app.slug}.*.nip.io`,
-                  done: activeDeployment?.status === 'succeeded',
+                  done: activeDeployment?.status === 'success' || activeDeployment?.status === 'succeeded',
                 },
                 {
                   id: 'live',
                   title: '5. Live Service',
-                  desc: activeDeployment?.status === 'failed' ? 'Failed' : 'Healthy (200 OK)',
-                  done: activeDeployment?.status === 'succeeded',
+                  desc: activeDeployment?.status === 'failed' ? 'Failed' : (activeDeployment?.status === 'in_progress' ? 'Deploying...' : 'Healthy (200 OK)'),
+                  done: activeDeployment?.status === 'success' || activeDeployment?.status === 'succeeded',
                   failed: activeDeployment?.status === 'failed',
                 },
               ].map((step, idx) => {
@@ -2002,6 +2048,11 @@ export default function AppDetailPage() {
                 <code style={{ fontSize: '0.76rem', color: 'var(--color-text)', fontWeight: 600 }}>
                   {activeDeployment?.commit_sha ? activeDeployment.commit_sha.slice(0, 8) : 'latest-head'}
                 </code>
+                {(activeDeployment?.commit_message || activeDeployment?.message) && (
+                  <span style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    ({activeDeployment.commit_message || activeDeployment.message})
+                  </span>
+                )}
               </div>
 
               <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
@@ -2877,6 +2928,11 @@ export default function AppDetailPage() {
             )}
           </div>
         </div>
+      )}
+
+      {/* TAB 6: APP TASKS KANBAN */}
+      {activeTab === 'tasks' && app && (
+        <AppTasksKanban appId={app.id} />
       )}
     </div>
   );

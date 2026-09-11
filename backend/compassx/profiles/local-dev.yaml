@@ -38,8 +38,9 @@ docker:
   # (see backend/compassx/launchers/docker_compose.py ensure_images) so this
   # profile uses an override that points those two services at the local
   # images instead of GHCR's amd64-only builds. See
-  # deployments/docker-compose/docker-compose.local-dev.yml.
-  compose_file: deployments/docker-compose/docker-compose.local-dev.yml
+  compose_file:
+    - deployments/docker-compose/docker-compose.yml
+    - deployments/docker-compose/docker-compose.local-dev.yml
   project_name: compassx
   ensure_images: true
 

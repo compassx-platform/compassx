@@ -8,6 +8,7 @@ import {
   Sparkles,
   CircleUserRound,
   Settings,
+  Sliders,
   LogOut,
   FlaskConical,
   Grid2x2,
@@ -98,6 +99,7 @@ export default function AppShell() {
     if (scopedPathname.startsWith('/icons')) return 'Custom Icons';
     if (scopedPathname.startsWith('/logo') || scopedPathname.startsWith('/brand-logo')) return 'Logo Showcase';
     if (scopedPathname.startsWith('/design-system')) return 'Design System';
+    if (scopedPathname.startsWith('/settings') || scopedPathname.startsWith('/workspace-settings')) return 'Workspace Settings';
     if (scopedPathname.startsWith('/ontology') || scopedPathname.startsWith('/topology')) return 'Ontology';
     return 'CompassX';
 
@@ -527,6 +529,33 @@ export default function AppShell() {
                       <ChevronRight size={13} style={{ opacity: 0.45 }} />
                     </button>
                   )}
+
+                  {/* Workspace Settings */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setProfileMenuOpen(false);
+                      navigate('/settings');
+                    }}
+                    style={{
+                      width: '100%',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 10,
+                      padding: '8px 12px',
+                      borderRadius: 8,
+                      border: 'none',
+                      background: 'transparent',
+                      color: 'var(--color-text)',
+                      cursor: 'pointer',
+                      textAlign: 'left',
+                      fontSize: '0.84rem',
+                    }}
+                  >
+                    <Sliders size={15} />
+                    <span style={{ flex: 1 }}>Workspace Settings</span>
+                    <ChevronRight size={13} style={{ opacity: 0.45 }} />
+                  </button>
 
                   {/* Workspace Members — Workspace / Account Admin Only */}
                   {isWorkspaceAdmin && workspaceCtx && (

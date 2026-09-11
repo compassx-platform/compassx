@@ -141,6 +141,16 @@ class TestBundledFiles:
         with pytest.raises(PlatformError):
             load_profile("does-not-exist")
 
+    def test_profile_compose_files(self):
+        local_dev = load_profile("local-dev")
+        assert len(local_dev.compose_files) == 2
+        assert "docker-compose.yml" in local_dev.compose_files[0]
+        assert "docker-compose.local-dev.yml" in local_dev.compose_files[1]
+
+        docker = load_profile("docker")
+        assert len(docker.compose_files) == 1
+        assert "docker-compose.yml" in docker.compose_files[0]
+
     def test_profile_env_var(self, monkeypatch):
         monkeypatch.setenv("COMPASSX_PLATFORM_PROFILE", "docker")
         assert load_profile().name == "docker"

@@ -281,6 +281,13 @@ class KubernetesAppDriver(BaseAppDriver):
                 except ApiException as e:
                     if e.status == 404:
                         k8s.apps().create_namespaced_deployment(namespace=ns, body=deployment)
+                    elif e.status in (422, 409) or "field is immutable" in str(e).lower():
+                        logger.info("Recreating deployment %s due to immutable field change: %s", name, e)
+                        try:
+                            k8s.apps().delete_namespaced_deployment(name=name, namespace=ns, grace_period_seconds=0)
+                        except Exception:
+                            pass
+                        k8s.apps().create_namespaced_deployment(namespace=ns, body=deployment)
                     else:
                         raise
 
@@ -289,6 +296,13 @@ class KubernetesAppDriver(BaseAppDriver):
                     k8s.core().replace_namespaced_service(name=name, namespace=ns, body=service)
                 except ApiException as e:
                     if e.status == 404:
+                        k8s.core().create_namespaced_service(namespace=ns, body=service)
+                    elif e.status in (422, 409) or "field is immutable" in str(e).lower():
+                        logger.info("Recreating service %s due to immutable field change: %s", name, e)
+                        try:
+                            k8s.core().delete_namespaced_service(name=name, namespace=ns)
+                        except Exception:
+                            pass
                         k8s.core().create_namespaced_service(namespace=ns, body=service)
                     else:
                         raise
@@ -304,7 +318,8 @@ class KubernetesAppDriver(BaseAppDriver):
 
                 build_logs.append(f"[{now_ts}] [SUCCESS] Kubernetes Deployment, Service, and Ingress ({subdomain}) created successfully.")
             except Exception as k8s_err:
-                build_logs.append(f"[{now_ts}] [WARNING] K8s API communication: {k8s_err}")
+                build_logs.append(f"[{now_ts}] [ERROR] K8s API communication: {k8s_err}")
+                raise
 
         return {
             "mode": "kubernetes",

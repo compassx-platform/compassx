@@ -47,7 +47,51 @@ def _require_workspace_admin(ctx: WorkspaceContext) -> None:
         raise HTTPException(status_code=403, detail="Workspace admin required")
 
 
-# ── Workspace info ────────────────────────────────────────────────────────────
+# ── Workspace info & settings ──────────────────────────────────────────────────
+
+DEFAULT_WORKSPACE_SETTINGS = {
+    "default_warehouse": "last_selected",
+    "serverless_interactive_timeout": 9000,
+    "package_repositories": {
+        "pypi_index_url": "https://pypi.org/simple",
+        "pypi_extra_index_urls": [],
+        "npm_registry": "https://registry.npmjs.org/",
+        "maven_central": "https://repo1.maven.org/maven2/",
+        "custom_repositories": []
+    },
+    "base_environments": {
+        "python_version": "3.11",
+        "spark_version": "3.5.0",
+        "preinstalled_packages": [
+            "pandas>=2.0.0",
+            "numpy>=1.24.0",
+            "scikit-learn>=1.3.0",
+            "plotly>=5.15.0",
+            "requests>=2.31.0"
+        ],
+        "environment_variables": {
+            "PYTHONUNBUFFERED": "1"
+        }
+    },
+    "serverless_usage_policies": {
+        "enforce_cost_tags": True,
+        "required_tags": ["Environment", "CostCenter", "Project"],
+        "max_runtime_hours_per_day": 24,
+        "max_concurrent_queries": 10,
+        "cost_alert_threshold": 1000
+    },
+    "classic_compute_policies": {
+        "allow_unrestricted_cluster_creation": False,
+        "default_node_type": "standard_d4s_v5",
+        "max_nodes": 8,
+        "auto_termination_minutes": 60,
+        "cluster_tags": {
+            "ManagedBy": "CompassX",
+            "Tier": "Workspace"
+        }
+    }
+}
+
 
 @router.get("/workspace")
 def get_workspace_info(
@@ -66,6 +110,67 @@ def get_workspace_info(
         "current_user_role": ctx.principal_role,
         "is_account_admin": ctx.is_account_admin,
     }
+
+
+@router.get("/workspace/settings")
+def get_workspace_settings(
+    slug: str,
+    request: Request,
+    db: Session = Depends(get_account_db),
+):
+    ctx = _get_workspace_ctx(request)
+    ws = db.query(Workspace).filter(Workspace.id == ctx.workspace_id).first()
+    if ws is None:
+        raise HTTPException(status_code=404, detail="Workspace not found")
+    
+    cfg = dict(ws.storage_config or {})
+    saved_settings = cfg.get("workspace_settings") or {}
+    
+    # Deep merge with defaults
+    merged = {**DEFAULT_WORKSPACE_SETTINGS, **saved_settings}
+    for k in ["package_repositories", "base_environments", "serverless_usage_policies", "classic_compute_policies"]:
+        if k in DEFAULT_WORKSPACE_SETTINGS and isinstance(DEFAULT_WORKSPACE_SETTINGS[k], dict):
+            merged[k] = {**DEFAULT_WORKSPACE_SETTINGS[k], **saved_settings.get(k, {})}
+
+    return merged
+
+
+@router.patch("/workspace/settings")
+def update_workspace_settings(
+    slug: str,
+    body: dict,
+    request: Request,
+    db: Session = Depends(get_account_db),
+):
+    ctx = _get_workspace_ctx(request)
+    _require_workspace_admin(ctx)
+    ws = db.query(Workspace).filter(Workspace.id == ctx.workspace_id).first()
+    if ws is None:
+        raise HTTPException(status_code=404, detail="Workspace not found")
+
+    cfg = dict(ws.storage_config or {})
+    existing = cfg.get("workspace_settings") or {}
+    
+    # Merge updates into existing settings
+    for key, value in body.items():
+        if isinstance(value, dict) and key in existing and isinstance(existing[key], dict):
+            existing[key] = {**existing[key], **value}
+        else:
+            existing[key] = value
+
+    cfg["workspace_settings"] = existing
+    ws.storage_config = cfg
+    db.commit()
+    db.refresh(ws)
+
+    # Return full merged settings
+    merged = {**DEFAULT_WORKSPACE_SETTINGS, **existing}
+    for k in ["package_repositories", "base_environments", "serverless_usage_policies", "classic_compute_policies"]:
+        if k in DEFAULT_WORKSPACE_SETTINGS and isinstance(DEFAULT_WORKSPACE_SETTINGS[k], dict):
+            merged[k] = {**DEFAULT_WORKSPACE_SETTINGS[k], **existing.get(k, {})}
+
+    return merged
+
 
 
 # ── Members ───────────────────────────────────────────────────────────────────

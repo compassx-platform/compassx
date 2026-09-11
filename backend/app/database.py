@@ -143,7 +143,18 @@ try:
     if not settings.SKIP_DB_INIT:
         with system_engine.connect() as conn:
             conn.execute(text("SELECT 1"))
+            try:
+                conn.execute(text("CREATE SCHEMA IF NOT EXISTS apps;"))
+                conn.commit()
+            except Exception:
+                pass
         logger.info("System database connection successful: %s", settings.resolved_data_db_url)
+
+        try:
+            from app.models.app_task import AppTask  # noqa: WPS433
+            SystemBase.metadata.create_all(bind=system_engine, tables=[AppTask.__table__])
+        except Exception as _task_init_err:
+            logger.debug("Could not auto-create app_tasks table: %s", _task_init_err)
     else:
         logger.info("System database connection test skipped (SKIP_DB_INIT=True)")
 except Exception as e:

@@ -397,7 +397,8 @@ class KubernetesCollector(ResourceCollector):
             status = "Ready" if is_ready else "NotReady"
 
             m = node_metrics.get(node_name, {})
-            cpu_percent = m.get("cpu_percent", 0.0)
+            raw_cores = (m.get("cpu_percent", 0.0) / 100.0) if "cpu_percent" in m else 0.0
+            cpu_percent = round((raw_cores / alloc_cores * 100.0), 2) if alloc_cores > 0 else m.get("cpu_percent", 0.0)
             mem_used_mb = m.get("memory_mb", 0.0)
             mem_used_bytes = m.get("memory_bytes", 0.0)
             mem_percent = (
@@ -443,12 +444,16 @@ class KubernetesCollector(ResourceCollector):
         return nodes_res
 
     def collect(self) -> list[ObservedResource]:
+        nodes_res = self._collect_nodes()
+        node_alloc_map = {n.container_name: n.memory_limit_mb for n in nodes_res if n.container_name}
+        avg_node_mem = (sum(n.memory_limit_mb for n in nodes_res) / len(nodes_res)) if nodes_res else 0.0
+
         resources = []
         try:
             core_v1 = self._client.core()
             pods = core_v1.list_namespaced_pod(self._namespace).items
         except Exception:
-            return resources
+            return nodes_res
 
         pod_metrics = self._fetch_pod_metrics()
 
@@ -499,12 +504,22 @@ class KubernetesCollector(ResourceCollector):
                 if res and res.limits:
                     total_limit_bytes += _parse_k8s_memory_bytes(res.limits.get("memory"))
 
-            memory_limit_mb = round(total_limit_bytes / (1024.0 * 1024.0), 2) if total_limit_bytes > 0 else 0.0
-            memory_percent = (
-                round(memory_bytes / total_limit_bytes * 100.0, 2)
-                if total_limit_bytes > 0 and memory_bytes > 0
-                else 0.0
-            )
+            if total_limit_bytes > 0:
+                memory_limit_mb = round(total_limit_bytes / (1024.0 * 1024.0), 2)
+                memory_percent = (
+                    round(memory_bytes / total_limit_bytes * 100.0, 2)
+                    if memory_bytes > 0
+                    else 0.0
+                )
+            else:
+                memory_limit_mb = 0.0
+                pod_node_name = pod.spec.node_name if pod.spec else None
+                node_mem = node_alloc_map.get(pod_node_name) or avg_node_mem
+                memory_percent = (
+                    round(memory_mb / node_mem * 100.0, 2)
+                    if node_mem > 0 and memory_mb > 0
+                    else 0.0
+                )
 
             resources.append(
                 ObservedResource(
@@ -525,7 +540,7 @@ class KubernetesCollector(ResourceCollector):
                     image_version=image,
                 )
             )
-        all_items = resources + self._collect_nodes()
+        all_items = resources + nodes_res
         return sorted(all_items, key=lambda item: (item.kind != "node", item.name))
 
 

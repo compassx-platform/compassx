@@ -64,6 +64,7 @@ class DeploymentProfile:
           external_services: [postgres]
     """
     raw: dict[str, Any] = field(default_factory=dict)
+    compose_files: list[str] = field(default_factory=list)
 
     def mode_for(self, service: str) -> ServiceMode:
         entry = self.services.get(service)
@@ -94,13 +95,28 @@ def _parse_profile(name: str, data: dict[str, Any]) -> DeploymentProfile:
     docker = data.get("docker") or {}
     k8s = data.get("kubernetes") or {}
 
+    raw_compose = (
+        docker.get("compose_files")
+        or docker.get("compose_file")
+        or "deployments/docker-compose/docker-compose.yml"
+    )
+    if isinstance(raw_compose, (list, tuple)):
+        compose_files = [str(f) for f in raw_compose]
+        primary_compose_file = (
+            compose_files[0] if compose_files else "deployments/docker-compose/docker-compose.yml"
+        )
+    else:
+        primary_compose_file = str(raw_compose)
+        compose_files = [primary_compose_file]
+
     return DeploymentProfile(
         name=data.get("profile", name),
         default_mode=default_mode,
         services=services,
         compute_driver=compute.get("driver", "kubernetes"),
         compute_overrides=dict(compute.get("overrides") or {}),
-        compose_file=docker.get("compose_file", "deployments/docker-compose/docker-compose.yml"),
+        compose_file=primary_compose_file,
+        compose_files=compose_files,
         compose_project=docker.get("project_name", "compassx"),
         docker_ensure_images=bool(docker.get("ensure_images", False)),
         k8s_namespace=k8s.get("namespace", "compassx-jobs"),

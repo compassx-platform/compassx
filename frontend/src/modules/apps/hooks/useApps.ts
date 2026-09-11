@@ -125,6 +125,7 @@ export interface DeploymentItem {
   status: 'success' | 'failed' | 'building' | 'pending' | string;
   commit_sha?: string;
   git_ref: string;
+  commit_message?: string;
   message?: string;
   duration_seconds?: number;
   triggered_by?: string;

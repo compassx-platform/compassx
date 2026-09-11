@@ -97,7 +97,7 @@ def test_build_collectors_local_dev_only_docker(tmp_path, monkeypatch):
     collectors = MonitoringResourceManager._build_collectors(profile, tmp_path)
     types = [type(c) for c in collectors]
     assert DockerComposeCollector in types
-    assert HostCollector not in types
+    assert HostCollector in types
     assert LocalProcessCollector not in types
 
 

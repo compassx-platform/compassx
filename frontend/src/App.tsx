@@ -59,6 +59,7 @@ import LogoShowcasePage from '@/pages/LogoShowcasePage';
 import DesignSystemShowcasePage from '@/pages/DesignSystemShowcasePage';
 import AppsHomePage from '@/modules/apps/pages/AppsHomePage';
 import AppDetailPage from '@/modules/apps/pages/AppDetailPage';
+import WorkspaceSettingsPage from '@/pages/workspace/WorkspaceSettingsPage';
 import { DEFAULT_APP_ID, isAppId, normalizeAppId, stripAppScope, getDefaultPathForApp, useCurrentAppId } from '@/lib/appNavigation';
 import { useMyWorkspaces } from '@/lib/workspaceApi';
 
@@ -338,6 +339,9 @@ export default function App() {
                   <Route path="brand-logo" element={<LogoShowcasePage />} />
                   {/* CompassX Centralized Design System Showcase */}
                   <Route path="design-system" element={<DesignSystemShowcasePage />} />
+                  {/* Workspace Settings */}
+                  <Route path="settings" element={<WorkspaceSettingsPage />} />
+                  <Route path="workspace-settings" element={<WorkspaceSettingsPage />} />
                   {/* Fallback for unhandled sub-routes inside an app */}
                   <Route path="*" element={<AppHomeRedirect />} />
                 </Route>

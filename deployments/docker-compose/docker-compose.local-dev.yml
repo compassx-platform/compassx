@@ -12,10 +12,6 @@
 #
 # Used automatically by the local-dev profile (see
 # backend/compassx/profiles/local-dev.yaml: docker.compose_file).
-
-include:
-  - docker-compose.yml
-
 services:
   jobs-runner-image:
     build:
