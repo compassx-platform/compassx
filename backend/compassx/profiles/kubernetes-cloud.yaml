@@ -43,6 +43,4 @@ startup_order:
   - backend
   - frontend
 
-required_healthy:
-  - postgres
-  - minio
+required_healthy: []
