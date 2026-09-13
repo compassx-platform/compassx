@@ -30,6 +30,13 @@ def _clean_id(raw_id: str) -> str:
     return re.sub(r"[^a-z0-9-]", "-", raw_id.lower()).strip("-")
 
 
+def _sanitize_workspace_name(raw_name: str) -> str:
+    """Sanitize workspace name to be a clean, valid folder and identifier (lowercase alphanumeric, dashes, underscores)."""
+    cleaned = re.sub(r"[^a-zA-Z0-9_-]", "-", (raw_name or "").strip()).strip("-").lower()
+    return cleaned or "default"
+
+
+
 class OmnigentDevService:
     """Orchestrates interactive dev sessions and pair programming with Omnigent AI."""
 
@@ -171,7 +178,12 @@ class OmnigentDevService:
         return host_id, host_name
 
     def create_or_get_omnigent_session(
-        self, app, repo_dir: str, dev_port: int, host_id: Optional[str] = None
+        self,
+        app,
+        repo_dir: str,
+        dev_port: int,
+        host_id: Optional[str] = None,
+        workspace_folder: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Register or link the dev sandbox container to the shared Databricks Omnigent server."""
         server_status = self.ensure_omnigent_server()
@@ -234,13 +246,14 @@ class OmnigentDevService:
                 agent_id = "057995d1517418e6839f51d340785dd6"
 
             # 3. Create session on Omnigent server
+            ws_path = f"/workspaces/{workspace_folder}" if workspace_folder else "/workspaces"
             payload_dict: Dict[str, Any] = {
                 "title": f"Dev Sandbox: {app.name}",
                 "agent_id": agent_id,
             }
             if host_id:
                 payload_dict["host_id"] = host_id
-                payload_dict["workspace"] = "/workspaces"
+                payload_dict["workspace"] = ws_path
 
             payload = json.dumps(payload_dict).encode("utf-8")
             session_id = None
@@ -299,7 +312,7 @@ class OmnigentDevService:
                 "host_name": expected_host_name,
                 "host_online": bool(res_data.get("host_online") or host_id),
                 "runner_online": bool(res_data.get("runner_online", True)),
-                "workspace": res_data.get("workspace", "/app"),
+                "workspace": res_data.get("workspace", ws_path),
                 "mode": "databricks_server",
             }
         except Exception as e:
@@ -313,13 +326,20 @@ class OmnigentDevService:
                 "host_id": host_id or expected_host_id,
                 "host_name": expected_host_name,
                 "host_online": True,
+                "workspace": f"/workspaces/{workspace_folder}" if workspace_folder else "/workspaces",
                 "mode": "databricks_server",
             }
 
-    def start_dev_session(self, app, workspace_id: Optional[str] = None) -> Dict[str, Any]:
+    def start_dev_session(
+        self,
+        app,
+        workspace_id: Optional[str] = None,
+        workspace_name: Optional[str] = None,
+    ) -> Dict[str, Any]:
         """Start or retrieve the development sandbox using active runtime driver."""
         repo_dir = self.get_repo_dir(app)
         expected_host_id, expected_host_name = self.get_app_host_identity(app)
+        clean_app_id = _clean_id(app.id)
 
         # ── Resolve or create DevWorkspace record ──────────────────────────────
         from app.models.dev_workspace import DevWorkspace
@@ -328,21 +348,39 @@ class OmnigentDevService:
             with _get_system_db() as db:
                 if workspace_id:
                     ws_record = db.query(DevWorkspace).filter(
-                        DevWorkspace.id == workspace_id,
                         DevWorkspace.app_id == app.id,
+                        (DevWorkspace.id == workspace_id) | (DevWorkspace.name == workspace_id),
                     ).first()
+
+                if not ws_record and workspace_name:
+                    clean_name = _sanitize_workspace_name(workspace_name)
+                    ws_record = db.query(DevWorkspace).filter(
+                        DevWorkspace.app_id == app.id,
+                        (DevWorkspace.name == clean_name) | (DevWorkspace.id == clean_name[:32]),
+                    ).first()
+
                 if not ws_record:
-                    # Auto-generate a new workspace
-                    ws_id = f"ws_{uuid.uuid4().hex[:16]}"
-                    clean_app_id = _clean_id(app.id)
-                    folder_path = f"{clean_app_id}/{ws_id}"
+                    # User specified name or auto-generate matching name & folder name
+                    if workspace_name:
+                        clean_name = _sanitize_workspace_name(workspace_name)
+                    else:
+                        ts = datetime.now(timezone.utc).strftime("%b%d-%H%M").lower()
+                        clean_name = f"ws-{ts}"
+
+                    folder_path = f"{clean_app_id}/{clean_name}"
                     branch = getattr(app, "git_branch", None) or "main"
-                    ts = datetime.now(timezone.utc).strftime("%b%d-%H%M")
+                    ws_id = clean_name[:32]
+
+                    # Verify ID uniqueness across DB
+                    id_conflict = db.query(DevWorkspace).filter(DevWorkspace.id == ws_id).first()
+                    if id_conflict and id_conflict.app_id != app.id:
+                        ws_id = f"{clean_name[:24]}_{uuid.uuid4().hex[:6]}"
+
                     ws_record = DevWorkspace(
                         id=ws_id,
                         app_id=app.id,
                         workspace_id=getattr(app, "workspace_id", ""),
-                        name=f"ws-{ts}",
+                        name=clean_name,
                         folder_path=folder_path,
                         git_branch=branch,
                         status="active",
@@ -357,16 +395,16 @@ class OmnigentDevService:
                     ws_record.last_active_at = datetime.now(timezone.utc)
                     db.commit()
                     db.refresh(ws_record)
-                # Detach from session so we can use fields after close
+
                 folder_path = ws_record.folder_path
                 ws_id = ws_record.id
                 ws_name = ws_record.name
         except Exception as ws_err:
             logger.warning("Could not manage DevWorkspace record: %s", ws_err)
-            clean_app_id = _clean_id(app.id)
-            ws_id = f"ws_{uuid.uuid4().hex[:8]}"
-            folder_path = f"{clean_app_id}/{ws_id}"
-            ws_name = f"ws-default"
+            clean_name = _sanitize_workspace_name(workspace_name or f"ws-{datetime.now(timezone.utc).strftime('%b%d-%H%M').lower()}")
+            ws_id = clean_name[:32]
+            folder_path = f"{clean_app_id}/{clean_name}"
+            ws_name = clean_name
 
         # If already running in memory for this workspace, return existing session
         session_key = f"{app.id}:{ws_id}"
@@ -389,7 +427,9 @@ class OmnigentDevService:
         dev_url = raw_driver_res.get("dev_url") or ingress_service.get_app_dev_url(app, dev_port)
 
         # 3. Create or link Omnigent session
-        omnigent_link = self.create_or_get_omnigent_session(app, repo_dir, dev_port, host_id=expected_host_id)
+        omnigent_link = self.create_or_get_omnigent_session(
+            app, repo_dir, dev_port, host_id=expected_host_id, workspace_folder=folder_path
+        )
 
         session_info = {
             "app_id": app.id,
@@ -420,6 +460,7 @@ class OmnigentDevService:
         # Also store by app_id for backward compat
         _DEV_SESSIONS[app.id] = session_info
         return session_info
+
 
 
     def get_dev_session(self, app) -> Dict[str, Any]:
@@ -515,6 +556,63 @@ class OmnigentDevService:
         except Exception as e:
             logger.warning("Could not list DevWorkspaces: %s", e)
             return []
+
+    def create_dev_workspace(self, app, name: str, git_branch: Optional[str] = None) -> Dict[str, Any]:
+        """Create a new dev workspace record with matching name and folder path."""
+        from app.models.dev_workspace import DevWorkspace
+        clean_app_id = _clean_id(app.id)
+        clean_name = _sanitize_workspace_name(name)
+        folder_path = f"{clean_app_id}/{clean_name}"
+        branch = git_branch or getattr(app, "git_branch", None) or "main"
+        ws_id = clean_name[:32]
+
+        try:
+            with _get_system_db() as db:
+                existing = db.query(DevWorkspace).filter(
+                    DevWorkspace.app_id == app.id,
+                    (DevWorkspace.name == clean_name) | (DevWorkspace.id == ws_id),
+                ).first()
+                if existing:
+                    return {
+                        "id": existing.id,
+                        "name": existing.name,
+                        "folder_path": existing.folder_path,
+                        "git_branch": existing.git_branch,
+                        "status": existing.status,
+                        "created_at": existing.created_at.isoformat() if existing.created_at else None,
+                        "already_exists": True,
+                    }
+
+                id_conflict = db.query(DevWorkspace).filter(DevWorkspace.id == ws_id).first()
+                if id_conflict and id_conflict.app_id != app.id:
+                    ws_id = f"{clean_name[:24]}_{uuid.uuid4().hex[:6]}"
+
+                ws_record = DevWorkspace(
+                    id=ws_id,
+                    app_id=app.id,
+                    workspace_id=getattr(app, "workspace_id", ""),
+                    name=clean_name,
+                    folder_path=folder_path,
+                    git_branch=branch,
+                    status="inactive",
+                    created_by=None,
+                    last_active_at=datetime.now(timezone.utc),
+                )
+                db.add(ws_record)
+                db.commit()
+                db.refresh(ws_record)
+                return {
+                    "id": ws_record.id,
+                    "name": ws_record.name,
+                    "folder_path": ws_record.folder_path,
+                    "git_branch": ws_record.git_branch,
+                    "status": ws_record.status,
+                    "created_at": ws_record.created_at.isoformat() if ws_record.created_at else None,
+                    "already_exists": False,
+                }
+        except Exception as e:
+            logger.warning("Could not create DevWorkspace: %s", e)
+            raise e
 
     def delete_dev_workspace(self, app, workspace_id: str) -> Dict[str, Any]:
         """Delete a dev workspace: remove DB record (folder on PVC is cleaned up by background job or on-demand)."""

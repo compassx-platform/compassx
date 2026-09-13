@@ -63,8 +63,9 @@ import {
 import { useAppTasks } from '../hooks/useAppTasks';
 import { APP_TYPES } from '../components/CreateAppModal';
 import { AppTasksKanban } from '../components/tasks/AppTasksKanban';
+import { AppDevelopmentTab } from '../components/AppDevelopmentTab';
 
-type DetailTab = 'overview' | 'deployments' | 'configuration' | 'environment' | 'logs' | 'tasks';
+type DetailTab = 'overview' | 'development' | 'deployments' | 'configuration' | 'environment' | 'logs' | 'tasks';
 
 export default function AppDetailPage() {
   const params = useParams<{ applicationId?: string; appId?: string }>();
@@ -78,6 +79,7 @@ export default function AppDetailPage() {
 
   const tabParam = searchParams.get('tab') as DetailTab | null;
   const activeTab: DetailTab =
+    tabParam === 'development' ||
     tabParam === 'deployments' ||
     tabParam === 'configuration' ||
     tabParam === 'environment' ||
@@ -888,6 +890,39 @@ export default function AppDetailPage() {
         </button>
 
         <button
+          onClick={() => handleTabChange('development')}
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+            padding: '10px 4px',
+            border: 'none',
+            background: 'none',
+            fontSize: '0.875rem',
+            fontWeight: activeTab === 'development' ? 600 : 500,
+            color: activeTab === 'development' ? 'var(--color-primary)' : 'var(--color-text-muted)',
+            borderBottom: activeTab === 'development' ? '2px solid var(--color-primary)' : '2px solid transparent',
+            cursor: 'pointer',
+            transition: 'all 0.15s ease',
+          }}
+        >
+          <Sparkles size={16} />
+          <span>Development</span>
+          {isDevPodRunning && (
+            <span
+              style={{
+                width: 6,
+                height: 6,
+                borderRadius: '50%',
+                background: '#22c55e',
+                marginLeft: -2,
+              }}
+              title="Dev Pod Running"
+            />
+          )}
+        </button>
+
+        <button
           onClick={() => handleTabChange('deployments')}
           style={{
             display: 'flex',
@@ -1096,24 +1131,24 @@ export default function AppDetailPage() {
               </div>
             </div>
 
-            {/* Omnigent Development Sandbox Card */}
+            {/* Development Sandbox Summary Card */}
             <div
               style={{
-                background: 'linear-gradient(135deg, rgba(99, 102, 241, 0.06) 0%, rgba(168, 85, 247, 0.06) 100%)',
+                background: 'linear-gradient(135deg, rgba(99, 102, 241, 0.05) 0%, rgba(168, 85, 247, 0.05) 100%)',
                 border: '1px solid rgba(99, 102, 241, 0.25)',
                 borderRadius: 'var(--radius-lg, 8px)',
-                padding: '20px 22px',
+                padding: '18px 20px',
                 display: 'flex',
                 flexDirection: 'column',
-                gap: 16,
+                gap: 14,
               }}
             >
-              <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', flexWrap: 'wrap', gap: 14 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 10 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
                   <div
                     style={{
-                      width: 44,
-                      height: 44,
+                      width: 40,
+                      height: 40,
                       borderRadius: 10,
                       background: 'linear-gradient(135deg, #6366f1 0%, #a855f7 100%)',
                       color: '#fff',
@@ -1121,445 +1156,89 @@ export default function AppDetailPage() {
                       alignItems: 'center',
                       justifyContent: 'center',
                       flexShrink: 0,
-                      boxShadow: '0 4px 12px rgba(99, 102, 241, 0.25)',
+                      boxShadow: '0 2px 8px rgba(99, 102, 241, 0.25)',
                     }}
                   >
-                    <Sparkles size={22} />
+                    <Sparkles size={20} />
                   </div>
                   <div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                      <h4 style={{ margin: 0, fontSize: '1rem', fontWeight: 650, color: 'var(--color-text)' }}>
-                        Omnigent Development Studio
-                      </h4>
-
-                      {/* Omnigent Server Status Pill */}
-                      <span
-                        style={{
-                          display: 'inline-flex',
-                          alignItems: 'center',
-                          gap: 5,
-                          padding: '2px 8px',
-                          borderRadius: 12,
-                          fontSize: '0.72rem',
-                          fontWeight: 600,
-                          color: devStatus?.omnigent_server_available ? '#15803d' : '#b45309',
-                          background: devStatus?.omnigent_server_available ? '#dcfce7' : '#fef3c7',
-                          border: devStatus?.omnigent_server_available ? '1px solid #bbf7d0' : '1px solid #fde68a',
-                        }}
-                        title={devStatus?.omnigent_server_available ? 'Shared Omnigent Server is online' : 'Omnigent Server starts on-demand'}
-                      >
-                        <span style={{ width: 6, height: 6, borderRadius: '50%', background: devStatus?.omnigent_server_available ? '#22c55e' : '#f59e0b' }} />
-                        {devStatus?.omnigent_server_available ? 'Server: Online' : 'Server: On-Demand'}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <span style={{ fontWeight: 650, fontSize: '0.95rem', color: 'var(--color-text)' }}>
+                        Development Sandbox
                       </span>
-
-                      {/* App Dev Pod Status Pill */}
                       <span
                         style={{
                           display: 'inline-flex',
                           alignItems: 'center',
-                          gap: 5,
+                          gap: 4,
                           padding: '2px 8px',
-                          borderRadius: 12,
+                          borderRadius: 10,
                           fontSize: '0.72rem',
                           fontWeight: 600,
-                          color: isDevPodRunning ? '#15803d' : isDevPodStopping ? '#b91c1c' : isDevPodStarting ? '#0284c7' : '#4b5563',
-                          background: isDevPodRunning ? '#dcfce7' : isDevPodStopping ? '#fee2e2' : isDevPodStarting ? '#e0f2fe' : '#f3f4f6',
-                          border: isDevPodRunning ? '1px solid #bbf7d0' : isDevPodStopping ? '1px solid #fecaca' : isDevPodStarting ? '1px solid #bae6fd' : '1px solid #e5e7eb',
+                          color: isDevPodRunning ? '#15803d' : '#4b5563',
+                          background: isDevPodRunning ? '#dcfce7' : '#f3f4f6',
+                          border: isDevPodRunning ? '1px solid #bbf7d0' : '1px solid #e5e7eb',
                         }}
                       >
-                        {isDevPodRunning ? (
-                          <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#22c55e' }} />
-                        ) : isDevPodStopping ? (
-                          <Loader2 size={10} className="spin" color="#b91c1c" />
-                        ) : isDevPodStarting ? (
-                          <Loader2 size={10} className="spin" color="#0284c7" />
-                        ) : (
-                          <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#9ca3af' }} />
-                        )}
-                        {isDevPodRunning ? 'Dev Pod: Running' : isDevPodStopping ? 'Dev Pod: Shutting Down...' : isDevPodStarting ? 'Dev Pod: Starting...' : 'Dev Pod: Stopped'}
+                        <span
+                          style={{
+                            width: 6,
+                            height: 6,
+                            borderRadius: '50%',
+                            background: isDevPodRunning ? '#22c55e' : '#9ca3af',
+                          }}
+                        />
+                        {isDevPodRunning ? 'Dev Pod: Running' : 'Dev Pod: Stopped'}
                       </span>
                     </div>
-
-                    <p style={{ margin: '4px 0 0', fontSize: '0.8rem', color: 'var(--color-text-muted)', maxWidth: 540, lineHeight: 1.4 }}>
-                      Isolated container with live hot-reload and AI agent pair programming. Edit code, test changes live, and push commits to Git.
-                    </p>
+                    <div style={{ fontSize: '0.78rem', color: 'var(--color-text-muted)', marginTop: 2 }}>
+                      {devWorkspaces && devWorkspaces.length > 0
+                        ? `${devWorkspaces.length} workspace${devWorkspaces.length > 1 ? 's' : ''} available • Live hot-reload and AI pair programming`
+                        : 'Interactive dev container with live hot-reload and AI pair programming'}
+                    </div>
                   </div>
                 </div>
 
-                {/* Top Action Buttons */}
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-                  {isDevPodStopping ? (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <button
+                    className="btn btn-outline"
+                    style={{ fontSize: '0.78rem', padding: '6px 12px', borderColor: '#6366f1', color: '#4f46e5' }}
+                    onClick={() => handleTabChange('development')}
+                  >
+                    <Code2 size={13} />
+                    <span>Open Development Tab</span>
+                  </button>
+                  {isDevPodRunning ? (
                     <button
                       className="btn"
                       style={{
-                        background: '#fee2e2',
-                        color: '#b91c1c',
-                        border: '1px solid #fecaca',
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        gap: 6,
-                        padding: '8px 16px',
-                        borderRadius: 6,
+                        background: 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)',
+                        color: '#fff',
+                        border: 'none',
+                        fontSize: '0.78rem',
                         fontWeight: 600,
-                        cursor: 'not-allowed',
+                        padding: '6px 14px',
+                        borderRadius: 6,
+                        cursor: 'pointer',
                       }}
-                      disabled={true}
+                      onClick={() => handleStartDevPod(undefined, true)}
                     >
-                      <Loader2 size={14} className="spin" color="#b91c1c" />
-                      <span>Shutting down Dev Pod...</span>
+                      <ExternalLink size={13} />
+                      <span>Launch Studio</span>
                     </button>
-                  ) : isDevPodRunning ? (
-                    <>
-                      <button
-                        className="btn"
-                        style={{
-                          background: 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)',
-                          color: '#ffffff',
-                          border: 'none',
-                          fontWeight: 600,
-                          display: 'inline-flex',
-                          alignItems: 'center',
-                          gap: 6,
-                          padding: '8px 16px',
-                          borderRadius: 6,
-                          boxShadow: '0 2px 8px rgba(99, 102, 241, 0.3)',
-                          cursor: 'pointer',
-                        }}
-                        onClick={handleLaunchDevStudio}
-                        disabled={startDevMutation.isPending}
-                        title="Open Dev Studio in new tab"
-                      >
-                        <ExternalLink size={14} />
-                        <span>Open Dev Studio</span>
-                      </button>
-
-                      <button
-                        className="btn btn-outline"
-                        style={{
-                          display: 'inline-flex',
-                          alignItems: 'center',
-                          gap: 6,
-                          padding: '8px 14px',
-                          borderRadius: 6,
-                        }}
-                        onClick={() => window.open(devStatus?.dev_url || `https://${app.slug}-dev.135.13.180.167.nip.io`, '_blank')}
-                        title="Open live dev app URL"
-                      >
-                        <Globe size={14} />
-                        <span>Open Live Dev App</span>
-                      </button>
-
-                      <button
-                        className="btn"
-                        style={{
-                          background: '#fee2e2',
-                          color: '#b91c1c',
-                          border: '1px solid #fecaca',
-                          display: 'inline-flex',
-                          alignItems: 'center',
-                          gap: 6,
-                          padding: '8px 14px',
-                          borderRadius: 6,
-                          fontWeight: 500,
-                          cursor: 'pointer',
-                        }}
-                        onClick={handleStopDevPod}
-                        title="Stop development pod to free cluster resources"
-                      >
-                        <Square size={13} />
-                        <span>Stop Dev Pod</span>
-                      </button>
-                    </>
                   ) : (
-                    <>
-                      <button
-                        className="btn btn-outline"
-                        style={{
-                          borderColor: '#6366f1',
-                          color: '#4f46e5',
-                          background: '#f5f3ff',
-                          fontWeight: 600,
-                          display: 'inline-flex',
-                          alignItems: 'center',
-                          gap: 6,
-                          padding: '8px 16px',
-                          borderRadius: 6,
-                          cursor: isDevPodStarting ? 'not-allowed' : 'pointer',
-                        }}
-                        onClick={() => handleStartDevPod(false)}
-                        disabled={isDevPodStarting}
-                        title="Start dev sandbox pod in cluster without opening studio"
-                      >
-                        {isDevPodStarting ? (
-                          <Loader2 size={14} className="spin" />
-                        ) : (
-                          <Play size={14} />
-                        )}
-                        <span>{isDevPodStarting ? 'Starting Dev Pod...' : 'Start Dev Pod'}</span>
-                      </button>
-
-                      <button
-                        className="btn"
-                        style={{
-                          background: 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)',
-                          color: '#ffffff',
-                          border: 'none',
-                          fontWeight: 600,
-                          display: 'inline-flex',
-                          alignItems: 'center',
-                          gap: 6,
-                          whiteSpace: 'nowrap',
-                          padding: '8px 18px',
-                          borderRadius: 6,
-                          cursor: isDevPodStarting ? 'not-allowed' : 'pointer',
-                          boxShadow: '0 2px 8px rgba(99, 102, 241, 0.3)',
-                        }}
-                        onClick={() => handleStartDevPod(true)}
-                        disabled={isDevPodStarting}
-                        title="Start dev pod & Launch Omnigent AI pair programmer in new tab"
-                      >
-                        {isDevPodStarting ? (
-                          <Loader2 size={14} className="spin" />
-                        ) : (
-                          <Sparkles size={14} />
-                        )}
-                        <span>{isDevPodStarting ? 'Launching Dev Studio...' : 'Launch Dev Studio'}</span>
-                      </button>
-                    </>
-                  )}
-                </div>
-              </div>
-
-              {/* Shutdown Alert / Progress Banner */}
-              {isDevPodStopping && (
-                <div
-                  style={{
-                    background: 'linear-gradient(90deg, #fef2f2 0%, #fff1f2 100%)',
-                    border: '1px solid #fecaca',
-                    borderRadius: 8,
-                    padding: '12px 16px',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 12,
-                  }}
-                >
-                  <Loader2 size={18} className="spin" color="#dc2626" />
-                  <div style={{ flex: 1 }}>
-                    <div style={{ fontWeight: 600, color: '#b91c1c', fontSize: '0.88rem' }}>
-                      Dev Pod Shutdown in Progress
-                    </div>
-                    <div style={{ fontSize: '0.78rem', color: '#7f1d1d', marginTop: 2 }}>
-                      Gracefully stopping dev container, terminating WebSocket runners, and releasing AKS CPU/Memory resources...
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* Multi-Step Launch & Connectivity Progress Visualizer */}
-              <div
-                style={{
-                  background: 'var(--color-surface)',
-                  border: '1px solid rgba(99, 102, 241, 0.2)',
-                  borderRadius: 8,
-                  padding: '14px 16px',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  gap: 10,
-                }}
-              >
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10 }}>
-                  {[
-                    {
-                      id: 1,
-                      title: '1. Omnigent Server',
-                      desc: devStatus?.omnigent_server_available ? 'Online (v0.12.0)' : 'Starts on-demand',
-                      done: devStatus?.omnigent_server_available || launchStep > 1,
-                      active: launchStep === 1,
-                    },
-                    {
-                      id: 2,
-                      title: '2. Dev Sandbox Pod',
-                      desc: devStatus?.status === 'active' ? (devStatus?.pod_name ? `${devStatus.pod_name.slice(0, 18)}...` : 'Running') : 'Git workspace mounted',
-                      done: devStatus?.status === 'active' || launchStep > 2,
-                      active: launchStep === 2 || (devStatus?.status === 'provisioning'),
-                    },
-                    {
-                      id: 3,
-                      title: '3. Runner WebSocket',
-                      desc: devStatus?.status === 'active' ? 'Tunnel Paired' : 'Agent tunnel relay',
-                      done: devStatus?.status === 'active' || launchStep > 3,
-                      active: launchStep === 3,
-                    },
-                    {
-                      id: 4,
-                      title: '4. Dev Studio Ready',
-                      desc: devStatus?.status === 'active' ? 'Session Active' : 'Ready to Launch',
-                      done: devStatus?.status === 'active' || launchStep === 4,
-                      active: launchStep === 4,
-                    },
-                  ].map((step) => {
-                    const isStepDone = step.done;
-                    const isStepActive = step.active;
-
-                    return (
-                      <div
-                        key={step.id}
-                        style={{
-                          display: 'flex',
-                          flexDirection: 'column',
-                          gap: 3,
-                          padding: '8px 10px',
-                          background: isStepActive ? '#eff6ff' : isStepDone ? '#f0fdf4' : 'var(--color-surface-hover, #f8fafc)',
-                          border: isStepActive ? '1px solid #3b82f6' : isStepDone ? '1px solid #86efac' : '1px solid var(--color-border)',
-                          borderRadius: 6,
-                          transition: 'all 0.2s ease',
-                        }}
-                      >
-                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                          <span style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--color-text)' }}>
-                            {step.title}
-                          </span>
-                          {isStepActive ? (
-                            <Loader2 size={12} className="spin" color="#2563eb" />
-                          ) : isStepDone ? (
-                            <CheckCircle2 size={12} color="#16a34a" />
-                          ) : (
-                            <div style={{ width: 7, height: 7, borderRadius: '50%', background: 'var(--color-border)' }} />
-                          )}
-                        </div>
-                        <span style={{ fontSize: '0.7rem', color: isStepActive ? '#1d4ed8' : isStepDone ? '#15803d' : 'var(--color-text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                          {step.desc}
-                        </span>
-                      </div>
-                    );
-                  })}
-                </div>
-
-                {/* Progress helper text */}
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.75rem', color: 'var(--color-text-muted)', paddingTop: 2 }}>
-                  <span style={{ color: launchStatusText ? '#2563eb' : 'var(--color-text-muted)', fontWeight: launchStatusText ? 500 : 400 }}>
-                    {launchStatusText || (devStatus?.status === 'active' ? 'Dev pod is live and paired with Omnigent server. Hot-reloading active.' : 'Click "Launch Dev Studio" to start an interactive pair-programming session.')}
-                  </span>
-                  {devStatus?.dev_url && (
-                    <span style={{ fontSize: '0.72rem' }}>
-                      Dev Endpoint: <code style={{ color: 'var(--color-primary)' }}>{devStatus.dev_url}</code>
-                    </span>
-                  )}
-                </div>
-              </div>
-            </div>
-
-            {/* Dev Workspaces Panel */}
-            <div
-              style={{
-                background: 'var(--color-surface)',
-                border: '1px solid var(--color-border)',
-                borderRadius: 'var(--radius-lg, 8px)',
-                padding: '18px 20px',
-              }}
-            >
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontWeight: 650, fontSize: '0.95rem' }}>
-                  <HardDrive size={18} color="var(--color-primary)" />
-                  <span>Dev Workspaces</span>
-                  {devWorkspaces && devWorkspaces.length > 0 && (
-                    <span style={{ background: 'var(--color-primary)', color: '#fff', borderRadius: 10, padding: '1px 7px', fontSize: '0.72rem', fontWeight: 600 }}>
-                      {devWorkspaces.length}
-                    </span>
-                  )}
-                </div>
-                <button
-                  onClick={handleNewWorkspace}
-                  disabled={isDevPodStarting}
-                  style={{
-                    display: 'inline-flex', alignItems: 'center', gap: 5, padding: '5px 12px',
-                    background: 'var(--color-primary)', color: '#fff', border: 'none',
-                    borderRadius: 6, cursor: isDevPodStarting ? 'not-allowed' : 'pointer',
-                    fontSize: '0.8rem', fontWeight: 600, opacity: isDevPodStarting ? 0.6 : 1,
-                  }}
-                >
-                  <Plus size={14} />
-                  New Workspace
-                </button>
-              </div>
-
-              {(!devWorkspaces || devWorkspaces.length === 0) ? (
-                <div style={{ textAlign: 'center', padding: '24px 0', color: 'var(--color-text-muted)', fontSize: '0.85rem' }}>
-                  <HardDrive size={32} style={{ opacity: 0.3, marginBottom: 8 }} />
-                  <p style={{ margin: 0 }}>No workspaces yet. Click <strong>New Workspace</strong> to clone the repo and start coding.</p>
-                </div>
-              ) : (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                  {devWorkspaces.map((ws) => (
-                    <div
-                      key={ws.id}
-                      style={{
-                        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                        padding: '10px 14px',
-                        background: ws.status === 'active' ? 'rgba(34,197,94,0.06)' : 'var(--color-surface-alt, rgba(0,0,0,0.02))',
-                        border: ws.status === 'active' ? '1px solid rgba(34,197,94,0.3)' : '1px solid var(--color-border)',
-                        borderRadius: 8, gap: 12, flexWrap: 'wrap',
-                      }}
+                    <button
+                      className="btn btn-primary"
+                      style={{ fontSize: '0.78rem', padding: '6px 12px' }}
+                      onClick={() => handleStartDevPod(undefined, false)}
+                      disabled={isDevPodStarting}
                     >
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0, flex: 1 }}>
-                        <HardDrive size={16} color={ws.status === 'active' ? '#16a34a' : 'var(--color-text-muted)'} />
-                        <div style={{ minWidth: 0 }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                            <span style={{ fontWeight: 600, fontSize: '0.875rem', color: 'var(--color-text)' }}>{ws.name}</span>
-                            {ws.status === 'active' && (
-                              <span style={{ background: '#dcfce7', color: '#15803d', border: '1px solid #bbf7d0', borderRadius: 10, padding: '1px 7px', fontSize: '0.7rem', fontWeight: 600 }}>
-                                ● Active
-                              </span>
-                            )}
-                            {ws.git_branch && (
-                              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, color: 'var(--color-text-muted)', fontSize: '0.75rem' }}>
-                                <GitBranch size={11} /> {ws.git_branch}
-                              </span>
-                            )}
-                          </div>
-                          <div style={{ fontSize: '0.72rem', color: 'var(--color-text-muted)', marginTop: 2 }}>
-                            {ws.last_active_at
-                              ? `Last active: ${new Date(ws.last_active_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}`
-                              : `Created: ${new Date(ws.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`}
-                            {ws.size_bytes ? `  ·  ${(ws.size_bytes / 1024 / 1024).toFixed(0)} MB` : ''}
-                          </div>
-                        </div>
-                      </div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
-                        <button
-                          onClick={() => handleLaunchWorkspace(ws)}
-                          disabled={isDevPodStarting}
-                          title="Launch Dev Studio with this workspace"
-                          style={{
-                            display: 'inline-flex', alignItems: 'center', gap: 5, padding: '5px 12px',
-                            background: 'var(--color-primary)', color: '#fff', border: 'none',
-                            borderRadius: 6, cursor: isDevPodStarting ? 'not-allowed' : 'pointer',
-                            fontSize: '0.78rem', fontWeight: 600, opacity: isDevPodStarting ? 0.6 : 1,
-                          }}
-                        >
-                          <Play size={12} />
-                          Launch
-                        </button>
-                        <button
-                          onClick={() => handleDeleteWorkspace(ws)}
-                          disabled={ws.status === 'active'}
-                          title={ws.status === 'active' ? 'Stop the dev pod before deleting' : 'Delete this workspace'}
-                          style={{
-                            display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-                            padding: '5px 8px', background: 'transparent',
-                            color: ws.status === 'active' ? 'var(--color-text-muted)' : '#dc2626',
-                            border: '1px solid var(--color-border)',
-                            borderRadius: 6, cursor: ws.status === 'active' ? 'not-allowed' : 'pointer',
-                            opacity: ws.status === 'active' ? 0.4 : 1,
-                          }}
-                        >
-                          <Trash2 size={13} />
-                        </button>
-                      </div>
-                    </div>
-                  ))}
+                      {isDevPodStarting ? <Loader2 size={13} className="spin" /> : <Play size={13} />}
+                      <span>Start Sandbox</span>
+                    </button>
+                  )}
                 </div>
-              )}
+              </div>
             </div>
 
             {/* Quick Live Preview Card */}
@@ -1835,6 +1514,11 @@ export default function AppDetailPage() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* TAB: DEVELOPMENT (Interactive Sandbox, Workspaces, Preview & Logs) */}
+      {activeTab === 'development' && app && (
+        <AppDevelopmentTab app={app} resolvedAppId={resolvedAppId!} />
       )}
 
       {/* TAB: DEPLOYMENTS (Live Pipeline, History & Logs) */}

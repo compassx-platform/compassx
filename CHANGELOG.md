@@ -5,6 +5,27 @@ All notable changes to the CompassX Platform will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.2] - 2026-09-13
+
+### 🚀 Highlights
+
+CompassX `0.8.2` delivers the dedicated **Interactive App Development Studio Tab**, **Named Multi-Workspace Management**, customizable workspace creation with Git branch linking, real-time live dev logs terminal, and resilient Kubernetes dev sandbox routing.
+
+### ✨ Features & Enhancements
+
+#### Interactive App Development Studio
+- **Dedicated Development Tab**: Modular `AppDevelopmentTab` component integrating live sandbox controls, step-by-step launch progress, interactive preview frame, and embedded terminal logs.
+- **Custom Named Workspaces**: Support for creating and managing explicitly named dev workspaces (`POST /api/v1/apps/{app_id}/dev/workspaces`) with branch association and directory isolation.
+- **Direct Workspace Launch & Switcher**: Seamlessly launch or switch active dev sessions across different workspace folders directly from the workspace cards.
+- **Dev Git Commit & Push**: Built-in modal for reviewing and committing workspace changes directly to the remote repository.
+
+#### Dev Sandbox & Driver Enhancements
+- **Dynamic Session Resumption**: Extended `start_dev_session` to automatically resolve or initialize named workspaces with RFC-compliant folder paths and database records.
+- **Real-Time Dev Logs Console**: Streaming log viewer with auto-scroll, log search filter, and instant refresh for dev sandbox processes.
+- **Kubernetes Ingress & Routing**: Dual-mode Ingress path and subdomain handling for dev container hosts with WebSocket and hot-module replacement (HMR) support.
+
+---
+
 ## [0.8.1] - 2026-09-11
 
 ### 🚀 Highlights

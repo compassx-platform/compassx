@@ -291,15 +291,48 @@ export function useDevStatus(appId?: string, enabled = true) {
 export function useStartDevSession() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async ({ appId, workspaceId }: { appId: string; workspaceId?: string }) => {
+    mutationFn: async ({
+      appId,
+      workspaceId,
+      workspaceName,
+    }: {
+      appId: string;
+      workspaceId?: string;
+      workspaceName?: string;
+    }) => {
       const res = await api.post<DevSessionStatus>(`/apps/${appId}/dev/start`, {
         workspace_id: workspaceId ?? null,
+        workspace_name: workspaceName ?? null,
       });
       return res.data;
     },
     onSuccess: (data, { appId }) => {
       qc.setQueryData(['app-dev-status', appId], data);
       qc.invalidateQueries({ queryKey: ['app-dev-status', appId] });
+      qc.invalidateQueries({ queryKey: ['app-dev-workspaces', appId] });
+    },
+  });
+}
+
+export function useCreateDevWorkspace() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      appId,
+      name,
+      gitBranch,
+    }: {
+      appId: string;
+      name: string;
+      gitBranch?: string;
+    }) => {
+      const res = await api.post<DevWorkspace>(`/apps/${appId}/dev/workspaces`, {
+        name,
+        git_branch: gitBranch ?? null,
+      });
+      return res.data;
+    },
+    onSuccess: (_, { appId }) => {
       qc.invalidateQueries({ queryKey: ['app-dev-workspaces', appId] });
     },
   });
@@ -331,3 +364,36 @@ export function useDeleteDevWorkspace() {
     },
   });
 }
+
+export function usePublishDevChanges() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ appId, commitMessage }: { appId: string; commitMessage?: string }) => {
+      const res = await api.post(`/apps/${appId}/dev/publish`, {
+        commit_message: commitMessage || 'Update application via Omnigent Dev Studio',
+      });
+      return res.data;
+    },
+    onSuccess: (_, { appId }) => {
+      qc.invalidateQueries({ queryKey: ['app-detail', appId] });
+      qc.invalidateQueries({ queryKey: ['app-deployments', appId] });
+    },
+  });
+}
+
+export function useDevLogs(appId?: string, enabled = true) {
+  return useQuery({
+    queryKey: ['app-dev-logs', appId],
+    queryFn: async () => {
+      if (!appId) throw new Error('App ID required');
+      const res = await api.get<{ app_id: string; logs: string[] } | string[]>(`/apps/${appId}/dev/logs`, {
+        params: { tail: 200 },
+      });
+      if (Array.isArray(res.data)) return res.data;
+      return (res.data as any)?.logs || [];
+    },
+    enabled: !!appId && enabled,
+    refetchInterval: enabled ? 3000 : false,
+  });
+}
+

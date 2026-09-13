@@ -170,7 +170,7 @@ class KubernetesAppDriver(BaseAppDriver):
             ports=[client.V1ContainerPort(container_port=8080, name="http")],
             resources=client.V1ResourceRequirements(
                 requests={"cpu": "100m", "memory": "256Mi"},
-                limits={"cpu": "1", "memory": "1Gi"},
+                limits={"cpu": "1", "memory": "2Gi"},
             ),
         )
 
@@ -616,8 +616,8 @@ class KubernetesDevDriver(BaseDevDriver):
                         client.V1EnvVar(name="DEV_WORKSPACE_DIR", value=workdir),
                     ],
                     resources=client.V1ResourceRequirements(
-                        requests={"cpu": "200m", "memory": "1280Mi"},
-                        limits={"cpu": "2", "memory": "2560Mi"},
+                        requests={"cpu": "200m", "memory": "512Mi"},
+                        limits={"cpu": "2", "memory": "3500Mi"},
                     ),
                     volume_mounts=[
                         client.V1VolumeMount(
