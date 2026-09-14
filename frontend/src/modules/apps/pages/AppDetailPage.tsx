@@ -143,6 +143,7 @@ export default function AppDetailPage() {
   const [configCredType, setConfigCredType] = useState<'link_account' | 'pat' | 'none'>('none');
   const [configCredNickname, setConfigCredNickname] = useState('');
   const [configPat, setConfigPat] = useState('');
+  const [showConfigPat, setShowConfigPat] = useState(false);
   const [configDirty, setConfigDirty] = useState(false);
 
   // Environment Tab State
@@ -421,6 +422,7 @@ export default function AppDetailPage() {
           git_pat: configPat.trim() || undefined,
         },
       });
+      setConfigPat('');
       setConfigDirty(false);
       toast.success('App configuration updated successfully.');
     } catch (err: any) {
@@ -2232,6 +2234,215 @@ export default function AppDetailPage() {
                   className="input-field"
                 />
               </label>
+            </div>
+
+            {/* Git Authentication & Credentials Section */}
+            <div style={{ borderTop: '1px solid var(--color-border)', paddingTop: 16, marginTop: 16 }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+                <div>
+                  <h4 style={{ margin: 0, fontSize: '0.92rem', fontWeight: 600 }}>Git Authentication & Credentials</h4>
+                  <p style={{ margin: '2px 0 0', fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>
+                    Configure credentials used for cloning repositories, running dev pods, and pushing commits.
+                  </p>
+                </div>
+                {app.pat_configured && (
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: '0.78rem', color: '#16a34a', background: 'rgba(22, 163, 74, 0.1)', padding: '3px 8px', borderRadius: 4, fontWeight: 500 }}>
+                    <ShieldCheck size={13} /> PAT Configured
+                  </span>
+                )}
+              </div>
+
+              {/* 3 Options: None / Public, Personal Access Token (PAT), Linked Account */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12, marginBottom: 16 }}>
+                {/* Option 1: None (Public) */}
+                <div
+                  onClick={() => {
+                    setConfigCredType('none');
+                    setConfigDirty(true);
+                  }}
+                  style={{
+                    padding: '12px 14px',
+                    borderRadius: 8,
+                    border: configCredType === 'none'
+                      ? '1.5px solid var(--color-primary, #1B6EF3)'
+                      : '1px solid var(--color-border)',
+                    background: configCredType === 'none'
+                      ? 'var(--color-primary-bg, #EBF2FF)'
+                      : 'var(--color-surface)',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 4,
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <input
+                      type="radio"
+                      name="config_cred_type"
+                      checked={configCredType === 'none'}
+                      onChange={() => {
+                        setConfigCredType('none');
+                        setConfigDirty(true);
+                      }}
+                      style={{ accentColor: 'var(--color-primary)', cursor: 'pointer' }}
+                    />
+                    <span style={{ fontWeight: 600, fontSize: '0.85rem' }}>None / Public</span>
+                  </div>
+                  <p style={{ margin: 0, fontSize: '0.75rem', color: 'var(--color-text-muted)', paddingLeft: 22 }}>
+                    For public repositories without authentication.
+                  </p>
+                </div>
+
+                {/* Option 2: PAT */}
+                <div
+                  onClick={() => {
+                    setConfigCredType('pat');
+                    setConfigDirty(true);
+                  }}
+                  style={{
+                    padding: '12px 14px',
+                    borderRadius: 8,
+                    border: configCredType === 'pat'
+                      ? '1.5px solid var(--color-primary, #1B6EF3)'
+                      : '1px solid var(--color-border)',
+                    background: configCredType === 'pat'
+                      ? 'var(--color-primary-bg, #EBF2FF)'
+                      : 'var(--color-surface)',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 4,
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <input
+                      type="radio"
+                      name="config_cred_type"
+                      checked={configCredType === 'pat'}
+                      onChange={() => {
+                        setConfigCredType('pat');
+                        setConfigDirty(true);
+                      }}
+                      style={{ accentColor: 'var(--color-primary)', cursor: 'pointer' }}
+                    />
+                    <span style={{ fontWeight: 600, fontSize: '0.85rem' }}>Personal Access Token</span>
+                  </div>
+                  <p style={{ margin: 0, fontSize: '0.75rem', color: 'var(--color-text-muted)', paddingLeft: 22 }}>
+                    Use a GitHub/GitLab/Azure DevOps PAT.
+                  </p>
+                </div>
+
+                {/* Option 3: Link Git Account */}
+                <div
+                  onClick={() => {
+                    setConfigCredType('link_account');
+                    setConfigDirty(true);
+                  }}
+                  style={{
+                    padding: '12px 14px',
+                    borderRadius: 8,
+                    border: configCredType === 'link_account'
+                      ? '1.5px solid var(--color-primary, #1B6EF3)'
+                      : '1px solid var(--color-border)',
+                    background: configCredType === 'link_account'
+                      ? 'var(--color-primary-bg, #EBF2FF)'
+                      : 'var(--color-surface)',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 4,
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <input
+                      type="radio"
+                      name="config_cred_type"
+                      checked={configCredType === 'link_account'}
+                      onChange={() => {
+                        setConfigCredType('link_account');
+                        setConfigDirty(true);
+                      }}
+                      style={{ accentColor: 'var(--color-primary)', cursor: 'pointer' }}
+                    />
+                    <span style={{ fontWeight: 600, fontSize: '0.85rem' }}>Linked Git Account</span>
+                  </div>
+                  <p style={{ margin: 0, fontSize: '0.75rem', color: 'var(--color-text-muted)', paddingLeft: 22 }}>
+                    Use an OAuth-linked platform git connection.
+                  </p>
+                </div>
+              </div>
+
+              {/* Dynamic Inputs depending on configCredType */}
+              {configCredType === 'pat' && (
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 8 }}>
+                  <label className="uc-field" style={{ marginBottom: 0 }}>
+                    <span className="uc-field-label">Credential Nickname</span>
+                    <input
+                      type="text"
+                      placeholder="e.g. GitHub Main Token"
+                      value={configCredNickname}
+                      onChange={(e) => {
+                        setConfigCredNickname(e.target.value);
+                        setConfigDirty(true);
+                      }}
+                      className="input-field"
+                    />
+                  </label>
+
+                  <label className="uc-field" style={{ marginBottom: 0 }}>
+                    <span className="uc-field-label">
+                      {app.pat_configured ? 'Update Personal Access Token (PAT)' : 'Personal Access Token (PAT)'}
+                    </span>
+                    <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+                      <Lock size={13} color="var(--color-text-muted)" style={{ position: 'absolute', left: 10 }} />
+                      <input
+                        type={showConfigPat ? 'text' : 'password'}
+                        placeholder={app.pat_configured ? '•••••••••••••••• (leave blank to keep current)' : 'ghp_••••••••••••••••••••••••'}
+                        value={configPat}
+                        onChange={(e) => {
+                          setConfigPat(e.target.value);
+                          setConfigDirty(true);
+                        }}
+                        className="input-field"
+                        style={{ paddingLeft: 30, paddingRight: 32 }}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowConfigPat((v) => !v)}
+                        style={{
+                          position: 'absolute',
+                          right: 8,
+                          background: 'none',
+                          border: 'none',
+                          cursor: 'pointer',
+                          color: 'var(--color-text-muted)',
+                          padding: 0,
+                        }}
+                      >
+                        {showConfigPat ? <EyeOff size={14} /> : <Eye size={14} />}
+                      </button>
+                    </div>
+                  </label>
+                </div>
+              )}
+
+              {configCredType === 'link_account' && (
+                <div style={{ marginBottom: 8 }}>
+                  <label className="uc-field" style={{ marginBottom: 0 }}>
+                    <span className="uc-field-label">Credential Nickname</span>
+                    <input
+                      type="text"
+                      placeholder="e.g. Org GitHub Account"
+                      value={configCredNickname}
+                      onChange={(e) => {
+                        setConfigCredNickname(e.target.value);
+                        setConfigDirty(true);
+                      }}
+                      className="input-field"
+                    />
+                  </label>
+                </div>
+              )}
             </div>
           </div>
 

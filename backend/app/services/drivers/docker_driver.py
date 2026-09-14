@@ -290,25 +290,33 @@ class DockerDevDriver(BaseDevDriver):
     ) -> Dict[str, Any]:
         """Execute git operations in docker dev container."""
         dev_container_name = f"compassx-app-dev-{app.id}"
+        workdir = f"/workspaces/{workspace_folder}" if workspace_folder else "/app"
         safe_msg = commit_message.replace('"', '\\"').replace("'", "\\'")
         remote_snippet = f"git remote set-url origin '{auth_url}' 2>/dev/null || true; " if auth_url else ""
         cmd = (
-            f"cd /app && "
+            f"cd {workdir} 2>/dev/null || cd /app; "
+            f"export GIT_TERMINAL_PROMPT=0; "
             f"git config user.name 'CompassX Dev' && git config user.email 'dev@compassx.io' && "
             f"(git checkout -B '{branch}' 2>/dev/null || true) && "
             f"{remote_snippet}"
             f"git add -A && "
-            f"(git commit -m \"{safe_msg}\" || echo 'NO_CHANGES_TO_COMMIT') && "
-            f"git push -u origin '{branch}' 2>&1"
+            f"(git commit -m \"{safe_msg}\" 2>/dev/null || true) && "
+            f"git push -u origin '{branch}' 2>&1 && echo '__GIT_PUSH_SUCCESS__'"
         )
         res = subprocess.run(["docker", "exec", dev_container_name, "bash", "-c", cmd], capture_output=True, text=True, check=False)
-        sha_res = subprocess.run(["docker", "exec", dev_container_name, "bash", "-c", "cd /app && git rev-parse --short HEAD 2>/dev/null || echo ''"], capture_output=True, text=True, check=False)
+        raw_output = ((res.stdout or "") + (res.stderr or "")).strip()
+        is_success = (res.returncode == 0) and ("__GIT_PUSH_SUCCESS__" in raw_output)
+        clean_output = raw_output.replace("__GIT_PUSH_SUCCESS__", "").strip()
+
+        sha_res = subprocess.run(["docker", "exec", dev_container_name, "bash", "-c", f"cd {workdir} 2>/dev/null || cd /app; git rev-parse --short HEAD 2>/dev/null || echo ''"], capture_output=True, text=True, check=False)
         return {
-            "success": res.returncode == 0,
-            "output": (res.stdout or "") + (res.stderr or ""),
+            "success": is_success,
+            "output": clean_output,
             "commit_sha": (sha_res.stdout or "").strip(),
             "branch": branch,
+            "error": None if is_success else (clean_output or "Git push command failed"),
         }
+
 
     def exec_command_in_dev(
         self,

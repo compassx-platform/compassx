@@ -120,8 +120,9 @@ class KubernetesAppDriver(BaseAppDriver):
                 f"  echo '[BUILD] [3/3] Build phase completed successfully.' && "
                 f"  echo '[BUILD] ========================================================' && "
                 f"  echo '[RUNTIME] Launching application server on port 8080...' && "
-                f"  if [ -f backend/main.py ]; then exec uvicorn backend.main:app --host 0.0.0.0 --port 8080; "
-                f"  elif [ -f backend/app.py ]; then exec uvicorn backend.app:app --host 0.0.0.0 --port 8080; "
+                f"  export PYTHONPATH=\"/app_src:/app_src/backend:$PYTHONPATH\" && "
+                f"  if [ -f backend/main.py ]; then (cd backend && exec uvicorn main:app --host 0.0.0.0 --port 8080) || exec uvicorn backend.main:app --host 0.0.0.0 --port 8080; "
+                f"  elif [ -f backend/app.py ]; then (cd backend && exec uvicorn app:app --host 0.0.0.0 --port 8080) || exec uvicorn backend.app:app --host 0.0.0.0 --port 8080; "
                 f"  fi; "
                 f"elif [ -f /app_src/main.py ] || [ -f /app_src/app.py ] || [ -f /app_src/requirements.txt ] || [ '{app_type}' = 'streamlit' ]; then "
                 f"  cd /app_src && "
@@ -591,8 +592,8 @@ class KubernetesDevDriver(BaseDevDriver):
                     f"if [ -n \"$FRONTEND_DIR\" ]; then "
                     f"  (cd \"$FRONTEND_DIR\" && "
                     f"   (python3 -c \"import os, re\\nfor f in ['vite.config.ts', 'vite.config.js']:\\n if os.path.exists(f):\\n  c = open(f, 'r').read()\\n  if 'usePolling' not in c: c = re.sub(r'(server:\\\\s*\\\\{{)', r'\\\\\\\\1\\\\\\\\n    allowedHosts: true,\\\\\\\\n    watch: {{ usePolling: true, interval: 100 }},\\\\\\\\n    hmr: {{ clientPort: 443 }},', c)\\n  c = c.replace('http://localhost:8080', 'http://localhost:8000')\\n  c = c.replace('http://127.0.0.1:8085', 'http://localhost:8000')\\n  open(f, 'w').write(c)\" 2>/dev/null || true) && "
-                    f"   (if [ ! -d node_modules ]; then npm install --prefer-offline --no-audit || npm install || true; fi) && "
-                    f"   (npx --yes vite --host 0.0.0.0 --port 8080 --cors || npm run dev -- --host 0.0.0.0 --port 8080 || npm start -- -p 8080 || npx --yes serve -l 8080 .)) & "
+                     f"   (if [ ! -d node_modules ]; then npm install --legacy-peer-deps --prefer-offline --no-audit || npm install --legacy-peer-deps || true; fi) && "
+                     f"   (npx --yes vite --host 0.0.0.0 --port 8080 --cors || npm run dev -- --host 0.0.0.0 --port 8080 || npm start -- -p 8080 || npx --yes serve -l 8080 .)) & "
                     f"elif [ -n \"$BACKEND_DIR\" ]; then "
                     # Pure Python app (Streamlit or FastAPI on port 8080)
                     f"  (cd \"$BACKEND_DIR\" && "
@@ -611,7 +612,7 @@ class KubernetesDevDriver(BaseDevDriver):
                     f"  (python3 -m http.server 8080 --directory {workdir} || npx --yes serve -l 8080 {workdir}) & "
                     f"fi; "
                     # 3. Start Omnigent Host Runner in foreground
-                    f"exec omnigent host --server {omnigent_internal_url} --name \"{host_name}\" --non-interactive"
+                    f"exec omnigent host --server {omnigent_internal_url} --non-interactive"
                 )
                 # 1b. Dev Deployment Spec (resilient self-healing; /workspaces backed by shared PVC)
                 dev_container = client.V1Container(
@@ -632,8 +633,8 @@ class KubernetesDevDriver(BaseDevDriver):
                         client.V1EnvVar(name="DEV_WORKSPACE_DIR", value=workdir),
                     ],
                     resources=client.V1ResourceRequirements(
-                        requests={"cpu": "200m", "memory": "512Mi"},
-                        limits={"cpu": "2", "memory": "3500Mi"},
+                        requests={"cpu": "200m", "memory": "1024Mi"},
+                        limits={"cpu": "4", "memory": "5000Mi"},
                     ),
                     volume_mounts=[
                         client.V1VolumeMount(
@@ -641,6 +642,28 @@ class KubernetesDevDriver(BaseDevDriver):
                             mount_path="/workspaces",
                         )
                     ],
+                )
+
+                dev_affinity = client.V1Affinity(
+                    pod_anti_affinity=client.V1PodAntiAffinity(
+                        preferred_during_scheduling_ignored_during_execution=[
+                            client.V1WeightedPodAffinityTerm(
+                                weight=100,
+                                pod_affinity_term=client.V1PodAffinityTerm(
+                                    label_selector=client.V1LabelSelector(
+                                        match_expressions=[
+                                            client.V1LabelSelectorRequirement(
+                                                key="compassx/dev",
+                                                operator="In",
+                                                values=["true"],
+                                            )
+                                        ]
+                                    ),
+                                    topology_key="kubernetes.io/hostname",
+                                ),
+                            )
+                        ]
+                    )
                 )
 
                 dev_deployment = client.V1Deployment(
@@ -654,6 +677,7 @@ class KubernetesDevDriver(BaseDevDriver):
                             metadata=client.V1ObjectMeta(labels=labels),
                             spec=client.V1PodSpec(
                                 containers=[dev_container],
+                                affinity=dev_affinity,
                                 restart_policy="Always",
                                 volumes=[
                                     client.V1Volume(
@@ -916,12 +940,13 @@ class KubernetesDevDriver(BaseDevDriver):
 
             bash_cmd = (
                 f"cd {workdir} && "
+                f"export GIT_TERMINAL_PROMPT=0 && "
                 f"git config user.name 'CompassX Dev' && git config user.email 'dev@compassx.io' && "
                 f"(git checkout -B '{branch}' 2>/dev/null || true) && "
                 f"{remote_snippet}"
                 f"git add -A && "
-                f"(git commit -m \"{safe_msg}\" || echo 'NO_CHANGES_TO_COMMIT') && "
-                f"git push -u origin '{branch}' 2>&1"
+                f"(git commit -m \"{safe_msg}\" 2>/dev/null || true) && "
+                f"git push -u origin '{branch}' 2>&1 && echo '__GIT_PUSH_SUCCESS__'"
             )
 
             resp = stream.stream(
@@ -934,6 +959,10 @@ class KubernetesDevDriver(BaseDevDriver):
                 stdout=True,
                 tty=False,
             )
+
+            raw_output = str(resp or "").strip()
+            is_success = "__GIT_PUSH_SUCCESS__" in raw_output
+            clean_output = raw_output.replace("__GIT_PUSH_SUCCESS__", "").strip()
 
             # Get latest commit sha
             sha_resp = stream.stream(
@@ -949,14 +978,16 @@ class KubernetesDevDriver(BaseDevDriver):
 
             commit_sha = (sha_resp or "").strip()
             return {
-                "success": True,
-                "output": resp,
+                "success": is_success,
+                "output": clean_output,
                 "commit_sha": commit_sha,
                 "branch": branch,
+                "error": None if is_success else (clean_output or "Git push command failed"),
             }
         except Exception as exc:
             logger.warning("Failed executing git in dev pod: %s", exc)
             return {"success": False, "error": str(exc)}
+
 
     def _find_running_pod_name(self, clean_id: str, ns: str) -> Optional[str]:
         k8s = self._get_k8s_client()

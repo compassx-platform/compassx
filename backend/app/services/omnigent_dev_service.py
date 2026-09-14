@@ -866,21 +866,39 @@ class OmnigentDevService:
 
         folder_name = target_ws.name if target_ws else (_DEV_SESSIONS.get(app.id, {}).get("workspace_name") or "default")
         folder_path = target_ws.folder_path if target_ws else f"{clean_app_id}/{folder_name}"
-        branch = (target_ws.git_branch if target_ws else None) or f"dev/{folder_name}"
+
+        # Resolve branch: If workspace is not "default", default to "dev/<folder_name>"
+        if target_ws and target_ws.git_branch and target_ws.git_branch != "main":
+            branch = target_ws.git_branch
+        elif folder_name and folder_name != "default":
+            branch = f"dev/{folder_name}"
+            if target_ws:
+                try:
+                    with _get_system_db() as db:
+                        db_ws = db.query(DevWorkspace).filter(DevWorkspace.id == target_ws.id).first()
+                        if db_ws:
+                            db_ws.git_branch = branch
+                            db.commit()
+                except Exception:
+                    pass
+        else:
+            branch = (target_ws.git_branch if target_ws else None) or getattr(app, "git_branch", None) or "main"
 
         # 2. Authenticated Git Push URL
-        git_url = getattr(app, "git_repo_url", None)
+        git_url = getattr(app, "git_repo_url", None) or ""
         git_token = None
         if hasattr(app, "git_pat_enc") and app.git_pat_enc:
             try:
                 from app.services.encryption import decrypt_field
                 git_token = decrypt_field(app.git_pat_enc)
-            except Exception:
-                pass
+            except Exception as enc_err:
+                logger.warning("Could not decrypt PAT token: %s", enc_err)
 
         auth_url = git_url
         if git_token and git_url and "github.com" in git_url and not ("@" in git_url.split("//")[-1]):
             auth_url = git_url.replace("https://", f"https://x-access-token:{git_token}@")
+        elif git_token and git_url and not ("@" in git_url.split("//")[-1]):
+            auth_url = git_url.replace("https://", f"https://oauth2:{git_token}@")
 
         msg = (commit_message or "").strip() or f"Dev updates [{folder_name}] - {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M')}"
 
@@ -909,12 +927,25 @@ class OmnigentDevService:
                     subprocess.run(["git", "add", "."], cwd=repo_dir, capture_output=True, text=True, check=False)
                     subprocess.run(["git", "commit", "-m", msg], cwd=repo_dir, capture_output=True, text=True, check=False)
                     p_res = subprocess.run(["git", "push", "-u", "origin", branch], cwd=repo_dir, capture_output=True, text=True, check=False)
-                    git_output = (p_res.stdout or "") + (p_res.stderr or "")
-                    success = p_res.returncode == 0
-                    s_res = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=repo_dir, capture_output=True, text=True, check=False)
-                    commit_sha = (s_res.stdout or "").strip()
+                    fallback_out = (p_res.stdout or "") + (p_res.stderr or "")
+                    if p_res.returncode == 0:
+                        success = True
+                        git_output = fallback_out
+                        s_res = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=repo_dir, capture_output=True, text=True, check=False)
+                        commit_sha = (s_res.stdout or "").strip()
+                    else:
+                        git_output = (git_output + "\n" + fallback_out).strip()
                 except Exception as fallback_err:
                     logger.warning("Local repo Git publish fallback error: %s", fallback_err)
+
+        if not success:
+            error_details = git_res.get("error") or git_output or "Git push failed without error output"
+            if "Authentication failed" in error_details or "could not read Username" in error_details or "Permission to" in error_details:
+                error_msg = f"Git Push Failed (Authentication Error): The repository denied write access. Please verify that a Personal Access Token (PAT) with write permissions is configured on this app. Output: {error_details}"
+            else:
+                error_msg = f"Git Push Failed: {error_details}"
+            logger.error("Publish changes failed for app %s: %s", app.id, error_msg)
+            raise RuntimeError(error_msg)
 
         return {
             "status": "pushed",
@@ -925,9 +956,10 @@ class OmnigentDevService:
             "commit_message": msg,
             "commit_sha": commit_sha,
             "git_output": git_output,
-            "pushed_to_remote": success,
+            "pushed_to_remote": True,
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
+
 
 
 omnigent_dev_service = OmnigentDevService()

@@ -245,7 +245,13 @@ export function AppDevelopmentTab({ app, resolvedAppId }: AppDevelopmentTabProps
     if (!resolvedAppId) return;
     const targetWsId = targetPublishWorkspace?.id || devStatus?.workspace_id;
     const targetWsName = targetPublishWorkspace?.name || devStatus?.workspace_name;
-    const targetBranch = targetPublishWorkspace?.git_branch || (targetWsName ? `dev/${targetWsName}` : 'main');
+    const targetBranch =
+      targetPublishWorkspace?.git_branch && targetPublishWorkspace.git_branch !== 'main'
+        ? targetPublishWorkspace.git_branch
+        : targetWsName && targetWsName !== 'default'
+        ? `dev/${targetWsName}`
+        : app.git_branch || 'main';
+
 
     try {
       const res: any = await publishMutation.mutateAsync({
@@ -1223,10 +1229,11 @@ export function AppDevelopmentTab({ app, resolvedAppId }: AppDevelopmentTabProps
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <span style={{ color: 'var(--color-text-muted)' }}>Destination Branch:</span>
                 <span style={{ fontWeight: 600, color: '#16a34a', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                  <GitBranch size={12} /> {targetPublishWorkspace?.git_branch || (targetPublishWorkspace?.name ? `dev/${targetPublishWorkspace.name}` : devStatus?.workspace_name ? `dev/${devStatus.workspace_name}` : 'dev/default')}
+                  <GitBranch size={12} /> {targetPublishWorkspace?.git_branch && targetPublishWorkspace.git_branch !== 'main' ? targetPublishWorkspace.git_branch : targetPublishWorkspace?.name && targetPublishWorkspace.name !== 'default' ? `dev/${targetPublishWorkspace.name}` : devStatus?.workspace_name && devStatus.workspace_name !== 'default' ? `dev/${devStatus.workspace_name}` : app.git_branch || 'main'}
                 </span>
               </div>
             </div>
+
 
             <div>
               <label style={{ display: 'block', fontSize: '0.78rem', fontWeight: 600, marginBottom: 6 }}>

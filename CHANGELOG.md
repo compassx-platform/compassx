@@ -5,6 +5,27 @@ All notable changes to the CompassX Platform will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.4] - 2026-09-15
+
+### 🚀 Highlights
+
+CompassX `0.8.4` delivers **Dev Sandbox Pod Affinity & Colocation**, **Enhanced In-Container Git Push with Multi-Platform Auth**, and dedicated **App Repository Credential Management UI**.
+
+### ✨ Features & Enhancements
+
+#### Dev Sandbox Pod Affinity & Low-Latency Colocation
+- **Pod Affinity Scheduling**: Added Kubernetes pod affinity in `kubernetes_driver.py` ensuring dev sandbox pods are colocated with the Omnigent server instance for minimal network latency during interactive terminal sessions and file synchronization.
+
+#### In-Container Git Push & Multi-Platform Authentication
+- **Resilient Push Pipeline**: Enhanced `KubernetesDevDriver.exec_git_in_workspace` with headless prompt suppression (`GIT_TERMINAL_PROMPT=0`), deterministic success markers, and detailed stderr diagnostic reporting.
+- **Multi-Provider Auth Injection**: Dynamic credential resolution supporting GitHub (`x-access-token`), GitLab, and Azure DevOps (`oauth2`) PAT injection in `omnigent_dev_service.py`.
+- **Automatic Dev Branch Association**: Automatically associates custom dev workspaces with isolated `dev/<workspace-name>` branches.
+
+#### App Settings & Repository Credentials UI
+- **Git Credential Management**: Added interactive credential selection (None/Public, Personal Access Token, Linked Platform Account) with nickname management and show/hide token toggles in `AppDetailPage.tsx` and `AppDevelopmentTab.tsx`.
+
+---
+
 ## [0.8.3] - 2026-09-14
 
 ### 🚀 Highlights
