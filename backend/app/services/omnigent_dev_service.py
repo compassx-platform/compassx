@@ -177,6 +177,63 @@ class OmnigentDevService:
         host_name = str(app_name).strip()
         return host_id, host_name
 
+    def resolve_live_host(self, app, expected_host_id: Optional[str] = None) -> Tuple[str, str, bool]:
+        """Query Omnigent Server /v1/hosts and dynamically match the live host for this app.
+        Returns (host_id, host_name, is_online)."""
+        import urllib.request
+        import json
+
+        default_host_id, default_host_name = self.get_app_host_identity(app)
+        target_id = expected_host_id or default_host_id
+
+        app_name = str(getattr(app, "name", "") or "").strip().lower()
+        app_slug = str(getattr(app, "slug", "") or "").strip().lower()
+        app_id_str = str(getattr(app, "id", "") or "").strip().lower()
+        clean_id = _clean_id(app_id_str)
+
+        match_targets = {app_name, app_slug, f"compassx-app-{app_id_str}", f"compassx-app-{clean_id}"}
+        match_targets.discard("")
+
+        urls = []
+        int_url = self.get_omnigent_internal_url()
+        pub_url = self.get_omnigent_server_url()
+        if int_url:
+            urls.append(int_url)
+        if pub_url and pub_url not in urls:
+            urls.append(pub_url)
+
+        for u in urls:
+            try:
+                hosts_req = urllib.request.Request(f"{u}/v1/hosts", headers={"User-Agent": "CompassX/1.0"})
+                with urllib.request.urlopen(hosts_req, timeout=2.0) as resp:
+                    hosts_data = json.loads(resp.read().decode())
+                    hosts_list = hosts_data.get("hosts") or []
+
+                    # 1. Exact ID match (online preferred)
+                    for h in hosts_list:
+                        h_id = h.get("host_id")
+                        if h_id == target_id:
+                            return h_id, h.get("name") or default_host_name, h.get("status") == "online"
+
+                    # 2. Name / Slug match (online first)
+                    for h in hosts_list:
+                        h_name = str(h.get("name") or "").strip().lower()
+                        if h_name in match_targets or (app_slug and app_slug in h_name) or (app_name and app_name in h_name):
+                            if h.get("status") == "online":
+                                return h.get("host_id"), h.get("name") or default_host_name, True
+
+                    # 3. Offline match by name / slug
+                    for h in hosts_list:
+                        h_name = str(h.get("name") or "").strip().lower()
+                        if h_name in match_targets or (app_slug and app_slug in h_name) or (app_name and app_name in h_name):
+                            return h.get("host_id"), h.get("name") or default_host_name, h.get("status") == "online"
+
+                    break
+            except Exception as e:
+                logger.debug("Could not fetch hosts from %s: %s", u, e)
+
+        return target_id, default_host_name, False
+
     def create_or_get_omnigent_session(
         self,
         app,
@@ -190,6 +247,12 @@ class OmnigentDevService:
         url = server_status.get("server_url") or self.get_omnigent_server_url()
         expected_host_id, expected_host_name = self.get_app_host_identity(app)
 
+        # Dynamically resolve live host identity from Omnigent registry
+        live_host_id, live_host_name, is_online = self.resolve_live_host(app, host_id or expected_host_id)
+        if not host_id:
+            host_id = live_host_id
+            expected_host_name = live_host_name
+
         if not server_status.get("available"):
             sess_id = f"sess_omnigent_{app.id}"
             return {
@@ -197,7 +260,7 @@ class OmnigentDevService:
                 "server_connected": False,
                 "session_id": sess_id,
                 "session_url": ingress_service.get_omnigent_session_url(sess_id),
-                "host_id": expected_host_id,
+                "host_id": host_id,
                 "host_name": expected_host_name,
                 "mode": "databricks_server",
             }
@@ -205,22 +268,6 @@ class OmnigentDevService:
         import urllib.request
         import json
         try:
-            # 1. If host_id not provided, try to find this app's online host
-            if not host_id:
-                try:
-                    hosts_req = urllib.request.Request(f"{url}/v1/hosts", headers={"User-Agent": "CompassX/1.0"})
-                    with urllib.request.urlopen(hosts_req, timeout=2.0) as resp:
-                        hosts_data = json.loads(resp.read().decode())
-                        for h in hosts_data.get("hosts", []):
-                            if h.get("status") == "online":
-                                if h.get("host_id") == expected_host_id or app.id in (h.get("name") or ""):
-                                    host_id = h.get("host_id")
-                                    break
-                        if not host_id:
-                            host_id = expected_host_id
-                except Exception as h_err:
-                    logger.warning("Could not list hosts from Omnigent server: %s", h_err)
-                    host_id = expected_host_id
 
             # 2. Fetch available agents on Omnigent server
             agent_id = None
@@ -368,13 +415,16 @@ class OmnigentDevService:
                         clean_name = f"ws-{ts}"
 
                     folder_path = f"{clean_app_id}/{clean_name}"
-                    branch = getattr(app, "git_branch", None) or "main"
+                    branch = getattr(app, "git_branch", None) or f"dev/{clean_name}"
                     ws_id = clean_name[:32]
 
                     # Verify ID uniqueness across DB
                     id_conflict = db.query(DevWorkspace).filter(DevWorkspace.id == ws_id).first()
                     if id_conflict and id_conflict.app_id != app.id:
                         ws_id = f"{clean_name[:24]}_{uuid.uuid4().hex[:6]}"
+
+                    # Set other workspaces for this app to inactive
+                    db.query(DevWorkspace).filter(DevWorkspace.app_id == app.id).update({"status": "inactive"})
 
                     ws_record = DevWorkspace(
                         id=ws_id,
@@ -391,6 +441,8 @@ class OmnigentDevService:
                     db.commit()
                     db.refresh(ws_record)
                 else:
+                    # Set other workspaces for this app to inactive
+                    db.query(DevWorkspace).filter(DevWorkspace.app_id == app.id).update({"status": "inactive"})
                     ws_record.status = "active"
                     ws_record.last_active_at = datetime.now(timezone.utc)
                     db.commit()
@@ -399,12 +451,14 @@ class OmnigentDevService:
                 folder_path = ws_record.folder_path
                 ws_id = ws_record.id
                 ws_name = ws_record.name
+                ws_branch = ws_record.git_branch or f"dev/{ws_name}"
         except Exception as ws_err:
             logger.warning("Could not manage DevWorkspace record: %s", ws_err)
             clean_name = _sanitize_workspace_name(workspace_name or f"ws-{datetime.now(timezone.utc).strftime('%b%d-%H%M').lower()}")
             ws_id = clean_name[:32]
             folder_path = f"{clean_app_id}/{clean_name}"
             ws_name = clean_name
+            ws_branch = f"dev/{clean_name}"
 
         # If already running in memory for this workspace, return existing session
         session_key = f"{app.id}:{ws_id}"
@@ -419,9 +473,11 @@ class OmnigentDevService:
         self.ensure_omnigent_server()
         omnigent_internal_url = self.get_omnigent_internal_url()
 
-        # 2. Start dev sandbox via driver (pass workspace folder)
+        # 2. Start dev sandbox via driver (pass workspace folder & branch)
         dev_driver = driver_factory.get_dev_driver()
-        raw_driver_res = dev_driver.start_dev(app, repo_dir, omnigent_internal_url, workspace_folder=folder_path)
+        raw_driver_res = dev_driver.start_dev(
+            app, repo_dir, omnigent_internal_url, workspace_folder=folder_path, workspace_branch=ws_branch
+        )
 
         dev_port = raw_driver_res.get("dev_port") or 9201
         dev_url = raw_driver_res.get("dev_url") or ingress_service.get_app_dev_url(app, dev_port)
@@ -430,6 +486,9 @@ class OmnigentDevService:
         omnigent_link = self.create_or_get_omnigent_session(
             app, repo_dir, dev_port, host_id=expected_host_id, workspace_folder=folder_path
         )
+
+        resolved_host_id = omnigent_link.get("host_id") or expected_host_id
+        resolved_host_name = omnigent_link.get("host_name") or expected_host_name
 
         session_info = {
             "app_id": app.id,
@@ -450,8 +509,8 @@ class OmnigentDevService:
             "omnigent_server_connected": omnigent_link.get("server_connected"),
             "omnigent_session_id": omnigent_link.get("session_id"),
             "omnigent_session_url": omnigent_link.get("session_url"),
-            "host_id": omnigent_link.get("host_id") or expected_host_id,
-            "host_name": expected_host_name,
+            "host_id": resolved_host_id,
+            "host_name": resolved_host_name,
             "host_online": omnigent_link.get("host_online", True),
             "workspace": omnigent_link.get("workspace", f"/workspaces/{folder_path}"),
         }
@@ -471,9 +530,14 @@ class OmnigentDevService:
         dev_driver = driver_factory.get_dev_driver()
         dev_status = dev_driver.get_dev_status(app)
 
+        # Dynamically resolve live host identity from Omnigent registry
+        live_host_id, live_host_name, host_online = self.resolve_live_host(app, expected_host_id)
+
         dev_url = ingress_service.get_app_dev_url(app, 9201)
         sess_id = f"sess_omnigent_{app.id}"
         session_url = ingress_service.get_omnigent_session_url(sess_id)
+
+        is_active = dev_status.get("status") == "active"
 
         if app.id in _DEV_SESSIONS:
             sess = _DEV_SESSIONS[app.id]
@@ -481,6 +545,9 @@ class OmnigentDevService:
             sess["omnigent_server_available"] = server_status.get("available", False)
             sess["omnigent_server_url"] = server_status.get("server_url") or self.get_omnigent_server_url()
             sess["omnigent_session_url"] = sess.get("omnigent_session_url") or session_url
+            sess["host_id"] = live_host_id or sess.get("host_id") or expected_host_id
+            sess["host_name"] = live_host_name or sess.get("host_name") or expected_host_name
+            sess["host_online"] = host_online or is_active
             sess["phase"] = dev_status.get("phase")
             sess["pod_name"] = dev_status.get("pod_name")
             return sess
@@ -490,12 +557,13 @@ class OmnigentDevService:
             "status": dev_status.get("status", "inactive"),
             "dev_url": dev_url,
             "repo_dir": repo_dir,
-            "omnigent_attached": dev_status.get("status") == "active",
+            "omnigent_attached": is_active,
             "omnigent_server_available": server_status.get("available", False),
             "omnigent_server_url": server_status.get("server_url") or self.get_omnigent_server_url(),
             "omnigent_session_url": session_url,
-            "host_id": expected_host_id,
-            "host_name": expected_host_name,
+            "host_id": live_host_id,
+            "host_name": live_host_name,
+            "host_online": host_online or is_active,
             "pod_name": dev_status.get("pod_name"),
             "phase": dev_status.get("phase"),
             "mode": dev_status.get("mode", "docker"),
@@ -529,9 +597,19 @@ class OmnigentDevService:
         return {"status": "stopped", "app_id": app.id}
 
     def list_dev_workspaces(self, app) -> List[Dict[str, Any]]:
-        """List all dev workspaces for an app."""
+        """List all dev workspaces for an app with dynamic active status."""
         from app.models.dev_workspace import DevWorkspace
         try:
+            # Check currently running session's workspace
+            dev_driver = driver_factory.get_dev_driver()
+            dev_status = dev_driver.get_dev_status(app)
+            is_pod_running = dev_status.get("status") == "active" or dev_status.get("phase") == "Running"
+
+            active_ws_id = None
+            if is_pod_running:
+                sess = _DEV_SESSIONS.get(app.id) or {}
+                active_ws_id = sess.get("workspace_id")
+
             with _get_system_db() as db:
                 workspaces = (
                     db.query(DevWorkspace)
@@ -539,31 +617,36 @@ class OmnigentDevService:
                     .order_by(DevWorkspace.last_active_at.desc().nullslast(), DevWorkspace.created_at.desc())
                     .all()
                 )
-                return [
-                    {
+                res = []
+                for ws in workspaces:
+                    # Dynamically determine if active in running pod
+                    is_active = is_pod_running and (
+                        ws.id == active_ws_id or
+                        (ws.status == "active" and not active_ws_id)
+                    )
+                    res.append({
                         "id": ws.id,
                         "name": ws.name,
                         "folder_path": ws.folder_path,
-                        "git_branch": ws.git_branch,
-                        "status": ws.status,
+                        "git_branch": ws.git_branch or f"dev/{ws.name}",
+                        "status": "active" if is_active else "inactive",
                         "size_bytes": ws.size_bytes,
                         "created_by": ws.created_by,
                         "created_at": ws.created_at.isoformat() if ws.created_at else None,
                         "last_active_at": ws.last_active_at.isoformat() if ws.last_active_at else None,
-                    }
-                    for ws in workspaces
-                ]
+                    })
+                return res
         except Exception as e:
             logger.warning("Could not list DevWorkspaces: %s", e)
             return []
 
     def create_dev_workspace(self, app, name: str, git_branch: Optional[str] = None) -> Dict[str, Any]:
-        """Create a new dev workspace record with matching name and folder path."""
+        """Create a new dev workspace record with auto-generated dev/<name> branch and matching folder path."""
         from app.models.dev_workspace import DevWorkspace
         clean_app_id = _clean_id(app.id)
         clean_name = _sanitize_workspace_name(name)
         folder_path = f"{clean_app_id}/{clean_name}"
-        branch = git_branch or getattr(app, "git_branch", None) or "main"
+        branch = git_branch or f"dev/{clean_name}"
         ws_id = clean_name[:32]
 
         try:
@@ -577,7 +660,7 @@ class OmnigentDevService:
                         "id": existing.id,
                         "name": existing.name,
                         "folder_path": existing.folder_path,
-                        "git_branch": existing.git_branch,
+                        "git_branch": existing.git_branch or branch,
                         "status": existing.status,
                         "created_at": existing.created_at.isoformat() if existing.created_at else None,
                         "already_exists": True,
@@ -730,30 +813,119 @@ class OmnigentDevService:
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
 
-    # ── Git Publish & Production Deployment ────────────────────────────────
+    # ── Git Publish (Per-Workspace Push to Remote) ─────────────────────────
 
-    def publish_dev_changes(self, app, commit_message: str, user_id: str = "system") -> Dict[str, Any]:
-        """Commit all modified files to Git, push to remote, and trigger clean production deployment."""
-        repo_dir = self.get_repo_dir(app)
+    def publish_dev_changes(
+        self,
+        app,
+        commit_message: Optional[str] = None,
+        user_id: str = "system",
+        workspace_id: Optional[str] = None,
+        workspace_name: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Commit all modified files in the targeted workspace to its dedicated Git branch and push to remote.
+        Decoupled: Does NOT stop dev sandbox. Does NOT trigger production deployment.
+        """
+        from app.models.dev_workspace import DevWorkspace
 
-        # 1. Git commit & push
-        subprocess.run(["git", "add", "."], cwd=repo_dir, capture_output=True, text=True, check=False)
-        msg = commit_message.strip() or f"Omnigent Dev updates - {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M')}"
-        commit_res = subprocess.run(["git", "commit", "-m", msg], cwd=repo_dir, capture_output=True, text=True, check=False)
-        push_res = subprocess.run(["git", "push", "origin", "main"], cwd=repo_dir, capture_output=True, text=True, check=False)
+        target_ws = None
+        clean_app_id = _clean_id(app.id)
 
-        # 2. Stop dev container
-        self.stop_dev_session(app)
+        # 1. Resolve workspace from parameter, active in-memory session, or latest DB record
+        try:
+            with _get_system_db() as db:
+                if workspace_id:
+                    target_ws = db.query(DevWorkspace).filter(
+                        DevWorkspace.app_id == app.id,
+                        (DevWorkspace.id == workspace_id) | (DevWorkspace.name == workspace_id),
+                    ).first()
+                elif workspace_name:
+                    clean_name = _sanitize_workspace_name(workspace_name)
+                    target_ws = db.query(DevWorkspace).filter(
+                        DevWorkspace.app_id == app.id,
+                        (DevWorkspace.name == clean_name) | (DevWorkspace.id == clean_name[:32]),
+                    ).first()
 
-        # 3. Trigger production deployment
-        deploy_res = app_runner_service.deploy_app(app)
+                if not target_ws and app.id in _DEV_SESSIONS:
+                    sess_ws_id = _DEV_SESSIONS[app.id].get("workspace_id")
+                    if sess_ws_id:
+                        target_ws = db.query(DevWorkspace).filter(
+                            DevWorkspace.app_id == app.id,
+                            DevWorkspace.id == sess_ws_id,
+                        ).first()
+
+                if not target_ws:
+                    target_ws = (
+                        db.query(DevWorkspace)
+                        .filter(DevWorkspace.app_id == app.id)
+                        .order_by(DevWorkspace.last_active_at.desc().nullslast(), DevWorkspace.created_at.desc())
+                        .first()
+                    )
+        except Exception as ws_err:
+            logger.warning("Could not query target DevWorkspace: %s", ws_err)
+
+        folder_name = target_ws.name if target_ws else (_DEV_SESSIONS.get(app.id, {}).get("workspace_name") or "default")
+        folder_path = target_ws.folder_path if target_ws else f"{clean_app_id}/{folder_name}"
+        branch = (target_ws.git_branch if target_ws else None) or f"dev/{folder_name}"
+
+        # 2. Authenticated Git Push URL
+        git_url = getattr(app, "git_repo_url", None)
+        git_token = None
+        if hasattr(app, "git_pat_enc") and app.git_pat_enc:
+            try:
+                from app.services.encryption import decrypt_field
+                git_token = decrypt_field(app.git_pat_enc)
+            except Exception:
+                pass
+
+        auth_url = git_url
+        if git_token and git_url and "github.com" in git_url and not ("@" in git_url.split("//")[-1]):
+            auth_url = git_url.replace("https://", f"https://x-access-token:{git_token}@")
+
+        msg = (commit_message or "").strip() or f"Dev updates [{folder_name}] - {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M')}"
+
+        # 3. Execute Git commit & push inside the workspace via driver
+        dev_driver = driver_factory.get_dev_driver()
+        git_res = dev_driver.exec_git_in_workspace(
+            app=app,
+            workspace_folder=folder_path,
+            commit_message=msg,
+            branch=branch,
+            auth_url=auth_url,
+        )
+
+        commit_sha = git_res.get("commit_sha") or ""
+        git_output = git_res.get("output") or ""
+        success = git_res.get("success", False)
+
+        # Fallback to local server repo if driver exec failed or was unavailable
+        if not success:
+            repo_dir = self.get_repo_dir(app)
+            if os.path.exists(repo_dir):
+                try:
+                    if auth_url:
+                        subprocess.run(["git", "remote", "set-url", "origin", auth_url], cwd=repo_dir, capture_output=True, text=True, check=False)
+                    subprocess.run(["git", "checkout", "-B", branch], cwd=repo_dir, capture_output=True, text=True, check=False)
+                    subprocess.run(["git", "add", "."], cwd=repo_dir, capture_output=True, text=True, check=False)
+                    subprocess.run(["git", "commit", "-m", msg], cwd=repo_dir, capture_output=True, text=True, check=False)
+                    p_res = subprocess.run(["git", "push", "-u", "origin", branch], cwd=repo_dir, capture_output=True, text=True, check=False)
+                    git_output = (p_res.stdout or "") + (p_res.stderr or "")
+                    success = p_res.returncode == 0
+                    s_res = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=repo_dir, capture_output=True, text=True, check=False)
+                    commit_sha = (s_res.stdout or "").strip()
+                except Exception as fallback_err:
+                    logger.warning("Local repo Git publish fallback error: %s", fallback_err)
 
         return {
-            "status": "published",
+            "status": "pushed",
+            "workspace_id": target_ws.id if target_ws else None,
+            "workspace_name": folder_name,
+            "workspace_folder": folder_path,
+            "git_branch": branch,
             "commit_message": msg,
-            "commit_output": commit_res.stdout,
-            "push_output": push_res.stdout,
-            "production_runtime": deploy_res.get("runtime_info"),
+            "commit_sha": commit_sha,
+            "git_output": git_output,
+            "pushed_to_remote": success,
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
 

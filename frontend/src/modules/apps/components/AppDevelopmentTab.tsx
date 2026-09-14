@@ -35,6 +35,7 @@ import {
   usePublishDevChanges,
   useDevLogs,
 } from '../hooks/useApps';
+import { DevTerminal } from './DevTerminal';
 
 interface AppDevelopmentTabProps {
   app: AppItem;
@@ -59,12 +60,14 @@ export function AppDevelopmentTab({ app, resolvedAppId }: AppDevelopmentTabProps
   const [isStoppingDevPod, setIsStoppingDevPod] = useState(false);
   const [launchStep, setLaunchStep] = useState(0);
   const [launchStatusText, setLaunchStatusText] = useState('');
-  const [previewTab, setPreviewTab] = useState<'preview' | 'logs'>('preview');
+  const [previewTab, setPreviewTab] = useState<'preview' | 'terminal' | 'logs'>('preview');
+
   const [publishModalOpen, setPublishModalOpen] = useState(false);
+  const [targetPublishWorkspace, setTargetPublishWorkspace] = useState<DevWorkspace | null>(null);
   const [commitMessage, setCommitMessage] = useState('');
   const [createWorkspaceModalOpen, setCreateWorkspaceModalOpen] = useState(false);
   const [newWorkspaceName, setNewWorkspaceName] = useState('');
-  const [newWorkspaceBranch, setNewWorkspaceBranch] = useState(app.git_branch || 'main');
+  const [newWorkspaceBranch, setNewWorkspaceBranch] = useState('');
   const [isCreatingAndLaunching, setIsCreatingAndLaunching] = useState(false);
   const [logFilter, setLogFilter] = useState('');
   const [autoScrollLogs, setAutoScrollLogs] = useState(true);
@@ -135,21 +138,24 @@ export function AppDevelopmentTab({ app, resolvedAppId }: AppDevelopmentTabProps
       return;
     }
     const cleanName = newWorkspaceName.trim().toLowerCase().replace(/[^a-z0-9-_]/g, '-');
+    const branchToUse = newWorkspaceBranch.trim() || `dev/${cleanName}`;
     try {
       setIsCreatingAndLaunching(true);
       if (andLaunch) {
         setCreateWorkspaceModalOpen(false);
         await handleStartDevPod(undefined, true, cleanName);
         setNewWorkspaceName('');
+        setNewWorkspaceBranch('');
       } else {
         await createWorkspaceMutation.mutateAsync({
           appId: resolvedAppId,
           name: cleanName,
-          gitBranch: newWorkspaceBranch.trim() || app.git_branch || 'main',
+          gitBranch: branchToUse,
         });
-        toast.success(`Workspace "${cleanName}" created successfully.`);
+        toast.success(`Workspace "${cleanName}" created on branch "${branchToUse}".`);
         setCreateWorkspaceModalOpen(false);
         setNewWorkspaceName('');
+        setNewWorkspaceBranch('');
         refetchDevWorkspaces();
       }
     } catch (err: any) {
@@ -197,6 +203,7 @@ export function AppDevelopmentTab({ app, resolvedAppId }: AppDevelopmentTabProps
       setLaunchStatusText('');
       toast.success('Dev sandbox pod shut down successfully.');
       refetchDevStatus();
+      refetchDevWorkspaces();
     } catch (err: any) {
       toast.error(err?.response?.data?.detail || 'Failed to stop dev pod.');
     } finally {
@@ -213,24 +220,48 @@ export function AppDevelopmentTab({ app, resolvedAppId }: AppDevelopmentTabProps
     try {
       await deleteWorkspaceMutation.mutateAsync({ appId: resolvedAppId, workspaceId: ws.id });
       toast.success(`Workspace "${ws.name}" deleted.`);
+      refetchDevWorkspaces();
     } catch {
       toast.error('Failed to delete workspace.');
     }
   }
 
+  // Open Publish Modal for a specific workspace or active workspace
+  function openPublishModal(ws?: DevWorkspace) {
+    if (ws) {
+      setTargetPublishWorkspace(ws);
+    } else {
+      const activeWs = devWorkspaces?.find(
+        (w) => w.id === devStatus?.workspace_id || w.name === devStatus?.workspace_name || w.status === 'active'
+      ) || devWorkspaces?.[0] || null;
+      setTargetPublishWorkspace(activeWs);
+    }
+    setCommitMessage('');
+    setPublishModalOpen(true);
+  }
+
   // Publish Dev Changes
   async function handlePublish() {
     if (!resolvedAppId) return;
+    const targetWsId = targetPublishWorkspace?.id || devStatus?.workspace_id;
+    const targetWsName = targetPublishWorkspace?.name || devStatus?.workspace_name;
+    const targetBranch = targetPublishWorkspace?.git_branch || (targetWsName ? `dev/${targetWsName}` : 'main');
+
     try {
-      await publishMutation.mutateAsync({
+      const res: any = await publishMutation.mutateAsync({
         appId: resolvedAppId,
         commitMessage: commitMessage.trim() || undefined,
+        workspaceId: targetWsId,
+        workspaceName: targetWsName,
       });
-      toast.success('Changes committed and pushed to Git. Redeployment triggered!');
+      const branchName = res?.git_branch || targetBranch;
+      const sha = res?.commit_sha ? ` (${res.commit_sha.slice(0, 7)})` : '';
+      toast.success(`Changes pushed to branch "${branchName}"${sha} successfully! Dev pod is running.`);
       setPublishModalOpen(false);
       setCommitMessage('');
+      refetchDevWorkspaces();
     } catch (err: any) {
-      toast.error(err?.response?.data?.detail || 'Failed to publish changes.');
+      toast.error(err?.response?.data?.detail || 'Failed to push changes to Git.');
     }
   }
 
@@ -343,6 +374,31 @@ export function AppDevelopmentTab({ app, resolvedAppId }: AppDevelopmentTabProps
                     ? 'Dev Pod: Starting...'
                     : 'Dev Pod: Stopped'}
                 </span>
+
+                {/* Active Workspace Banner Pill */}
+                {isDevPodRunning && (devStatus?.workspace_name || devStatus?.workspace_id) && (
+                  <span
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: 5,
+                      padding: '3px 9px',
+                      borderRadius: 12,
+                      fontSize: '0.74rem',
+                      fontWeight: 600,
+                      color: '#15803d',
+                      background: '#dcfce7',
+                      border: '1px solid #86efac',
+                    }}
+                    title={`Active Workspace: ${devStatus.workspace_name || devStatus.workspace_id}`}
+                  >
+                    <span>Active Target:</span>
+                    <strong>📁 {devStatus.workspace_name || devStatus.workspace_id}</strong>
+                    <span style={{ color: '#16a34a', display: 'inline-flex', alignItems: 'center', gap: 2, fontWeight: 500 }}>
+                      <GitBranch size={11} /> dev/{devStatus.workspace_name || devStatus.workspace_id}
+                    </span>
+                  </span>
+                )}
               </div>
 
               <p style={{ margin: '4px 0 0', fontSize: '0.84rem', color: 'var(--color-text-muted)', maxWidth: 620, lineHeight: 1.4 }}>
@@ -428,11 +484,11 @@ export function AppDevelopmentTab({ app, resolvedAppId }: AppDevelopmentTabProps
                     fontWeight: 600,
                     cursor: 'pointer',
                   }}
-                  onClick={() => setPublishModalOpen(true)}
-                  title="Commit changes and deploy"
+                  onClick={() => openPublishModal()}
+                  title="Push active workspace changes to remote Git branch"
                 >
                   <UploadCloud size={14} />
-                  <span>Publish to Git</span>
+                  <span>Push to Git</span>
                 </button>
 
                 <button
@@ -663,95 +719,173 @@ export function AppDevelopmentTab({ app, resolvedAppId }: AppDevelopmentTabProps
               </div>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                {devWorkspaces.map((ws) => (
-                  <div
-                    key={ws.id}
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'space-between',
-                      padding: '10px 14px',
-                      background: ws.status === 'active' ? 'rgba(34,197,94,0.06)' : 'var(--color-surface-alt, rgba(0,0,0,0.02))',
-                      border: ws.status === 'active' ? '1px solid rgba(34,197,94,0.3)' : '1px solid var(--color-border)',
-                      borderRadius: 8,
-                      gap: 12,
-                      flexWrap: 'wrap',
-                    }}
-                  >
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0, flex: 1 }}>
-                      <HardDrive size={16} color={ws.status === 'active' ? '#16a34a' : 'var(--color-text-muted)'} />
-                      <div style={{ minWidth: 0 }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                          <span style={{ fontWeight: 650, fontSize: '0.875rem', color: 'var(--color-text)' }}>{ws.name}</span>
-                          {ws.status === 'active' && (
-                            <span style={{ background: '#dcfce7', color: '#15803d', border: '1px solid #bbf7d0', borderRadius: 10, padding: '1px 7px', fontSize: '0.7rem', fontWeight: 600 }}>
-                              ● Active
-                            </span>
-                          )}
-                          {ws.git_branch && (
-                            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, color: 'var(--color-text-muted)', fontSize: '0.75rem' }}>
-                              <GitBranch size={11} /> {ws.git_branch}
-                            </span>
-                          )}
+                {devWorkspaces.map((ws) => {
+                  const isWsActive =
+                    ws.status === 'active' ||
+                    (isDevPodRunning &&
+                      (devStatus?.workspace_id === ws.id ||
+                        devStatus?.workspace_name === ws.name ||
+                        devStatus?.workspace_folder?.endsWith(ws.name)));
+
+                  return (
+                    <div
+                      key={ws.id}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        padding: '12px 14px',
+                        background: isWsActive
+                          ? 'linear-gradient(135deg, rgba(34,197,94,0.08) 0%, rgba(16,185,129,0.04) 100%)'
+                          : 'var(--color-surface-alt, rgba(0,0,0,0.02))',
+                        border: isWsActive ? '1.5px solid #22c55e' : '1px solid var(--color-border)',
+                        borderRadius: 8,
+                        boxShadow: isWsActive ? '0 2px 10px rgba(34,197,94,0.12)' : 'none',
+                        gap: 12,
+                        flexWrap: 'wrap',
+                        transition: 'all 0.2s ease',
+                      }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0, flex: 1 }}>
+                        <div
+                          style={{
+                            width: 32,
+                            height: 32,
+                            borderRadius: 8,
+                            background: isWsActive ? 'rgba(34,197,94,0.15)' : 'rgba(0,0,0,0.04)',
+                            color: isWsActive ? '#16a34a' : 'var(--color-text-muted)',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            flexShrink: 0,
+                          }}
+                        >
+                          <HardDrive size={16} />
                         </div>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.72rem', color: 'var(--color-text-muted)', marginTop: 3, flexWrap: 'wrap' }}>
-                          <span style={{ fontFamily: 'monospace', color: '#6366f1', background: 'rgba(99,102,241,0.08)', padding: '1px 5px', borderRadius: 4 }}>
-                            📁 {ws.folder_path || `app-${app.id.slice(0, 8)}/${ws.name}`}
-                          </span>
-                          <span>
-                            {ws.last_active_at
-                              ? `Last active: ${new Date(ws.last_active_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}`
-                              : `Created: ${new Date(ws.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`}
-                          </span>
-                          {ws.size_bytes ? <span>· {(ws.size_bytes / 1024 / 1024).toFixed(0)} MB</span> : null}
+                        <div style={{ minWidth: 0 }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                            <span style={{ fontWeight: 700, fontSize: '0.88rem', color: isWsActive ? '#15803d' : 'var(--color-text)' }}>
+                              {ws.name}
+                            </span>
+                            {isWsActive && (
+                              <span
+                                style={{
+                                  background: '#dcfce7',
+                                  color: '#15803d',
+                                  border: '1px solid #86efac',
+                                  borderRadius: 10,
+                                  padding: '1px 8px',
+                                  fontSize: '0.7rem',
+                                  fontWeight: 700,
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: 4,
+                                }}
+                              >
+                                <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#22c55e' }} />
+                                Active in Dev Studio
+                              </span>
+                            )}
+                            <span
+                              style={{
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: 3,
+                                color: isWsActive ? '#16a34a' : 'var(--color-text-muted)',
+                                fontSize: '0.75rem',
+                                fontWeight: 500,
+                                background: isWsActive ? 'rgba(34,197,94,0.1)' : 'transparent',
+                                padding: isWsActive ? '1px 6px' : 0,
+                                borderRadius: 4,
+                              }}
+                            >
+                              <GitBranch size={11} /> {ws.git_branch || `dev/${ws.name}`}
+                            </span>
+                          </div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.72rem', color: 'var(--color-text-muted)', marginTop: 3, flexWrap: 'wrap' }}>
+                            <span style={{ fontFamily: 'monospace', color: '#6366f1', background: 'rgba(99,102,241,0.08)', padding: '1px 5px', borderRadius: 4 }}>
+                              📁 {ws.folder_path || `app-${app.id.slice(0, 8)}/${ws.name}`}
+                            </span>
+                            <span>
+                              {ws.last_active_at
+                                ? `Last active: ${new Date(ws.last_active_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}`
+                                : `Created: ${new Date(ws.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`}
+                            </span>
+                            {ws.size_bytes ? <span>· {(ws.size_bytes / 1024 / 1024).toFixed(0)} MB</span> : null}
+                          </div>
                         </div>
                       </div>
+
+                      {/* Per-Workspace Actions */}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+                        <button
+                          onClick={() => handleStartDevPod(ws.id, true, ws.name)}
+                          disabled={isDevPodStarting}
+                          title={isWsActive ? 'Open Omnigent Studio for this active workspace' : 'Switch sandbox to this workspace and open Studio'}
+                          style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: 5,
+                            padding: '5px 12px',
+                            background: isWsActive ? 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)' : 'var(--color-primary)',
+                            color: '#fff',
+                            border: 'none',
+                            borderRadius: 6,
+                            cursor: isDevPodStarting ? 'not-allowed' : 'pointer',
+                            fontSize: '0.78rem',
+                            fontWeight: 600,
+                            opacity: isDevPodStarting ? 0.6 : 1,
+                            boxShadow: isWsActive ? '0 2px 6px rgba(99,102,241,0.3)' : 'none',
+                          }}
+                        >
+                          <Play size={12} />
+                          {isWsActive ? 'Launch Studio' : 'Switch & Launch'}
+                        </button>
+
+                        <button
+                          onClick={() => openPublishModal(ws)}
+                          title={`Push "${ws.name}" changes to branch ${ws.git_branch || 'dev/' + ws.name}`}
+                          style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: 4,
+                            padding: '5px 10px',
+                            background: '#f0fdf4',
+                            color: '#16a34a',
+                            border: '1px solid #bbf7d0',
+                            borderRadius: 6,
+                            fontSize: '0.78rem',
+                            fontWeight: 600,
+                            cursor: 'pointer',
+                          }}
+                        >
+                          <UploadCloud size={12} />
+                          <span>Push</span>
+                        </button>
+
+                        <button
+                          onClick={() => handleDeleteWorkspace(ws)}
+                          disabled={isWsActive}
+                          title={isWsActive ? 'Cannot delete currently active workspace' : 'Delete this workspace'}
+                          style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            padding: '5px 8px',
+                            background: 'transparent',
+                            color: isWsActive ? 'var(--color-text-muted)' : '#dc2626',
+                            border: '1px solid var(--color-border)',
+                            borderRadius: 6,
+                            cursor: isWsActive ? 'not-allowed' : 'pointer',
+                            opacity: isWsActive ? 0.3 : 1,
+                          }}
+                        >
+                          <Trash2 size={13} />
+                        </button>
+                      </div>
                     </div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
-                      <button
-                        onClick={() => handleStartDevPod(ws.id, true)}
-                        disabled={isDevPodStarting}
-                        title="Launch Dev Studio with this workspace"
-                        style={{
-                          display: 'inline-flex',
-                          alignItems: 'center',
-                          gap: 5,
-                          padding: '5px 12px',
-                          background: 'var(--color-primary)',
-                          color: '#fff',
-                          border: 'none',
-                          borderRadius: 6,
-                          cursor: isDevPodStarting ? 'not-allowed' : 'pointer',
-                          fontSize: '0.78rem',
-                          fontWeight: 600,
-                          opacity: isDevPodStarting ? 0.6 : 1,
-                        }}
-                      >
-                        <Play size={12} />
-                        Launch
-                      </button>
-                      <button
-                        onClick={() => handleDeleteWorkspace(ws)}
-                        disabled={ws.status === 'active'}
-                        title={ws.status === 'active' ? 'Stop dev pod before deleting workspace' : 'Delete this workspace'}
-                        style={{
-                          display: 'inline-flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          padding: '5px 8px',
-                          background: 'transparent',
-                          color: ws.status === 'active' ? 'var(--color-text-muted)' : '#dc2626',
-                          border: '1px solid var(--color-border)',
-                          borderRadius: 6,
-                          cursor: ws.status === 'active' ? 'not-allowed' : 'pointer',
-                          opacity: ws.status === 'active' ? 0.4 : 1,
-                        }}
-                      >
-                        <Trash2 size={13} />
-                      </button>
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>
@@ -808,9 +942,9 @@ export function AppDevelopmentTab({ app, resolvedAppId }: AppDevelopmentTabProps
               gap: 14,
             }}
           >
-            {/* Header Tabs: Preview vs Logs */}
+            {/* Header Tabs: Preview vs Terminal vs Logs */}
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '1px solid var(--color-border)', paddingBottom: 10 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                 <button
                   onClick={() => setPreviewTab('preview')}
                   style={{
@@ -818,15 +952,40 @@ export function AppDevelopmentTab({ app, resolvedAppId }: AppDevelopmentTabProps
                     alignItems: 'center',
                     gap: 6,
                     border: 'none',
-                    background: 'none',
-                    fontWeight: previewTab === 'preview' ? 600 : 500,
+                    background: previewTab === 'preview' ? 'var(--color-primary-bg, rgba(99, 102, 241, 0.1))' : 'none',
+                    fontWeight: previewTab === 'preview' ? 650 : 500,
                     color: previewTab === 'preview' ? 'var(--color-primary)' : 'var(--color-text-muted)',
                     cursor: 'pointer',
-                    fontSize: '0.88rem',
+                    fontSize: '0.86rem',
+                    padding: '6px 12px',
+                    borderRadius: 6,
                   }}
                 >
                   <Globe size={15} />
                   <span>Live Dev App Preview</span>
+                </button>
+
+                <button
+                  onClick={() => setPreviewTab('terminal')}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 6,
+                    border: 'none',
+                    background: previewTab === 'terminal' ? 'rgba(168, 85, 247, 0.12)' : 'none',
+                    fontWeight: previewTab === 'terminal' ? 650 : 500,
+                    color: previewTab === 'terminal' ? '#a855f7' : 'var(--color-text-muted)',
+                    cursor: 'pointer',
+                    fontSize: '0.86rem',
+                    padding: '6px 12px',
+                    borderRadius: 6,
+                  }}
+                >
+                  <Terminal size={15} />
+                  <span>Terminal & Console</span>
+                  {isDevPodRunning && (
+                    <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#10b981', marginLeft: 2 }} />
+                  )}
                 </button>
 
                 <button
@@ -836,30 +995,38 @@ export function AppDevelopmentTab({ app, resolvedAppId }: AppDevelopmentTabProps
                     alignItems: 'center',
                     gap: 6,
                     border: 'none',
-                    background: 'none',
-                    fontWeight: previewTab === 'logs' ? 600 : 500,
+                    background: previewTab === 'logs' ? 'var(--color-primary-bg, rgba(99, 102, 241, 0.1))' : 'none',
+                    fontWeight: previewTab === 'logs' ? 650 : 500,
                     color: previewTab === 'logs' ? 'var(--color-primary)' : 'var(--color-text-muted)',
                     cursor: 'pointer',
-                    fontSize: '0.88rem',
+                    fontSize: '0.86rem',
+                    padding: '6px 12px',
+                    borderRadius: 6,
                   }}
                 >
-                  <Terminal size={15} />
+                  <RotateCw size={14} />
                   <span>Sandbox Logs</span>
                 </button>
               </div>
 
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                {previewTab === 'preview' ? (
-                  <>
-                    <button
-                      className="btn btn-outline"
-                      style={{ fontSize: '0.75rem', padding: '4px 10px' }}
-                      onClick={() => window.open(liveDevUrl, '_blank')}
-                    >
-                      <ExternalLink size={12} /> Open in Dedicated Window
-                    </button>
-                  </>
-                ) : (
+                {previewTab === 'preview' && (
+                  <button
+                    className="btn btn-outline"
+                    style={{ fontSize: '0.75rem', padding: '4px 10px' }}
+                    onClick={() => window.open(liveDevUrl, '_blank')}
+                  >
+                    <ExternalLink size={12} /> Open in Dedicated Window
+                  </button>
+                )}
+
+                {previewTab === 'terminal' && (
+                  <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>
+                    <span>Interactive PTY Shell</span>
+                  </div>
+                )}
+
+                {previewTab === 'logs' && (
                   <>
                     <input
                       type="text"
@@ -956,6 +1123,19 @@ export function AppDevelopmentTab({ app, resolvedAppId }: AppDevelopmentTabProps
               </>
             )}
 
+            {/* Tab Body: Interactive Terminal & Console */}
+            {previewTab === 'terminal' && (
+              <DevTerminal
+                appId={resolvedAppId}
+                appName={app.name}
+                workspaceId={devStatus?.workspace_id}
+                workspaceName={devStatus?.workspace_name}
+                isDevPodRunning={isDevPodRunning}
+                onStartDevPod={() => handleStartDevPod(undefined, false)}
+              />
+            )}
+
+
             {/* Tab Body: Dev Logs */}
             {previewTab === 'logs' && (
               <div
@@ -1009,7 +1189,7 @@ export function AppDevelopmentTab({ app, resolvedAppId }: AppDevelopmentTabProps
               borderRadius: 8,
               border: '1px solid var(--color-border)',
               width: '100%',
-              maxWidth: 500,
+              maxWidth: 520,
               padding: 24,
               display: 'flex',
               flexDirection: 'column',
@@ -1019,13 +1199,34 @@ export function AppDevelopmentTab({ app, resolvedAppId }: AppDevelopmentTabProps
           >
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontWeight: 650, fontSize: '1.05rem' }}>
               <UploadCloud size={20} color="var(--color-primary)" />
-              <span>Publish Dev Changes to Git</span>
+              <span>Push Workspace Changes to Git</span>
             </div>
 
             <p style={{ margin: 0, fontSize: '0.84rem', color: 'var(--color-text-muted)' }}>
-              All code modifications in the active dev workspace will be staged, committed, pushed to branch{' '}
-              <strong>{app.git_branch || app.git_ref || 'main'}</strong>, and trigger a production redeployment.
+              All code modifications in this workspace will be staged, committed, and pushed to its dedicated remote Git branch. The dev pod will remain active and running.
             </p>
+
+            {/* Source Workspace & Target Info Box */}
+            <div style={{ background: 'var(--color-surface-alt, rgba(0,0,0,0.03))', padding: '12px 14px', borderRadius: 6, border: '1px solid var(--color-border)', fontSize: '0.8rem', display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ color: 'var(--color-text-muted)' }}>Target Workspace:</span>
+                <span style={{ fontWeight: 700, color: 'var(--color-primary)' }}>
+                  {targetPublishWorkspace?.name || devStatus?.workspace_name || 'Active Workspace'}
+                </span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ color: 'var(--color-text-muted)' }}>Folder Path on Pod:</span>
+                <span style={{ fontFamily: 'monospace', fontSize: '0.74rem', color: '#6366f1' }}>
+                  📁 {targetPublishWorkspace?.folder_path || devStatus?.workspace_folder || `app-${app.id.replace(/[^a-zA-Z0-9_-]/g, '')}/${targetPublishWorkspace?.name || devStatus?.workspace_name || 'default'}`}
+                </span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ color: 'var(--color-text-muted)' }}>Destination Branch:</span>
+                <span style={{ fontWeight: 600, color: '#16a34a', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                  <GitBranch size={12} /> {targetPublishWorkspace?.git_branch || (targetPublishWorkspace?.name ? `dev/${targetPublishWorkspace.name}` : devStatus?.workspace_name ? `dev/${devStatus.workspace_name}` : 'dev/default')}
+                </span>
+              </div>
+            </div>
 
             <div>
               <label style={{ display: 'block', fontSize: '0.78rem', fontWeight: 600, marginBottom: 6 }}>
@@ -1035,7 +1236,7 @@ export function AppDevelopmentTab({ app, resolvedAppId }: AppDevelopmentTabProps
                 rows={3}
                 value={commitMessage}
                 onChange={(e) => setCommitMessage(e.target.value)}
-                placeholder="e.g. feat: add task kanban board and fix API proxy"
+                placeholder="e.g. feat: update readme and add task endpoints"
                 style={{
                   width: '100%',
                   padding: '8px 10px',
@@ -1060,9 +1261,10 @@ export function AppDevelopmentTab({ app, resolvedAppId }: AppDevelopmentTabProps
                 className="btn btn-primary"
                 onClick={handlePublish}
                 disabled={publishMutation.isPending}
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
               >
-                {publishMutation.isPending ? <Loader2 size={14} className="spin" /> : <Check size={14} />}
-                <span>{publishMutation.isPending ? 'Publishing...' : 'Commit & Push'}</span>
+                {publishMutation.isPending ? <Loader2 size={14} className="spin" /> : <UploadCloud size={14} />}
+                <span>{publishMutation.isPending ? 'Pushing to Git...' : 'Push to Git'}</span>
               </button>
             </div>
           </div>
@@ -1102,7 +1304,7 @@ export function AppDevelopmentTab({ app, resolvedAppId }: AppDevelopmentTabProps
             </div>
 
             <p style={{ margin: 0, fontSize: '0.84rem', color: 'var(--color-text-muted)' }}>
-              Create an isolated development workspace. The workspace name you specify will be used directly as the folder name on disk and in Omnigent Server.
+              Create an isolated development workspace. The workspace will automatically be initialized on its own dedicated Git branch (<code style={{ color: 'var(--color-primary)' }}>dev/&lt;workspace-name&gt;</code>) branched off <code style={{ color: 'var(--color-text)' }}>{app.git_branch || 'main'}</code>.
             </p>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -1133,7 +1335,9 @@ export function AppDevelopmentTab({ app, resolvedAppId }: AppDevelopmentTabProps
                 />
                 {newWorkspaceName.trim() && (
                   <div style={{ fontSize: '0.72rem', color: 'var(--color-text-muted)', marginTop: 4 }}>
-                    Omnigent folder path:{' '}
+                    Assigned Branch: <strong style={{ color: '#16a34a' }}>dev/{newWorkspaceName.trim().toLowerCase().replace(/[^a-z0-9-_]/g, '-')}</strong>
+                    <br />
+                    Pod path:{' '}
                     <code style={{ color: 'var(--color-primary)' }}>
                       /workspaces/app-{app.id.replace(/[^a-zA-Z0-9_-]/g, '')}/{newWorkspaceName.trim().toLowerCase().replace(/[^a-z0-9-_]/g, '-')}
                     </code>
@@ -1143,13 +1347,13 @@ export function AppDevelopmentTab({ app, resolvedAppId }: AppDevelopmentTabProps
 
               <div>
                 <label style={{ display: 'block', fontSize: '0.78rem', fontWeight: 600, marginBottom: 6 }}>
-                  Git Branch (optional)
+                  Custom Git Branch (optional)
                 </label>
                 <input
                   type="text"
                   value={newWorkspaceBranch}
                   onChange={(e) => setNewWorkspaceBranch(e.target.value)}
-                  placeholder="e.g. main or feature/branch-name"
+                  placeholder={newWorkspaceName.trim() ? `dev/${newWorkspaceName.trim().toLowerCase().replace(/[^a-z0-9-_]/g, '-')}` : 'dev/<name> (auto-assigned if left blank)'}
                   style={{
                     width: '100%',
                     padding: '8px 10px',

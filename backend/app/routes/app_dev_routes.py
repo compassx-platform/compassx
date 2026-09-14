@@ -1,24 +1,33 @@
 import logging
 from typing import Optional, List, Dict, Any
 from pydantic import BaseModel
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect, status
 from sqlalchemy.orm import Session
 
 from app.database import get_system_db
 from app.governance.dependencies import Guard, get_guard
 from app.models.app import App
 from app.services.omnigent_dev_service import omnigent_dev_service
+from app.services.dev_terminal_service import dev_terminal_service
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/apps/{app_id}/dev", tags=["Apps Development & Omnigent"])
 
+class ExecCommandRequest(BaseModel):
+    command: str
+    workspace_id: Optional[str] = None
+    workspace_name: Optional[str] = None
+
 class FileWriteRequest(BaseModel):
+
     path: str
     content: str
 
 class PublishRequest(BaseModel):
     commit_message: Optional[str] = "Update application via Omnigent Dev Studio"
+    workspace_id: Optional[str] = None
+    workspace_name: Optional[str] = None
 
 class CreateSessionRequest(BaseModel):
     agent_name: Optional[str] = "polly"
@@ -197,21 +206,58 @@ def write_workspace_file(
 @router.post("/publish")
 def publish_dev_changes(
     app_id: str,
-    body: PublishRequest,
+    body: Optional[PublishRequest] = None,
     db: Session = Depends(get_system_db),
     guard: Guard = Depends(get_guard),
 ):
-    """Commit all dev changes, push to GitHub, and redeploy the production container."""
+    """Commit workspace changes and push to its dedicated remote Git branch."""
     app = db.query(App).filter(App.id == app_id).first()
     if not app:
         raise HTTPException(status_code=404, detail=f"App '{app_id}' not found.")
 
     user_id = str(guard.principal.id) if guard.principal else "system"
+    commit_msg = body.commit_message if body else None
+    ws_id = body.workspace_id if body else None
+    ws_name = body.workspace_name if body else None
     try:
-        res = omnigent_dev_service.publish_dev_changes(app, body.commit_message or "Dev updates", user_id=user_id)
+        res = omnigent_dev_service.publish_dev_changes(
+            app,
+            commit_message=commit_msg,
+            user_id=user_id,
+            workspace_id=ws_id,
+            workspace_name=ws_name,
+        )
         return res
     except Exception as e:
         logger.exception("Failed to publish dev changes for app %s: %s", app.name, e)
+        raise HTTPException(status_code=500, detail=f"Publish failed: {str(e)}")
+
+
+@router.post("/workspaces/{workspace_id}/publish")
+def publish_workspace_changes(
+    app_id: str,
+    workspace_id: str,
+    body: Optional[PublishRequest] = None,
+    db: Session = Depends(get_system_db),
+    guard: Guard = Depends(get_guard),
+):
+    """Commit and push changes for a specific workspace to its dedicated remote Git branch."""
+    app = db.query(App).filter(App.id == app_id).first()
+    if not app:
+        raise HTTPException(status_code=404, detail=f"App '{app_id}' not found.")
+
+    user_id = str(guard.principal.id) if guard.principal else "system"
+    commit_msg = body.commit_message if body else None
+    try:
+        res = omnigent_dev_service.publish_dev_changes(
+            app,
+            commit_message=commit_msg,
+            user_id=user_id,
+            workspace_id=workspace_id,
+        )
+        return res
+    except Exception as e:
+        logger.exception("Failed to publish workspace %s changes for app %s: %s", workspace_id, app.name, e)
         raise HTTPException(status_code=500, detail=f"Publish failed: {str(e)}")
 
 
@@ -263,4 +309,59 @@ def get_dev_sandbox_logs(
         raise HTTPException(status_code=404, detail=f"App '{app_id}' not found.")
 
     return omnigent_dev_service.get_dev_logs(app, tail=tail)
+
+
+@router.post("/exec")
+def exec_dev_command(
+    app_id: str,
+    body: ExecCommandRequest,
+    db: Session = Depends(get_system_db),
+    guard: Guard = Depends(get_guard),
+):
+    """Execute a single shell command inside the dev sandbox container."""
+    app = db.query(App).filter(App.id == app_id).first()
+    if not app:
+        raise HTTPException(status_code=404, detail=f"App '{app_id}' not found.")
+    if guard.workspace_id and app.workspace_id != guard.workspace_id:
+        raise HTTPException(status_code=403, detail="Cannot access app in another workspace.")
+    if not body.command or not body.command.strip():
+        raise HTTPException(status_code=400, detail="Command cannot be empty.")
+
+    return dev_terminal_service.exec_command(
+        app,
+        command=body.command.strip(),
+        workspace_id=body.workspace_id,
+        workspace_name=body.workspace_name,
+    )
+
+
+@router.websocket("/terminal/ws")
+async def dev_terminal_websocket(
+    websocket: WebSocket,
+    app_id: str,
+    token: Optional[str] = Query(None),
+    workspace_id: Optional[str] = Query(None),
+    workspace_name: Optional[str] = Query(None),
+    cols: int = Query(100),
+    rows: int = Query(30),
+):
+    """Interactive real-time WebSocket terminal inside the dev pod/container."""
+    from app.database import SystemSessionLocal
+    with SystemSessionLocal() as db:
+        app = db.query(App).filter(App.id == app_id).first()
+        if not app:
+            await websocket.accept()
+            await websocket.send_text(f"\r\n\x1b[1;31mApp '{app_id}' not found.\x1b[0m\r\n")
+            await websocket.close(code=4404, reason=f"App '{app_id}' not found")
+            return
+
+    await dev_terminal_service.handle_terminal_websocket(
+        websocket=websocket,
+        app=app,
+        workspace_id=workspace_id,
+        workspace_name=workspace_name,
+        cols=cols,
+        rows=rows,
+    )
+
 

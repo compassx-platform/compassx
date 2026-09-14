@@ -482,7 +482,7 @@ class KubernetesDevDriver(BaseDevDriver):
             except Exception:
                 return None
 
-    def start_dev(self, app, repo_dir: str, omnigent_internal_url: str, workspace_folder: str = "") -> Dict[str, Any]:
+    def start_dev(self, app, repo_dir: str, omnigent_internal_url: str, workspace_folder: str = "", workspace_branch: str = "") -> Dict[str, Any]:
         from kubernetes import client
         from kubernetes.client.exceptions import ApiException
 
@@ -521,11 +521,22 @@ class KubernetesDevDriver(BaseDevDriver):
                     auth_url = git_url.replace("https://", f"https://x-access-token:{git_token}@")
                 git_ref = getattr(app, "git_ref", None) or getattr(app, "git_branch", None) or "main"
 
+                # Dedicated branch for this workspace
+                target_branch = workspace_branch
+                if not target_branch and workspace_folder:
+                    ws_leaf = workspace_folder.split("/")[-1]
+                    target_branch = f"dev/{ws_leaf}"
+                if not target_branch:
+                    target_branch = "dev/default"
+
                 clone_snippet = ""
                 if auth_url:
                     clone_snippet = (
                         f"if [ ! -d .git ]; then "
-                        f"(git clone --branch '{git_ref}' '{auth_url}' . || git clone '{auth_url}' . || true); "
+                        f"(git clone --branch '{git_ref}' '{auth_url}' . || git clone '{auth_url}' . || true) && "
+                        f"(git checkout -B '{target_branch}' || true); "
+                        f"else "
+                        f"(git checkout -B '{target_branch}' 2>/dev/null || true); "
                         f"fi; "
                     )
 
@@ -539,8 +550,13 @@ class KubernetesDevDriver(BaseDevDriver):
                 app_type = getattr(app, "app_type", "custom_web") or "custom_web"
 
                 dev_cmd = (
-                    f"mkdir -p /root/.omnigent && printf 'host:\\n  host_id: {host_id}\\n  name: \"{host_name}\"\\n' > /root/.omnigent/config.yaml; "
-                    f"export OMNIGENT_HOST_ID={host_id} OMNIGENT_HOST_NAME=\"{host_name}\" "
+                    f"mkdir -p /workspaces/.shared_auth/.gemini && "
+                    f"cp -rn /root/.gemini/* /workspaces/.shared_auth/.gemini/ 2>/dev/null; "
+                    f"rm -rf /root/.gemini && ln -sf /workspaces/.shared_auth/.gemini /root/.gemini; "
+                    f"(which agy >/dev/null 2>&1 && ln -sf /usr/local/bin/agy /usr/local/bin/antigravity || true); "
+                    f"mkdir -p /root/.omnigent /root/.config/omnigent /root/.config/opencode /root/.opencode && "
+                    f"printf 'host:\\n  host_id: {host_id}\\n  name: \"{host_name}\"\\n' | tee /root/.omnigent/config.yaml /root/.config/omnigent/config.yaml /root/.config/opencode/config.yaml /root/.opencode/config.yaml >/dev/null; "
+                    f"export OMNIGENT_HOST_ID={host_id} OMNIGENT_HOST_NAME=\"{host_name}\" HOST_ID={host_id} HOST_NAME=\"{host_name}\" OPENCODE_HOST_ID={host_id} OPENCODE_HOST_NAME=\"{host_name}\" "
                     f"CHOKIDAR_USEPOLLING=1 WATCHPACK_POLLING=true WATCHFILES_FORCE_POLLING=true "
                     f"NODE_TLS_REJECT_UNAUTHORIZED=0 NPM_CONFIG_STRICT_SSL=false PYTHONHTTPSVERIFY=0 GIT_SSL_NO_VERIFY=true CURL_INSECURE=1; "
                     f"(which opencode >/dev/null 2>&1 || npm install -g opencode-ai@1.18.0 || true); "
@@ -595,7 +611,7 @@ class KubernetesDevDriver(BaseDevDriver):
                     f"  (python3 -m http.server 8080 --directory {workdir} || npx --yes serve -l 8080 {workdir}) & "
                     f"fi; "
                     # 3. Start Omnigent Host Runner in foreground
-                    f"exec omnigent host --server {omnigent_internal_url} --non-interactive"
+                    f"exec omnigent host --server {omnigent_internal_url} --name \"{host_name}\" --non-interactive"
                 )
                 # 1b. Dev Deployment Spec (resilient self-healing; /workspaces backed by shared PVC)
                 dev_container = client.V1Container(
@@ -843,7 +859,7 @@ class KubernetesDevDriver(BaseDevDriver):
     def get_dev_url(self, app) -> str:
         return ingress_service.get_app_dev_url(app)
 
-    def get_dev_logs(self, app) -> str:
+    def get_dev_logs(self, app, max_lines: int = 200) -> str:
         k8s = self._get_k8s_client()
         if not k8s:
             return ""
@@ -856,8 +872,190 @@ class KubernetesDevDriver(BaseDevDriver):
             )
             if pods.items:
                 pod_name = pods.items[0].metadata.name
-                return k8s.core().read_namespaced_pod_log(name=pod_name, namespace=ns, tail_lines=200)
+                return k8s.core().read_namespaced_pod_log(name=pod_name, namespace=ns, tail_lines=max_lines)
             name = f"compassx-app-dev-{clean_id}"
-            return k8s.core().read_namespaced_pod_log(name=name, namespace=ns, tail_lines=200)
+            return k8s.core().read_namespaced_pod_log(name=name, namespace=ns, tail_lines=max_lines)
         except Exception:
             return ""
+
+    def exec_git_in_workspace(
+        self,
+        app,
+        workspace_folder: str,
+        commit_message: str,
+        branch: str,
+        auth_url: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Execute git add, commit, and push directly inside the dev pod workspace directory."""
+        from kubernetes import stream
+        k8s = self._get_k8s_client()
+        if not k8s:
+            return {"success": False, "error": "Kubernetes client not available"}
+
+        clean_id = re.sub(r"[^a-z0-9-]", "-", app.id.lower()).strip("-")
+        dev_name = f"compassx-app-dev-{clean_id}"
+        ns = settings.K8S_NAMESPACE
+
+        try:
+            pods = k8s.core().list_namespaced_pod(
+                namespace=ns,
+                label_selector=f"compassx/app-id={clean_id},compassx/dev=true",
+            )
+            pod_name = None
+            for p in (pods.items or []):
+                if p.status and p.status.phase == "Running" and not p.metadata.deletion_timestamp:
+                    pod_name = p.metadata.name
+                    break
+            if not pod_name:
+                pod_name = dev_name
+
+            workdir = f"/workspaces/{workspace_folder}"
+            safe_msg = commit_message.replace('"', '\\"').replace("'", "\\'")
+
+            remote_snippet = f"git remote set-url origin '{auth_url}' 2>/dev/null || true; " if auth_url else ""
+
+            bash_cmd = (
+                f"cd {workdir} && "
+                f"git config user.name 'CompassX Dev' && git config user.email 'dev@compassx.io' && "
+                f"(git checkout -B '{branch}' 2>/dev/null || true) && "
+                f"{remote_snippet}"
+                f"git add -A && "
+                f"(git commit -m \"{safe_msg}\" || echo 'NO_CHANGES_TO_COMMIT') && "
+                f"git push -u origin '{branch}' 2>&1"
+            )
+
+            resp = stream.stream(
+                k8s.core().connect_get_namespaced_pod_exec,
+                pod_name,
+                ns,
+                command=["/bin/sh", "-c", bash_cmd],
+                stderr=True,
+                stdin=False,
+                stdout=True,
+                tty=False,
+            )
+
+            # Get latest commit sha
+            sha_resp = stream.stream(
+                k8s.core().connect_get_namespaced_pod_exec,
+                pod_name,
+                ns,
+                command=["/bin/sh", "-c", f"cd {workdir} && git rev-parse --short HEAD 2>/dev/null || echo ''"],
+                stderr=False,
+                stdin=False,
+                stdout=True,
+                tty=False,
+            )
+
+            commit_sha = (sha_resp or "").strip()
+            return {
+                "success": True,
+                "output": resp,
+                "commit_sha": commit_sha,
+                "branch": branch,
+            }
+        except Exception as exc:
+            logger.warning("Failed executing git in dev pod: %s", exc)
+            return {"success": False, "error": str(exc)}
+
+    def _find_running_pod_name(self, clean_id: str, ns: str) -> Optional[str]:
+        k8s = self._get_k8s_client()
+        if not k8s:
+            return None
+        dev_name = f"compassx-app-dev-{clean_id}"
+        try:
+            pods = k8s.core().list_namespaced_pod(
+                namespace=ns,
+                label_selector=f"compassx/app-id={clean_id},compassx/dev=true",
+            )
+            for p in (pods.items or []):
+                if p.status and p.status.phase == "Running" and not p.metadata.deletion_timestamp:
+                    return p.metadata.name
+        except Exception:
+            pass
+        return dev_name
+
+    def exec_command_in_dev(
+        self,
+        app,
+        command: str,
+        workspace_folder: str = "",
+    ) -> Dict[str, Any]:
+        """Execute a single shell command inside the dev pod workspace directory."""
+        from kubernetes import stream
+        k8s = self._get_k8s_client()
+        if not k8s:
+            return {"success": False, "exit_code": 1, "output": "Kubernetes client not available"}
+
+        clean_id = re.sub(r"[^a-z0-9-]", "-", app.id.lower()).strip("-")
+        ns = settings.K8S_NAMESPACE
+        pod_name = self._find_running_pod_name(clean_id, ns) or f"compassx-app-dev-{clean_id}"
+
+        workdir = f"/workspaces/{workspace_folder}" if workspace_folder else f"/workspaces/{clean_id}/default"
+        full_cmd = f"cd {workdir} && {command}"
+
+        try:
+            resp = stream.stream(
+                k8s.core().connect_get_namespaced_pod_exec,
+                pod_name,
+                ns,
+                command=["/bin/sh", "-c", full_cmd],
+                stderr=True,
+                stdin=False,
+                stdout=True,
+                tty=False,
+                _request_timeout=60,
+            )
+            return {
+                "success": True,
+                "exit_code": 0,
+                "output": resp or "",
+                "workdir": workdir,
+            }
+        except Exception as exc:
+            logger.warning("Failed executing command in dev pod: %s", exc)
+            return {"success": False, "exit_code": 1, "output": str(exc), "workdir": workdir}
+
+    def open_terminal_ws_client(
+        self,
+        app,
+        workspace_folder: str = "",
+        cols: int = 80,
+        rows: int = 24,
+    ) -> Any:
+        """Open a live bidirectional interactive PTY stream to the dev pod."""
+        from kubernetes import stream
+        import json
+        k8s = self._get_k8s_client()
+        if not k8s:
+            return None
+
+        clean_id = re.sub(r"[^a-z0-9-]", "-", app.id.lower()).strip("-")
+        ns = settings.K8S_NAMESPACE
+        pod_name = self._find_running_pod_name(clean_id, ns) or f"compassx-app-dev-{clean_id}"
+        workdir = f"/workspaces/{workspace_folder}" if workspace_folder else f"/workspaces/{clean_id}/default"
+
+        shell_cmd = ["/bin/sh", "-c", f"cd {workdir} 2>/dev/null; if [ -x /bin/bash ]; then exec /bin/bash -l; else exec /bin/sh -l; fi"]
+
+        try:
+            ws_client = stream.stream(
+                k8s.core().connect_get_namespaced_pod_exec,
+                pod_name,
+                ns,
+                command=shell_cmd,
+                stderr=True,
+                stdin=True,
+                stdout=True,
+                tty=True,
+                _preload_content=False,
+            )
+            try:
+                from kubernetes.stream.ws_client import RESIZE_CHANNEL
+                ws_client.write_channel(RESIZE_CHANNEL, json.dumps({"Width": cols, "Height": rows}))
+            except Exception:
+                pass
+            return ws_client
+        except Exception as exc:
+            logger.warning("Failed to open terminal stream in dev pod %s: %s", pod_name, exc)
+            return None
+

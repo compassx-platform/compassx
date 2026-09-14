@@ -5,6 +5,30 @@ All notable changes to the CompassX Platform will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.3] - 2026-09-14
+
+### 🚀 Highlights
+
+CompassX `0.8.3` introduces the **Interactive Dev Sandbox Terminal** with live WebSocket PTY streaming and command execution, **Decoupled Per-Workspace Git Push** targeting dedicated development branches, and expanded container driver runtime capabilities.
+
+### ✨ Features & Enhancements
+
+#### Interactive Dev Sandbox Terminal
+- **Full-Featured Dev Terminal**: Embedded terminal emulator (`DevTerminal.tsx`) with ANSI styling, execution history buffer, auto-scroll, and interactive shell execution directly in the App Development tab.
+- **WebSocket Terminal Streaming**: Real-time terminal bridge (`DevTerminalService` & `/api/v1/apps/{app_id}/dev/terminal/ws`) streaming standard input/output directly to active Kubernetes pods and Docker containers.
+- **Remote Command Execution**: Added `/api/v1/apps/{app_id}/dev/terminal/exec` for dispatching shell commands within sandboxed workspaces.
+
+#### Per-Workspace Git Publishing & Branching
+- **Dedicated Dev Branches**: Workspaces automatically commit and push to dedicated development branches (`dev/<workspace-name>`) without polluting the main branch.
+- **Decoupled Workflow**: Committing changes preserves the active sandbox session without triggering premature production deployments.
+- **Authenticated Driver Git Push**: Secure Git credential injection and in-container remote push execution in both Kubernetes and Docker drivers.
+
+#### Driver & Runtime Enhancements
+- **Driver PTY & Exec Protocol**: Added `open_terminal_ws_client` and `exec_git_in_workspace` across `KubernetesDriver` and `DockerDriver`.
+- **WebSocket Ingress Routing**: Ensured proper upgrade headers and timeouts for dev sandbox terminal connections.
+
+---
+
 ## [0.8.2] - 2026-09-13
 
 ### 🚀 Highlights

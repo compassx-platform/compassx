@@ -368,15 +368,29 @@ export function useDeleteDevWorkspace() {
 export function usePublishDevChanges() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async ({ appId, commitMessage }: { appId: string; commitMessage?: string }) => {
+    mutationFn: async ({
+      appId,
+      commitMessage,
+      workspaceId,
+      workspaceName,
+    }: {
+      appId: string;
+      commitMessage?: string;
+      workspaceId?: string;
+      workspaceName?: string;
+    }) => {
       const res = await api.post(`/apps/${appId}/dev/publish`, {
         commit_message: commitMessage || 'Update application via Omnigent Dev Studio',
+        workspace_id: workspaceId ?? null,
+        workspace_name: workspaceName ?? null,
       });
       return res.data;
     },
     onSuccess: (_, { appId }) => {
       qc.invalidateQueries({ queryKey: ['app-detail', appId] });
       qc.invalidateQueries({ queryKey: ['app-deployments', appId] });
+      qc.invalidateQueries({ queryKey: ['app-dev-status', appId] });
+      qc.invalidateQueries({ queryKey: ['app-dev-workspaces', appId] });
     },
   });
 }
@@ -396,4 +410,35 @@ export function useDevLogs(appId?: string, enabled = true) {
     refetchInterval: enabled ? 3000 : false,
   });
 }
+
+export interface ExecCommandResult {
+  success: boolean;
+  exit_code?: number;
+  output?: string;
+  workdir?: string;
+}
+
+export function useExecDevCommand() {
+  return useMutation({
+    mutationFn: async ({
+      appId,
+      command,
+      workspaceId,
+      workspaceName,
+    }: {
+      appId: string;
+      command: string;
+      workspaceId?: string;
+      workspaceName?: string;
+    }): Promise<ExecCommandResult> => {
+      const res = await api.post(`/apps/${appId}/dev/exec`, {
+        command,
+        workspace_id: workspaceId || null,
+        workspace_name: workspaceName || null,
+      });
+      return res.data;
+    },
+  });
+}
+
 

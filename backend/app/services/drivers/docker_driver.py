@@ -137,7 +137,7 @@ class DockerDevDriver(BaseDevDriver):
         res = subprocess.run(["docker", "image", "inspect", tag], capture_output=True, text=True, check=False)
         return res.returncode == 0
 
-    def start_dev(self, app, repo_dir: str, omnigent_internal_url: str) -> Dict[str, Any]:
+    def start_dev(self, app, repo_dir: str, omnigent_internal_url: str, workspace_folder: str = "", workspace_branch: str = "") -> Dict[str, Any]:
         import uuid
         dev_container_name = f"compassx-app-dev-{app.id}"
         dev_port = find_free_tcp_port(9201, 9400)
@@ -152,14 +152,22 @@ class DockerDevDriver(BaseDevDriver):
 
         app_type = getattr(app, "app_type", "custom_web") or "custom_web"
 
+        target_branch = workspace_branch
+        if not target_branch and workspace_folder:
+            target_branch = f"dev/{workspace_folder.split('/')[-1]}"
+        if not target_branch:
+            target_branch = "dev/default"
+
         # Container boot script: writes config.yaml with app identity, configures TLS, starts FastAPI and React/Vite, then runs Omnigent host runner
         container_cmd = (
-            f"mkdir -p /root/.omnigent && printf 'host:\\n  host_id: {host_id}\\n  name: \"{host_name}\"\\n' > /root/.omnigent/config.yaml; "
-            f"export OMNIGENT_HOST_ID={host_id} OMNIGENT_HOST_NAME=\"{host_name}\" "
+            f"mkdir -p /root/.omnigent /root/.config/omnigent /root/.config/opencode /root/.opencode && "
+            f"printf 'host:\\n  host_id: {host_id}\\n  name: \"{host_name}\"\\n' | tee /root/.omnigent/config.yaml /root/.config/omnigent/config.yaml /root/.config/opencode/config.yaml /root/.opencode/config.yaml >/dev/null; "
+            f"export OMNIGENT_HOST_ID={host_id} OMNIGENT_HOST_NAME=\"{host_name}\" HOST_ID={host_id} HOST_NAME=\"{host_name}\" OPENCODE_HOST_ID={host_id} OPENCODE_HOST_NAME=\"{host_name}\" "
             f"CHOKIDAR_USEPOLLING=1 WATCHPACK_POLLING=true WATCHFILES_FORCE_POLLING=true "
             f"NODE_TLS_REJECT_UNAUTHORIZED=0 NPM_CONFIG_STRICT_SSL=false PYTHONHTTPSVERIFY=0 GIT_SSL_NO_VERIFY=true CURL_INSECURE=1; "
             f"(which opencode >/dev/null 2>&1 || npm install -g opencode-ai@1.18.0 || true); "
             f"mkdir -p /app && cd /app && "
+            f"(git checkout -B '{target_branch}' 2>/dev/null || true); "
             # 1. Detect and start Python FastAPI Backend in background (live reload on port 8000)
             f"BACKEND_DIR=\"\"; "
             f"if [ -d /app/backend ] && ( [ -f /app/backend/app.py ] || [ -f /app/backend/main.py ] || [ -f /app/backend/requirements.txt ] ); then BACKEND_DIR=\"/app/backend\"; "
@@ -186,7 +194,7 @@ class DockerDevDriver(BaseDevDriver):
             f"fi; "
             f"if [ -n \"$FRONTEND_DIR\" ]; then "
             f"  (cd \"$FRONTEND_DIR\" && "
-            f"   (python3 -c \"import os, re\nfor f in ['vite.config.ts', 'vite.config.js']:\n if os.path.exists(f):\n  c = open(f, 'r').read()\n  if 'usePolling' not in c: c = re.sub(r'(server:\\s*\\{{)', r'\\\\1\\\\n    allowedHosts: true,\\\\n    watch: {{ usePolling: true, interval: 100 }},\\\\n    hmr: {{ clientPort: 443 }},', c)\n  c = c.replace('http://localhost:8080', 'http://localhost:8000')\n  c = c.replace('http://127.0.0.1:8085', 'http://localhost:8000')\n  open(f, 'w').write(c)\" 2>/dev/null || true) && "
+            f"   (python3 -c \"import os, re\\nfor f in ['vite.config.ts', 'vite.config.js']:\\n if os.path.exists(f):\\n  c = open(f, 'r').read()\\n  if 'usePolling' not in c: c = re.sub(r'(server:\\s*\\{{)', r'\\\\1\\\\n    allowedHosts: true,\\\\n    watch: {{ usePolling: true, interval: 100 }},\\\\n    hmr: {{ clientPort: 443 }},', c)\\n  c = c.replace('http://localhost:8080', 'http://localhost:8000')\\n  c = c.replace('http://127.0.0.1:8085', 'http://localhost:8000')\\n  open(f, 'w').write(c)\" 2>/dev/null || true) && "
             f"   (if [ ! -d node_modules ]; then npm install --prefer-offline --no-audit || npm install || true; fi) && "
             f"   (npx --yes vite --host 0.0.0.0 --port 8080 --cors || npm run dev -- --host 0.0.0.0 --port 8080 || npm start -- -p 8080 || npx --yes serve -l 8080 .)) & "
             f"elif [ -n \"$BACKEND_DIR\" ]; then "
@@ -203,7 +211,7 @@ class DockerDevDriver(BaseDevDriver):
             f"  if [ ! -f /app/index.html ]; then echo '<!DOCTYPE html><html><head><title>Dev Sandbox for {app.name}</title></head><body style=\"font-family:sans-serif;padding:2rem;\"><h1>Dev Sandbox for {app.name}</h1><p style=\"color:green;font-weight:bold;\">Connected to Omnigent Dev Studio</p></body></html>' > /app/index.html; fi; "
             f"  npx --yes serve -l 8080 /app & "
             f"fi; "
-            f"omnigent host --server {omnigent_internal_url} --non-interactive"
+            f"omnigent host --server {omnigent_internal_url} --name \"{host_name}\" --non-interactive"
         )
 
         dev_host_image = "compassx-dev-host:latest" if self._image_exists("compassx-dev-host:latest") else "ghcr.io/omnigent-ai/omnigent-host:latest"
@@ -267,7 +275,80 @@ class DockerDevDriver(BaseDevDriver):
     def get_dev_url(self, app) -> str:
         return ingress_service.get_app_dev_url(app)
 
-    def get_dev_logs(self, app) -> str:
+    def get_dev_logs(self, app, max_lines: int = 250) -> str:
         dev_container_name = f"compassx-app-dev-{app.id}"
-        res = subprocess.run(["docker", "logs", "--tail", "250", dev_container_name], capture_output=True, text=True, check=False)
+        res = subprocess.run(["docker", "logs", "--tail", str(max_lines), dev_container_name], capture_output=True, text=True, check=False)
         return (res.stdout or "") + (res.stderr or "")
+
+    def exec_git_in_workspace(
+        self,
+        app,
+        workspace_folder: str,
+        commit_message: str,
+        branch: str,
+        auth_url: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Execute git operations in docker dev container."""
+        dev_container_name = f"compassx-app-dev-{app.id}"
+        safe_msg = commit_message.replace('"', '\\"').replace("'", "\\'")
+        remote_snippet = f"git remote set-url origin '{auth_url}' 2>/dev/null || true; " if auth_url else ""
+        cmd = (
+            f"cd /app && "
+            f"git config user.name 'CompassX Dev' && git config user.email 'dev@compassx.io' && "
+            f"(git checkout -B '{branch}' 2>/dev/null || true) && "
+            f"{remote_snippet}"
+            f"git add -A && "
+            f"(git commit -m \"{safe_msg}\" || echo 'NO_CHANGES_TO_COMMIT') && "
+            f"git push -u origin '{branch}' 2>&1"
+        )
+        res = subprocess.run(["docker", "exec", dev_container_name, "bash", "-c", cmd], capture_output=True, text=True, check=False)
+        sha_res = subprocess.run(["docker", "exec", dev_container_name, "bash", "-c", "cd /app && git rev-parse --short HEAD 2>/dev/null || echo ''"], capture_output=True, text=True, check=False)
+        return {
+            "success": res.returncode == 0,
+            "output": (res.stdout or "") + (res.stderr or ""),
+            "commit_sha": (sha_res.stdout or "").strip(),
+            "branch": branch,
+        }
+
+    def exec_command_in_dev(
+        self,
+        app,
+        command: str,
+        workspace_folder: str = "",
+    ) -> Dict[str, Any]:
+        """Execute a single shell command inside the docker dev container."""
+        dev_container_name = f"compassx-app-dev-{app.id}"
+        workdir = f"/workspaces/{workspace_folder}" if workspace_folder else "/app"
+        cmd = f"cd {workdir} 2>/dev/null || cd /app; {command}"
+        res = subprocess.run(["docker", "exec", "-w", workdir, dev_container_name, "bash", "-c", cmd], capture_output=True, text=True, check=False)
+        return {
+            "success": res.returncode == 0,
+            "exit_code": res.returncode,
+            "output": (res.stdout or "") + (res.stderr or ""),
+            "workdir": workdir,
+        }
+
+    def open_terminal_ws_client(
+        self,
+        app,
+        workspace_folder: str = "",
+        cols: int = 80,
+        rows: int = 24,
+    ) -> Any:
+        """Start a subprocess for Docker interactive exec."""
+        dev_container_name = f"compassx-app-dev-{app.id}"
+        workdir = f"/workspaces/{workspace_folder}" if workspace_folder else "/app"
+        try:
+            cmd = ["docker", "exec", "-i", "-w", workdir, "-e", f"COLUMNS={cols}", "-e", f"LINES={rows}", "-e", "TERM=xterm-256color", dev_container_name, "bash", "-l"]
+            proc = subprocess.Popen(
+                cmd,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                bufsize=0,
+            )
+            return proc
+        except Exception as exc:
+            logger.warning("Failed to start docker interactive terminal: %s", exc)
+            return None
+
