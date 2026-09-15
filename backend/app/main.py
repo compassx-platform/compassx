@@ -332,10 +332,18 @@ async def lifespan(app: FastAPI):
                 logger.warning("Jobs reconciliation cycle failed", exc_info=True)
             await asyncio.sleep(120)
 
+    # Start Sandbox Reaper service (scales idle dev pods to zero, reaps stale sandboxes)
+    from app.services.sandbox_reaper_service import sandbox_reaper_service
+    await sandbox_reaper_service.start()
+
     jobs_reconciliation_task = asyncio.create_task(_jobs_reconciliation_loop())
     try:
         yield
     finally:
+        try:
+            await sandbox_reaper_service.shutdown()
+        except Exception:
+            pass
         jobs_reconciliation_task.cancel()
         try:
             await jobs_reconciliation_task
@@ -347,7 +355,7 @@ app = FastAPI(
     lifespan=lifespan,
     title="CompassX API",
     description="CompassX Platform API",
-    version="0.8.6",
+    version="0.9.0",
     docs_url="/api/swagger/docs",
     openapi_url="/api/swagger.json",
 )

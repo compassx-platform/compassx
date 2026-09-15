@@ -596,6 +596,74 @@ class OmnigentDevService:
 
         return {"status": "stopped", "app_id": app.id}
 
+    def suspend_dev_session(self, app) -> Dict[str, Any]:
+        """Suspend development sandbox compute (scale-to-zero) while keeping persistent workspace intact."""
+        sess = _DEV_SESSIONS.get(app.id)
+        mode = sess.get("mode") if sess else None
+        ws_id = sess.get("workspace_id") if sess else None
+
+        dev_driver = driver_factory.get_dev_driver(mode)
+        suspended = dev_driver.suspend_dev(app)
+
+        if sess:
+            sess["status"] = "suspended"
+
+        if ws_id:
+            try:
+                from app.models.dev_workspace import DevWorkspace
+                with _get_system_db() as db:
+                    ws = db.query(DevWorkspace).filter(DevWorkspace.id == ws_id).first()
+                    if ws:
+                        ws.status = "suspended"
+                        db.commit()
+            except Exception as e:
+                logger.warning("Could not update DevWorkspace status to suspended: %s", e)
+
+        return {"status": "suspended" if suspended else "failed", "app_id": app.id}
+
+    def resume_dev_session(self, app) -> Dict[str, Any]:
+        """Resume a suspended dev sandbox compute (scale-to-one)."""
+        sess = _DEV_SESSIONS.get(app.id)
+        mode = sess.get("mode") if sess else None
+        ws_id = sess.get("workspace_id") if sess else None
+
+        dev_driver = driver_factory.get_dev_driver(mode)
+        resumed = dev_driver.resume_dev(app)
+
+        if sess:
+            sess["status"] = "active"
+
+        if ws_id:
+            try:
+                from app.models.dev_workspace import DevWorkspace
+                with _get_system_db() as db:
+                    ws = db.query(DevWorkspace).filter(DevWorkspace.id == ws_id).first()
+                    if ws:
+                        ws.status = "active"
+                        ws.last_active_at = datetime.now(timezone.utc)
+                        db.commit()
+            except Exception as e:
+                logger.warning("Could not update DevWorkspace status to active: %s", e)
+
+        return {"status": "active" if resumed else "failed", "app_id": app.id}
+
+    def touch_workspace_activity(self, app_id: str, workspace_id: Optional[str] = None) -> None:
+        """Update last_active_at timestamp for workspace."""
+        try:
+            from app.models.dev_workspace import DevWorkspace
+            with _get_system_db() as db:
+                query = db.query(DevWorkspace).filter(DevWorkspace.app_id == app_id)
+                if workspace_id:
+                    query = query.filter((DevWorkspace.id == workspace_id) | (DevWorkspace.name == workspace_id))
+                else:
+                    query = query.filter(DevWorkspace.status.in_(["active", "suspended"]))
+                ws = query.order_by(DevWorkspace.last_active_at.desc().nullslast()).first()
+                if ws:
+                    ws.last_active_at = datetime.now(timezone.utc)
+                    db.commit()
+        except Exception:
+            pass
+
     def list_dev_workspaces(self, app) -> List[Dict[str, Any]]:
         """List all dev workspaces for an app with dynamic active status."""
         from app.models.dev_workspace import DevWorkspace
@@ -779,6 +847,7 @@ class OmnigentDevService:
 
     def read_workspace_file(self, app, file_path: str) -> Dict[str, Any]:
         """Read text content of a workspace file."""
+        self.touch_workspace_activity(app.id)
         repo_dir = self.get_repo_dir(app)
         safe_path = os.path.normpath(os.path.join(repo_dir, file_path.lstrip("/\\")))
         if not safe_path.startswith(repo_dir) or not os.path.exists(safe_path) or not os.path.isfile(safe_path):
@@ -796,6 +865,7 @@ class OmnigentDevService:
 
     def write_workspace_file(self, app, file_path: str, content: str) -> Dict[str, Any]:
         """Write content to a file in the workspace (triggering hot reload)."""
+        self.touch_workspace_activity(app.id)
         repo_dir = self.get_repo_dir(app)
         safe_path = os.path.normpath(os.path.join(repo_dir, file_path.lstrip("/\\")))
         if not safe_path.startswith(repo_dir):

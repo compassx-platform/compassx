@@ -901,6 +901,46 @@ class KubernetesDevDriver(BaseDevDriver):
             pass
         return stopped
 
+    def suspend_dev(self, app) -> bool:
+        """Suspend dev sandbox compute (scale replicas to 0) while keeping persistent volume claim intact."""
+        k8s = self._get_k8s_client()
+        if not k8s:
+            return False
+        ns = settings.K8S_NAMESPACE
+        clean_id = re.sub(r"[^a-z0-9-]", "-", app.id.lower()).strip("-")
+        name = f"compassx-app-dev-{clean_id}"
+        try:
+            k8s.apps().patch_namespaced_deployment(
+                name=name,
+                namespace=ns,
+                body={"spec": {"replicas": 0}},
+            )
+            logger.info("Suspended dev sandbox for app %s (scaled replicas to 0)", app.id)
+            return True
+        except Exception as e:
+            logger.warning("Could not suspend dev sandbox %s: %s", name, e)
+            return False
+
+    def resume_dev(self, app) -> bool:
+        """Resume a suspended dev sandbox compute (scale replicas to 1)."""
+        k8s = self._get_k8s_client()
+        if not k8s:
+            return False
+        ns = settings.K8S_NAMESPACE
+        clean_id = re.sub(r"[^a-z0-9-]", "-", app.id.lower()).strip("-")
+        name = f"compassx-app-dev-{clean_id}"
+        try:
+            k8s.apps().patch_namespaced_deployment(
+                name=name,
+                namespace=ns,
+                body={"spec": {"replicas": 1}},
+            )
+            logger.info("Resumed dev sandbox for app %s (scaled replicas to 1)", app.id)
+            return True
+        except Exception as e:
+            logger.warning("Could not resume dev sandbox %s: %s", name, e)
+            return False
+
     def get_dev_status(self, app) -> Dict[str, Any]:
         clean_id = re.sub(r"[^a-z0-9-]", "-", app.id.lower()).strip("-")
         dev_name = f"compassx-app-dev-{clean_id}"
@@ -914,6 +954,12 @@ class KubernetesDevDriver(BaseDevDriver):
             dep = k8s.apps().read_namespaced_deployment(name=dev_name, namespace=ns)
             if dep.metadata and dep.metadata.deletion_timestamp:
                 return {"status": "stopping", "pod_name": dev_name, "mode": "kubernetes", "phase": "Terminating"}
+            
+            # Check for scale-to-zero suspension
+            desired_replicas = dep.spec.replicas if dep.spec else 1
+            if desired_replicas == 0:
+                return {"status": "suspended", "pod_name": dev_name, "mode": "kubernetes", "phase": "Suspended"}
+
             ready = (dep.status and (dep.status.available_replicas or dep.status.ready_replicas or 0) > 0)
             if ready:
                 return {"status": "active", "pod_name": dev_name, "mode": "kubernetes", "phase": "Running"}

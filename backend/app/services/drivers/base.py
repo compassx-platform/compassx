@@ -60,6 +60,14 @@ class BaseDevDriver(ABC):
         """Return active stdout/stderr logs from the dev sandbox."""
         pass
 
+    def suspend_dev(self, app) -> bool:
+        """Suspend dev sandbox compute (scale-to-zero) while keeping persistent workspace."""
+        return False
+
+    def resume_dev(self, app) -> bool:
+        """Resume a suspended dev sandbox compute (scale-to-one)."""
+        return False
+
     def exec_git_in_workspace(
         self,
         app,

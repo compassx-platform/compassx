@@ -88,7 +88,26 @@ export default function AppDetailPage() {
       ? tabParam
       : 'overview';
 
-  function handleTabChange(newTab: DetailTab) {
+  async function handleTabChange(newTab: DetailTab) {
+    if (envDirty && resolvedAppId && app) {
+      try {
+        const currentConfig = app.config || {};
+        const updatedConfig = {
+          ...currentConfig,
+          env_vars: envVars,
+          resources: {
+            cpu: cpuCores,
+            memory: memoryLimit,
+            replicas: Number(replicas),
+          },
+        };
+        await updateMutation.mutateAsync({
+          appId: resolvedAppId,
+          payload: { config: updatedConfig },
+        });
+        setEnvDirty(false);
+      } catch {}
+    }
     setSearchParams(
       (prev) => {
         const next = new URLSearchParams(prev);
@@ -536,25 +555,71 @@ export default function AppDetailPage() {
     toast.success('Route copied to clipboard!');
   }
 
-  function handleAddEnvVar() {
-    if (!newEnvKey.trim()) return;
-    setEnvVars((prev) => [
-      ...prev,
-      {
-        key: newEnvKey.trim().toUpperCase().replace(/[^A-Z0-9_]/g, '_'),
-        value: newEnvVal,
-        isSecret: newEnvSecret,
-      },
-    ]);
+  async function handleAddEnvVar() {
+    if (!newEnvKey.trim() || !resolvedAppId) return;
+    const newEntry = {
+      key: newEnvKey.trim().toUpperCase().replace(/[^A-Z0-9_]/g, '_'),
+      value: newEnvVal,
+      isSecret: newEnvSecret,
+    };
+    const nextEnv = [...envVars, newEntry];
+    setEnvVars(nextEnv);
     setNewEnvKey('');
     setNewEnvVal('');
     setNewEnvSecret(false);
-    setEnvDirty(true);
+    setEnvDirty(false);
+
+    try {
+      const currentConfig = app?.config || {};
+      const updatedConfig = {
+        ...currentConfig,
+        env_vars: nextEnv,
+        resources: {
+          cpu: cpuCores,
+          memory: memoryLimit,
+          replicas: Number(replicas),
+        },
+      };
+      await updateMutation.mutateAsync({
+        appId: resolvedAppId,
+        payload: { config: updatedConfig },
+      });
+      toast.success(`Saved environment variable "${newEntry.key}".`);
+    } catch {
+      setEnvDirty(true);
+      toast.error('Failed to save environment variable to database.');
+    }
   }
 
-  function handleDeleteEnvVar(index: number) {
-    setEnvVars((prev) => prev.filter((_, i) => i !== index));
-    setEnvDirty(true);
+  async function handleDeleteEnvVar(index: number) {
+    if (!resolvedAppId) return;
+    const removedKey = envVars[index]?.key;
+    const nextEnv = envVars.filter((_, i) => i !== index);
+    setEnvVars(nextEnv);
+    setEnvDirty(false);
+
+    try {
+      const currentConfig = app?.config || {};
+      const updatedConfig = {
+        ...currentConfig,
+        env_vars: nextEnv,
+        resources: {
+          cpu: cpuCores,
+          memory: memoryLimit,
+          replicas: Number(replicas),
+        },
+      };
+      await updateMutation.mutateAsync({
+        appId: resolvedAppId,
+        payload: { config: updatedConfig },
+      });
+      if (removedKey) {
+        toast.info(`Removed environment variable "${removedKey}".`);
+      }
+    } catch {
+      setEnvDirty(true);
+      toast.error('Failed to update environment variables.');
+    }
   }
 
   function handleDownloadLogs() {

@@ -5,6 +5,27 @@ All notable changes to the CompassX Platform will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.0] - 2026-09-15
+
+### 🚀 Highlights
+
+CompassX `0.9.0` delivers **Omnigent-Inspired Managed Dev Sandboxes** with **Decoupled Persistent Volume Storage**, **Activity-Driven Scale-to-Zero Idle Suspension**, **Reactive 1-2s Resume**, and an automated **Background Sandbox Reaper Service**.
+
+### ✨ Features & Enhancements
+
+#### Managed Dev Sandbox Lifecycle & Storage Decoupling
+- **State Preservation on Suspend**: Dev sandboxes mount the shared Kubernetes Persistent Volume (`compassx-dev-workspaces`) at `/workspaces`. When an app dev session is suspended or idle, compute scales to `replicas: 0` freeing CPU and memory while keeping all workspace files, git changes, and npm/pip modules intact.
+- **Fast Reactive Resume**: Resuming suspended workspaces (`suspend_dev` → `resume_dev`) restores compute to `replicas: 1` in ~1-2 seconds with the persistent storage automatically re-attached.
+- **Status Reporting**: `get_dev_status` now distinguishes `"suspended"` from `"running"` and `"stopped"`, enabling clear UI indicators for scale-to-zero sandboxes.
+
+#### Activity-Driven Tracking & Background Sandbox Reaper
+- **Workspace Activity Tracking**: Added `touch_workspace_activity` integrated into file operations, git synchronization, and live terminal PTY streams.
+- **Automated Sandbox Reaper**: Background reaper service runs continuous sweeps:
+  - Scales active sandboxes idle for > 30 minutes to zero compute replicas to optimize cluster resources.
+  - Sweeps inactive workspaces older than 30 days for disk reclamation while keeping audit trails and metadata intact.
+
+---
+
 ## [0.8.6] - 2026-09-15
 
 ### 🚀 Highlights
