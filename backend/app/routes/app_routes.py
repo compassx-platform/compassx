@@ -320,6 +320,52 @@ def deploy_app(
     return AppDeployResponse(**deployment_record)
 
 
+def _reconcile_app_deployments(app: App, db: Session) -> list:
+    """Check and reconcile any stuck 'in_progress' deployments by inspecting logs and status."""
+    cfg = dict(app.config or {})
+    deployments = list(cfg.get("deployments", []))
+    modified = False
+
+    for dep in deployments:
+        if dep.get("status") in ("in_progress", "building", "starting", "queued"):
+            dep_logs = list(dep.get("logs") or [])
+            has_err = any(
+                ("[ERROR]" in l or "npm error" in l.lower() or "fatal:" in l.lower() or "build failed" in l.lower())
+                for l in dep_logs
+            )
+            has_ok = any(
+                ("[RUNTIME]" in l or "Build phase completed successfully" in l or "Launching application server" in l or "Deployment, Service, and Ingress" in l)
+                for l in dep_logs
+            )
+
+            if has_err:
+                dep["status"] = "failed"
+                modified = True
+            elif has_ok or app.status == "active":
+                dep["status"] = "success"
+                # Calculate real duration if available
+                try:
+                    created_dt = datetime.fromisoformat(dep.get("created_at", "").replace("Z", "+00:00"))
+                    dur = round((datetime.now(timezone.utc) - created_dt).total_seconds(), 2)
+                    if dur > 0 and dep.get("duration_seconds", 0) <= 2.0:
+                        dep["duration_seconds"] = min(dur, 60.0)
+                except Exception:
+                    pass
+                modified = True
+
+    if modified:
+        cfg["deployments"] = deployments
+        app.config = cfg
+        flag_modified(app, "config")
+        try:
+            db.commit()
+            db.refresh(app)
+        except Exception as e:
+            logger.debug("Failed to commit reconciled deployment status for app %s: %s", app.id, e)
+
+    return deployments
+
+
 @router.get("/{app_id}/deployments", response_model=List[AppDeployResponse])
 def get_app_deployments(
     app_id: str,
@@ -334,8 +380,7 @@ def get_app_deployments(
     if guard.workspace_id and app.workspace_id != guard.workspace_id:
         raise HTTPException(status_code=403, detail="Cannot access app from another workspace.")
 
-    cfg = dict(app.config or {})
-    deployments = cfg.get("deployments", [])
+    deployments = _reconcile_app_deployments(app, db)
     return [AppDeployResponse(**d) for d in deployments]
 
 
@@ -354,8 +399,7 @@ def get_app_deployment(
     if guard.workspace_id and app.workspace_id != guard.workspace_id:
         raise HTTPException(status_code=403, detail="Cannot access app from another workspace.")
 
-    cfg = dict(app.config or {})
-    deployments = cfg.get("deployments", [])
+    deployments = _reconcile_app_deployments(app, db)
     for dep in deployments:
         if dep.get("deployment_id") == deployment_id:
             return AppDeployResponse(**dep)

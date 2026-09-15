@@ -242,6 +242,7 @@ CMD ["python", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080
             return
 
         def update_db_logs(current_logs: List[str], final: bool = False, is_failed: bool = False, duration: float = 0.0):
+            from sqlalchemy.orm.attributes import flag_modified
             db_inner = SessionLocal()
             try:
                 target_app = db_inner.query(App).filter(App.id == app_id).first()
@@ -262,6 +263,7 @@ CMD ["python", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080
                 if final:
                     target_app.status = "error" if is_failed else "active"
                 target_app.config = cfg
+                flag_modified(target_app, "config")
                 db_inner.commit()
             except Exception as ex:
                 logger.debug("Error updating progressive deployment logs for %s (%s): %s", app_id, deployment_id, ex)

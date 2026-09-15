@@ -503,11 +503,11 @@ class KubernetesAppDriver(BaseAppDriver):
                         current_build_lines.append(line)
                         if "Build phase completed successfully" in line or "Build pipeline finished" in line:
                             build_finished = True
-                    elif "[ERROR]" in line:
+                    elif "[ERROR]" in line or "npm error" in line.lower() or "fatal:" in line.lower():
                         build_started = True
                         current_build_lines.append(line)
                         build_finished = True
-                    elif "[RUNTIME]" in line:
+                    elif "[RUNTIME]" in line or "Launching application server" in line or "Uvicorn running" in line or "Serving" in line or "streamlit run" in line.lower():
                         build_started = True
                         current_build_lines.append(line)
                         build_finished = True
