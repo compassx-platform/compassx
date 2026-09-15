@@ -80,6 +80,10 @@ class BaseDevDriver(ABC):
         """Execute a single shell command inside the dev container / pod workspace."""
         return {"success": False, "exit_code": 1, "output": "Not implemented for this driver"}
 
+    def get_live_branch(self, app, workspace_folder: str = "") -> Optional[str]:
+        """Fetch the active Git branch from inside the running dev workspace."""
+        return None
+
     def open_terminal_ws_client(
         self,
         app,

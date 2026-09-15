@@ -32,3 +32,6 @@ site/
 *.env
 !*.env.example
 !.env.example
+aks_hotpatch/
+scratch/
+

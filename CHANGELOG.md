@@ -5,6 +5,29 @@ All notable changes to the CompassX Platform will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.5] - 2026-09-15
+
+### 🚀 Highlights
+
+CompassX `0.8.5` delivers **Live Git Branch Detection & Synchronization**, **Dev Sandbox Auto-Recovery for Git Push Operations**, **Optimized Hot-Reload & File Watcher Performance**, and **Refined Omnigent Dev Studio Routing**.
+
+### ✨ Features & Enhancements
+
+#### Live Git Branch Synchronization & Dynamic Resolution
+- **In-Pod Branch Inspection**: Implemented `get_live_branch` across `KubernetesDevDriver` and `DockerDevDriver` to query active branches inside workspace containers via Git exec.
+- **Dynamic Branch Sync**: Workspaces reflect user branch changes made in the terminal during development and commit to the active branch automatically.
+
+#### Dev Sandbox Auto-Recovery for Push
+- **Auto-Start on Push**: Committing or pushing changes to a stopped or idle dev sandbox automatically spins up the sandbox pod and executes the Git pipeline smoothly.
+
+#### File Watcher & Resource Optimization
+- **Throttled Polling & Exclusions**: Configured debounced file watching (`interval: 2000ms`) with explicit exclusions for `node_modules`, `.git`, `dist`, and `.cache` across Vite, Uvicorn, Chokidar, and Watchpack in dev containers, significantly reducing CPU and memory overhead.
+
+#### Omnigent Dev Studio Ingress Fix
+- **Direct Dev Studio Navigation**: Sanitized Omnigent public URL resolution to eliminate invalid session sub-paths when opening Dev Studio.
+
+---
+
 ## [0.8.4] - 2026-09-15
 
 ### 🚀 Highlights

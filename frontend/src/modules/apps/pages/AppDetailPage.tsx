@@ -213,7 +213,8 @@ export default function AppDetailPage() {
       setLaunchStatusText('4. Dev pod is running and ready!');
 
       if (openStudio) {
-        const targetUrl = session?.omnigent_session_url || session?.omnigent_server_url || 'https://devstudio.135.13.180.167.nip.io';
+        const rawUrl = session?.omnigent_server_url || session?.omnigent_session_url || 'https://devstudio.135.13.180.167.nip.io';
+        const targetUrl = rawUrl.replace(/\/s\/[^/?#]+/, '');
         window.open(targetUrl, '_blank');
         toast.success(`Omnigent Dev Studio ready and opened for ${app.name}`);
       } else {

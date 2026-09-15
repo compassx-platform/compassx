@@ -558,7 +558,7 @@ class KubernetesDevDriver(BaseDevDriver):
                     f"mkdir -p /root/.omnigent /root/.config/omnigent /root/.config/opencode /root/.opencode && "
                     f"printf 'host:\\n  host_id: {host_id}\\n  name: \"{host_name}\"\\n' | tee /root/.omnigent/config.yaml /root/.config/omnigent/config.yaml /root/.config/opencode/config.yaml /root/.opencode/config.yaml >/dev/null; "
                     f"export OMNIGENT_HOST_ID={host_id} OMNIGENT_HOST_NAME=\"{host_name}\" HOST_ID={host_id} HOST_NAME=\"{host_name}\" OPENCODE_HOST_ID={host_id} OPENCODE_HOST_NAME=\"{host_name}\" "
-                    f"CHOKIDAR_USEPOLLING=1 WATCHPACK_POLLING=true WATCHFILES_FORCE_POLLING=true "
+                    f"CHOKIDAR_USEPOLLING=1 CHOKIDAR_INTERVAL=2000 WATCHPACK_POLLING=true WATCHPACK_POLLING_INTERVAL=2000 WATCHFILES_FORCE_POLLING=true WATCHFILES_POLL_DELAY_MS=2000 "
                     f"NODE_TLS_REJECT_UNAUTHORIZED=0 NPM_CONFIG_STRICT_SSL=false PYTHONHTTPSVERIFY=0 GIT_SSL_NO_VERIFY=true CURL_INSECURE=1; "
                     f"(which opencode >/dev/null 2>&1 || npm install -g opencode-ai@1.18.0 || true); "
                     f"mkdir -p {workdir} && cd {workdir} && "
@@ -577,9 +577,9 @@ class KubernetesDevDriver(BaseDevDriver):
                     f"   (if [ -f requirements.txt ]; then pip install --no-cache-dir -r requirements.txt; fi) && "
                     f"   (pip install --no-cache-dir uvicorn fastapi || true) && "
                     f"   if [ -f app.py ]; then "
-                    f"     (uvicorn app:app --host 0.0.0.0 --port 8000 --reload || python app.py) & "
+                    f"     (uvicorn app:app --host 0.0.0.0 --port 8000 --reload --reload-delay 2.0 --reload-exclude '**/node_modules/**' --reload-exclude '**/.git/**' || python app.py) & "
                     f"   elif [ -f main.py ]; then "
-                    f"     (uvicorn main:app --host 0.0.0.0 --port 8000 --reload || python main.py) & "
+                    f"     (uvicorn main:app --host 0.0.0.0 --port 8000 --reload --reload-delay 2.0 --reload-exclude '**/node_modules/**' --reload-exclude '**/.git/**' || python main.py) & "
                     f"   fi) & "
                     f"fi; "
                     # 2. Detect and start React / Vite Frontend in background (npm run dev on port 8080)
@@ -591,9 +591,9 @@ class KubernetesDevDriver(BaseDevDriver):
                     f"fi; "
                     f"if [ -n \"$FRONTEND_DIR\" ]; then "
                     f"  (cd \"$FRONTEND_DIR\" && "
-                    f"   (python3 -c \"import os, re\\nfor f in ['vite.config.ts', 'vite.config.js']:\\n if os.path.exists(f):\\n  c = open(f, 'r').read()\\n  if 'usePolling' not in c: c = re.sub(r'(server:\\\\s*\\\\{{)', r'\\\\\\\\1\\\\\\\\n    allowedHosts: true,\\\\\\\\n    watch: {{ usePolling: true, interval: 100 }},\\\\\\\\n    hmr: {{ clientPort: 443 }},', c)\\n  c = c.replace('http://localhost:8080', 'http://localhost:8000')\\n  c = c.replace('http://127.0.0.1:8085', 'http://localhost:8000')\\n  open(f, 'w').write(c)\" 2>/dev/null || true) && "
-                     f"   (if [ ! -d node_modules ]; then npm install --legacy-peer-deps --prefer-offline --no-audit || npm install --legacy-peer-deps || true; fi) && "
-                     f"   (npx --yes vite --host 0.0.0.0 --port 8080 --cors || npm run dev -- --host 0.0.0.0 --port 8080 || npm start -- -p 8080 || npx --yes serve -l 8080 .)) & "
+                    f"   (python3 -c \"import os, re\\nfor f in ['vite.config.ts', 'vite.config.js']:\\n if os.path.exists(f):\\n  c = open(f, 'r').read()\\n  if 'usePolling' not in c: c = re.sub(r'(server:\\\\s*\\\\{{)', r'\\\\\\\\1\\\\\\\\n    allowedHosts: true,\\\\\\\\n    watch: {{ usePolling: true, interval: 2000, ignored: [\\\\\\\"**/node_modules/**\\\\\\\", \\\\\\\"**/.git/**\\\\\\\", \\\\\\\"**/dist/**\\\\\\\", \\\\\\\"**/.cache/**\\\\\\\"] }},\\\\\\\\n    hmr: {{ clientPort: 443 }},', c)\\n  else: c = re.sub(r'watch:\\\\s*\\\\{{[^}}]*\\\\}}', 'watch: {{ usePolling: true, interval: 2000, ignored: [\\\\\\\"**/node_modules/**\\\\\\\", \\\\\\\"**/.git/**\\\\\\\", \\\\\\\"**/dist/**\\\\\\\", \\\\\\\"**/.cache/**\\\\\\\"] }}', c)\\n  c = c.replace('http://localhost:8080', 'http://localhost:8000')\\n  c = c.replace('http://127.0.0.1:8085', 'http://localhost:8000')\\n  open(f, 'w').write(c)\" 2>/dev/null || true) && "
+                    f"   (if [ ! -d node_modules ]; then npm install --legacy-peer-deps --prefer-offline --no-audit || npm install --legacy-peer-deps || true; fi) && "
+                    f"   (npx --yes vite --host 0.0.0.0 --port 8080 --cors || npm run dev -- --host 0.0.0.0 --port 8080 || npm start -- -p 8080 || npx --yes serve -l 8080 .)) & "
                     f"elif [ -n \"$BACKEND_DIR\" ]; then "
                     # Pure Python app (Streamlit or FastAPI on port 8080)
                     f"  (cd \"$BACKEND_DIR\" && "
@@ -602,9 +602,9 @@ class KubernetesDevDriver(BaseDevDriver):
                     f"   if grep -q 'streamlit' app.py 2>/dev/null || [ '{app_type}' = 'streamlit' ]; then "
                     f"     pip install --no-cache-dir streamlit && exec streamlit run app.py --server.port=8080 --server.address=0.0.0.0 --server.headless=true; "
                     f"   elif [ -f app.py ]; then "
-                    f"     exec uvicorn app:app --host 0.0.0.0 --port 8080 --reload; "
+                    f"     exec uvicorn app:app --host 0.0.0.0 --port 8080 --reload --reload-delay 2.0 --reload-exclude '**/node_modules/**' --reload-exclude '**/.git/**'; "
                     f"   elif [ -f main.py ]; then "
-                    f"     exec uvicorn main:app --host 0.0.0.0 --port 8080 --reload; "
+                    f"     exec uvicorn main:app --host 0.0.0.0 --port 8080 --reload --reload-delay 2.0 --reload-exclude '**/node_modules/**' --reload-exclude '**/.git/**'; "
                     f"   fi) & "
                     f"else "
                     # Fallback default web page
@@ -1004,7 +1004,33 @@ class KubernetesDevDriver(BaseDevDriver):
                     return p.metadata.name
         except Exception:
             pass
-        return dev_name
+    def get_live_branch(self, app, workspace_folder: str = "") -> Optional[str]:
+        """Fetch active Git branch from inside the running workspace pod."""
+        from kubernetes import stream
+        k8s = self._get_k8s_client()
+        if not k8s:
+            return None
+        clean_id = re.sub(r"[^a-z0-9-]", "-", app.id.lower()).strip("-")
+        ns = settings.K8S_NAMESPACE
+        pod_name = self._find_running_pod_name(clean_id, ns)
+        if not pod_name:
+            return None
+        workdir = f"/workspaces/{workspace_folder}" if workspace_folder else f"/workspaces/{clean_id}/default"
+        try:
+            resp = stream.stream(
+                k8s.core().connect_get_namespaced_pod_exec,
+                pod_name,
+                ns,
+                command=["/bin/sh", "-c", f"cd {workdir} 2>/dev/null && git rev-parse --abbrev-ref HEAD 2>/dev/null || echo ''"],
+                stderr=False,
+                stdin=False,
+                stdout=True,
+                tty=False,
+            )
+            branch = (resp or "").strip()
+            return branch if branch and branch != "HEAD" else None
+        except Exception:
+            return None
 
     def exec_command_in_dev(
         self,

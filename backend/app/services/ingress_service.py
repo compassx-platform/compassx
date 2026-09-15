@@ -175,7 +175,7 @@ class IngressService:
     def get_omnigent_session_url(self, session_id: str) -> str:
         """Construct full URL to an Omnigent session."""
         base = self.get_omnigent_public_url()
-        return f"{base}/s/{session_id}"
+        return base
 
 
 ingress_service = IngressService()

@@ -624,11 +624,22 @@ class OmnigentDevService:
                         ws.id == active_ws_id or
                         (ws.status == "active" and not active_ws_id)
                     )
+                    current_branch = ws.git_branch or f"dev/{ws.name}"
+                    if is_active and hasattr(dev_driver, "get_live_branch"):
+                        try:
+                            live_branch = dev_driver.get_live_branch(app, ws.folder_path)
+                            if live_branch and live_branch != current_branch:
+                                current_branch = live_branch
+                                ws.git_branch = live_branch
+                                db.commit()
+                        except Exception:
+                            pass
+
                     res.append({
                         "id": ws.id,
                         "name": ws.name,
                         "folder_path": ws.folder_path,
-                        "git_branch": ws.git_branch or f"dev/{ws.name}",
+                        "git_branch": current_branch,
                         "status": "active" if is_active else "inactive",
                         "size_bytes": ws.size_bytes,
                         "created_by": ws.created_by,
@@ -867,8 +878,28 @@ class OmnigentDevService:
         folder_name = target_ws.name if target_ws else (_DEV_SESSIONS.get(app.id, {}).get("workspace_name") or "default")
         folder_path = target_ws.folder_path if target_ws else f"{clean_app_id}/{folder_name}"
 
-        # Resolve branch: If workspace is not "default", default to "dev/<folder_name>"
-        if target_ws and target_ws.git_branch and target_ws.git_branch != "main":
+        # Check live branch inside the container
+        dev_driver = driver_factory.get_dev_driver()
+        live_branch = None
+        if hasattr(dev_driver, "get_live_branch"):
+            try:
+                live_branch = dev_driver.get_live_branch(app, folder_path)
+            except Exception:
+                pass
+
+        # Resolve branch
+        if live_branch:
+            branch = live_branch
+            if target_ws:
+                try:
+                    with _get_system_db() as db:
+                        db_ws = db.query(DevWorkspace).filter(DevWorkspace.id == target_ws.id).first()
+                        if db_ws and db_ws.git_branch != live_branch:
+                            db_ws.git_branch = live_branch
+                            db.commit()
+                except Exception:
+                    pass
+        elif target_ws and target_ws.git_branch and target_ws.git_branch != "main":
             branch = target_ws.git_branch
         elif folder_name and folder_name != "default":
             branch = f"dev/{folder_name}"
@@ -902,8 +933,29 @@ class OmnigentDevService:
 
         msg = (commit_message or "").strip() or f"Dev updates [{folder_name}] - {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M')}"
 
-        # 3. Execute Git commit & push inside the workspace via driver
+        # 3. Ensure Dev Pod is running if currently stopped
         dev_driver = driver_factory.get_dev_driver()
+        dev_status = dev_driver.get_dev_status(app)
+        is_running = dev_status.get("status") == "active" or dev_status.get("phase") == "Running"
+        if not is_running:
+            try:
+                repo_dir = self.get_repo_dir(app)
+                self.start_dev_session(
+                    app,
+                    repo_dir,
+                    workspace_id=target_ws.id if target_ws else None,
+                    workspace_name=folder_name,
+                )
+                import time
+                for _ in range(8):
+                    time.sleep(1.0)
+                    st = dev_driver.get_dev_status(app)
+                    if st.get("status") == "active" or st.get("phase") == "Running":
+                        break
+            except Exception as start_err:
+                logger.warning("Could not auto-start dev pod for push: %s", start_err)
+
+        # 4. Execute Git commit & push inside the target workspace folder via driver
         git_res = dev_driver.exec_git_in_workspace(
             app=app,
             workspace_folder=folder_path,
