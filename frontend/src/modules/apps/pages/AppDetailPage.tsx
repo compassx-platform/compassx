@@ -294,8 +294,17 @@ export default function AppDetailPage() {
       setConfigCredType((app.git_credential_type as any) || (app.pat_configured ? 'pat' : 'none'));
       setConfigCredNickname(app.git_credential_nickname || '');
 
-      if (app.config?.env_vars && Array.isArray(app.config.env_vars)) {
-        setEnvVars(app.config.env_vars);
+      if (app.config?.env_vars) {
+        if (Array.isArray(app.config.env_vars)) {
+          setEnvVars(app.config.env_vars);
+        } else if (typeof app.config.env_vars === 'object') {
+          const parsed = Object.entries(app.config.env_vars).map(([k, v]) => ({
+            key: k,
+            value: String(v ?? ''),
+            isSecret: k.toLowerCase().includes('key') || k.toLowerCase().includes('secret') || k.toLowerCase().includes('pass') || k.toLowerCase().includes('token'),
+          }));
+          setEnvVars(parsed);
+        }
       }
       if (app.config?.resources?.cpu) setCpuCores(app.config.resources.cpu);
       if (app.config?.resources?.memory) setMemoryLimit(app.config.resources.memory);
@@ -308,12 +317,6 @@ export default function AppDetailPage() {
       logTerminalRef.current.scrollTop = logTerminalRef.current.scrollHeight;
     }
   }, [logsData, autoScroll]);
-
-  useEffect(() => {
-    if (deploymentAutoScroll && deploymentTerminalRef.current) {
-      deploymentTerminalRef.current.scrollTop = deploymentTerminalRef.current.scrollHeight;
-    }
-  }, [deploymentsData, deploymentAutoScroll]);
 
   const allDeployments = useMemo<DeploymentItem[]>(() => {
     if (deploymentsData && Array.isArray(deploymentsData) && deploymentsData.length > 0) {
@@ -360,6 +363,12 @@ export default function AppDetailPage() {
       return matchText && matchLevel;
     });
   }, [rawDeploymentLogs, deploymentLogFilter, deploymentLogLevel]);
+
+  useEffect(() => {
+    if (deploymentAutoScroll && deploymentTerminalRef.current) {
+      deploymentTerminalRef.current.scrollTop = deploymentTerminalRef.current.scrollHeight;
+    }
+  }, [deploymentsData, filteredDeploymentLogs, deploymentAutoScroll]);
 
   const filteredHistoryDeployments = useMemo(() => {
     if (!historySearch.trim()) return allDeployments;
@@ -461,9 +470,31 @@ export default function AppDetailPage() {
     if (!resolvedAppId) return;
     setIsDeploying(true);
     try {
+      if (envDirty) {
+        const currentConfig = app?.config || {};
+        const updatedConfig = {
+          ...currentConfig,
+          env_vars: envVars,
+          resources: {
+            cpu: cpuCores,
+            memory: memoryLimit,
+            replicas: Number(replicas),
+          },
+        };
+        await updateMutation.mutateAsync({
+          appId: resolvedAppId,
+          payload: { config: updatedConfig },
+        });
+        setEnvDirty(false);
+      }
       toast.info(`Triggering build & deployment for "${app?.name}"...`);
-      await deployMutation.mutateAsync(resolvedAppId);
-      toast.success('Deployment succeeded! App is live and updated.');
+      const res = await deployMutation.mutateAsync(resolvedAppId);
+      if (res?.deployment_id) {
+        setSelectedDeploymentId(res.deployment_id);
+      }
+      handleTabChange('deployments');
+      refetchDeployments();
+      toast.info('Deployment build started. Streaming live logs from pipeline...');
       refetchLogs();
     } catch (err: any) {
       toast.error(err?.response?.data?.detail || 'Deployment failed.');

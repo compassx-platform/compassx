@@ -233,7 +233,7 @@ CMD ["python", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080
         }
 
     def capture_deployment_build_logs(self, app_id: str, deployment_id: str) -> None:
-        """Background worker: captures pure build logs from the new container/pod and updates the deployment record in DB."""
+        """Background worker: captures pure build logs from the new container/pod and streams them to the DB in real-time."""
         import time
         from app.database import SessionLocal
         from app.models.app import App
@@ -241,54 +241,76 @@ CMD ["python", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080
         if not SessionLocal:
             return
 
-        db = SessionLocal()
+        def update_db_logs(current_logs: List[str], final: bool = False, is_failed: bool = False, duration: float = 0.0):
+            db_inner = SessionLocal()
+            try:
+                target_app = db_inner.query(App).filter(App.id == app_id).first()
+                if not target_app:
+                    return
+                cfg = dict(target_app.config or {})
+                deployments = list(cfg.get("deployments", []))
+                for dep in deployments:
+                    if dep.get("deployment_id") == deployment_id:
+                        if final:
+                            dep["status"] = "failed" if is_failed else "success"
+                            dep["duration_seconds"] = duration
+                        dep["logs"] = current_logs
+                        break
+                cfg["deployments"] = deployments
+                if current_logs:
+                    cfg["logs"] = current_logs
+                if final:
+                    target_app.status = "error" if is_failed else "active"
+                target_app.config = cfg
+                db_inner.commit()
+            except Exception as ex:
+                logger.debug("Error updating progressive deployment logs for %s (%s): %s", app_id, deployment_id, ex)
+            finally:
+                db_inner.close()
+
         start_time = datetime.now(timezone.utc)
         try:
+            db = SessionLocal()
             app = db.query(App).filter(App.id == app_id).first()
             if not app:
+                db.close()
                 return
 
             cfg = dict(app.config or {})
             mode = (cfg.get("runtime") or {}).get("mode")
+            initial_logs = []
+            for dep in (cfg.get("deployments") or []):
+                if dep.get("deployment_id") == deployment_id:
+                    initial_logs = list(dep.get("logs") or [])
+                    break
+            db.close()
+
             driver = driver_factory.get_app_driver(mode)
 
             build_logs = []
             if hasattr(driver, "capture_build_logs"):
-                build_logs = driver.capture_build_logs(app, deployment_id)
+                build_logs = driver.capture_build_logs(
+                    app,
+                    deployment_id,
+                    initial_logs=initial_logs,
+                    on_progress=lambda progressive_logs: update_db_logs(progressive_logs, final=False),
+                )
             else:
                 time.sleep(2)
-                build_logs = [
+                build_logs = (initial_logs or []) + [
                     f"[BUILD] Deployment {deployment_id} initialized for app '{app.name}'.",
                     f"[BUILD] Build completed successfully.",
                 ]
 
             duration = round((datetime.now(timezone.utc) - start_time).total_seconds(), 2)
-
-            # Re-fetch app to avoid stale state
-            app = db.query(App).filter(App.id == app_id).first()
-            if app:
-                cfg = dict(app.config or {})
-                deployments = list(cfg.get("deployments", []))
-                is_failed = False
-                for dep in deployments:
-                    if dep.get("deployment_id") == deployment_id:
-                        if build_logs:
-                            dep["logs"] = build_logs
-                        is_failed = any("[ERROR]" in l for l in build_logs)
-                        dep["status"] = "failed" if is_failed else "success"
-                        dep["duration_seconds"] = duration
-                        break
-                cfg["deployments"] = deployments
-                if build_logs:
-                    cfg["logs"] = build_logs
-                app.config = cfg
-                app.status = "active" if not is_failed else "error"
-                db.commit()
-                logger.info("Captured %d build log lines for app %s (dep=%s)", len(build_logs), app.name, deployment_id)
+            is_failed = any(
+                ("[ERROR]" in l or "npm error" in l.lower() or "fatal:" in l.lower() or "build failed" in l.lower() or "eresolve" in l.lower())
+                for l in build_logs
+            )
+            update_db_logs(build_logs, final=True, is_failed=is_failed, duration=duration)
+            logger.info("Captured %d final build log lines for app %s (dep=%s, status=%s)", len(build_logs), app.name, deployment_id, "failed" if is_failed else "success")
         except Exception as e:
             logger.exception("Error capturing build logs for app %s, dep %s: %s", app_id, deployment_id, e)
-        finally:
-            db.close()
 
     def get_live_logs(self, app, tail: int = 250) -> List[str]:
         """Fetch actual runtime container, pod, or process logs."""

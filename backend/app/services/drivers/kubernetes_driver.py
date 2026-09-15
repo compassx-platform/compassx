@@ -4,7 +4,7 @@ import re
 import uuid
 import logging
 from datetime import datetime, timezone
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Callable
 
 from app.config import settings
 from app.services.drivers.base import BaseAppDriver, BaseDevDriver
@@ -60,9 +60,34 @@ class KubernetesAppDriver(BaseAppDriver):
             client.V1EnvVar(name="APP_ID", value=str(app.id)),
             client.V1EnvVar(name="WORKSPACE_ID", value=str(app.workspace_id)),
         ]
-        for ev in (cfg.get("env_vars") or []):
-            if isinstance(ev, dict) and ev.get("key") and ev.get("value"):
-                env_vars.append(client.V1EnvVar(name=ev["key"], value=str(ev["value"])))
+
+        # Support list of dicts [{"key": "...", "value": "..."}, {"name": "...", "value": "..."}] OR dict {"KEY": "VAL"}
+        raw_env = cfg.get("env_vars") or cfg.get("env") or cfg.get("environment") or []
+        if isinstance(raw_env, dict):
+            for k, v in raw_env.items():
+                if k:
+                    env_vars.append(client.V1EnvVar(name=str(k), value=str(v) if v is not None else ""))
+        elif isinstance(raw_env, list):
+            for ev in raw_env:
+                if isinstance(ev, dict):
+                    k = ev.get("key") or ev.get("name")
+                    v = ev.get("value")
+                    if k:
+                        env_vars.append(client.V1EnvVar(name=str(k), value=str(v) if v is not None else ""))
+                elif isinstance(ev, str) and "=" in ev:
+                    k, v = ev.split("=", 1)
+                    env_vars.append(client.V1EnvVar(name=k.strip(), value=v.strip()))
+
+        # Also inject platform connection env vars (Azure OpenAI, OpenAI, Postgres, etc.)
+        try:
+            from app.services.omnigent_dev_service import omnigent_dev_service
+            llm_env = omnigent_dev_service.get_llm_env_vars(app.workspace_id)
+            existing_names = {e.name for e in env_vars}
+            for k, v in llm_env.items():
+                if k not in existing_names and v is not None:
+                    env_vars.append(client.V1EnvVar(name=str(k), value=str(v)))
+        except Exception as e:
+            logger.debug("Could not inject platform LLM env vars into app %s: %s", app.id, e)
 
         # 2. Dynamic Container Image and Execution Command
         custom_image = cfg.get("image")
@@ -91,76 +116,97 @@ class KubernetesAppDriver(BaseAppDriver):
             container_cmd = ["/bin/sh", "-c"]
             subdir = (getattr(app, "git_subdir", "") or "").strip("/")
             run_cmd = (
-                f"echo '[BUILD] ========================================================' && "
-                f"echo '[BUILD] Starting Deployment Build for {app.name} (ref: {git_ref})' && "
-                f"echo '[BUILD] ========================================================' && "
-                f"echo '[BUILD] [1/3] Cloning repository ({git_ref})...' && "
-                f"mkdir -p /app_src && cd /app_src && "
-                f"(git clone --branch '{git_ref}' '{auth_url}' . || git clone '{auth_url}' . || true) && "
-                f"echo '[BUILD] [2/3] Building dependencies and compiling assets...' && "
+                f"hold_on_error() {{ "
+                f"  echo ''; "
+                f"  echo '[ERROR] ========================================================'; "
+                f"  echo '[ERROR] Deployment build or application startup failed!'; "
+                f"  echo '[ERROR] Container is holding in place so logs remain visible for inspection.'; "
+                f"  echo '[ERROR] Review the error above, fix the issues in Development, and click Deploy to redeploy.'; "
+                f"  echo '[ERROR] ========================================================'; "
+                f"  exec tail -f /dev/null; "
+                f"}} && "
+                f"run_app() {{ "
+                f"  echo '[BUILD] ========================================================' && "
+                f"  echo '[BUILD] Starting Deployment Build for {app.name} (ref: {git_ref})' && "
+                f"  echo '[BUILD] ========================================================' && "
+                f"  echo '[BUILD] [1/3] Cloning repository ({git_ref})...' && "
+                f"  mkdir -p /app_src && cd /app_src && "
+                f"  (git clone --branch '{git_ref}' '{auth_url}' . || git clone '{auth_url}' . || true) && "
+                f"  echo '[BUILD] [2/3] Building dependencies and compiling assets...' && "
                 # 1. Build Frontend if present (supports monorepo frontend, web, client, or root)
-                f"if [ -d /app_src/frontend ] && [ -f /app_src/frontend/package.json ]; then "
-                f"  echo '[BUILD] Detected frontend directory. Installing dependencies & building...' && "
-                f"  (cd /app_src/frontend && npm install --prefer-offline --no-audit && npm run build) || true; "
-                f"elif [ -d /app_src/client ] && [ -f /app_src/client/package.json ]; then "
-                f"  echo '[BUILD] Detected client directory. Installing dependencies & building...' && "
-                f"  (cd /app_src/client && npm install --prefer-offline --no-audit && npm run build) || true; "
-                f"elif [ -d /app_src/web ] && [ -f /app_src/web/package.json ]; then "
-                f"  echo '[BUILD] Detected web directory. Installing dependencies & building...' && "
-                f"  (cd /app_src/web && npm install --prefer-offline --no-audit && npm run build) || true; "
-                f"elif [ -f /app_src/package.json ]; then "
-                f"  echo '[BUILD] Detected root package.json. Installing dependencies & building...' && "
-                f"  (cd /app_src && npm install --prefer-offline --no-audit && npm run build --if-present) || true; "
-                f"fi; "
+                f"  if [ -d /app_src/frontend ] && [ -f /app_src/frontend/package.json ]; then "
+                f"    echo '[BUILD] Detected frontend directory. Installing dependencies & building...' && "
+                f"    (cd /app_src/frontend && (npm install --legacy-peer-deps --prefer-offline --no-audit || npm install --legacy-peer-deps || npm install --force) && npm run build) || "
+                f"    (echo '[ERROR] Frontend build failed in /app_src/frontend' && return 1); "
+                f"  elif [ -d /app_src/client ] && [ -f /app_src/client/package.json ]; then "
+                f"    echo '[BUILD] Detected client directory. Installing dependencies & building...' && "
+                f"    (cd /app_src/client && (npm install --legacy-peer-deps --prefer-offline --no-audit || npm install --legacy-peer-deps || npm install --force) && npm run build) || "
+                f"    (echo '[ERROR] Client build failed in /app_src/client' && return 1); "
+                f"  elif [ -d /app_src/web ] && [ -f /app_src/web/package.json ]; then "
+                f"    echo '[BUILD] Detected web directory. Installing dependencies & building...' && "
+                f"    (cd /app_src/web && (npm install --legacy-peer-deps --prefer-offline --no-audit || npm install --legacy-peer-deps || npm install --force) && npm run build) || "
+                f"    (echo '[ERROR] Web build failed in /app_src/web' && return 1); "
+                f"  elif [ -f /app_src/package.json ]; then "
+                f"    echo '[BUILD] Detected root package.json. Installing dependencies & building...' && "
+                f"    (cd /app_src && (npm install --legacy-peer-deps --prefer-offline --no-audit || npm install --legacy-peer-deps || npm install --force) && (npm run build --if-present || true)) || "
+                f"    (echo '[ERROR] Root frontend build failed' && return 1); "
+                f"  fi && "
                 # 2. Start Application: Python Backend vs Pure Python / Streamlit vs Node Frontend
-                f"if [ -d /app_src/backend ] && ( [ -f /app_src/backend/main.py ] || [ -f /app_src/backend/app.py ] || [ -f /app_src/backend/requirements.txt ] ); then "
-                f"  cd /app_src && "
-                f"  (if [ -f backend/requirements.txt ]; then echo '[BUILD] Installing Python dependencies from backend/requirements.txt...' && pip install --no-cache-dir -r backend/requirements.txt; fi) && "
-                f"  (pip install --no-cache-dir uvicorn fastapi || true) && "
-                f"  echo '[BUILD] [3/3] Build phase completed successfully.' && "
-                f"  echo '[BUILD] ========================================================' && "
-                f"  echo '[RUNTIME] Launching application server on port 8080...' && "
-                f"  export PYTHONPATH=\"/app_src:/app_src/backend:$PYTHONPATH\" && "
-                f"  if [ -f backend/main.py ]; then (cd backend && exec uvicorn main:app --host 0.0.0.0 --port 8080) || exec uvicorn backend.main:app --host 0.0.0.0 --port 8080; "
-                f"  elif [ -f backend/app.py ]; then (cd backend && exec uvicorn app:app --host 0.0.0.0 --port 8080) || exec uvicorn backend.app:app --host 0.0.0.0 --port 8080; "
+                f"  if [ -d /app_src/backend ] && ( [ -f /app_src/backend/main.py ] || [ -f /app_src/backend/app.py ] || [ -f /app_src/backend/requirements.txt ] ); then "
+                f"    cd /app_src && "
+                f"    (if [ -f backend/requirements.txt ]; then echo '[BUILD] Installing Python dependencies from backend/requirements.txt...' && (pip install --no-cache-dir -r backend/requirements.txt || (echo '[ERROR] pip install failed for backend/requirements.txt' && return 1)); fi) && "
+                f"    (pip install --no-cache-dir uvicorn fastapi || true) && "
+                f"    echo '[BUILD] [3/3] Build phase completed successfully.' && "
+                f"    echo '[BUILD] ========================================================' && "
+                f"    echo '[RUNTIME] Launching application server on port 8080...' && "
+                f"    export PYTHONPATH=\"/app_src:/app_src/backend:$PYTHONPATH\" && "
+                f"    if [ -f backend/main.py ]; then (cd backend && uvicorn main:app --host 0.0.0.0 --port 8080) || uvicorn backend.main:app --host 0.0.0.0 --port 8080; "
+                f"    elif [ -f backend/app.py ]; then (cd backend && uvicorn app:app --host 0.0.0.0 --port 8080) || uvicorn backend.app:app --host 0.0.0.0 --port 8080; "
+                f"    fi; "
+                f"  elif [ -f /app_src/main.py ] || [ -f /app_src/app.py ] || [ -f /app_src/requirements.txt ] || [ '{app_type}' = 'streamlit' ]; then "
+                f"    cd /app_src && "
+                f"    (if [ -f requirements.txt ]; then echo '[BUILD] Installing Python dependencies from requirements.txt...' && (pip install --no-cache-dir -r requirements.txt || (echo '[ERROR] pip install failed for requirements.txt' && return 1)); fi) && "
+                f"    (pip install --no-cache-dir uvicorn fastapi streamlit || true) && "
+                f"    echo '[BUILD] [3/3] Build phase completed successfully.' && "
+                f"    echo '[BUILD] ========================================================' && "
+                f"    echo '[RUNTIME] Launching application server on port 8080...' && "
+                f"    if grep -q 'streamlit' app.py 2>/dev/null || [ '{app_type}' = 'streamlit' ]; then "
+                f"      streamlit run app.py --server.port=8080 --server.address=0.0.0.0 --server.headless=true; "
+                f"    elif [ -f main.py ]; then uvicorn main:app --host 0.0.0.0 --port 8080; "
+                f"    elif [ -f app.py ]; then uvicorn app:app --host 0.0.0.0 --port 8080; "
+                f"    fi; "
+                f"  elif [ -f /app_src/package.json ]; then "
+                f"    echo '[BUILD] [3/3] Build phase completed successfully.' && "
+                f"    echo '[BUILD] ========================================================' && "
+                f"    echo '[RUNTIME] Launching application server on port 8080...' && "
+                f"    cd /app_src && (npm start -- -p 8080 || ( [ -d frontend/dist ] && npx --yes serve -l 8080 frontend/dist ) || ( [ -d dist ] && npx --yes serve -l 8080 dist ) || ( [ -d build ] && npx --yes serve -l 8080 build ) || ( [ -d out ] && npx --yes serve -l 8080 out ) || npx --yes serve -l 8080 .); "
+                f"  elif [ -d /app_src/frontend/dist ]; then "
+                f"    echo '[BUILD] [3/3] Build phase completed successfully.' && "
+                f"    echo '[BUILD] ========================================================' && "
+                f"    echo '[RUNTIME] Launching application server on port 8080...' && "
+                f"    npx --yes serve -l 8080 /app_src/frontend/dist; "
+                f"  elif [ -f /app_src/index.html ]; then "
+                f"    echo '[BUILD] [3/3] Build phase completed successfully.' && "
+                f"    echo '[BUILD] ========================================================' && "
+                f"    echo '[RUNTIME] Launching application server on port 8080...' && "
+                f"    npx --yes serve -l 8080 /app_src; "
+                f"  else "
+                f"    echo '[BUILD] [3/3] Build phase completed successfully.' && "
+                f"    echo '[BUILD] ========================================================' && "
+                f"    echo '[RUNTIME] Launching application server on port 8080...' && "
+                f"    echo '<!DOCTYPE html><html><body><h1>{app.name}</h1><p>Running on CompassX</p></body></html>' > /app_src/index.html && npx --yes serve -l 8080 /app_src; "
                 f"  fi; "
-                f"elif [ -f /app_src/main.py ] || [ -f /app_src/app.py ] || [ -f /app_src/requirements.txt ] || [ '{app_type}' = 'streamlit' ]; then "
-                f"  cd /app_src && "
-                f"  (if [ -f requirements.txt ]; then echo '[BUILD] Installing Python dependencies from requirements.txt...' && pip install --no-cache-dir -r requirements.txt; fi) && "
-                f"  (pip install --no-cache-dir uvicorn fastapi streamlit || true) && "
-                f"  echo '[BUILD] [3/3] Build phase completed successfully.' && "
-                f"  echo '[BUILD] ========================================================' && "
-                f"  echo '[RUNTIME] Launching application server on port 8080...' && "
-                f"  if grep -q 'streamlit' app.py 2>/dev/null || [ '{app_type}' = 'streamlit' ]; then "
-                f"    exec streamlit run app.py --server.port=8080 --server.address=0.0.0.0 --server.headless=true; "
-                f"  elif [ -f main.py ]; then exec uvicorn main:app --host 0.0.0.0 --port 8080; "
-                f"  elif [ -f app.py ]; then exec uvicorn app:app --host 0.0.0.0 --port 8080; "
-                f"  fi; "
-                f"elif [ -f /app_src/package.json ]; then "
-                f"  echo '[BUILD] [3/3] Build phase completed successfully.' && "
-                f"  echo '[BUILD] ========================================================' && "
-                f"  echo '[RUNTIME] Launching application server on port 8080...' && "
-                f"  cd /app_src && (npm start -- -p 8080 || ( [ -d frontend/dist ] && npx --yes serve -l 8080 frontend/dist ) || ( [ -d dist ] && npx --yes serve -l 8080 dist ) || ( [ -d build ] && npx --yes serve -l 8080 build ) || ( [ -d out ] && npx --yes serve -l 8080 out ) || npx --yes serve -l 8080 .); "
-                f"elif [ -d /app_src/frontend/dist ]; then "
-                f"  echo '[BUILD] [3/3] Build phase completed successfully.' && "
-                f"  echo '[BUILD] ========================================================' && "
-                f"  echo '[RUNTIME] Launching application server on port 8080...' && "
-                f"  npx --yes serve -l 8080 /app_src/frontend/dist; "
-                f"elif [ -f /app_src/index.html ]; then "
-                f"  echo '[BUILD] [3/3] Build phase completed successfully.' && "
-                f"  echo '[BUILD] ========================================================' && "
-                f"  echo '[RUNTIME] Launching application server on port 8080...' && "
-                f"  npx --yes serve -l 8080 /app_src; "
-                f"else "
-                f"  echo '[BUILD] [3/3] Build phase completed successfully.' && "
-                f"  echo '[BUILD] ========================================================' && "
-                f"  echo '[RUNTIME] Launching application server on port 8080...' && "
-                f"  echo '<!DOCTYPE html><html><body><h1>{app.name}</h1><p>Running on CompassX</p></body></html>' > /app_src/index.html && npx --yes serve -l 8080 /app_src; "
-                f"fi"
+                f"}} && "
+                f"(run_app || hold_on_error) && hold_on_error"
             )
             container_args = [run_cmd]
 
         # 3. Deployment Spec
+        resources_cfg = cfg.get("resources") or {}
+        cpu_val = str(resources_cfg.get("cpu") or "1")
+        mem_val = str(resources_cfg.get("memory") or "2Gi")
+        replica_val = int(resources_cfg.get("replicas") or 1)
+
         container = client.V1Container(
             name="app",
             image=image_tag,
@@ -171,7 +217,7 @@ class KubernetesAppDriver(BaseAppDriver):
             ports=[client.V1ContainerPort(container_port=8080, name="http")],
             resources=client.V1ResourceRequirements(
                 requests={"cpu": "100m", "memory": "256Mi"},
-                limits={"cpu": "1", "memory": "2Gi"},
+                limits={"cpu": cpu_val, "memory": mem_val},
             ),
         )
 
@@ -180,7 +226,7 @@ class KubernetesAppDriver(BaseAppDriver):
             kind="Deployment",
             metadata=client.V1ObjectMeta(name=name, namespace=ns, labels=labels),
             spec=client.V1DeploymentSpec(
-                replicas=1,
+                replicas=replica_val,
                 selector=client.V1LabelSelector(match_labels={"compassx/app-id": clean_id, "compassx/role": "prod"}),
                 template=client.V1PodTemplateSpec(
                     metadata=client.V1ObjectMeta(
@@ -387,12 +433,21 @@ class KubernetesAppDriver(BaseAppDriver):
     def get_live_url(self, app) -> str:
         return ingress_service.get_app_url(app)
 
-    def capture_build_logs(self, app, deployment_id: str, timeout_sec: int = 90) -> List[str]:
-        """Poll and extract pure build phase logs from the newly spawned pod."""
+    def capture_build_logs(
+        self,
+        app,
+        deployment_id: str,
+        timeout_sec: int = 120,
+        initial_logs: Optional[List[str]] = None,
+        on_progress: Optional[Callable[[List[str]], None]] = None,
+    ) -> List[str]:
+        """Poll and stream pure build phase logs from the newly spawned pod in real-time."""
         import time
         k8s = self._get_k8s_client()
+        base_logs = list(initial_logs or [])
         if not k8s:
-            return ["[INFO] K8s client not available to stream build logs."]
+            base_logs.append("[INFO] K8s client not available to stream build logs.")
+            return base_logs
 
         ns = settings.K8S_NAMESPACE
         clean_id = re.sub(r"[^a-z0-9-]", "-", app.id.lower()).strip("-")
@@ -400,7 +455,8 @@ class KubernetesAppDriver(BaseAppDriver):
         # 1. Wait for newly created pod
         pod_name = None
         start_time = time.time()
-        while time.time() - start_time < 30:
+        last_notified_phase = None
+        while time.time() - start_time < 35:
             try:
                 pods = k8s.core().list_namespaced_pod(
                     namespace=ns,
@@ -412,19 +468,24 @@ class KubernetesAppDriver(BaseAppDriver):
                     items.sort(key=lambda p: p.metadata.creation_timestamp or 0, reverse=True)
                     pod_name = items[0].metadata.name
                     phase = items[0].status.phase if items[0].status else "Unknown"
+                    if phase != last_notified_phase:
+                        last_notified_phase = phase
+                        if on_progress:
+                            now_ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+                            on_progress(base_logs + [f"[{now_ts}] [INFO] Deployment pod '{pod_name}' phase: {phase}"])
                     if phase in ("Running", "Succeeded", "Failed"):
                         break
             except Exception as e:
                 logger.debug("Waiting for deployment pod %s: %s", clean_id, e)
-            time.sleep(2)
+            time.sleep(1.5)
 
         if not pod_name:
-            return [
-                f"[INFO] Deployment {deployment_id} scheduled in namespace '{ns}'.",
-                f"[INFO] Container rollout initiated for {app.name}.",
-            ]
+            now_ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+            base_logs.append(f"[{now_ts}] [INFO] Deployment {deployment_id} scheduled in namespace '{ns}'.")
+            base_logs.append(f"[{now_ts}] [INFO] Container rollout initiated for {app.name}.")
+            return base_logs
 
-        # 2. Read logs until build phase finishes or timeout
+        # 2. Read logs continuously and stream progress until build phase finishes or timeout
         captured_build_logs = []
         build_started = False
         build_finished = False
@@ -442,7 +503,13 @@ class KubernetesAppDriver(BaseAppDriver):
                         current_build_lines.append(line)
                         if "Build phase completed successfully" in line or "Build pipeline finished" in line:
                             build_finished = True
+                    elif "[ERROR]" in line:
+                        build_started = True
+                        current_build_lines.append(line)
+                        build_finished = True
                     elif "[RUNTIME]" in line:
+                        build_started = True
+                        current_build_lines.append(line)
                         build_finished = True
                         break
                     elif build_started and not build_finished:
@@ -450,21 +517,25 @@ class KubernetesAppDriver(BaseAppDriver):
                         current_build_lines.append(line)
 
                 if current_build_lines:
-                    captured_build_logs = current_build_lines
+                    combined = base_logs + current_build_lines
+                    captured_build_logs = combined
+                    if on_progress:
+                        on_progress(combined)
 
                 if build_finished:
                     break
             except Exception as e:
                 logger.debug("Streaming pod logs for %s: %s", pod_name, e)
 
-            time.sleep(2)
+            time.sleep(1.5)
 
         if not captured_build_logs:
             try:
                 raw = k8s.core().read_namespaced_pod_log(name=pod_name, namespace=ns, tail_lines=100)
-                captured_build_logs = [l for l in raw.splitlines() if l.strip()]
+                pod_lines = [l for l in raw.splitlines() if l.strip()]
+                captured_build_logs = base_logs + pod_lines
             except Exception:
-                captured_build_logs = [f"[INFO] Deployment {deployment_id} active on pod {pod_name}."]
+                captured_build_logs = base_logs + [f"[INFO] Deployment {deployment_id} active on pod {pod_name}."]
 
         return captured_build_logs
 

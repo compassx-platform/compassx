@@ -164,8 +164,8 @@ export function useAppDeployments(appId?: string, enabled = true) {
     refetchInterval: (query) => {
       if (!enabled) return false;
       const data = query.state.data;
-      const hasInProgress = Array.isArray(data) && data.some((d: any) => d.status === 'in_progress' || d.status === 'building');
-      return hasInProgress ? 2000 : 5000;
+      const hasInProgress = Array.isArray(data) && data.some((d: any) => d.status === 'in_progress' || d.status === 'building' || d.status === 'starting' || d.status === 'queued');
+      return hasInProgress ? 1000 : 5000;
     },
   });
 }

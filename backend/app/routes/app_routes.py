@@ -10,6 +10,7 @@ from typing import List, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, status
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.attributes import flag_modified
 
 from app.database import get_system_db
 from app.governance.dependencies import Guard, get_guard
@@ -214,6 +215,7 @@ def update_app(
         app.git_pat_enc = encrypt_field(body.git_pat) if body.git_pat else None
     if body.config is not None:
         app.config = body.config
+        flag_modified(app, "config")
 
     db.commit()
     db.refresh(app)
@@ -303,6 +305,7 @@ def deploy_app(
     cfg["runtime"] = runtime_info
 
     app.config = cfg
+    flag_modified(app, "config")
     app.status = "active" if deploy_status in ("success", "in_progress") else "error"
     db.commit()
     db.refresh(app)

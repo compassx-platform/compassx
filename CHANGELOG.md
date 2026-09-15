@@ -5,6 +5,33 @@ All notable changes to the CompassX Platform will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.6] - 2026-09-15
+
+### 🚀 Highlights
+
+CompassX `0.8.6` delivers **Real-Time Deployment Log Streaming**, **Configurable App Resource Limits & Replicas**, **Auto-Save Env Vars on Deploy**, and **Smarter Deployment Status Polling**.
+
+### ✨ Features & Enhancements
+
+#### Real-Time Deployment Log Streaming
+- **Progressive Log Updates**: The `capture_build_logs` pipeline now streams live log lines from Kubernetes pods back to the database in real-time via `on_progress` callbacks, so the UI shows continuous build progress instead of waiting for the final result.
+- **Pod Phase Notifications**: Phase transitions (Pending → Running → Succeeded) are injected as timestamped log events enabling visibility into scheduling delays.
+- **Error Detection**: Build failures (npm errors, fatal Git errors, build pipeline errors) are now detected across multiple patterns and immediately mark the deployment as `failed`.
+
+#### Configurable App Resource Limits & Replicas
+- **Per-App Resources**: Deployment specs now honor `resources.cpu`, `resources.memory`, and `resources.replicas` from the app config, replacing hard-coded limits, enabling proper resource control per app.
+
+#### Auto-Save Env Vars on Deploy
+- **Atomic Config Flush**: When deploying a dirty config (unsaved env vars, CPU/memory/replicas changes), the UI now automatically persists those settings via PATCH before triggering a build.
+- **SQLAlchemy flag_modified**: Added `flag_modified(app, "config")` to `app_routes.py` to ensure JSON config mutations are reliably committed.
+
+#### Smarter Deployment Status Polling
+- **Faster Polling on Active Builds**: Frontend refetch interval reduced to 1000ms for `in_progress`, `building`, `starting`, and `queued` statuses.
+- **Auto-Scroll with Log Filter**: Deployment terminal auto-scroll now triggered on both deployment data and filtered log changes.
+- **Env Var Object Format Support**: `env_vars` in `object` format from the backend are automatically parsed and normalized into the UI list format.
+
+---
+
 ## [0.8.5] - 2026-09-15
 
 ### 🚀 Highlights
