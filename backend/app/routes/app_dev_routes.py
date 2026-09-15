@@ -151,6 +151,34 @@ def stop_dev_session(
     return omnigent_dev_service.stop_dev_session(app)
 
 
+@router.post("/suspend")
+def suspend_dev_session(
+    app_id: str,
+    db: Session = Depends(get_system_db),
+    guard: Guard = Depends(get_guard),
+):
+    """Suspend dev sandbox (scale compute to 0 replicas, keep storage intact)."""
+    app = db.query(App).filter(App.id == app_id).first()
+    if not app:
+        raise HTTPException(status_code=404, detail=f"App '{app_id}' not found.")
+
+    return omnigent_dev_service.suspend_dev_session(app)
+
+
+@router.post("/resume")
+def resume_dev_session(
+    app_id: str,
+    db: Session = Depends(get_system_db),
+    guard: Guard = Depends(get_guard),
+):
+    """Resume a suspended dev sandbox (restore compute to 1 replica)."""
+    app = db.query(App).filter(App.id == app_id).first()
+    if not app:
+        raise HTTPException(status_code=404, detail=f"App '{app_id}' not found.")
+
+    return omnigent_dev_service.resume_dev_session(app)
+
+
 @router.get("/files")
 def list_workspace_files(
     app_id: str,
