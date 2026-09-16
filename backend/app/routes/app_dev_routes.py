@@ -355,12 +355,31 @@ def exec_dev_command(
     if not body.command or not body.command.strip():
         raise HTTPException(status_code=400, detail="Command cannot be empty.")
 
+    omnigent_dev_service.touch_workspace_activity(app.id, body.workspace_id or body.workspace_name)
     return dev_terminal_service.exec_command(
         app,
         command=body.command.strip(),
         workspace_id=body.workspace_id,
         workspace_name=body.workspace_name,
     )
+
+
+@router.post("/heartbeat")
+def record_dev_heartbeat(
+    app_id: str,
+    workspace_id: Optional[str] = Query(None),
+    db: Session = Depends(get_system_db),
+    guard: Guard = Depends(get_guard),
+):
+    """Client heartbeat endpoint to keep active dev session and workspace alive."""
+    app = db.query(App).filter(App.id == app_id).first()
+    if not app:
+        raise HTTPException(status_code=404, detail=f"App '{app_id}' not found.")
+    if guard.workspace_id and app.workspace_id != guard.workspace_id:
+        raise HTTPException(status_code=403, detail="Cannot access app in another workspace.")
+
+    omnigent_dev_service.touch_workspace_activity(app.id, workspace_id)
+    return {"status": "ok", "app_id": app.id}
 
 
 @router.websocket("/terminal/ws")
@@ -383,6 +402,7 @@ async def dev_terminal_websocket(
             await websocket.close(code=4404, reason=f"App '{app_id}' not found")
             return
 
+    omnigent_dev_service.touch_workspace_activity(app.id, workspace_id or workspace_name)
     await dev_terminal_service.handle_terminal_websocket(
         websocket=websocket,
         app=app,
@@ -391,5 +411,6 @@ async def dev_terminal_websocket(
         cols=cols,
         rows=rows,
     )
+
 
 

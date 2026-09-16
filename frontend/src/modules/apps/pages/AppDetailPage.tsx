@@ -165,6 +165,12 @@ export default function AppDetailPage() {
   const [showConfigPat, setShowConfigPat] = useState(false);
   const [configDirty, setConfigDirty] = useState(false);
 
+  // Dev Sandbox Lifecycle Settings State
+  const [autoSuspendEnabled, setAutoSuspendEnabled] = useState(true);
+  const [idleTimeoutMinutes, setIdleTimeoutMinutes] = useState(120);
+  const [autoReapEnabled, setAutoReapEnabled] = useState(true);
+  const [staleReapDays, setStaleReapDays] = useState(30);
+
   // Environment Tab State
   const [envVars, setEnvVars] = useState<Array<{ key: string; value: string; isSecret: boolean }>>([
     { key: 'ENVIRONMENT', value: 'production', isSecret: false },
@@ -328,6 +334,12 @@ export default function AppDetailPage() {
       if (app.config?.resources?.cpu) setCpuCores(app.config.resources.cpu);
       if (app.config?.resources?.memory) setMemoryLimit(app.config.resources.memory);
       if (app.config?.resources?.replicas) setReplicas(app.config.resources.replicas);
+
+      const devCfg = app.config?.dev_sandbox || {};
+      setAutoSuspendEnabled(devCfg.auto_suspend_enabled !== false);
+      setIdleTimeoutMinutes(devCfg.idle_timeout_minutes ?? 120);
+      setAutoReapEnabled(devCfg.auto_reap_enabled !== false);
+      setStaleReapDays(devCfg.stale_reap_days ?? 30);
     }
   }, [app]);
 
@@ -432,6 +444,16 @@ export default function AppDetailPage() {
     e.preventDefault();
     if (!resolvedAppId) return;
     try {
+      const currentConfig = app?.config || {};
+      const updatedConfig = {
+        ...currentConfig,
+        dev_sandbox: {
+          auto_suspend_enabled: autoSuspendEnabled,
+          idle_timeout_minutes: Number(idleTimeoutMinutes),
+          auto_reap_enabled: autoReapEnabled,
+          stale_reap_days: Number(staleReapDays),
+        },
+      };
       await updateMutation.mutateAsync({
         appId: resolvedAppId,
         payload: {
@@ -449,6 +471,7 @@ export default function AppDetailPage() {
           git_credential_type: configCredType,
           git_credential_nickname: configCredNickname.trim() || undefined,
           git_pat: configPat.trim() || undefined,
+          config: updatedConfig,
         },
       });
       setConfigPat('');
@@ -2540,6 +2563,143 @@ export default function AppDetailPage() {
                   </label>
                 </div>
               )}
+            </div>
+          </div>
+
+          {/* Dev Sandbox Lifecycle & Idle Settings (Reaper) */}
+          <div
+            style={{
+              padding: '18px 20px',
+              border: '1px solid var(--color-border)',
+              borderRadius: 'var(--radius-md, 6px)',
+              background: 'var(--color-bg-subtle, rgba(255,255,255,0.02))',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 16,
+            }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+              <div>
+                <h4 style={{ margin: '0 0 4px', fontSize: '0.92rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <Cpu size={16} color="var(--color-primary)" />
+                  <span>Dev Sandbox Lifecycle & Auto-Suspend (Reaper)</span>
+                </h4>
+                <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>
+                  Control automatic scale-to-zero compute suspension for idle sandboxes and stale workspace storage reclaim.
+                </p>
+              </div>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+              {/* Auto Suspend Toggle & Timeout */}
+              <div
+                style={{
+                  padding: '14px 16px',
+                  borderRadius: 6,
+                  border: '1px solid var(--color-border)',
+                  background: 'var(--color-surface)',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 12,
+                }}
+              >
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div>
+                    <span style={{ fontSize: '0.85rem', fontWeight: 600 }}>Auto-Suspend Idle Sandboxes</span>
+                    <p style={{ margin: '2px 0 0', fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>
+                      Scale dev pod to 0 replicas when completely inactive.
+                    </p>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={autoSuspendEnabled}
+                    onChange={(e) => {
+                      setAutoSuspendEnabled(e.target.checked);
+                      setConfigDirty(true);
+                    }}
+                    style={{ width: 18, height: 18, cursor: 'pointer' }}
+                  />
+                </div>
+
+                {autoSuspendEnabled && (
+                  <label className="uc-field" style={{ marginBottom: 0 }}>
+                    <span className="uc-field-label">Idle Inactivity Timeout</span>
+                    <select
+                      value={idleTimeoutMinutes}
+                      onChange={(e) => {
+                        setIdleTimeoutMinutes(Number(e.target.value));
+                        setConfigDirty(true);
+                      }}
+                      className="input-field"
+                    >
+                      <option value={15}>15 Minutes</option>
+                      <option value={30}>30 Minutes</option>
+                      <option value={60}>1 Hour (60 mins)</option>
+                      <option value={120}>2 Hours (120 mins) — Recommended</option>
+                      <option value={240}>4 Hours (240 mins)</option>
+                      <option value={480}>8 Hours (480 mins)</option>
+                    </select>
+                  </label>
+                )}
+              </div>
+
+              {/* Auto Reap Stale Workspaces */}
+              <div
+                style={{
+                  padding: '14px 16px',
+                  borderRadius: 6,
+                  border: '1px solid var(--color-border)',
+                  background: 'var(--color-surface)',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 12,
+                }}
+              >
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div>
+                    <span style={{ fontSize: '0.85rem', fontWeight: 600 }}>Auto-Reap Stale Workspaces</span>
+                    <p style={{ margin: '2px 0 0', fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>
+                      Archive and delete abandoned workspace files from PVC.
+                    </p>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={autoReapEnabled}
+                    onChange={(e) => {
+                      setAutoReapEnabled(e.target.checked);
+                      setConfigDirty(true);
+                    }}
+                    style={{ width: 18, height: 18, cursor: 'pointer' }}
+                  />
+                </div>
+
+                {autoReapEnabled && (
+                  <label className="uc-field" style={{ marginBottom: 0 }}>
+                    <span className="uc-field-label">Stale Threshold</span>
+                    <select
+                      value={staleReapDays}
+                      onChange={(e) => {
+                        setStaleReapDays(Number(e.target.value));
+                        setConfigDirty(true);
+                      }}
+                      className="input-field"
+                    >
+                      <option value={7}>7 Days</option>
+                      <option value={14}>14 Days</option>
+                      <option value={30}>30 Days — Default</option>
+                      <option value={60}>60 Days</option>
+                      <option value={90}>90 Days</option>
+                    </select>
+                  </label>
+                )}
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>
+              <ShieldCheck size={14} color="#10b981" />
+              <span>
+                Active work protection enabled: Live Omnigent AI sessions, terminal connections, and recent file changes automatically prevent suspension.
+              </span>
             </div>
           </div>
 

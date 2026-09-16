@@ -234,6 +234,98 @@ class OmnigentDevService:
 
         return target_id, default_host_name, False
 
+    def check_app_has_active_work(self, app, ws=None, cutoff_dt: Optional[datetime] = None) -> bool:
+        """Multi-layer check to verify if app dev sandbox is actively being developed.
+        Checks:
+        1. Omnigent Server host status ('online') and active/recent sessions.
+        2. Filesystem modification timestamps (mtime) in workspace folder.
+        Returns True if active work is detected and refreshes ws.last_active_at in DB.
+        """
+        import urllib.request
+        import json
+
+        now = datetime.now(timezone.utc)
+        if cutoff_dt is None:
+            cutoff_dt = now - timedelta(seconds=7200)
+
+        # ── 1. Check Omnigent Host & Sessions ─────────────────────────────────
+        try:
+            expected_host_id, _ = self.get_app_host_identity(app)
+            host_id, host_name, is_online = self.resolve_live_host(app, expected_host_id)
+
+            if is_online:
+                # The dev runner is actively connected over WebSocket to Omnigent Server
+                urls = []
+                int_url = self.get_omnigent_internal_url()
+                pub_url = self.get_omnigent_server_url()
+                if int_url:
+                    urls.append(int_url)
+                if pub_url and pub_url not in urls:
+                    urls.append(pub_url)
+
+                cutoff_epoch = int(cutoff_dt.timestamp())
+                for u in urls:
+                    try:
+                        req = urllib.request.Request(f"{u}/v1/sessions?limit=20", headers={"User-Agent": "CompassX/1.0"})
+                        with urllib.request.urlopen(req, timeout=2.5) as resp:
+                            data = json.loads(resp.read().decode())
+                            sessions = data.get("sessions") or (data if isinstance(data, list) else [])
+                            for s in sessions:
+                                s_host = s.get("host_id")
+                                s_ws = str(s.get("workspace") or "")
+                                if s_host == host_id or (ws and ws.folder_path and ws.folder_path in s_ws) or getattr(app, "id", "") in s_ws:
+                                    status = str(s.get("status", "")).lower()
+                                    updated_at = s.get("updated_at") or 0
+                                    if status in ["running", "active", "in_progress"] or updated_at >= cutoff_epoch:
+                                        self.touch_workspace_activity(app.id, ws.id if ws else None)
+                                        return True
+                            break
+                    except Exception:
+                        pass
+
+                # If host is online and connected, runner is alive
+                self.touch_workspace_activity(app.id, ws.id if ws else None)
+                return True
+        except Exception as e:
+            logger.debug("Error checking Omnigent live host/sessions: %s", e)
+
+        # ── 2. Check Filesystem mtime in Workspace ─────────────────────────────
+        try:
+            paths_to_check = []
+            repo_dir = os.path.join(app_runner_service.get_app_dir(app.id), "repo")
+            if os.path.exists(repo_dir):
+                paths_to_check.append(repo_dir)
+
+            if ws and ws.folder_path:
+                ws_dir = os.path.join(app_runner_service.get_app_dir(app.id), "workspaces", ws.folder_path.split("/")[-1])
+                if os.path.exists(ws_dir):
+                    paths_to_check.append(ws_dir)
+
+            latest_mtime = 0.0
+            ignore_dirs = {"node_modules", ".git", ".cache", "dist", "build", "__pycache__", ".venv"}
+
+            for base_dir in paths_to_check:
+                for root, dirs, files in os.walk(base_dir):
+                    dirs[:] = [d for d in dirs if d not in ignore_dirs]
+                    for f in files:
+                        fp = os.path.join(root, f)
+                        try:
+                            mt = os.path.getmtime(fp)
+                            if mt > latest_mtime:
+                                latest_mtime = mt
+                        except OSError:
+                            continue
+
+            if latest_mtime > 0:
+                mtime_dt = datetime.fromtimestamp(latest_mtime, tz=timezone.utc)
+                if mtime_dt > cutoff_dt:
+                    self.touch_workspace_activity(app.id, ws.id if ws else None)
+                    return True
+        except Exception as e:
+            logger.debug("Error checking workspace filesystem mtime: %s", e)
+
+        return False
+
     def create_or_get_omnigent_session(
         self,
         app,
@@ -538,6 +630,8 @@ class OmnigentDevService:
         session_url = ingress_service.get_omnigent_session_url(sess_id)
 
         is_active = dev_status.get("status") == "active"
+        if is_active or host_online:
+            self.touch_workspace_activity(app.id)
 
         if app.id in _DEV_SESSIONS:
             sess = _DEV_SESSIONS[app.id]

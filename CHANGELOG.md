@@ -5,6 +5,31 @@ All notable changes to the CompassX Platform will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.1] - 2026-09-16
+
+### 🚀 Highlights
+
+CompassX `0.9.1` delivers **Dev Sandbox Lifecycle Management UI**, **Suspend & Resume API Endpoints**, **Configurable Auto-Suspend & Stale Workspace Reaping**, and a **Persistent Deployment Status Fix**.
+
+### ✨ Features & Enhancements
+
+#### Dev Sandbox Lifecycle Management UI
+- **Lifecycle Settings Panel**: New "Dev Sandbox Lifecycle & Auto-Suspend (Reaper)" section in App Settings with configurable Auto-Suspend idle timeout (15 min – 8 hrs) and Auto-Reap stale workspace threshold (7–90 days).
+- **Active Work Protection**: UI clearly communicates that live Omnigent AI sessions, terminal connections, and recent file changes automatically prevent suspension.
+- **Config Persistence**: Sandbox lifecycle settings are stored in `app.config.dev_sandbox` and synced on every App Settings save.
+
+#### Suspend & Resume API Endpoints
+- **`POST /api/v1/apps/{app_id}/dev/suspend`**: Immediately scales the dev sandbox to 0 replicas (scale-to-zero).
+- **`POST /api/v1/apps/{app_id}/dev/resume`**: Restores the sandbox from scale-to-zero back to active (1 replica), enabling rapid 1-2s resume.
+
+#### Sandbox Reaper Service Enhancements
+- **Per-App Policy Override**: Reaper now respects per-app `dev_sandbox.auto_suspend_enabled`, `idle_timeout_minutes`, `auto_reap_enabled`, and `stale_reap_days` config overrides, falling back to global defaults.
+
+#### Persistent Deployment Status Fix
+- **`flag_modified` on Config**: Fixed SQLAlchemy not detecting JSON mutations in deployment status, ensuring `in_progress` deployments correctly resolve to `success` or `failed`.
+
+---
+
 ## [0.9.0] - 2026-09-15
 
 ### 🚀 Highlights

@@ -441,4 +441,21 @@ export function useExecDevCommand() {
   });
 }
 
+export function useDevHeartbeat() {
+  return useMutation({
+    mutationFn: async ({
+      appId,
+      workspaceId,
+    }: {
+      appId: string;
+      workspaceId?: string;
+    }) => {
+      const params = workspaceId ? { workspace_id: workspaceId } : {};
+      const res = await api.post(`/apps/${appId}/dev/heartbeat`, null, { params });
+      return res.data;
+    },
+  });
+}
+
+
 

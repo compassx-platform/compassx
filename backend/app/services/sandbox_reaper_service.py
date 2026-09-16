@@ -10,7 +10,7 @@ from app.services.drivers.factory import driver_factory
 logger = logging.getLogger(__name__)
 
 # Default timeouts
-DEFAULT_IDLE_SUSPEND_SECONDS = 1800  # 30 minutes of inactivity -> scale-to-zero
+DEFAULT_IDLE_SUSPEND_SECONDS = 7200  # 2 hours of inactivity -> scale-to-zero
 DEFAULT_STALE_REAP_DAYS = 30         # 30 days offline -> reclaim storage
 SWEEP_INTERVAL_SECONDS = 120        # Sweep check every 2 minutes
 
@@ -37,7 +37,7 @@ class SandboxReaperService:
         self._running = True
         self._task = asyncio.create_task(self._run_loop(), name="compassx-sandbox-reaper")
         logger.info(
-            "Managed Sandbox Reaper started (idle_timeout=%ss, stale_reap=%sdays, sweep_interval=%ss)",
+            "Managed Sandbox Reaper started (default_idle_timeout=%ss, default_stale_reap=%sdays, sweep_interval=%ss)",
             self.idle_timeout_seconds,
             self.stale_reap_days,
             self.sweep_interval_seconds,
@@ -80,37 +80,68 @@ class SandboxReaperService:
             from app.models.app import App
             from app.services.omnigent_dev_service import omnigent_dev_service
 
-            cutoff = datetime.now(timezone.utc) - timedelta(seconds=self.idle_timeout_seconds)
+            now = datetime.now(timezone.utc)
 
             with SystemSessionLocal() as db:
-                idle_workspaces = (
+                active_workspaces = (
                     db.query(DevWorkspace)
-                    .filter(
-                        DevWorkspace.status == "active",
-                        DevWorkspace.last_active_at < cutoff,
-                    )
+                    .filter(DevWorkspace.status == "active")
                     .all()
                 )
 
-                if not idle_workspaces:
+                if not active_workspaces:
                     return
 
-                for ws in idle_workspaces:
+                for ws in active_workspaces:
                     app = db.query(App).filter(App.id == ws.app_id).first()
                     if not app:
                         continue
 
-                    # Check runtime status
-                    dev_driver = driver_factory.get_dev_driver()
-                    status = dev_driver.get_dev_status(app)
-                    if status.get("status") == "active":
-                        logger.info(
-                            "Suspending idle dev sandbox for app '%s' (%s) — last active at %s",
-                            app.name,
-                            app.id,
-                            ws.last_active_at.isoformat() if ws.last_active_at else "unknown",
-                        )
-                        omnigent_dev_service.suspend_dev_session(app)
+                    # Read app-specific configuration
+                    app_cfg = (app.config or {}).get("dev_sandbox", {})
+                    auto_suspend_enabled = app_cfg.get("auto_suspend_enabled", True)
+
+                    # If auto-suspend is disabled for this app, do not suspend
+                    if not auto_suspend_enabled:
+                        continue
+
+                    # Resolve per-app idle timeout
+                    idle_timeout_mins = app_cfg.get("idle_timeout_minutes")
+                    if idle_timeout_mins is not None:
+                        try:
+                            idle_timeout_secs = max(300, int(idle_timeout_mins) * 60)
+                        except (ValueError, TypeError):
+                            idle_timeout_secs = self.idle_timeout_seconds
+                    else:
+                        idle_timeout_secs = self.idle_timeout_seconds
+
+                    cutoff = now - timedelta(seconds=idle_timeout_secs)
+
+                    if not ws.last_active_at or ws.last_active_at < cutoff:
+                        # Check runtime status
+                        dev_driver = driver_factory.get_dev_driver()
+                        status = dev_driver.get_dev_status(app)
+                        if status.get("status") == "active":
+                            # Multi-layer active work verification:
+                            # 1. Omnigent host runner online / active task sessions
+                            # 2. Workspace filesystem mtime changes
+                            has_active_work = omnigent_dev_service.check_app_has_active_work(app, ws, cutoff)
+                            if has_active_work:
+                                logger.info(
+                                    "Dev sandbox for app '%s' (%s) has active Omnigent/filesystem work; keeping alive.",
+                                    app.name,
+                                    app.id,
+                                )
+                                continue
+
+                            logger.info(
+                                "Suspending idle dev sandbox for app '%s' (%s) — last active at %s (timeout=%ss)",
+                                app.name,
+                                app.id,
+                                ws.last_active_at.isoformat() if ws.last_active_at else "unknown",
+                                idle_timeout_secs,
+                            )
+                            omnigent_dev_service.suspend_dev_session(app)
         except Exception as err:
             logger.debug("Error during idle sandbox sweep: %s", err)
 
@@ -121,43 +152,59 @@ class SandboxReaperService:
             from app.models.dev_workspace import DevWorkspace
             from app.models.app import App
 
-            stale_cutoff = datetime.now(timezone.utc) - timedelta(days=self.stale_reap_days)
+            now = datetime.now(timezone.utc)
 
             with SystemSessionLocal() as db:
-                stale_workspaces = (
+                stale_candidates = (
                     db.query(DevWorkspace)
-                    .filter(
-                        DevWorkspace.status.in_(["stopped", "suspended", "inactive"]),
-                        DevWorkspace.last_active_at < stale_cutoff,
-                    )
+                    .filter(DevWorkspace.status.in_(["stopped", "suspended", "inactive"]))
                     .all()
                 )
 
-                if not stale_workspaces:
+                if not stale_candidates:
                     return
 
-                for ws in stale_workspaces:
+                for ws in stale_candidates:
                     app = db.query(App).filter(App.id == ws.app_id).first()
                     if not app:
                         continue
 
-                    logger.info(
-                        "Reaping stale dev workspace '%s' (app %s) inactive for > %s days",
-                        ws.folder_path,
-                        ws.app_id,
-                        self.stale_reap_days,
-                    )
+                    app_cfg = (app.config or {}).get("dev_sandbox", {})
+                    auto_reap_enabled = app_cfg.get("auto_reap_enabled", True)
 
-                    # Delete folder from shared PVC via driver
-                    dev_driver = driver_factory.get_dev_driver()
-                    if hasattr(dev_driver, "delete_workspace_folder"):
+                    # If auto-reap is disabled for this app, preserve storage indefinitely
+                    if not auto_reap_enabled:
+                        continue
+
+                    stale_days = app_cfg.get("stale_reap_days")
+                    if stale_days is not None:
                         try:
-                            dev_driver.delete_workspace_folder(ws.folder_path)
-                        except Exception:
-                            pass
+                            stale_reap_days = max(1, int(stale_days))
+                        except (ValueError, TypeError):
+                            stale_reap_days = self.stale_reap_days
+                    else:
+                        stale_reap_days = self.stale_reap_days
 
-                    ws.status = "archived"
-                    db.commit()
+                    stale_cutoff = now - timedelta(days=stale_reap_days)
+
+                    if ws.last_active_at and ws.last_active_at < stale_cutoff:
+                        logger.info(
+                            "Reaping stale dev workspace '%s' (app %s) inactive for > %s days",
+                            ws.folder_path,
+                            ws.app_id,
+                            stale_reap_days,
+                        )
+
+                        # Delete folder from shared PVC via driver
+                        dev_driver = driver_factory.get_dev_driver()
+                        if hasattr(dev_driver, "delete_workspace_folder"):
+                            try:
+                                dev_driver.delete_workspace_folder(ws.folder_path)
+                            except Exception:
+                                pass
+
+                        ws.status = "archived"
+                        db.commit()
         except Exception as err:
             logger.debug("Error during stale workspace reap sweep: %s", err)
 

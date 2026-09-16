@@ -34,6 +34,7 @@ import {
   useDevWorkspaces,
   usePublishDevChanges,
   useDevLogs,
+  useDevHeartbeat,
 } from '../hooks/useApps';
 import { DevTerminal } from './DevTerminal';
 
@@ -55,6 +56,7 @@ export function AppDevelopmentTab({ app, resolvedAppId }: AppDevelopmentTabProps
   const deleteWorkspaceMutation = useDeleteDevWorkspace();
   const createWorkspaceMutation = useCreateDevWorkspace();
   const publishMutation = usePublishDevChanges();
+  const heartbeatMutation = useDevHeartbeat();
 
   // Local State
   const [isStoppingDevPod, setIsStoppingDevPod] = useState(false);
@@ -91,6 +93,21 @@ export function AppDevelopmentTab({ app, resolvedAppId }: AppDevelopmentTabProps
 
   const liveDevUrl =
     devStatus?.dev_url || `https://${app.slug}-dev.135.13.180.167.nip.io`;
+
+  // Keep dev pod alive via periodic heartbeat while user is on Development tab
+  useEffect(() => {
+    if (!isDevPodRunning || !resolvedAppId) return;
+
+    // Send initial heartbeat
+    heartbeatMutation.mutate({ appId: resolvedAppId });
+
+    // Send heartbeat every 45 seconds while page is active
+    const interval = setInterval(() => {
+      heartbeatMutation.mutate({ appId: resolvedAppId });
+    }, 45_000);
+
+    return () => clearInterval(interval);
+  }, [isDevPodRunning, resolvedAppId]);
 
   // Start Dev Pod & optionally open studio
   async function handleStartDevPod(workspaceId?: string, openStudio: boolean = false, workspaceName?: string) {
