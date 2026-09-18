@@ -11,8 +11,8 @@ import type { PrincipalInfo } from "./auth";
 
 const BASE = import.meta.env.VITE_API_BASE_URL?.replace(/\/api\/v1\/?$/, "") || "";
 
-// Raw axios for workspace/auth APIs (no /api/v1 prefix — lives at /api/auth/*)
-const authApi = axios.create({ baseURL: BASE, timeout: 15000, headers: { "Content-Type": "application/json" } });
+// Raw axios for workspace/auth APIs (no /api/v1 prefix — lives at /api/auth/*, /api/account/*)
+export const authApi = axios.create({ baseURL: BASE, timeout: 15000, headers: { "Content-Type": "application/json" } });
 authApi.interceptors.request.use((c) => {
   const token = getToken();
   if (token) c.headers["Authorization"] = `Bearer ${token}`;

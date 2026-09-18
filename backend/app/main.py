@@ -359,7 +359,7 @@ app = FastAPI(
     lifespan=lifespan,
     title="CompassX API",
     description="CompassX Platform API",
-    version="0.9.2",
+    version="0.9.3",
     docs_url="/api/swagger/docs",
     openapi_url="/api/swagger.json",
 )
@@ -442,6 +442,7 @@ app.include_router(app_task_routes.router)
 # Workspace / account / auth routes (legacy - kept for backward compat)
 app.include_router(workspace_auth_routes.router)
 app.include_router(workspace_account_routes.router)
+app.include_router(workspace_account_routes.router, prefix="/api/v1")
 app.include_router(workspace_ws_routes.router)
 
 # User Manager v1 routes

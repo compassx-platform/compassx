@@ -2,7 +2,7 @@
  * API client and React Query hooks for Account-level Settings.
  */
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import api from '@/lib/api';
+import { authApi } from './workspaceApi';
 
 export interface AirflowAccountSettings {
   webserver_enabled: boolean;
@@ -82,17 +82,17 @@ export interface AccountSettingsResponse {
 }
 
 export async function fetchAccountSettings(): Promise<AccountSettingsResponse> {
-  const resp = await api.get<AccountSettingsResponse>('/api/account/settings');
+  const resp = await authApi.get<AccountSettingsResponse>('/api/account/settings');
   return resp.data;
 }
 
 export async function patchAccountSettings(body: Partial<AccountSettingsData>): Promise<AccountSettingsResponse> {
-  const resp = await api.patch<AccountSettingsResponse>('/api/account/settings', body);
+  const resp = await authApi.patch<AccountSettingsResponse>('/api/account/settings', body);
   return resp.data;
 }
 
 export async function triggerNodepoolSwitchover(targetPool?: string): Promise<any> {
-  const resp = await api.post('/api/account/settings/nodepool/switchover', null, {
+  const resp = await authApi.post('/api/account/settings/nodepool/switchover', null, {
     params: targetPool ? { target_pool: targetPool } : {},
   });
   return resp.data;

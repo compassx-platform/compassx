@@ -5,6 +5,20 @@ All notable changes to the CompassX Platform will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.3] - 2026-09-18
+
+### 🚀 Highlights
+
+CompassX `0.9.3` delivers **Account Settings API Authentication & Authorization Fixes** and **Dual REST Route Mounting Compatibility** (`/api/account` & `/api/v1/account`).
+
+### ✨ Features & Enhancements
+
+#### Account Settings API Authentication & Client Fix
+- **Authenticated Axios Client**: Switched `accountSettingsApi.ts` to use `authApi` with bearer token interceptor to ensure all account settings queries and mutations are properly authenticated.
+- **Dual Route Mounting**: Mounted `workspace_account_routes` at both `/api/account` and `/api/v1/account` in FastAPI backend for seamless routing compatibility across all client configurations.
+
+---
+
 ## [0.9.2] - 2026-09-18
 
 ### 🚀 Highlights
