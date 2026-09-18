@@ -47,6 +47,14 @@ class Settings(BaseSettings):
     K8S_ENABLE_AUTO_TLS: bool = True
     K8S_USE_HTTPS: bool = True
 
+    # Azure AKS & Node Pool Orchestration
+    AZURE_SUBSCRIPTION_ID: str = "c1df500b-0ff9-4dc9-9983-9cc3ab55353d"
+    AZURE_RESOURCE_GROUP: str = "rg-ecg-prod-ci-02"
+    AZURE_AKS_CLUSTER_NAME: str = "aks-ecg-prod-ci-02"
+    AZURE_DEFAULT_USER_NODEPOOL: str = "userpoolv2"
+    AZURE_APP_NODEPOOL_NAME: str = "apppool"
+    AZURE_APP_NODEPOOL_DEFAULT_VM_SIZE: str = "Standard_B2s_v2"
+
     # CORS
     FRONTEND_ORIGIN: str = "http://localhost:5173"
 

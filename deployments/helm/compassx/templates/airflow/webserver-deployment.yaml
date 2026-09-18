@@ -1,4 +1,4 @@
-{{- if .Values.airflow.enabled }}
+{{- if and .Values.airflow.enabled .Values.airflow.webserver.enabled }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:

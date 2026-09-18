@@ -221,6 +221,13 @@ class KubernetesAppDriver(BaseAppDriver):
             ),
         )
 
+        # Resolve target nodeSelector from Account node pool configuration
+        try:
+            from app.services.node_pool_manager import node_pool_manager
+            app_node_selector = node_pool_manager.get_app_node_selector()
+        except Exception:
+            app_node_selector = None
+
         deployment = client.V1Deployment(
             api_version="apps/v1",
             kind="Deployment",
@@ -235,7 +242,10 @@ class KubernetesAppDriver(BaseAppDriver):
                             "compassx.io/restarted-at": datetime.now(timezone.utc).isoformat(),
                         },
                     ),
-                    spec=client.V1PodSpec(containers=[container]),
+                    spec=client.V1PodSpec(
+                        containers=[container],
+                        node_selector=app_node_selector or None,
+                    ),
                 ),
             ),
         )
@@ -704,7 +714,7 @@ class KubernetesDevDriver(BaseDevDriver):
                         client.V1EnvVar(name="DEV_WORKSPACE_DIR", value=workdir),
                     ],
                     resources=client.V1ResourceRequirements(
-                        requests={"cpu": "200m", "memory": "1024Mi"},
+                        requests={"cpu": "200m", "memory": "512Mi"},
                         limits={"cpu": "4", "memory": "5000Mi"},
                     ),
                     volume_mounts=[
@@ -737,6 +747,12 @@ class KubernetesDevDriver(BaseDevDriver):
                     )
                 )
 
+                try:
+                    from app.services.node_pool_manager import node_pool_manager
+                    app_node_selector = node_pool_manager.get_app_node_selector()
+                except Exception:
+                    app_node_selector = None
+
                 dev_deployment = client.V1Deployment(
                     api_version="apps/v1",
                     kind="Deployment",
@@ -749,6 +765,7 @@ class KubernetesDevDriver(BaseDevDriver):
                             spec=client.V1PodSpec(
                                 containers=[dev_container],
                                 affinity=dev_affinity,
+                                node_selector=app_node_selector or None,
                                 restart_policy="Always",
                                 volumes=[
                                     client.V1Volume(

@@ -187,14 +187,15 @@ async def lifespan(app: FastAPI):
                                     user_id=ws.created_by or "default",
                                     runtime_manager=runtime_manager,
                                 )
-                        # Also ensure global/default scope
-                        ensure_workspace_default_resources(
-                            db,
-                            workspace_id=None,
-                            created_by="system",
-                            user_id="default",
-                            runtime_manager=runtime_manager,
-                        )
+                        else:
+                            # Only bootstrap unscoped fallback if no workspaces exist in the system
+                            ensure_workspace_default_resources(
+                                db,
+                                workspace_id=None,
+                                created_by="system",
+                                user_id="default",
+                                runtime_manager=runtime_manager,
+                            )
                     finally:
                         db.close()
 
@@ -245,6 +246,9 @@ async def lifespan(app: FastAPI):
                     if not _has_col:
                         _conn.execute(_text("ALTER TABLE catalog_queries ADD COLUMN current_version INTEGER NOT NULL DEFAULT 1;"))
                         logger.info("Auto-migrated catalog_queries: added current_version column")
+
+                    # Ensure settings column exists on accounts
+                    _conn.execute(_text("ALTER TABLE accounts ADD COLUMN IF NOT EXISTS settings JSONB DEFAULT '{}'::jsonb;"))
 
                     _conn.commit()
             except Exception as _conn_tbl_err:
@@ -355,7 +359,7 @@ app = FastAPI(
     lifespan=lifespan,
     title="CompassX API",
     description="CompassX Platform API",
-    version="0.9.1",
+    version="0.9.2",
     docs_url="/api/swagger/docs",
     openapi_url="/api/swagger.json",
 )

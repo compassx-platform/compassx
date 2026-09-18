@@ -78,7 +78,7 @@ class AirflowManager(BaseServiceManager):
 
         logger.info("start: Airflow init job submitted; continuing startup without waiting")
 
-    def start(self) -> ServiceStatus:
+    def start(self, enable_webserver: bool = False) -> ServiceStatus:
         namespace = airflow_settings.AIRFLOW_NAMESPACE
         env = compute_settings.COMPASSX_ENV
         self._ensure_namespace(namespace)
@@ -158,8 +158,10 @@ class AirflowManager(BaseServiceManager):
             build_airflow_redis_deployment(namespace, env),
             build_airflow_scheduler_deployment(namespace, env),
             build_airflow_worker_deployment(namespace, env),
-            build_airflow_webserver_deployment(namespace, env),
         ]
+        if enable_webserver:
+            deployments.append(build_airflow_webserver_deployment(namespace, env))
+
         for deployment in deployments:
             try:
                 apps.replace_namespaced_deployment(
@@ -176,9 +178,11 @@ class AirflowManager(BaseServiceManager):
                     raise
 
         services = [
-            build_airflow_service(namespace, env),
             build_airflow_redis_service(namespace),
         ]
+        if enable_webserver:
+            services.append(build_airflow_service(namespace, env))
+
         for service in services:
             try:
                 core.replace_namespaced_service(
@@ -197,6 +201,140 @@ class AirflowManager(BaseServiceManager):
             message="Airflow starting.",
             details=self._details(),
         )
+
+    def _resolve_webserver_deployment_name(self, namespace: str) -> str:
+        """Find the existing webserver deployment name or default."""
+        k8s = get_k8s_client()
+        candidate_names = [
+            airflow_settings.AIRFLOW_WEBSERVER_DEPLOYMENT_NAME,
+            f"{airflow_settings.AIRFLOW_SERVICE_NAME}-webserver",
+            "compassx-airflow-webserver",
+            "compassx-airflow-web",
+        ]
+        for name in candidate_names:
+            try:
+                k8s.apps().read_namespaced_deployment(name=name, namespace=namespace)
+                return name
+            except ApiException:
+                continue
+        return airflow_settings.AIRFLOW_WEBSERVER_DEPLOYMENT_NAME
+
+    def get_webserver_status(self) -> dict:
+        """Inspect the current status of the Airflow Webserver pod/deployment."""
+        namespace = airflow_settings.AIRFLOW_NAMESPACE
+        k8s = get_k8s_client()
+        dep_name = self._resolve_webserver_deployment_name(namespace)
+        try:
+            dep = k8s.apps().read_namespaced_deployment(name=dep_name, namespace=namespace)
+            replicas = dep.spec.replicas or 0
+            available = dep.status.available_replicas or dep.status.ready_replicas or 0
+            if replicas == 0:
+                phase = "stopped"
+            elif available >= 1:
+                phase = "running"
+            else:
+                phase = "starting"
+            return {
+                "enabled": replicas > 0,
+                "status": phase,
+                "deployment_name": dep_name,
+                "replicas": replicas,
+                "available_replicas": available,
+                "url": airflow_settings.ui_url() if phase == "running" else None,
+            }
+        except ApiException as exc:
+            if exc.status == 404:
+                return {
+                    "enabled": False,
+                    "status": "stopped",
+                    "deployment_name": dep_name,
+                    "replicas": 0,
+                    "available_replicas": 0,
+                    "url": None,
+                }
+            logger.warning("Error reading Airflow webserver deployment: %s", exc)
+            return {
+                "enabled": False,
+                "status": "unknown",
+                "deployment_name": dep_name,
+                "replicas": 0,
+                "available_replicas": 0,
+                "url": None,
+            }
+
+    def start_webserver(self) -> dict:
+        """Scale up or create the Airflow Webserver deployment on-demand."""
+        namespace = airflow_settings.AIRFLOW_NAMESPACE
+        env = compute_settings.COMPASSX_ENV
+        k8s = get_k8s_client()
+        apps = k8s.apps()
+        core = k8s.core()
+
+        # 1. Ensure service exists
+        web_service = build_airflow_service(namespace, env)
+        try:
+            core.replace_namespaced_service(
+                name=web_service.metadata.name,
+                namespace=namespace,
+                body=web_service,
+            )
+        except ApiException as exc:
+            if exc.status == 404:
+                try:
+                    core.create_namespaced_service(namespace=namespace, body=web_service)
+                except ApiException:
+                    pass
+
+        # 2. Check if deployment exists and scale to 1 or create
+        dep_name = self._resolve_webserver_deployment_name(namespace)
+        try:
+            dep = apps.read_namespaced_deployment(name=dep_name, namespace=namespace)
+            if (dep.spec.replicas or 0) == 0:
+                apps.patch_namespaced_deployment(
+                    name=dep_name,
+                    namespace=namespace,
+                    body={"spec": {"replicas": 1}},
+                )
+                logger.info("Scaled Airflow webserver deployment %s to 1 replica", dep_name)
+        except ApiException as exc:
+            if exc.status == 404:
+                web_dep = build_airflow_webserver_deployment(namespace, env)
+                apps.create_namespaced_deployment(namespace=namespace, body=web_dep)
+                logger.info("Created Airflow webserver deployment %s", web_dep.metadata.name)
+            else:
+                raise
+
+        return self.get_webserver_status()
+
+    def stop_webserver(self) -> dict:
+        """Scale down the Airflow Webserver deployment to 0 replicas to suspend compute."""
+        namespace = airflow_settings.AIRFLOW_NAMESPACE
+        k8s = get_k8s_client()
+        apps = k8s.apps()
+
+        candidate_names = [
+            airflow_settings.AIRFLOW_WEBSERVER_DEPLOYMENT_NAME,
+            f"{airflow_settings.AIRFLOW_SERVICE_NAME}-webserver",
+            "compassx-airflow-webserver",
+            "compassx-airflow-web",
+        ]
+        scaled = False
+        for name in candidate_names:
+            try:
+                apps.patch_namespaced_deployment(
+                    name=name,
+                    namespace=namespace,
+                    body={"spec": {"replicas": 0}},
+                )
+                logger.info("Scaled Airflow webserver deployment %s to 0 replicas", name)
+                scaled = True
+            except ApiException:
+                continue
+
+        if not scaled:
+            logger.debug("No active Airflow webserver deployment found to scale down")
+
+        return self.get_webserver_status()
 
     def stop(self) -> ServiceStatus:
         namespace = airflow_settings.AIRFLOW_NAMESPACE

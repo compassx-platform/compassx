@@ -100,6 +100,7 @@ export default function AppShell() {
     if (scopedPathname.startsWith('/logo') || scopedPathname.startsWith('/brand-logo')) return 'Logo Showcase';
     if (scopedPathname.startsWith('/design-system')) return 'Design System';
     if (scopedPathname.startsWith('/settings') || scopedPathname.startsWith('/workspace-settings')) return 'Workspace Settings';
+    if (scopedPathname.startsWith('/account-settings') || scopedPathname.startsWith('/account/settings')) return 'Account Settings';
     if (scopedPathname.startsWith('/ontology') || scopedPathname.startsWith('/topology')) return 'Ontology';
     return 'CompassX';
 
@@ -501,33 +502,60 @@ export default function AppShell() {
                     </div>
                   </div>
 
-                  {/* Account Console — Account Admin Only */}
+                  {/* Account Console & Account Settings — Account Admin Only */}
                   {isAccountAdmin && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setProfileMenuOpen(false);
-                        rawNavigate('/account');
-                      }}
-                      style={{
-                        width: '100%',
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: 10,
-                        padding: '8px 12px',
-                        borderRadius: 8,
-                        border: 'none',
-                        background: 'transparent',
-                        color: 'var(--color-text)',
-                        cursor: 'pointer',
-                        textAlign: 'left',
-                        fontSize: '0.84rem',
-                      }}
-                    >
-                      <Settings size={15} />
-                      <span style={{ flex: 1 }}>Account Console</span>
-                      <ChevronRight size={13} style={{ opacity: 0.45 }} />
-                    </button>
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setProfileMenuOpen(false);
+                          rawNavigate('/account');
+                        }}
+                        style={{
+                          width: '100%',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 10,
+                          padding: '8px 12px',
+                          borderRadius: 8,
+                          border: 'none',
+                          background: 'transparent',
+                          color: 'var(--color-text)',
+                          cursor: 'pointer',
+                          textAlign: 'left',
+                          fontSize: '0.84rem',
+                        }}
+                      >
+                        <Settings size={15} />
+                        <span style={{ flex: 1 }}>Account Console</span>
+                        <ChevronRight size={13} style={{ opacity: 0.45 }} />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setProfileMenuOpen(false);
+                          navigate('/account/settings');
+                        }}
+                        style={{
+                          width: '100%',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 10,
+                          padding: '8px 12px',
+                          borderRadius: 8,
+                          border: 'none',
+                          background: 'transparent',
+                          color: 'var(--color-text)',
+                          cursor: 'pointer',
+                          textAlign: 'left',
+                          fontSize: '0.84rem',
+                        }}
+                      >
+                        <Sliders size={15} />
+                        <span style={{ flex: 1 }}>Account Settings</span>
+                        <ChevronRight size={13} style={{ opacity: 0.45 }} />
+                      </button>
+                    </>
                   )}
 
                   {/* Workspace Settings */}

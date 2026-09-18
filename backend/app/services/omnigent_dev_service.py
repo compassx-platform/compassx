@@ -283,9 +283,9 @@ class OmnigentDevService:
                     except Exception:
                         pass
 
-                # If host is online and connected, runner is alive
-                self.touch_workspace_activity(app.id, ws.id if ws else None)
-                return True
+                # If sessions were found and were active, we already returned True above.
+                # If the host is merely online with no active sessions or recent activity,
+                # we proceed to check filesystem mtime rather than unconditionally keeping it alive.
         except Exception as e:
             logger.debug("Error checking Omnigent live host/sessions: %s", e)
 

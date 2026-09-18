@@ -8,8 +8,9 @@ import {
 } from "../../lib/userManagerApi";
 import { clearSession } from "../../lib/auth";
 import { CompassXLogo } from "@/components/common/CompassXLogo";
+import AccountSettingsPage from "./AccountSettingsPage";
 
-const TABS = ["Users", "Invites", "Groups", "Workspaces", "Audit Log"] as const;
+const TABS = ["Users", "Invites", "Groups", "Workspaces", "Audit Log", "Settings"] as const;
 type Tab = typeof TABS[number];
 
 const STATUS_COLOR: Record<string, string> = {
@@ -476,6 +477,7 @@ export default function AccountConsolePage() {
         {activeTab === "Groups"     && <GroupsTab />}
         {activeTab === "Workspaces" && <WorkspacesTab />}
         {activeTab === "Audit Log"  && <AuditLogTab />}
+        {activeTab === "Settings"   && <AccountSettingsPage />}
       </div>
     </div>
   );

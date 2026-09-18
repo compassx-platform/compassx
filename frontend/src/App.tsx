@@ -69,6 +69,7 @@ import { fetchSetupStatus, fetchEntryPoint } from '@/lib/userManagerApi';
 const LoginPage          = lazy(() => import('@/pages/auth/LoginPage'));
 const SetupWizardPage    = lazy(() => import('@/pages/setup/SetupWizardPage'));
 const AccountConsolePage = lazy(() => import('@/pages/account/AccountConsolePage'));
+const AccountSettingsPage = lazy(() => import('@/pages/account/AccountSettingsPage'));
 const WorkspaceMembersPage = lazy(() => import('@/pages/workspace/WorkspaceMembersPage'));
 const InviteAcceptancePage = lazy(() => import('@/pages/invite/InviteAcceptancePage'));
 const WorkspacePickerPage  = lazy(() => import('@/pages/workspace-picker/WorkspacePickerPage'));
@@ -267,6 +268,8 @@ export default function App() {
               <Route path="/workspace-picker"    element={<UMSuspense><WorkspacePickerPage /></UMSuspense>} />
               <Route path="/no-workspace-access" element={<UMSuspense><NoWorkspacePage /></UMSuspense>} />
               <Route path="/account"             element={<UMSuspense><AccountConsolePage /></UMSuspense>} />
+              <Route path="/account/settings"    element={<UMSuspense><AccountSettingsPage /></UMSuspense>} />
+              <Route path="/account-settings"    element={<UMSuspense><AccountSettingsPage /></UMSuspense>} />
               <Route path="/account/workspaces/:workspaceId/members" element={<UMSuspense><WorkspaceMembersPage /></UMSuspense>} />
               <Route path="/design-system"        element={<DesignSystemShowcasePage />} />
               <Route path="/ontology"             element={<OntologyPage />} />
@@ -342,6 +345,9 @@ export default function App() {
                   {/* Workspace Settings */}
                   <Route path="settings" element={<WorkspaceSettingsPage />} />
                   <Route path="workspace-settings" element={<WorkspaceSettingsPage />} />
+                  {/* Account Settings */}
+                  <Route path="account-settings" element={<UMSuspense><AccountSettingsPage /></UMSuspense>} />
+                  <Route path="account/settings" element={<UMSuspense><AccountSettingsPage /></UMSuspense>} />
                   {/* Fallback for unhandled sub-routes inside an app */}
                   <Route path="*" element={<AppHomeRedirect />} />
                 </Route>

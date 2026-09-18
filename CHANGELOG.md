@@ -5,6 +5,32 @@ All notable changes to the CompassX Platform will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.2] - 2026-09-18
+
+### 🚀 Highlights
+
+CompassX `0.9.2` delivers **Dedicated App Workload Node Pool Provisioning & Dynamic Switchover**, **Account Settings Console & Management API**, **On-Demand Airflow Webserver Lifecycle Management**, and **Cluster Resource Scheduling Isolation**.
+
+### ✨ Features & Enhancements
+
+#### Dedicated App Node Pool Management (`NodePoolManager`)
+- **AKS Node Pool Provisioning**: Automated management of dedicated AKS node pools (`apppool`) with support for curated Azure VM size tiers (Burstable, Compute-Optimized, Memory-Optimized).
+- **Dynamic Workload Switchover**: One-click rolling migration of all running app deployments and dev sandboxes between the shared pool (`userpoolv2`) and the dedicated app pool (`apppool`).
+- **Cluster Discovery & Status**: Live inspection of cluster node pools, node readiness, active VM sizes, and app workload distribution.
+
+#### Account Settings Console & API
+- **New Account Settings UI**: Added Account Settings page accessible via the profile menu and Account Console tabs for Account Admins.
+- **REST Endpoints**: Added `GET/PATCH /api/v1/account/settings`, `GET /api/v1/account/settings/nodepool/status`, and `POST /api/v1/account/settings/nodepool/switchover`.
+
+#### On-Demand Airflow Webserver Lifecycle Management
+- **Scale-to-Zero Webserver**: Ability to start and stop the Airflow Webserver on-demand from Account Settings to conserve cluster compute while keeping the scheduler and worker active.
+- **Helm Configuration**: Updated chart defaults for on-demand webserver support.
+
+#### Workload Placement & Node Isolation
+- **Driver Node Targeting**: App runner and dev sandbox deployment builders route workloads to dedicated node pools dynamically based on active account configuration.
+
+---
+
 ## [0.9.1] - 2026-09-16
 
 ### 🚀 Highlights

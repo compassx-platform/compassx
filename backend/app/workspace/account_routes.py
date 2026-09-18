@@ -65,6 +65,154 @@ def patch_account(
     return account
 
 
+# ── Account Settings ─────────────────────────────────────────────────────────
+
+DEFAULT_ACCOUNT_SETTINGS = {
+    "airflow": {
+        "webserver_enabled": False,
+    },
+    "app_node_pool": {
+        "dedicated_pool_enabled": False,
+        "pool_name": "apppool",
+        "default_pool_name": "userpoolv2",
+        "vm_size": "Standard_B2s_v2",
+        "min_count": 1,
+        "max_count": 5,
+        "auto_scale": True,
+    },
+}
+
+
+@router.get("/settings")
+def get_account_settings(
+    db: Session = Depends(get_account_db),
+    _admin: Principal = Depends(require_account_admin),
+):
+    account = db.query(Account).first()
+    if account is None:
+        raise HTTPException(status_code=404, detail="Account not found")
+
+    saved = getattr(account, "settings", None) or {}
+    merged = {**DEFAULT_ACCOUNT_SETTINGS, **saved}
+    for k in ["airflow", "app_node_pool"]:
+        if k in DEFAULT_ACCOUNT_SETTINGS and isinstance(DEFAULT_ACCOUNT_SETTINGS[k], dict):
+            merged[k] = {**DEFAULT_ACCOUNT_SETTINGS[k], **saved.get(k, {})}
+
+    # Enrich with live Airflow Webserver status
+    try:
+        from services.airflow.manager import get_airflow_manager
+        mgr = get_airflow_manager()
+        live_status = mgr.get_webserver_status()
+        merged["airflow"]["webserver_status"] = live_status.get("status", "stopped")
+        merged["airflow"]["webserver_replicas"] = live_status.get("replicas", 0)
+        merged["airflow"]["webserver_available_replicas"] = live_status.get("available_replicas", 0)
+        merged["airflow"]["webserver_url"] = live_status.get("url")
+    except Exception as exc:
+        logger.debug("Could not query live Airflow webserver status: %s", exc)
+        merged["airflow"]["webserver_status"] = "stopped" if not merged["airflow"].get("webserver_enabled") else "unknown"
+
+    # Enrich with live App Node Pool status
+    try:
+        from app.services.node_pool_manager import node_pool_manager
+        pool_status = node_pool_manager.get_node_pool_status()
+        merged["app_node_pool"] = {**merged.get("app_node_pool", {}), **pool_status}
+    except Exception as exc:
+        logger.debug("Could not query live node pool status: %s", exc)
+
+    return {
+        "account_id": str(account.id),
+        "account_name": account.name,
+        "account_slug": account.slug,
+        "settings": merged,
+    }
+
+
+@router.patch("/settings")
+def update_account_settings(
+    body: dict,
+    db: Session = Depends(get_account_db),
+    _admin: Principal = Depends(require_account_admin),
+):
+    account = db.query(Account).first()
+    if account is None:
+        raise HTTPException(status_code=404, detail="Account not found")
+
+    existing = dict(getattr(account, "settings", None) or {})
+    for key, value in body.items():
+        if isinstance(value, dict) and key in existing and isinstance(existing[key], dict):
+            existing[key] = {**existing[key], **value}
+        else:
+            existing[key] = value
+
+    account.settings = existing
+    db.commit()
+    db.refresh(account)
+
+    # 1. Apply Airflow webserver on-demand start/stop if requested
+    if "airflow" in body and isinstance(body["airflow"], dict) and "webserver_enabled" in body["airflow"]:
+        enable_ws = bool(body["airflow"]["webserver_enabled"])
+        try:
+            from services.airflow.manager import get_airflow_manager
+            mgr = get_airflow_manager()
+            if enable_ws:
+                mgr.start_webserver()
+            else:
+                mgr.stop_webserver()
+        except Exception as exc:
+            logger.warning("Could not apply Airflow webserver state change: %s", exc)
+
+    # 2. Apply App Node Pool configuration & pod switchover if requested
+    if "app_node_pool" in body and isinstance(body["app_node_pool"], dict):
+        pool_cfg = body["app_node_pool"]
+        try:
+            from app.services.node_pool_manager import node_pool_manager
+            dedicated = bool(pool_cfg.get("dedicated_pool_enabled", existing.get("app_node_pool", {}).get("dedicated_pool_enabled", False)))
+            vm_size = str(pool_cfg.get("vm_size") or existing.get("app_node_pool", {}).get("vm_size") or "Standard_B2s_v2")
+            min_count = int(pool_cfg.get("min_count") or 1)
+            max_count = int(pool_cfg.get("max_count") or 5)
+            auto_scale = bool(pool_cfg.get("auto_scale", True))
+            pool_name = str(pool_cfg.get("pool_name") or "apppool")
+            default_pool_name = str(pool_cfg.get("default_pool_name") or "userpoolv2")
+
+            if dedicated:
+                # Trigger AKS nodepool provision/update in background
+                node_pool_manager.trigger_provision_nodepool_async(
+                    vm_size=vm_size, min_count=min_count, max_count=max_count, auto_scale=auto_scale
+                )
+                # Immediately roll over app workloads to target dedicated pool
+                target = pool_name
+            else:
+                # Roll over app workloads to default user pool
+                target = default_pool_name
+
+            node_pool_manager.switchover_app_workloads(target_pool=target)
+        except Exception as exc:
+            logger.warning("Could not apply App Node Pool configuration change: %s", exc)
+
+    return get_account_settings(db=db, _admin=_admin)
+
+
+@router.post("/settings/nodepool/switchover")
+def trigger_nodepool_switchover(
+    target_pool: Optional[str] = None,
+    _admin: Principal = Depends(require_account_admin),
+):
+    """Trigger manual/forced rolling switchover of all app pods to the target node pool."""
+    from app.services.node_pool_manager import node_pool_manager
+    res = node_pool_manager.switchover_app_workloads(target_pool=target_pool)
+    return res
+
+
+@router.get("/settings/nodepool/status")
+def get_nodepool_status(
+    _admin: Principal = Depends(require_account_admin),
+):
+    """Return live node pool status, cluster pools, and app workloads."""
+    from app.services.node_pool_manager import node_pool_manager
+    return node_pool_manager.get_node_pool_status()
+
+
+
 # ── Workspaces ───────────────────────────────────────────────────────────────
 
 @router.get("/workspaces", response_model=list[WorkspaceOut])
