@@ -601,6 +601,28 @@ class KubernetesAppDriver(BaseAppDriver):
                             "last_updated": now_iso,
                         }
                     elif reason in ("ContainerCreating", "PodInitializing"):
+                        prov_msg = "Container is initializing on node..."
+                        prov_desc = "Pulling container image & initializing app container..."
+                        try:
+                            evs = k8s.core().list_namespaced_event(
+                                namespace=ns,
+                                field_selector=f"involvedObject.name={pod_name}"
+                            )
+                            if evs and evs.items:
+                                latest_ev = sorted(
+                                    evs.items,
+                                    key=lambda ev: ev.last_timestamp or ev.event_time or ev.metadata.creation_timestamp or datetime.min.replace(tzinfo=timezone.utc)
+                                )[-1]
+                                if latest_ev.message:
+                                    prov_msg = latest_ev.message
+                                if latest_ev.reason == "Pulling":
+                                    prov_desc = "Downloading host base container image..."
+                                elif latest_ev.reason == "Pulled":
+                                    prov_desc = "Image pulled. Creating and starting container..."
+                                elif latest_ev.reason == "Scheduled":
+                                    prov_desc = "Pod scheduled. Allocating container storage..."
+                        except Exception:
+                            pass
                         return {
                             "app_id": app.id,
                             "status": "provisioning",
@@ -612,13 +634,28 @@ class KubernetesAppDriver(BaseAppDriver):
                             "ready_replicas": 0,
                             "available_replicas": 0,
                             "step": 2,
-                            "step_description": "Pulling container image & initializing app container...",
-                            "message": "Container is initializing on node...",
+                            "step_description": prov_desc,
+                            "message": prov_msg,
                             "url": live_url,
                             "last_updated": now_iso,
                         }
 
             if pod_phase == "Pending":
+                pend_msg = "Pod is pending placement on node..."
+                try:
+                    evs = k8s.core().list_namespaced_event(
+                        namespace=ns,
+                        field_selector=f"involvedObject.name={pod_name}"
+                    )
+                    if evs and evs.items:
+                        latest_ev = sorted(
+                            evs.items,
+                            key=lambda ev: ev.last_timestamp or ev.event_time or ev.metadata.creation_timestamp or datetime.min.replace(tzinfo=timezone.utc)
+                        )[-1]
+                        if latest_ev.message:
+                            pend_msg = latest_ev.message
+                except Exception:
+                    pass
                 return {
                     "app_id": app.id,
                     "status": "provisioning",
@@ -631,7 +668,7 @@ class KubernetesAppDriver(BaseAppDriver):
                     "available_replicas": 0,
                     "step": 1,
                     "step_description": "Allocating cluster resources and scheduling pod...",
-                    "message": "Pod is pending placement on node...",
+                    "message": pend_msg,
                     "url": live_url,
                     "last_updated": now_iso,
                 }
@@ -719,9 +756,45 @@ class KubernetesAppDriver(BaseAppDriver):
             pods = k8s.core().list_namespaced_pod(namespace=ns, label_selector=f"compassx/app-id={clean_id},compassx/role=prod")
             if not pods.items:
                 return []
-            pod_name = pods.items[0].metadata.name
-            raw = k8s.core().read_namespaced_pod_log(name=pod_name, namespace=ns, tail_lines=max_lines)
-            return [line for line in raw.splitlines() if line.strip()]
+            active_pods = [p for p in pods.items if not p.metadata.deletion_timestamp]
+            target_pod = active_pods[0] if active_pods else pods.items[0]
+            pod_name = target_pod.metadata.name
+
+            container_logs: List[str] = []
+            try:
+                raw = k8s.core().read_namespaced_pod_log(name=pod_name, namespace=ns, tail_lines=max_lines)
+                if raw and raw.strip():
+                    container_logs = [line for line in raw.splitlines() if line.strip()]
+            except Exception as e:
+                logger.debug("Container log not yet readable for pod %s: %s", pod_name, e)
+
+            # Query pod lifecycle events
+            event_logs: List[str] = []
+            try:
+                evs = k8s.core().list_namespaced_event(
+                    namespace=ns,
+                    field_selector=f"involvedObject.name={pod_name}"
+                )
+                if evs and evs.items:
+                    sorted_evs = sorted(
+                        evs.items,
+                        key=lambda ev: ev.last_timestamp or ev.event_time or ev.metadata.creation_timestamp or datetime.min.replace(tzinfo=timezone.utc)
+                    )
+                    for ev in sorted_evs:
+                        ts = ev.last_timestamp or ev.event_time or ev.metadata.creation_timestamp
+                        ts_str = ts.strftime("%H:%M:%S") if ts and hasattr(ts, "strftime") else "PROVISION"
+                        reason = ev.reason or "Event"
+                        msg = ev.message or ""
+                        event_logs.append(f"[{ts_str}] [PROVISION] [{reason}] {msg}")
+            except Exception as ev_err:
+                logger.debug("Could not read pod events for %s: %s", pod_name, ev_err)
+
+            if container_logs:
+                # Merge recent provisioning events before container output
+                return event_logs + container_logs
+            elif event_logs:
+                return event_logs
+            return []
         except Exception as e:
             logger.debug("Could not read K8s pod logs for app %s: %s", app.id, e)
             return []
@@ -985,7 +1058,7 @@ class KubernetesDevDriver(BaseDevDriver):
                 dev_container = client.V1Container(
                     name="dev-host",
                     image="ghcr.io/omnigent-ai/omnigent-host:latest",
-                    image_pull_policy="IfNotPresent",
+                    image_pull_policy="Always",
                     command=["/bin/sh", "-c"],
                     args=[dev_cmd],
                     ports=[client.V1ContainerPort(container_port=8080, name="http")],
@@ -1005,8 +1078,9 @@ class KubernetesDevDriver(BaseDevDriver):
                     ),
                     volume_mounts=[
                         client.V1VolumeMount(
-                            name="dev-workspaces",
+                            name="shared-storage",
                             mount_path="/workspaces",
+                            sub_path="workspaces",
                         )
                     ],
                 )
@@ -1055,9 +1129,9 @@ class KubernetesDevDriver(BaseDevDriver):
                                 restart_policy="Always",
                                 volumes=[
                                     client.V1Volume(
-                                        name="dev-workspaces",
+                                        name="shared-storage",
                                         persistent_volume_claim=client.V1PersistentVolumeClaimVolumeSource(
-                                            claim_name="compassx-dev-workspaces",
+                                            claim_name="compassx-shared-storage",
                                         ),
                                     )
                                 ],

@@ -170,7 +170,11 @@ export function useAppDeployments(appId?: string, enabled = true) {
   });
 }
 
-export function useAppLogs(appId?: string, enabled = true) {
+export function useAppLogs(
+  appId?: string,
+  enabled = true,
+  refetchInterval?: number | false | ((query: any) => number | false)
+) {
   return useQuery({
     queryKey: ['app-logs', appId],
     queryFn: async () => {
@@ -179,7 +183,7 @@ export function useAppLogs(appId?: string, enabled = true) {
       return res.data;
     },
     enabled: !!appId && enabled,
-    refetchInterval: enabled ? 3000 : false,
+    refetchInterval: refetchInterval !== undefined ? refetchInterval : (enabled ? 2000 : false),
   });
 }
 

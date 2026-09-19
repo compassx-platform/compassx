@@ -138,10 +138,16 @@ export default function AppDetailPage() {
   const [isStoppingApp, setIsStoppingApp] = useState(false);
   const [appLaunchStep, setAppLaunchStep] = useState(0);
   const [appLaunchStatusText, setAppLaunchStatusText] = useState('');
+  const [startupElapsedSeconds, setStartupElapsedSeconds] = useState(0);
+  const startupTerminalRef = useRef<HTMLDivElement>(null);
+
+  const rawStatusForLogs = runtimeStatus?.status || app?.status || 'stopped';
+  const isCurrentlyStarting = isStartingApp || rawStatusForLogs === 'starting' || rawStatusForLogs === 'provisioning';
 
   const { data: logsData, isFetching: logsFetching, refetch: refetchLogs } = useAppLogs(
     resolvedAppId,
-    activeTab === 'logs' || activeTab === 'overview'
+    activeTab === 'logs' || activeTab === 'overview' || isCurrentlyStarting,
+    isCurrentlyStarting ? 1500 : undefined
   );
   const { data: deploymentsData, isFetching: deploymentsFetching, refetch: refetchDeployments } = useAppDeployments(
     resolvedAppId,
@@ -569,10 +575,11 @@ export default function AppDetailPage() {
       setAppLaunchStep(2);
       setAppLaunchStatusText('2. Allocating cluster resources & scheduling pod...');
 
-      // Poll runtime status every 1.5s until active or error
-      const maxAttempts = 20;
+      // Poll runtime status & logs every 1.5s until active, error, or max attempts (3 min)
+      const maxAttempts = 120;
       for (let i = 0; i < maxAttempts; i++) {
         await new Promise((r) => setTimeout(r, 1500));
+        refetchLogs();
         const res = await refetchRuntimeStatus();
         const cur = res.data;
         if (cur?.status === 'active' || cur?.phase === 'Running' || (cur?.ready_replicas && cur.ready_replicas > 0)) {
@@ -582,7 +589,7 @@ export default function AppDetailPage() {
           break;
         } else if (cur?.phase === 'ContainerCreating' || cur?.phase === 'Starting' || cur?.step === 2) {
           setAppLaunchStep(3);
-          setAppLaunchStatusText('3. Pulling container image & starting application server...');
+          setAppLaunchStatusText(cur?.step_description || '3. Pulling container image & starting application server...');
         } else if (cur?.status === 'error' || ['CrashLoopBackOff', 'ImagePullBackOff', 'ErrImagePull', 'Error', 'OOMKilled'].includes(cur?.phase || '')) {
           toast.error(cur?.message || `Pod error: ${cur?.phase}`);
           break;
@@ -784,6 +791,53 @@ export default function AppDetailPage() {
   const isAppError = rawStatus === 'error' || ['CrashLoopBackOff', 'ImagePullBackOff', 'ErrImagePull', 'Error', 'OOMKilled'].includes(rawPhase);
   const isRunning = isAppLive;
   const isLive = isAppLive;
+
+  useEffect(() => {
+    let interval: any = null;
+    if (isAppStarting) {
+      interval = setInterval(() => {
+        setStartupElapsedSeconds((prev) => prev + 1);
+      }, 1000);
+    } else {
+      setStartupElapsedSeconds(0);
+    }
+    return () => {
+      if (interval) clearInterval(interval);
+    };
+  }, [isAppStarting]);
+
+  useEffect(() => {
+    if (isAppStarting && startupTerminalRef.current) {
+      startupTerminalRef.current.scrollTop = startupTerminalRef.current.scrollHeight;
+    }
+  }, [isAppStarting, rawLogs]);
+
+  const currentStartupStep = useMemo(() => {
+    if (isAppLive) return 4;
+    if (runtimeStatus?.step && runtimeStatus.step > 0) return runtimeStatus.step;
+    if (rawPhase === 'Running') return 3;
+    if (rawPhase === 'ContainerCreating' || rawPhase === 'PodInitializing') return 2;
+    if (rawPhase === 'Pending') return 1;
+    if (appLaunchStep > 0) return appLaunchStep;
+    return 1;
+  }, [isAppLive, runtimeStatus?.step, rawPhase, appLaunchStep]);
+
+  const currentStartupMessage = useMemo(() => {
+    if (runtimeStatus?.message && runtimeStatus.message !== 'Application is stopped / not deployed.') return runtimeStatus.message;
+    if (runtimeStatus?.step_description) return runtimeStatus.step_description;
+    if (appLaunchStatusText) return appLaunchStatusText;
+    if (currentStartupStep === 1) return 'Allocating cluster resources & scheduling pod on AKS node...';
+    if (currentStartupStep === 2) return 'Downloading container image (~1.7 GB) & initializing container...';
+    if (currentStartupStep === 3) return 'Cloning repository, installing dependencies & compiling frontend...';
+    if (currentStartupStep === 4) return 'Application server is live and serving traffic!';
+    return 'Starting application container...';
+  }, [runtimeStatus?.message, runtimeStatus?.step_description, appLaunchStatusText, currentStartupStep]);
+
+  function formatElapsedTime(sec: number): string {
+    const m = Math.floor(sec / 60);
+    const s = sec % 60;
+    return `${m < 10 ? '0' : ''}${m}:${s < 10 ? '0' : ''}${s}`;
+  }
 
   const runtimeInfo = app.config?.runtime;
   const runtimePort = runtimeStatus?.url ? undefined : runtimeInfo?.host_port;
@@ -1198,8 +1252,8 @@ export default function AppDetailPage() {
           <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
             <div
               style={{
-                width: 36,
-                height: 36,
+                width: 38,
+                height: 38,
                 borderRadius: '50%',
                 background: '#ffffff',
                 border: '1px solid #bae6fd',
@@ -1207,17 +1261,40 @@ export default function AppDetailPage() {
                 alignItems: 'center',
                 justifyContent: 'center',
                 flexShrink: 0,
+                boxShadow: '0 1px 4px rgba(2, 132, 199, 0.15)',
               }}
             >
-              <Loader2 size={18} className="spin" color="#0284c7" />
+              <Loader2 size={19} className="spin" color="#0284c7" />
             </div>
             <div>
-              <div style={{ fontWeight: 600, fontSize: '0.9rem', color: '#0369a1' }}>
-                {appLaunchStatusText || 'Provisioning application container on cluster...'}
+              <div style={{ fontWeight: 650, fontSize: '0.92rem', color: '#0369a1', display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span>{currentStartupMessage}</span>
               </div>
-              <div style={{ fontSize: '0.78rem', color: '#0284c7', marginTop: 2 }}>
-                Profile: <span style={{ fontWeight: 600 }}>{runtimeMode}</span> • Phase: <span style={{ fontWeight: 600 }}>{rawPhase}</span>
-                {runtimeStatus?.pod_name ? ` • Pod: ${runtimeStatus.pod_name}` : ''}
+              <div style={{ fontSize: '0.78rem', color: '#0284c7', marginTop: 3, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                <span>
+                  Profile: <strong style={{ color: '#075985' }}>{runtimeMode}</strong>
+                </span>
+                <span>•</span>
+                <span>
+                  Phase: <strong style={{ color: '#075985' }}>{rawPhase}</strong>
+                </span>
+                {runtimeStatus?.pod_name && (
+                  <>
+                    <span>•</span>
+                    <span>
+                      Pod: <code style={{ fontSize: '0.75rem', background: 'rgba(255,255,255,0.7)', padding: '1px 5px', borderRadius: 4 }}>{runtimeStatus.pod_name}</code>
+                    </span>
+                  </>
+                )}
+                {startupElapsedSeconds > 0 && (
+                  <>
+                    <span>•</span>
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontWeight: 700, color: '#0284c7' }}>
+                      <Clock size={12} />
+                      Elapsed: {formatElapsedTime(startupElapsedSeconds)}
+                    </span>
+                  </>
+                )}
               </div>
             </div>
           </div>
@@ -1226,12 +1303,12 @@ export default function AppDetailPage() {
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             {[
               { num: 1, label: 'Resources' },
-              { num: 2, label: 'Pod Schedule' },
-              { num: 3, label: 'Container Init' },
-              { num: 4, label: 'Live Ready' },
+              { num: 2, label: 'Image Pull' },
+              { num: 3, label: 'Build & Init' },
+              { num: 4, label: 'Live Server' },
             ].map((st) => {
-              const isPast = appLaunchStep > st.num;
-              const isCur = appLaunchStep === st.num;
+              const isPast = currentStartupStep > st.num;
+              const isCur = currentStartupStep === st.num;
               return (
                 <div
                   key={st.num}
@@ -1716,6 +1793,257 @@ export default function AppDetailPage() {
                     </button>
                   </div>
                 </div>
+              ) : isAppStarting ? (
+                <div
+                  style={{
+                    border: '1px solid #bae6fd',
+                    borderRadius: 8,
+                    background: 'linear-gradient(180deg, #f8fafc 0%, #f0f9ff 100%)',
+                    overflow: 'hidden',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    boxShadow: '0 4px 12px rgba(2, 132, 199, 0.08)',
+                  }}
+                >
+                  {/* Console Header Bar */}
+                  <div
+                    style={{
+                      padding: '12px 16px',
+                      background: 'linear-gradient(135deg, #0284c7 0%, #0369a1 100%)',
+                      color: '#ffffff',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      flexWrap: 'wrap',
+                      gap: 10,
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                      <div
+                        style={{
+                          width: 28,
+                          height: 28,
+                          borderRadius: '50%',
+                          background: 'rgba(255,255,255,0.2)',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                        }}
+                      >
+                        <Loader2 size={16} className="spin" color="#ffffff" />
+                      </div>
+                      <div>
+                        <div style={{ fontWeight: 700, fontSize: '0.88rem' }}>
+                          Starting & Provisioning Application
+                        </div>
+                        <div style={{ fontSize: '0.74rem', color: '#e0f2fe' }}>
+                          {currentStartupMessage}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                      <div
+                        style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: 6,
+                          background: 'rgba(0,0,0,0.25)',
+                          padding: '4px 10px',
+                          borderRadius: 20,
+                          fontSize: '0.78rem',
+                          fontWeight: 700,
+                          color: '#f0f9ff',
+                        }}
+                      >
+                        <Clock size={13} />
+                        <span>Elapsed: {formatElapsedTime(startupElapsedSeconds)}</span>
+                      </div>
+
+                      <button
+                        className="btn btn-outline"
+                        style={{
+                          fontSize: '0.72rem',
+                          padding: '3px 8px',
+                          color: '#fff',
+                          borderColor: 'rgba(255,255,255,0.4)',
+                          background: 'rgba(255,255,255,0.1)',
+                        }}
+                        onClick={() => refetchLogs()}
+                        title="Refresh logs stream"
+                      >
+                        <RotateCw size={11} /> Refresh
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* 4-Step Progress Track */}
+                  <div
+                    style={{
+                      padding: '14px 16px',
+                      background: '#ffffff',
+                      borderBottom: '1px solid #e0f2fe',
+                      display: 'grid',
+                      gridTemplateColumns: 'repeat(4, 1fr)',
+                      gap: 8,
+                    }}
+                  >
+                    {[
+                      {
+                        step: 1,
+                        title: '1. Pod Schedule',
+                        desc: 'Resource Allocation',
+                      },
+                      {
+                        step: 2,
+                        title: '2. Image Pull',
+                        desc: 'Base Image (~1.7 GB)',
+                      },
+                      {
+                        step: 3,
+                        title: '3. Build & Deps',
+                        desc: 'Compile & Install',
+                      },
+                      {
+                        step: 4,
+                        title: '4. Live Ready',
+                        desc: 'Port 8080 Active',
+                      },
+                    ].map((st) => {
+                      const isPast = currentStartupStep > st.step;
+                      const isCur = currentStartupStep === st.step;
+                      return (
+                        <div
+                          key={st.step}
+                          style={{
+                            padding: '8px 10px',
+                            borderRadius: 6,
+                            background: isPast ? '#f0fdf4' : isCur ? '#eff6ff' : '#f8fafc',
+                            border: isPast ? '1px solid #86efac' : isCur ? '1px solid #93c5fd' : '1px solid #e2e8f0',
+                            display: 'flex',
+                            flexDirection: 'column',
+                            gap: 2,
+                            transition: 'all 0.2s ease',
+                          }}
+                        >
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.76rem', fontWeight: 700, color: isPast ? '#15803d' : isCur ? '#1d4ed8' : '#64748b' }}>
+                            {isPast ? (
+                              <CheckCircle2 size={13} color="#16a34a" />
+                            ) : isCur ? (
+                              <Loader2 size={13} className="spin" color="#2563eb" />
+                            ) : (
+                              <span style={{ width: 13, height: 13, borderRadius: '50%', border: '1px solid #94a3b8', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.65rem' }}>
+                                {st.step}
+                              </span>
+                            )}
+                            <span>{st.title}</span>
+                          </div>
+                          <div style={{ fontSize: '0.68rem', color: isPast ? '#166534' : isCur ? '#1e40af' : '#94a3b8', paddingLeft: 19 }}>
+                            {st.desc}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  {/* Real-time Streaming Logs Terminal */}
+                  <div style={{ display: 'flex', flexDirection: 'column' }}>
+                    <div
+                      style={{
+                        padding: '6px 14px',
+                        background: '#0f172a',
+                        borderBottom: '1px solid #1e293b',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        fontSize: '0.72rem',
+                        color: '#94a3b8',
+                      }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <Terminal size={12} color="#38bdf8" />
+                        <span style={{ color: '#f1f5f9', fontWeight: 600 }}>Live Cluster Events & Container Logs</span>
+                        <span>({rawLogs.length} lines)</span>
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, color: '#4ade80' }}>
+                          <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#4ade80' }} />
+                          Streaming Live
+                        </span>
+                      </div>
+                    </div>
+
+                    <div
+                      ref={startupTerminalRef}
+                      style={{
+                        height: 280,
+                        overflowY: 'auto',
+                        background: '#090d16',
+                        padding: '12px 14px',
+                        fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
+                        fontSize: '0.78rem',
+                        lineHeight: '1.5',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: 2,
+                      }}
+                    >
+                      {rawLogs.length === 0 ? (
+                        <div style={{ color: '#64748b', fontStyle: 'italic', padding: '20px 0', textAlign: 'center' }}>
+                          Connecting to cluster event stream...
+                        </div>
+                      ) : (
+                        rawLogs.map((line, idx) => {
+                          let lineStyle: React.CSSProperties = { color: '#e2e8f0' };
+                          if (line.includes('[PROVISION]')) {
+                            lineStyle = { color: '#7dd3fc' };
+                          } else if (line.includes('[BUILD]')) {
+                            lineStyle = { color: '#fef08a' };
+                          } else if (line.includes('[RUNTIME]')) {
+                            lineStyle = { color: '#86efac', fontWeight: 600 };
+                          } else if (line.includes('[ERROR]') || line.includes('ERR')) {
+                            lineStyle = { color: '#fca5a5' };
+                          } else if (line.includes('[WARN]')) {
+                            lineStyle = { color: '#fde047' };
+                          } else if (line.includes('[INFO]')) {
+                            lineStyle = { color: '#93c5fd' };
+                          }
+                          return (
+                            <div key={idx} style={{ ...lineStyle, wordBreak: 'break-all', whiteSpace: 'pre-wrap' }}>
+                              {line}
+                            </div>
+                          );
+                        })
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Cold-start Info Footer */}
+                  <div
+                    style={{
+                      padding: '10px 14px',
+                      background: '#f8fafc',
+                      borderTop: '1px solid #e2e8f0',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      fontSize: '0.74rem',
+                      color: 'var(--color-text-muted)',
+                      flexWrap: 'wrap',
+                      gap: 8,
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <Sparkles size={13} color="#0284c7" />
+                      <span>
+                        Cold start downloads the runtime image (~1.7 GB) & compiles assets (30s – 2.5m).
+                      </span>
+                    </div>
+                    <div>
+                      Container: <code>{runtimeStatus?.pod_name || 'compassx-app-pod'}</code>
+                    </div>
+                  </div>
+                </div>
               ) : (
                 <div
                   style={{
@@ -1750,13 +2078,22 @@ export default function AppDetailPage() {
                   <p style={{ margin: '0 0 14px', fontSize: '0.8rem', color: 'var(--color-text-muted)', maxWidth: 360 }}>
                     Click redeploy or start to launch the container runner.
                   </p>
-                  <button
-                    className="btn btn-primary"
-                    onClick={handleTriggerDeploy}
-                    disabled={isDeploying}
-                  >
-                    <RotateCw size={13} className={isDeploying ? 'spin' : ''} /> Deploy Container
-                  </button>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <button
+                      className="btn btn-outline"
+                      onClick={handleStartApp}
+                      disabled={isStartingApp}
+                    >
+                      <Play size={13} /> Start App
+                    </button>
+                    <button
+                      className="btn btn-primary"
+                      onClick={handleTriggerDeploy}
+                      disabled={isDeploying}
+                    >
+                      <RotateCw size={13} className={isDeploying ? 'spin' : ''} /> Deploy Container
+                    </button>
+                  </div>
                 </div>
               )}
             </div>
