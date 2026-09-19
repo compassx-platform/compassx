@@ -328,21 +328,58 @@ CMD ["python", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080
         # Stored logs fallback
         return cfg.get("logs") or [f"[INFO] App '{app.name}' is registered and active."]
 
-    def stop_app(self, app) -> None:
+    def stop_app(self, app) -> Dict[str, Any]:
         """Stop the running container, pod, or process."""
         cfg = app.config or {}
         mode = (cfg.get("runtime") or {}).get("mode")
         driver = driver_factory.get_app_driver(mode)
         driver.stop(app)
+        return {
+            "app_id": app.id,
+            "status": "stopping",
+            "phase": "Terminating",
+            "mode": mode,
+            "step": 0,
+            "step_description": "Stopping application instance...",
+            "message": "Application stop initiated.",
+        }
 
-    def start_app(self, app) -> None:
+    def start_app(self, app) -> Dict[str, Any]:
         """Start a stopped app instance."""
         cfg = app.config or {}
         mode = (cfg.get("runtime") or {}).get("mode")
-        container_name = (cfg.get("runtime") or {}).get("container_name") or f"compassx-app-{app.id}"
+        driver = driver_factory.get_app_driver(mode)
+        return driver.start(app)
 
-        if (mode == "docker" or self.is_docker_available()) and container_name:
-            subprocess.run(["docker", "start", container_name], capture_output=True, text=True, check=False)
+    def get_runtime_status(self, app, db=None) -> Dict[str, Any]:
+        """Fetch real-time runtime status for the app container/pod and reconcile with database status if needed."""
+        cfg = app.config or {}
+        mode = (cfg.get("runtime") or {}).get("mode")
+        driver = driver_factory.get_app_driver(mode)
+        status_info = driver.get_status(app)
+
+        cur_runtime_status = status_info.get("status")
+        if db and cur_runtime_status:
+            from sqlalchemy.orm.attributes import flag_modified
+            should_update = False
+            if cur_runtime_status == "active" and app.status not in ("active",):
+                app.status = "active"
+                should_update = True
+            elif cur_runtime_status == "stopped" and app.status in ("stopping", "provisioning", "starting"):
+                app.status = "stopped"
+                should_update = True
+            elif cur_runtime_status == "error" and app.status not in ("error",):
+                app.status = "error"
+                should_update = True
+
+            if should_update:
+                try:
+                    db.commit()
+                    db.refresh(app)
+                except Exception as ex:
+                    logger.debug("Failed to auto-sync app %s status: %s", app.id, ex)
+
+        return status_info
 
     def delete_app_runtime(self, app) -> None:
         """Clean up app runtime resources and storage."""

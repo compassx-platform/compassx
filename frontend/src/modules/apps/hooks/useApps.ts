@@ -183,6 +183,80 @@ export function useAppLogs(appId?: string, enabled = true) {
   });
 }
 
+export interface AppRuntimeStatus {
+  app_id: string;
+  status: 'active' | 'running' | 'provisioning' | 'starting' | 'stopping' | 'stopped' | 'error' | string;
+  phase?: 'Running' | 'Pending' | 'ContainerCreating' | 'Terminating' | 'Stopped' | 'CrashLoopBackOff' | 'NotFound' | string;
+  mode?: 'kubernetes' | 'docker' | 'local' | string;
+  container_name?: string;
+  container_id?: string;
+  pod_name?: string;
+  replicas?: number;
+  ready_replicas?: number;
+  available_replicas?: number;
+  step?: number;
+  step_description?: string;
+  message?: string;
+  url?: string;
+  last_updated?: string;
+}
+
+export function useAppRuntimeStatus(appId?: string, enabled = true) {
+  return useQuery({
+    queryKey: ['app-runtime-status', appId],
+    queryFn: async () => {
+      if (!appId) throw new Error('App ID required');
+      const res = await api.get<AppRuntimeStatus>(`/apps/${appId}/runtime-status`);
+      return res.data;
+    },
+    enabled: !!appId && enabled,
+    refetchInterval: (query) => {
+      if (!enabled) return false;
+      const st = query.state.data?.status;
+      if (st === 'provisioning' || st === 'starting' || st === 'stopping') {
+        return 1500;
+      }
+      return 6000;
+    },
+  });
+}
+
+export function useStartApp() {
+  const qc = useQueryClient();
+  const workspace = useWorkspaceContext();
+  const wsId = workspace?.id;
+
+  return useMutation({
+    mutationFn: async (appId: string) => {
+      const res = await api.post<AppRuntimeStatus>(`/apps/${appId}/start`);
+      return res.data;
+    },
+    onSuccess: (data) => {
+      qc.invalidateQueries({ queryKey: ['app-runtime-status', data.app_id] });
+      qc.invalidateQueries({ queryKey: ['app-detail', data.app_id] });
+      qc.invalidateQueries({ queryKey: ['apps-list', wsId] });
+    },
+  });
+}
+
+export function useStopApp() {
+  const qc = useQueryClient();
+  const workspace = useWorkspaceContext();
+  const wsId = workspace?.id;
+
+  return useMutation({
+    mutationFn: async (appId: string) => {
+      const res = await api.post<AppRuntimeStatus>(`/apps/${appId}/stop`);
+      return res.data;
+    },
+    onSuccess: (data) => {
+      qc.invalidateQueries({ queryKey: ['app-runtime-status', data.app_id] });
+      qc.invalidateQueries({ queryKey: ['app-detail', data.app_id] });
+      qc.invalidateQueries({ queryKey: ['apps-list', wsId] });
+    },
+  });
+}
+
 export function useUpdateAppStatus() {
   const qc = useQueryClient();
   const workspace = useWorkspaceContext();
@@ -197,6 +271,7 @@ export function useUpdateAppStatus() {
     },
     onSuccess: (data) => {
       qc.invalidateQueries({ queryKey: ['app-detail', data.id] });
+      qc.invalidateQueries({ queryKey: ['app-runtime-status', data.id] });
       qc.invalidateQueries({ queryKey: ['apps-list', wsId] });
     },
   });

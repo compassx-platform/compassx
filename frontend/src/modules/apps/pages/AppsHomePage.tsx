@@ -215,24 +215,55 @@ export default function AppsHomePage() {
       key: 'status',
       header: 'Status',
       width: '10%',
-      render: (app) => (
-        <span
-          style={{
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: 4,
-            padding: '2px 8px',
-            borderRadius: 4,
-            fontSize: '0.72rem',
-            fontWeight: 600,
-            color: app.status === 'active' ? '#2E7D32' : '#6B6B6B',
-            background: app.status === 'active' ? '#E8F5E9' : '#F0F0F0',
-          }}
-        >
-          {app.status === 'active' ? <CheckCircle2 size={11} /> : <Clock size={11} />}
-          {app.status.toUpperCase()}
-        </span>
-      ),
+      render: (app) => {
+        const isStarting = app.status === 'starting' || app.status === 'provisioning';
+        const isStopping = app.status === 'stopping';
+        const isError = app.status === 'error';
+        const isActive = app.status === 'active' || app.status === 'running';
+
+        return (
+          <span
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 4,
+              padding: '2px 8px',
+              borderRadius: 4,
+              fontSize: '0.72rem',
+              fontWeight: 600,
+              color: isStarting
+                ? '#1d4ed8'
+                : isStopping
+                ? '#be123c'
+                : isError
+                ? '#b91c1c'
+                : isActive
+                ? '#2E7D32'
+                : '#6B6B6B',
+              background: isStarting
+                ? '#eff6ff'
+                : isStopping
+                ? '#fff1f2'
+                : isError
+                ? '#fef2f2'
+                : isActive
+                ? '#E8F5E9'
+                : '#F0F0F0',
+            }}
+          >
+            {isStarting || isStopping ? (
+              <Loader2 size={11} className="spin" />
+            ) : isActive ? (
+              <CheckCircle2 size={11} />
+            ) : isError ? (
+              <Clock size={11} />
+            ) : (
+              <Clock size={11} />
+            )}
+            {app.status.toUpperCase()}
+          </span>
+        );
+      },
     },
     {
       key: 'route',

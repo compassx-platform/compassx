@@ -397,31 +397,317 @@ class KubernetesAppDriver(BaseAppDriver):
         clean_id = re.sub(r"[^a-z0-9-]", "-", app.id.lower()).strip("-")
         name = f"compassx-app-{clean_id}"
         try:
-            k8s.apps().delete_namespaced_deployment(name=name, namespace=ns)
+            # Scale deployment to 0 replicas for instant resource release and fast restart
+            body = {"spec": {"replicas": 0}}
+            k8s.apps().patch_namespaced_deployment(name=name, namespace=ns, body=body)
+            logger.info("Scaled K8s deployment %s to 0 replicas", name)
             return True
         except Exception as e:
-            logger.warning("Could not delete K8s deployment %s: %s", name, e)
-            return False
+            logger.warning("Could not scale K8s deployment %s to 0: %s. Attempting delete...", name, e)
+            try:
+                k8s.apps().delete_namespaced_deployment(name=name, namespace=ns)
+                return True
+            except Exception as e2:
+                logger.warning("Could not delete K8s deployment %s: %s", name, e2)
+                return False
+
+    def start(self, app) -> Dict[str, Any]:
+        from kubernetes.client.exceptions import ApiException
+        k8s = self._get_k8s_client()
+        clean_id = re.sub(r"[^a-z0-9-]", "-", app.id.lower()).strip("-")
+        name = f"compassx-app-{clean_id}"
+        ns = settings.K8S_NAMESPACE
+        cfg = dict(app.config or {})
+        target_replicas = int(cfg.get("resources", {}).get("replicas") or 1)
+
+        if not k8s:
+            return {
+                "app_id": app.id,
+                "status": "error",
+                "phase": "Unknown",
+                "mode": "kubernetes",
+                "message": "Kubernetes client not available.",
+            }
+
+        try:
+            # Check if deployment exists and scale up
+            dep = k8s.apps().read_namespaced_deployment(name=name, namespace=ns)
+            body = {
+                "spec": {
+                    "replicas": target_replicas,
+                    "template": {
+                        "metadata": {
+                            "annotations": {
+                                "compassx.io/restarted-at": datetime.now(timezone.utc).isoformat(),
+                            }
+                        }
+                    }
+                }
+            }
+            k8s.apps().patch_namespaced_deployment(name=name, namespace=ns, body=body)
+            logger.info("Scaled up K8s deployment %s to %d replicas", name, target_replicas)
+            return {
+                "app_id": app.id,
+                "status": "provisioning",
+                "phase": "Pending",
+                "mode": "kubernetes",
+                "container_name": "app",
+                "pod_name": None,
+                "replicas": target_replicas,
+                "ready_replicas": 0,
+                "step": 1,
+                "step_description": "Allocating cluster resources and scheduling pod...",
+                "message": f"Deployment scaled to {target_replicas} replica(s). Scheduling pod...",
+                "url": self.get_live_url(app),
+                "last_updated": datetime.now(timezone.utc).isoformat(),
+            }
+        except ApiException as e:
+            if e.status == 404:
+                # Deployment does not exist; trigger full deployment
+                from app.services.app_runner import app_runner_service
+                app_runner_service.deploy_app(app, runner_mode="kubernetes")
+                return {
+                    "app_id": app.id,
+                    "status": "provisioning",
+                    "phase": "ContainerCreating",
+                    "mode": "kubernetes",
+                    "container_name": "app",
+                    "pod_name": None,
+                    "replicas": target_replicas,
+                    "ready_replicas": 0,
+                    "step": 1,
+                    "step_description": "Provisioning Kubernetes deployment, service, and ingress...",
+                    "message": "Creating cluster resources...",
+                    "url": self.get_live_url(app),
+                    "last_updated": datetime.now(timezone.utc).isoformat(),
+                }
+            raise
 
     def get_status(self, app) -> Dict[str, Any]:
         k8s = self._get_k8s_client()
         clean_id = re.sub(r"[^a-z0-9-]", "-", app.id.lower()).strip("-")
         name = f"compassx-app-{clean_id}"
         ns = settings.K8S_NAMESPACE
+        live_url = self.get_live_url(app)
+        now_iso = datetime.now(timezone.utc).isoformat()
+
         if not k8s:
-            return {"status": "unknown", "deployment_name": name}
+            return {
+                "app_id": app.id,
+                "status": "unknown",
+                "phase": "Unknown",
+                "mode": "kubernetes",
+                "deployment_name": name,
+                "url": live_url,
+                "last_updated": now_iso,
+            }
+
         try:
             dep = k8s.apps().read_namespaced_deployment(name=name, namespace=ns)
-            available = (dep.status and (dep.status.available_replicas or dep.status.ready_replicas or 0) > 0)
-            return {"status": "running" if available else "starting", "deployment_name": name}
-        except Exception:
-            try:
-                pods = k8s.core().list_namespaced_pod(namespace=ns, label_selector=f"compassx/app-id={clean_id},compassx/role=prod")
-                if pods.items and any(p.status and p.status.phase == "Running" for p in pods.items):
-                    return {"status": "running", "deployment_name": name}
-            except Exception:
-                pass
-            return {"status": "stopped", "deployment_name": name}
+            desired_replicas = dep.spec.replicas or 0
+            ready_replicas = dep.status.ready_replicas or 0
+            available_replicas = dep.status.available_replicas or 0
+
+            if desired_replicas == 0:
+                return {
+                    "app_id": app.id,
+                    "status": "stopped",
+                    "phase": "Stopped",
+                    "mode": "kubernetes",
+                    "container_name": "app",
+                    "pod_name": None,
+                    "replicas": 0,
+                    "ready_replicas": 0,
+                    "available_replicas": 0,
+                    "step": 0,
+                    "step_description": "Application is stopped",
+                    "message": "Deployment is stopped (0 replicas).",
+                    "url": live_url,
+                    "last_updated": now_iso,
+                }
+
+            # Query live pods
+            pods = k8s.core().list_namespaced_pod(
+                namespace=ns,
+                label_selector=f"compassx/app-id={clean_id},compassx/role=prod"
+            )
+
+            if not pods.items:
+                return {
+                    "app_id": app.id,
+                    "status": "provisioning",
+                    "phase": "Pending",
+                    "mode": "kubernetes",
+                    "container_name": "app",
+                    "pod_name": None,
+                    "replicas": desired_replicas,
+                    "ready_replicas": 0,
+                    "available_replicas": 0,
+                    "step": 1,
+                    "step_description": "Allocating cluster resources and scheduling pod...",
+                    "message": "Waiting for pod to be scheduled on node...",
+                    "url": live_url,
+                    "last_updated": now_iso,
+                }
+
+            # Filter out pods marked for deletion if other pods exist
+            active_pods = [p for p in pods.items if not p.metadata.deletion_timestamp]
+            target_pod = active_pods[0] if active_pods else pods.items[0]
+            pod_name = target_pod.metadata.name
+            pod_phase = target_pod.status.phase if target_pod.status else "Unknown"
+
+            if target_pod.metadata.deletion_timestamp:
+                return {
+                    "app_id": app.id,
+                    "status": "stopping",
+                    "phase": "Terminating",
+                    "mode": "kubernetes",
+                    "container_name": "app",
+                    "pod_name": pod_name,
+                    "replicas": desired_replicas,
+                    "ready_replicas": 0,
+                    "available_replicas": 0,
+                    "step": 0,
+                    "step_description": "Terminating container and releasing cluster resources...",
+                    "message": "Pod is terminating...",
+                    "url": live_url,
+                    "last_updated": now_iso,
+                }
+
+            # Check container statuses inside pod
+            container_statuses = target_pod.status.container_statuses if target_pod.status else []
+            app_container_status = next((c for c in container_statuses if c.name == "app"), container_statuses[0] if container_statuses else None)
+
+            if app_container_status:
+                waiting = app_container_status.state.waiting if app_container_status.state else None
+                if waiting:
+                    reason = waiting.reason or "Waiting"
+                    msg = waiting.message or f"Container waiting: {reason}"
+                    if reason in ("CrashLoopBackOff", "ImagePullBackOff", "ErrImagePull", "Error"):
+                        return {
+                            "app_id": app.id,
+                            "status": "error",
+                            "phase": reason,
+                            "mode": "kubernetes",
+                            "container_name": "app",
+                            "pod_name": pod_name,
+                            "replicas": desired_replicas,
+                            "ready_replicas": 0,
+                            "available_replicas": 0,
+                            "step": 0,
+                            "step_description": f"Error: {reason}",
+                            "message": msg,
+                            "url": live_url,
+                            "last_updated": now_iso,
+                        }
+                    elif reason in ("ContainerCreating", "PodInitializing"):
+                        return {
+                            "app_id": app.id,
+                            "status": "provisioning",
+                            "phase": reason,
+                            "mode": "kubernetes",
+                            "container_name": "app",
+                            "pod_name": pod_name,
+                            "replicas": desired_replicas,
+                            "ready_replicas": 0,
+                            "available_replicas": 0,
+                            "step": 2,
+                            "step_description": "Pulling container image & initializing app container...",
+                            "message": "Container is initializing on node...",
+                            "url": live_url,
+                            "last_updated": now_iso,
+                        }
+
+            if pod_phase == "Pending":
+                return {
+                    "app_id": app.id,
+                    "status": "provisioning",
+                    "phase": "Pending",
+                    "mode": "kubernetes",
+                    "container_name": "app",
+                    "pod_name": pod_name,
+                    "replicas": desired_replicas,
+                    "ready_replicas": 0,
+                    "available_replicas": 0,
+                    "step": 1,
+                    "step_description": "Allocating cluster resources and scheduling pod...",
+                    "message": "Pod is pending placement on node...",
+                    "url": live_url,
+                    "last_updated": now_iso,
+                }
+
+            if pod_phase == "Running":
+                is_pod_ready = ready_replicas > 0 or (app_container_status and app_container_status.ready)
+                if is_pod_ready:
+                    return {
+                        "app_id": app.id,
+                        "status": "active",
+                        "phase": "Running",
+                        "mode": "kubernetes",
+                        "container_name": "app",
+                        "pod_name": pod_name,
+                        "replicas": desired_replicas,
+                        "ready_replicas": max(ready_replicas, 1),
+                        "available_replicas": max(available_replicas, 1),
+                        "step": 4,
+                        "step_description": "Pod is running and serving live traffic",
+                        "message": "Application is live and ready.",
+                        "url": live_url,
+                        "last_updated": now_iso,
+                    }
+                else:
+                    return {
+                        "app_id": app.id,
+                        "status": "starting",
+                        "phase": "Running",
+                        "mode": "kubernetes",
+                        "container_name": "app",
+                        "pod_name": pod_name,
+                        "replicas": desired_replicas,
+                        "ready_replicas": 0,
+                        "available_replicas": 0,
+                        "step": 3,
+                        "step_description": "Application server process starting on port 8080...",
+                        "message": "Container started, waiting for application startup...",
+                        "url": live_url,
+                        "last_updated": now_iso,
+                    }
+
+            return {
+                "app_id": app.id,
+                "status": "starting",
+                "phase": pod_phase,
+                "mode": "kubernetes",
+                "container_name": "app",
+                "pod_name": pod_name,
+                "replicas": desired_replicas,
+                "ready_replicas": ready_replicas,
+                "available_replicas": available_replicas,
+                "step": 2,
+                "step_description": f"Pod in phase {pod_phase}",
+                "message": f"Pod state: {pod_phase}",
+                "url": live_url,
+                "last_updated": now_iso,
+            }
+
+        except Exception as ex:
+            logger.debug("Could not inspect K8s deployment %s status: %s", name, ex)
+            return {
+                "app_id": app.id,
+                "status": "stopped",
+                "phase": "NotFound",
+                "mode": "kubernetes",
+                "container_name": "app",
+                "pod_name": None,
+                "replicas": 0,
+                "ready_replicas": 0,
+                "available_replicas": 0,
+                "step": 0,
+                "step_description": "Application stopped / not deployed",
+                "message": "Application is stopped / not deployed.",
+                "url": live_url,
+                "last_updated": now_iso,
+            }
 
     def get_logs(self, app, max_lines: int = 200) -> List[str]:
         k8s = self._get_k8s_client()

@@ -15,7 +15,14 @@ from sqlalchemy.orm.attributes import flag_modified
 from app.database import get_system_db
 from app.governance.dependencies import Guard, get_guard
 from app.models.app import App
-from app.schemas.apps import AppCreate, AppDeployResponse, AppLogsResponse, AppResponse, AppUpdate
+from app.schemas.apps import (
+    AppCreate,
+    AppDeployResponse,
+    AppLogsResponse,
+    AppResponse,
+    AppRuntimeStatusResponse,
+    AppUpdate,
+)
 from app.services.encryption import encrypt_field
 from app.services.app_runner import app_runner_service
 
@@ -428,6 +435,70 @@ def get_app_logs(
     )
 
 
+@router.get("/{app_id}/runtime-status", response_model=AppRuntimeStatusResponse)
+def get_app_runtime_status(
+    app_id: str,
+    db: Session = Depends(get_system_db),
+    guard: Guard = Depends(get_guard),
+):
+    """Inspect actual real-time container or Kubernetes pod status for an application."""
+    app = db.query(App).filter(App.id == app_id).first()
+    if not app:
+        raise HTTPException(status_code=404, detail=f"App '{app_id}' not found.")
+
+    if guard.workspace_id and app.workspace_id != guard.workspace_id:
+        raise HTTPException(status_code=403, detail="Cannot access app from another workspace.")
+
+    runtime_status = app_runner_service.get_runtime_status(app, db=db)
+    return AppRuntimeStatusResponse(**runtime_status)
+
+
+@router.post("/{app_id}/start", response_model=AppRuntimeStatusResponse)
+def start_app_instance(
+    app_id: str,
+    db: Session = Depends(get_system_db),
+    guard: Guard = Depends(get_guard),
+):
+    """Start or scale up application container/pod."""
+    app = db.query(App).filter(App.id == app_id).first()
+    if not app:
+        raise HTTPException(status_code=404, detail=f"App '{app_id}' not found.")
+
+    if guard.workspace_id and app.workspace_id != guard.workspace_id:
+        raise HTTPException(status_code=403, detail="Cannot modify app from another workspace.")
+
+    app.status = "starting"
+    db.commit()
+    db.refresh(app)
+
+    app_runner_service.start_app(app)
+    status_info = app_runner_service.get_runtime_status(app, db=db)
+    return AppRuntimeStatusResponse(**status_info)
+
+
+@router.post("/{app_id}/stop", response_model=AppRuntimeStatusResponse)
+def stop_app_instance(
+    app_id: str,
+    db: Session = Depends(get_system_db),
+    guard: Guard = Depends(get_guard),
+):
+    """Stop application container/pod."""
+    app = db.query(App).filter(App.id == app_id).first()
+    if not app:
+        raise HTTPException(status_code=404, detail=f"App '{app_id}' not found.")
+
+    if guard.workspace_id and app.workspace_id != guard.workspace_id:
+        raise HTTPException(status_code=403, detail="Cannot modify app from another workspace.")
+
+    app.status = "stopping"
+    db.commit()
+    db.refresh(app)
+
+    app_runner_service.stop_app(app)
+    status_info = app_runner_service.get_runtime_status(app, db=db)
+    return AppRuntimeStatusResponse(**status_info)
+
+
 @router.post("/{app_id}/status", response_model=AppResponse)
 def update_app_status(
     app_id: str,
@@ -435,7 +506,7 @@ def update_app_status(
     db: Session = Depends(get_system_db),
     guard: Guard = Depends(get_guard),
 ):
-    """Change status of application (active, stopped, maintenance)."""
+    """Change status of application (active, stopped, starting, stopping)."""
     app = db.query(App).filter(App.id == app_id).first()
     if not app:
         raise HTTPException(status_code=404, detail=f"App '{app_id}' not found.")
@@ -444,15 +515,19 @@ def update_app_status(
         raise HTTPException(status_code=403, detail="Cannot modify app from another workspace.")
 
     if status_value.lower() in ("stopped", "inactive"):
+        app.status = "stopping"
+        db.commit()
         app_runner_service.stop_app(app)
-        app.status = "stopped"
-    elif status_value.lower() == "active":
+        app_runner_service.get_runtime_status(app, db=db)
+    elif status_value.lower() in ("active", "starting", "provisioning"):
+        app.status = "starting"
+        db.commit()
         app_runner_service.start_app(app)
-        app.status = "active"
+        app_runner_service.get_runtime_status(app, db=db)
     else:
         app.status = status_value
+        db.commit()
 
-    db.commit()
     db.refresh(app)
     return _to_response(app)
 

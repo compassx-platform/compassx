@@ -16,6 +16,10 @@ class BaseAppDriver(ABC):
         """Stop running instance of the application."""
         pass
 
+    def start(self, app) -> Dict[str, Any]:
+        """Start or scale up instance of the application."""
+        return {"status": "starting", "message": "Starting application..."}
+
     @abstractmethod
     def get_status(self, app) -> Dict[str, Any]:
         """Return runtime status for the application."""

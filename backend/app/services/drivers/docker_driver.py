@@ -112,11 +112,127 @@ class DockerAppDriver(BaseAppDriver):
         res = subprocess.run(["docker", "stop", container_name], capture_output=True, text=True, check=False)
         return res.returncode == 0
 
+    def start(self, app) -> Dict[str, Any]:
+        container_name = f"compassx-app-{app.id}"
+        # Check if container exists
+        inspect_res = subprocess.run(["docker", "inspect", "-f", "{{.State.Status}}", container_name], capture_output=True, text=True, check=False)
+        if inspect_res.returncode != 0:
+            # Container does not exist; redeploy
+            from app.services.app_runner import app_runner_service
+            deploy_res = app_runner_service.deploy_app(app, runner_mode="docker")
+            return {
+                "status": "provisioning",
+                "phase": "ContainerCreating",
+                "step": 2,
+                "step_description": "Creating and provisioning Docker container...",
+                "container_name": container_name,
+                "message": "Provisioning Docker container...",
+            }
+
+        subprocess.run(["docker", "start", container_name], capture_output=True, text=True, check=False)
+        return {
+            "status": "starting",
+            "phase": "Starting",
+            "step": 3,
+            "step_description": "Starting Docker container process...",
+            "container_name": container_name,
+            "message": "Starting Docker container...",
+        }
+
     def get_status(self, app) -> Dict[str, Any]:
         container_name = f"compassx-app-{app.id}"
-        res = subprocess.run(["docker", "inspect", "-f", "{{.State.Status}}", container_name], capture_output=True, text=True, check=False)
-        is_running = (res.stdout or "").strip().lower() == "running"
-        return {"status": "running" if is_running else "stopped", "container_name": container_name}
+        cfg = dict(app.config or {})
+        port = (cfg.get("runtime") or {}).get("host_port")
+        res = subprocess.run(
+            ["docker", "inspect", "-f", "{{.State.Status}}|{{.State.Running}}|{{.State.Restarting}}|{{.State.OOMKilled}}", container_name],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if res.returncode != 0:
+            return {
+                "app_id": app.id,
+                "status": "stopped",
+                "phase": "NotFound",
+                "mode": "docker",
+                "container_name": container_name,
+                "replicas": 0,
+                "ready_replicas": 0,
+                "step": 0,
+                "step_description": "Container not created",
+                "message": "Docker container not found or stopped.",
+                "url": self.get_live_url(app),
+                "last_updated": datetime.now(timezone.utc).isoformat(),
+            }
+
+        parts = (res.stdout or "").strip().split("|")
+        raw_status = parts[0].lower() if len(parts) > 0 else "unknown"
+        is_running = parts[1].lower() == "true" if len(parts) > 1 else False
+        is_restarting = parts[2].lower() == "true" if len(parts) > 2 else False
+        is_oom = parts[3].lower() == "true" if len(parts) > 3 else False
+
+        if is_oom:
+            return {
+                "app_id": app.id,
+                "status": "error",
+                "phase": "OOMKilled",
+                "mode": "docker",
+                "container_name": container_name,
+                "replicas": 1,
+                "ready_replicas": 0,
+                "step": 0,
+                "step_description": "Out of memory error",
+                "message": "Container was terminated due to memory limit (OOMKilled).",
+                "url": self.get_live_url(app),
+                "last_updated": datetime.now(timezone.utc).isoformat(),
+            }
+
+        if is_running:
+            return {
+                "app_id": app.id,
+                "status": "active",
+                "phase": "Running",
+                "mode": "docker",
+                "container_name": container_name,
+                "replicas": 1,
+                "ready_replicas": 1,
+                "step": 4,
+                "step_description": f"Container running on port {port or 8080}",
+                "message": "Application is live and ready.",
+                "url": self.get_live_url(app),
+                "last_updated": datetime.now(timezone.utc).isoformat(),
+            }
+
+        if is_restarting or raw_status in ("created", "restarting"):
+            return {
+                "app_id": app.id,
+                "status": "starting",
+                "phase": "ContainerCreating",
+                "mode": "docker",
+                "container_name": container_name,
+                "replicas": 1,
+                "ready_replicas": 0,
+                "step": 3,
+                "step_description": "Container is starting...",
+                "message": "Docker container is starting...",
+                "url": self.get_live_url(app),
+                "last_updated": datetime.now(timezone.utc).isoformat(),
+            }
+
+        return {
+            "app_id": app.id,
+            "status": "stopped",
+            "phase": "Stopped",
+            "mode": "docker",
+            "container_name": container_name,
+            "replicas": 0,
+            "ready_replicas": 0,
+            "step": 0,
+            "step_description": "Container is stopped",
+            "message": "Docker container is stopped.",
+            "url": self.get_live_url(app),
+            "last_updated": datetime.now(timezone.utc).isoformat(),
+        }
 
     def get_logs(self, app, max_lines: int = 200) -> List[str]:
         container_name = f"compassx-app-{app.id}"

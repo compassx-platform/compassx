@@ -51,6 +51,9 @@ import {
   useAppDeployments,
   useAppLogs,
   useUpdateAppStatus,
+  useAppRuntimeStatus,
+  useStartApp,
+  useStopApp,
   useDeleteApp,
   useStartDevSession,
   useDevStatus,
@@ -59,6 +62,7 @@ import {
   useDeleteDevWorkspace,
   DevWorkspace,
   DeploymentItem,
+  AppRuntimeStatus,
 } from '../hooks/useApps';
 import { useAppTasks } from '../hooks/useAppTasks';
 import { APP_TYPES } from '../components/CreateAppModal';
@@ -126,7 +130,15 @@ export default function AppDetailPage() {
   const updateMutation = useUpdateApp();
   const deployMutation = useDeployApp();
   const statusMutation = useUpdateAppStatus();
+  const startAppMutation = useStartApp();
+  const stopAppMutation = useStopApp();
   const deleteMutation = useDeleteApp();
+  const { data: runtimeStatus, refetch: refetchRuntimeStatus } = useAppRuntimeStatus(resolvedAppId);
+  const [isStartingApp, setIsStartingApp] = useState(false);
+  const [isStoppingApp, setIsStoppingApp] = useState(false);
+  const [appLaunchStep, setAppLaunchStep] = useState(0);
+  const [appLaunchStatusText, setAppLaunchStatusText] = useState('');
+
   const { data: logsData, isFetching: logsFetching, refetch: refetchLogs } = useAppLogs(
     resolvedAppId,
     activeTab === 'logs' || activeTab === 'overview'
@@ -545,14 +557,78 @@ export default function AppDetailPage() {
     }
   }
 
-  async function handleToggleStatus() {
+  async function handleStartApp() {
     if (!resolvedAppId || !app) return;
-    const newStatus = app.status === 'active' ? 'stopped' : 'active';
+    setIsStartingApp(true);
+    setAppLaunchStep(1);
+    setAppLaunchStatusText('1. Initializing container / pod configuration...');
     try {
-      await statusMutation.mutateAsync({ appId: resolvedAppId, status: newStatus });
-      toast.info(`Application marked as ${newStatus}.`);
+      toast.info(`Starting application "${app.name}"...`);
+      await startAppMutation.mutateAsync(resolvedAppId);
+
+      setAppLaunchStep(2);
+      setAppLaunchStatusText('2. Allocating cluster resources & scheduling pod...');
+
+      // Poll runtime status every 1.5s until active or error
+      const maxAttempts = 20;
+      for (let i = 0; i < maxAttempts; i++) {
+        await new Promise((r) => setTimeout(r, 1500));
+        const res = await refetchRuntimeStatus();
+        const cur = res.data;
+        if (cur?.status === 'active' || cur?.phase === 'Running' || (cur?.ready_replicas && cur.ready_replicas > 0)) {
+          setAppLaunchStep(4);
+          setAppLaunchStatusText('4. Container is running and ready to serve traffic!');
+          toast.success(`Application "${app.name}" is now running!`);
+          break;
+        } else if (cur?.phase === 'ContainerCreating' || cur?.phase === 'Starting' || cur?.step === 2) {
+          setAppLaunchStep(3);
+          setAppLaunchStatusText('3. Pulling container image & starting application server...');
+        } else if (cur?.status === 'error' || ['CrashLoopBackOff', 'ImagePullBackOff', 'ErrImagePull', 'Error', 'OOMKilled'].includes(cur?.phase || '')) {
+          toast.error(cur?.message || `Pod error: ${cur?.phase}`);
+          break;
+        }
+      }
+      refetch();
     } catch (err: any) {
-      toast.error(err?.response?.data?.detail || 'Failed to update status.');
+      toast.error(err?.response?.data?.detail || 'Failed to start application.');
+    } finally {
+      setIsStartingApp(false);
+      setTimeout(() => {
+        setAppLaunchStep(0);
+        setAppLaunchStatusText('');
+      }, 3500);
+    }
+  }
+
+  async function handleStopApp() {
+    if (!resolvedAppId || !app) return;
+    if (!confirm(`Stop application "${app.name}"? This will pause compute and release cluster resources.`)) {
+      return;
+    }
+    setIsStoppingApp(true);
+    setAppLaunchStep(0);
+    setAppLaunchStatusText('Stopping container and releasing cluster resources...');
+    try {
+      toast.info(`Stopping "${app.name}"...`);
+      await stopAppMutation.mutateAsync(resolvedAppId);
+
+      // Poll until stopped
+      const maxAttempts = 10;
+      for (let i = 0; i < maxAttempts; i++) {
+        await new Promise((r) => setTimeout(r, 1500));
+        const res = await refetchRuntimeStatus();
+        const cur = res.data;
+        if (cur?.status === 'stopped' || cur?.phase === 'Stopped' || cur?.phase === 'NotFound' || cur?.replicas === 0) {
+          break;
+        }
+      }
+      toast.success(`Application "${app.name}" stopped.`);
+      refetch();
+    } catch (err: any) {
+      toast.error(err?.response?.data?.detail || 'Failed to stop application.');
+    } finally {
+      setIsStoppingApp(false);
+      setAppLaunchStatusText('');
     }
   }
 
@@ -699,12 +775,20 @@ export default function AppDetailPage() {
     );
   }
 
-  const isLive = app.status === 'active';
+  const rawStatus = runtimeStatus?.status || app.status || 'stopped';
+  const rawPhase = runtimeStatus?.phase || (rawStatus === 'active' ? 'Running' : 'Stopped');
+
+  const isAppStopping = isStoppingApp || stopAppMutation.isPending || rawStatus === 'stopping' || rawPhase === 'Terminating';
+  const isAppStarting = (isStartingApp || startAppMutation.isPending || rawStatus === 'starting' || rawStatus === 'provisioning' || (appLaunchStep > 0 && appLaunchStep < 4)) && !isAppStopping;
+  const isAppLive = (rawStatus === 'active' || rawStatus === 'running' || rawPhase === 'Running') && !isAppStopping && !isAppStarting;
+  const isAppError = rawStatus === 'error' || ['CrashLoopBackOff', 'ImagePullBackOff', 'ErrImagePull', 'Error', 'OOMKilled'].includes(rawPhase);
+  const isRunning = isAppLive;
+  const isLive = isAppLive;
+
   const runtimeInfo = app.config?.runtime;
-  const isRunning = isLive && (runtimeInfo?.status === 'running' || !!runtimeInfo?.container_id || !!runtimeInfo?.pid);
-  const runtimePort = runtimeInfo?.host_port;
-  const runtimeMode = (runtimeInfo?.mode || (runtimeInfo?.container_id ? 'docker' : 'local')).toUpperCase();
-  const rawLiveUrl = runtimeInfo?.url || (runtimePort ? `http://localhost:${runtimePort}` : app.route);
+  const runtimePort = runtimeStatus?.url ? undefined : runtimeInfo?.host_port;
+  const runtimeMode = (runtimeStatus?.mode || runtimeInfo?.mode || (runtimeInfo?.container_id ? 'docker' : 'kubernetes')).toUpperCase();
+  const rawLiveUrl = runtimeStatus?.url || runtimeInfo?.url || (runtimePort ? `http://localhost:${runtimePort}` : app.route);
   const appLiveUrl = rawLiveUrl?.startsWith('/') ? `${window.location.origin}${rawLiveUrl}` : rawLiveUrl;
 
   return (
@@ -770,19 +854,65 @@ export default function AppDetailPage() {
                   borderRadius: 12,
                   fontSize: '0.75rem',
                   fontWeight: 600,
-                  color: isRunning ? '#15803d' : isLive ? '#15803d' : '#6b7280',
-                  background: isRunning ? '#dcfce7' : isLive ? '#dcfce7' : '#f3f4f6',
-                  border: isRunning ? '1px solid #bbf7d0' : isLive ? '1px solid #bbf7d0' : '1px solid #e5e7eb',
+                  color: isAppStopping
+                    ? '#be123c'
+                    : isAppStarting
+                    ? '#1d4ed8'
+                    : isAppError
+                    ? '#b91c1c'
+                    : isAppLive
+                    ? '#15803d'
+                    : '#6b7280',
+                  background: isAppStopping
+                    ? '#fff1f2'
+                    : isAppStarting
+                    ? '#eff6ff'
+                    : isAppError
+                    ? '#fef2f2'
+                    : isAppLive
+                    ? '#dcfce7'
+                    : '#f3f4f6',
+                  border: isAppStopping
+                    ? '1px solid #fecdd3'
+                    : isAppStarting
+                    ? '1px solid #bfdbfe'
+                    : isAppError
+                    ? '1px solid #fca5a5'
+                    : isAppLive
+                    ? '1px solid #bbf7d0'
+                    : '1px solid #e5e7eb',
                 }}
               >
-                {isRunning ? (
-                  <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#22c55e' }} />
+                {isAppStopping ? (
+                  <>
+                    <Loader2 size={12} className="spin" />
+                    <span>STOPPING...</span>
+                  </>
+                ) : isAppStarting ? (
+                  <>
+                    <Loader2 size={12} className="spin" />
+                    <span>PROVISIONING • {rawPhase || 'STARTING'}</span>
+                  </>
+                ) : isAppError ? (
+                  <>
+                    <XCircle size={12} />
+                    <span>ERROR • {rawPhase}</span>
+                  </>
+                ) : isAppLive ? (
+                  <>
+                    <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#22c55e' }} />
+                    <span>
+                      {runtimePort
+                        ? `RUNNING • ${runtimeMode} :${runtimePort}`
+                        : `RUNNING • ${runtimeMode}`}
+                    </span>
+                  </>
                 ) : (
-                  <Clock size={12} />
+                  <>
+                    <Clock size={12} />
+                    <span>STOPPED</span>
+                  </>
                 )}
-                {isRunning && runtimePort
-                  ? `${app.status.toUpperCase()} • ${runtimeMode} :${runtimePort}`
-                  : app.status.toUpperCase()}
               </span>
 
               {/* Framework Tag */}
@@ -942,22 +1072,89 @@ export default function AppDetailPage() {
             <span>{startDevMutation.isPending ? 'Launching Omnigent...' : 'Modify with Omnigent'}</span>
           </button>
 
-          <button
-            className="btn btn-outline"
-            onClick={handleToggleStatus}
-            disabled={statusMutation.isPending}
-            title={isLive ? 'Stop application' : 'Start application'}
-          >
-            {isLive ? (
-              <>
-                <Pause size={14} /> Stop App
-              </>
-            ) : (
-              <>
-                <Play size={14} /> Start App
-              </>
-            )}
-          </button>
+          {isAppStopping ? (
+            <button
+              className="btn btn-outline"
+              disabled={true}
+              style={{
+                borderColor: '#fca5a5',
+                color: '#dc2626',
+                background: '#fff1f2',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 6,
+                padding: '6px 12px',
+                fontWeight: 500,
+                cursor: 'not-allowed',
+              }}
+              title="Application container is shutting down..."
+            >
+              <Loader2 size={14} className="spin" color="#dc2626" />
+              <span>Stopping App...</span>
+            </button>
+          ) : isAppStarting ? (
+            <button
+              className="btn btn-outline"
+              disabled={true}
+              style={{
+                borderColor: '#bfdbfe',
+                color: '#1d4ed8',
+                background: '#eff6ff',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 6,
+                padding: '6px 12px',
+                fontWeight: 500,
+                cursor: 'not-allowed',
+              }}
+              title="Application container is starting and provisioning..."
+            >
+              <Loader2 size={14} className="spin" color="#1d4ed8" />
+              <span>Starting App...</span>
+            </button>
+          ) : isAppLive ? (
+            <button
+              className="btn btn-outline"
+              onClick={handleStopApp}
+              disabled={isStoppingApp}
+              style={{
+                borderColor: '#fca5a5',
+                color: '#dc2626',
+                background: '#fff1f2',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 6,
+                padding: '6px 12px',
+                fontWeight: 500,
+                cursor: 'pointer',
+              }}
+              title="Stop application to release cluster resources"
+            >
+              <Pause size={14} />
+              <span>Stop App</span>
+            </button>
+          ) : (
+            <button
+              className="btn btn-outline"
+              onClick={handleStartApp}
+              disabled={isStartingApp}
+              style={{
+                borderColor: '#86efac',
+                color: '#15803d',
+                background: '#f0fdf4',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 6,
+                padding: '6px 12px',
+                fontWeight: 500,
+                cursor: 'pointer',
+              }}
+              title="Start application container / pod"
+            >
+              <Play size={14} />
+              <span>Start App</span>
+            </button>
+          )}
 
           <button
             className="btn btn-outline"
@@ -980,6 +1177,92 @@ export default function AppDetailPage() {
           </button>
         </div>
       </div>
+
+      {/* Intermediate Provisioning Steps Tracker Banner */}
+      {(isAppStarting || appLaunchStep > 0) && (
+        <div
+          style={{
+            marginBottom: 20,
+            padding: '14px 20px',
+            borderRadius: 10,
+            background: 'linear-gradient(135deg, #f0f7ff 0%, #e0f2fe 100%)',
+            border: '1px solid #bae6fd',
+            boxShadow: '0 2px 6px rgba(186, 230, 253, 0.4)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: 16,
+            flexWrap: 'wrap',
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+            <div
+              style={{
+                width: 36,
+                height: 36,
+                borderRadius: '50%',
+                background: '#ffffff',
+                border: '1px solid #bae6fd',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                flexShrink: 0,
+              }}
+            >
+              <Loader2 size={18} className="spin" color="#0284c7" />
+            </div>
+            <div>
+              <div style={{ fontWeight: 600, fontSize: '0.9rem', color: '#0369a1' }}>
+                {appLaunchStatusText || 'Provisioning application container on cluster...'}
+              </div>
+              <div style={{ fontSize: '0.78rem', color: '#0284c7', marginTop: 2 }}>
+                Profile: <span style={{ fontWeight: 600 }}>{runtimeMode}</span> • Phase: <span style={{ fontWeight: 600 }}>{rawPhase}</span>
+                {runtimeStatus?.pod_name ? ` • Pod: ${runtimeStatus.pod_name}` : ''}
+              </div>
+            </div>
+          </div>
+
+          {/* Step Progression Indicators 1 to 4 */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            {[
+              { num: 1, label: 'Resources' },
+              { num: 2, label: 'Pod Schedule' },
+              { num: 3, label: 'Container Init' },
+              { num: 4, label: 'Live Ready' },
+            ].map((st) => {
+              const isPast = appLaunchStep > st.num;
+              const isCur = appLaunchStep === st.num;
+              return (
+                <div
+                  key={st.num}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 6,
+                    padding: '4px 10px',
+                    borderRadius: 16,
+                    fontSize: '0.74rem',
+                    fontWeight: isCur || isPast ? 700 : 500,
+                    background: isPast ? '#0284c7' : isCur ? '#38bdf8' : '#ffffff',
+                    color: isPast || isCur ? '#ffffff' : '#0369a1',
+                    border: isPast || isCur ? 'none' : '1px solid #bae6fd',
+                    transition: 'all 0.25s ease',
+                  }}
+                >
+                  {isPast ? (
+                    <Check size={12} strokeWidth={3} />
+                  ) : isCur ? (
+                    <Loader2 size={12} className="spin" />
+                  ) : (
+                    <span>{st.num}</span>
+                  )}
+                  <span>{st.label}</span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Tabs Navigation Bar */}
       <div

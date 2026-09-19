@@ -112,3 +112,22 @@ class AppLogsResponse(BaseModel):
     app_id: str
     status: str
     logs: list[str] = []
+
+
+class AppRuntimeStatusResponse(BaseModel):
+    app_id: str
+    status: str  # active, running, provisioning, starting, stopping, stopped, error, not_found
+    phase: Optional[str] = None  # Running, Pending, ContainerCreating, Terminating, Stopped, CrashLoopBackOff, NotFound
+    mode: Optional[str] = None  # kubernetes, docker, local
+    container_name: Optional[str] = None
+    container_id: Optional[str] = None
+    pod_name: Optional[str] = None
+    replicas: Optional[int] = 1
+    ready_replicas: Optional[int] = 0
+    available_replicas: Optional[int] = 0
+    step: Optional[int] = None
+    step_description: Optional[str] = None
+    message: Optional[str] = None
+    url: Optional[str] = None
+    last_updated: Optional[str] = None
+
