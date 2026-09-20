@@ -781,33 +781,7 @@ export default function AppDetailPage() {
     toast.success('Deployment logs copied to clipboard!');
   }
 
-  if (isLoading) {
-    return (
-      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '60vh', gap: 12 }}>
-        <Loader2 size={30} className="spin" color="var(--color-primary)" />
-        <div style={{ color: 'var(--color-text-muted)', fontSize: '0.9rem' }}>Loading application details...</div>
-      </div>
-    );
-  }
-
-  if (error || !app) {
-    return (
-      <div style={{ padding: 32, maxWidth: 600, margin: '40px auto', textAlign: 'center' }}>
-        <div style={{ padding: 24, background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 8, color: '#b91c1c' }}>
-          <AlertCircle size={28} style={{ margin: '0 auto 8px' }} />
-          <h3 style={{ margin: '0 0 6px', fontSize: '1.1rem' }}>Application Not Found</h3>
-          <p style={{ margin: '0 0 16px', fontSize: '0.85rem' }}>
-            The requested application could not be loaded or was removed from this workspace.
-          </p>
-          <button className="btn btn-primary" onClick={() => navigate('/home')}>
-            <ArrowLeft size={14} /> Return to Apps
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  const rawStatus = runtimeStatus?.status || app.status || 'stopped';
+  const rawStatus = runtimeStatus?.status || app?.status || 'stopped';
   const rawPhase = runtimeStatus?.phase || (rawStatus === 'active' ? 'Running' : 'Stopped');
 
   const isAppStopping = isStoppingApp || stopAppMutation.isPending || rawStatus === 'stopping' || rawPhase === 'Terminating';
@@ -864,11 +838,37 @@ export default function AppDetailPage() {
     return `${m < 10 ? '0' : ''}${m}:${s < 10 ? '0' : ''}${s}`;
   }
 
-  const runtimeInfo = app.config?.runtime;
+  const runtimeInfo = app?.config?.runtime;
   const runtimePort = runtimeStatus?.url ? undefined : runtimeInfo?.host_port;
   const runtimeMode = (runtimeStatus?.mode || runtimeInfo?.mode || (runtimeInfo?.container_id ? 'docker' : 'kubernetes')).toUpperCase();
-  const rawLiveUrl = runtimeStatus?.url || runtimeInfo?.url || (runtimePort ? `http://localhost:${runtimePort}` : app.route);
+  const rawLiveUrl = runtimeStatus?.url || runtimeInfo?.url || (runtimePort ? `http://localhost:${runtimePort}` : app?.route);
   const appLiveUrl = rawLiveUrl?.startsWith('/') ? `${window.location.origin}${rawLiveUrl}` : rawLiveUrl;
+
+  if (isLoading) {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '60vh', gap: 12 }}>
+        <Loader2 size={30} className="spin" color="var(--color-primary)" />
+        <div style={{ color: 'var(--color-text-muted)', fontSize: '0.9rem' }}>Loading application details...</div>
+      </div>
+    );
+  }
+
+  if (error || !app) {
+    return (
+      <div style={{ padding: 32, maxWidth: 600, margin: '40px auto', textAlign: 'center' }}>
+        <div style={{ padding: 24, background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 8, color: '#b91c1c' }}>
+          <AlertCircle size={28} style={{ margin: '0 auto 8px' }} />
+          <h3 style={{ margin: '0 0 6px', fontSize: '1.1rem' }}>Application Not Found</h3>
+          <p style={{ margin: '0 0 16px', fontSize: '0.85rem' }}>
+            The requested application could not be loaded or was removed from this workspace.
+          </p>
+          <button className="btn btn-primary" onClick={() => navigate('/home')}>
+            <ArrowLeft size={14} /> Return to Apps
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="page-section apps-page" style={{ width: '100%', maxWidth: '100%', padding: '20px 28px 40px', margin: 0 }}>

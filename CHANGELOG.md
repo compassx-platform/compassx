@@ -5,6 +5,19 @@ All notable changes to the CompassX Platform will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.5] - 2026-09-20
+
+### 🚀 Highlights
+
+CompassX `0.9.5` delivers a **React Hooks Ordering & State Derivation Fix** in App Detail Page for resilient rendering during loading and error transitions.
+
+### ✨ Features & Enhancements
+
+#### React Hooks Ordering & Loading State Resiliency
+- **Safe Hook Call Order (`AppDetailPage.tsx`)**: Reordered loading and error early returns to execute after top-level derived states and hooks, eliminating React Hooks rule violations and ensuring seamless state transitions during app loading and teardown.
+
+---
+
 ## [0.9.4] - 2026-09-20
 
 ### 🚀 Highlights
