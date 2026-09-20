@@ -286,3 +286,116 @@ def my_workspaces(
                 ))
 
     return result
+
+
+# ── Service Principal M2M Token Authentication ────────────────────────────────
+
+class ServicePrincipalTokenIn(BaseModel):
+    application_id: str
+    client_secret: str
+
+
+class ServicePrincipalTokenOut(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    sp_id: str
+    application_id: str
+    display_name: str
+    account_id: str
+
+
+@router.post("/sp-token", response_model=ServicePrincipalTokenOut)
+def authenticate_service_principal(
+    body: ServicePrincipalTokenIn,
+    account_db: Session = Depends(get_account_db),
+):
+    from app.user_manager.models.account_models import UmServicePrincipal, UmServicePrincipalSecret
+
+    sp = account_db.query(UmServicePrincipal).filter(
+        UmServicePrincipal.application_id == body.application_id,
+        UmServicePrincipal.is_active == True,
+    ).first()
+    if not sp:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid application ID or secret")
+
+    now = datetime.now(timezone.utc)
+    secrets = account_db.query(UmServicePrincipalSecret).filter(
+        UmServicePrincipalSecret.sp_id == sp.id,
+    ).all()
+
+    valid_secret = None
+    for s in secrets:
+        if s.expires_at and s.expires_at < now:
+            continue
+        if verify_password(body.client_secret, s.secret_hash):
+            valid_secret = s
+            break
+
+    if not valid_secret:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid application ID or secret")
+
+    access = create_access_token(
+        user_id=sp.id,
+        account_id=sp.account_id,
+        account_roles=["service_principal"],
+    )
+
+    return ServicePrincipalTokenOut(
+        access_token=access,
+        token_type="bearer",
+        sp_id=sp.id,
+        application_id=sp.application_id,
+        display_name=sp.display_name,
+        account_id=sp.account_id,
+    )
+
+
+# ── My Assumable Groups ───────────────────────────────────────────────────────
+
+class MyGroupOut(BaseModel):
+    id: str
+    name: str
+    source: str
+    member_count: int
+
+
+@router.get("/my-groups", response_model=list[MyGroupOut])
+def get_my_groups(
+    user: UmUser = Depends(get_current_um_user),
+    account_db: Session = Depends(get_account_db),
+):
+    from sqlalchemy import text
+
+    # Recursively find all groups the user belongs to
+    query = text("""
+        WITH RECURSIVE my_groups AS (
+            SELECT group_id FROM um_group_members WHERE user_id = :user_id
+            UNION
+            SELECT gn.parent_group_id
+            FROM um_group_nestings gn
+            JOIN my_groups mg ON gn.child_group_id = mg.group_id
+        )
+        SELECT g.id, g.name, g.source,
+               (SELECT count(*) FROM um_group_members gm WHERE gm.group_id = g.id) as member_count
+        FROM um_groups g
+        JOIN my_groups mg ON g.id = mg.group_id
+        WHERE g.account_id = :account_id
+        ORDER BY g.name ASC;
+    """)
+
+    rows = account_db.execute(query, {
+        "user_id": user.id,
+        "account_id": user.account_id,
+    }).fetchall()
+
+    return [
+        MyGroupOut(
+            id=str(r[0]),
+            name=str(r[1]),
+            source=str(r[2]),
+            member_count=int(r[3]),
+        )
+        for r in rows
+    ]
+
+

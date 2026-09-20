@@ -3,15 +3,18 @@ import { useNavigate } from "react-router-dom";
 import {
   useMe, useUsers, useCreateUser, useInvites, useGroups, useWorkspacesAdmin, useAuditLog,
   useSuspendUser, useReactivateUser, useCreateInvite, useRevokeInvite,
-  useCreateGroup, changeAccountRole,
+  useCreateGroup, useAddGroupMember, useRemoveGroupMember, useServicePrincipals, changeAccountRole,
   type UserListItem, type InviteOut, type GroupOut, type WorkspaceAdminOut, type AuditLogItem, type InviteIn,
 } from "../../lib/userManagerApi";
 import { clearSession } from "../../lib/auth";
 import { CompassXLogo } from "@/components/common/CompassXLogo";
 import AccountSettingsPage from "./AccountSettingsPage";
+import { IdentityHubTab } from "./IdentityHubTab";
+import { ServicePrincipalsTab } from "./ServicePrincipalsTab";
+import { GroupDetailsPanel } from "./GroupDetailsPanel";
 
-const TABS = ["Users", "Invites", "Groups", "Workspaces", "Audit Log", "Settings"] as const;
-type Tab = typeof TABS[number];
+export const TABS = ["Identity Hub", "Users", "Groups", "Service Principals", "Invites", "Workspaces", "Audit Log", "Settings"] as const;
+export type Tab = typeof TABS[number];
 
 const STATUS_COLOR: Record<string, string> = {
   active: "var(--color-success)", invited: "var(--color-warning)", suspended: "var(--color-danger)", deactivated: "var(--color-text-subtle)",
@@ -289,6 +292,9 @@ function GroupsTab() {
   const [newGroupName, setNewGroupName] = useState("");
   const [expandedGroup, setExpandedGroup] = useState<string | null>(null);
 
+  const addMember = useAddGroupMember(expandedGroup || "");
+  const removeMember = useRemoveGroupMember(expandedGroup || "");
+
   const handleCreate = async () => {
     if (!newGroupName.trim()) return;
     await create.mutateAsync(newGroupName.trim());
@@ -300,24 +306,46 @@ function GroupsTab() {
     <div>
       <div style={{ display: "flex", gap: 8, marginBottom: 20 }}>
         <input className="input-field" value={newGroupName}
+          placeholder="New group name…"
           onChange={e => setNewGroupName(e.target.value)} style={{ maxWidth: 320 }} />
-        <button className="btn-primary" onClick={handleCreate}>Create Group</button>
+        <button className="btn-primary" onClick={handleCreate} disabled={!newGroupName.trim() || create.isPending}>
+          {create.isPending ? "Creating…" : "Create Group"}
+        </button>
       </div>
-      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-        {groups.map((g: GroupOut) => (
-          <Glass key={g.id} style={{ padding: "14px 20px" }}>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-              <div>
-                <span style={{ fontWeight: 600, color: "var(--color-text)" }}>{g.name}</span>
-                <span style={{ color: "var(--color-text-muted)", fontSize: 12, marginLeft: 10 }}>{g.member_count} member{g.member_count !== 1 ? "s" : ""}</span>
+      <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        {groups.map((g: GroupOut) => {
+          const isExpanded = expandedGroup === g.id;
+          return (
+            <Glass key={g.id} style={{ padding: "16px 20px" }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                <div>
+                  <span style={{ fontWeight: 600, color: "var(--color-text)", fontSize: 15 }}>{g.name}</span>
+                  <span style={{ color: "var(--color-text-muted)", fontSize: 12, marginLeft: 10 }}>
+                    {g.member_count} member{g.member_count !== 1 ? "s" : ""}
+                  </span>
+                </div>
+                <button className="btn-outline" style={{ fontSize: 12 }}
+                  onClick={() => setExpandedGroup(isExpanded ? null : g.id)}>
+                  {isExpanded ? "Hide" : "Manage"}
+                </button>
               </div>
-              <button className="btn-outline" style={{ fontSize: 12 }}
-                onClick={() => setExpandedGroup(expandedGroup === g.id ? null : g.id)}>
-                {expandedGroup === g.id ? "Hide" : "Manage"}
-              </button>
-            </div>
-          </Glass>
-        ))}
+
+              {isExpanded && (
+                <div style={{ marginTop: 16, paddingTop: 16, borderTop: "1px solid var(--color-border)" }}>
+                  <GroupDetailsPanel
+                    group={g}
+                    onAddMember={async (userId) => {
+                      await addMember.mutateAsync(userId);
+                    }}
+                    onRemoveMember={async (userId) => {
+                      await removeMember.mutateAsync(userId);
+                    }}
+                  />
+                </div>
+              )}
+            </Glass>
+          );
+        })}
         {groups.length === 0 && <Empty message="No groups yet." />}
       </div>
     </div>
@@ -402,7 +430,10 @@ const Empty: React.FC<{ message: string }> = ({ message }) => (
 /* ─── Main Page ──────────────────────────────────────────────────────── */
 export default function AccountConsolePage() {
   const { data: me, isLoading } = useMe();
-  const [activeTab, setActiveTab] = useState<Tab>("Users");
+  const { data: users = [] } = useUsers();
+  const { data: groups = [] } = useGroups();
+  const { data: sps = [] } = useServicePrincipals();
+  const [activeTab, setActiveTab] = useState<Tab>("Identity Hub");
   const navigate = useNavigate();
 
   const handleLogout = () => {
@@ -454,7 +485,7 @@ export default function AccountConsolePage() {
         <div style={{ marginBottom: 24 }}>
           <h1 style={{ margin: 0, fontSize: 24, fontWeight: 700, color: "var(--color-text)" }}>Account Console</h1>
           <p style={{ margin: "4px 0 0", color: "var(--color-text-muted)", fontSize: 14 }}>
-            Manage users, invites, groups, workspaces, and audit activity.
+            Manage identity, service principals, groups, workspaces, and audit activity.
           </p>
         </div>
 
@@ -472,12 +503,21 @@ export default function AccountConsolePage() {
         </div>
 
         {/* Tab content */}
-        {activeTab === "Users"      && <UsersTab />}
-        {activeTab === "Invites"    && <InvitesTab />}
-        {activeTab === "Groups"     && <GroupsTab />}
-        {activeTab === "Workspaces" && <WorkspacesTab />}
-        {activeTab === "Audit Log"  && <AuditLogTab />}
-        {activeTab === "Settings"   && <AccountSettingsPage />}
+        {activeTab === "Identity Hub"       && (
+          <IdentityHubTab
+            onSelectTab={setActiveTab}
+            userCount={users?.length || 0}
+            groupCount={groups?.length || 0}
+            spCount={sps?.length || 0}
+          />
+        )}
+        {activeTab === "Users"              && <UsersTab />}
+        {activeTab === "Groups"             && <GroupsTab />}
+        {activeTab === "Service Principals" && <ServicePrincipalsTab />}
+        {activeTab === "Invites"            && <InvitesTab />}
+        {activeTab === "Workspaces"         && <WorkspacesTab />}
+        {activeTab === "Audit Log"          && <AuditLogTab />}
+        {activeTab === "Settings"           && <AccountSettingsPage />}
       </div>
     </div>
   );

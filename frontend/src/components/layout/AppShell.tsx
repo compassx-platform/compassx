@@ -38,6 +38,8 @@ import {
 } from '@/lib/appNavigation';
 import { useWorkspaceContext } from '@/lib/workspaceContext';
 import { useMe, useMyWorkspaces, setDefaultWorkspace } from '@/lib/userManagerApi';
+import { RoleSwitcherDropdown } from './RoleSwitcherDropdown';
+import { AssumedContextBanner } from './AssumedContextBanner';
 
 
 const EXPERIMENTAL_NAV: NavItem[] = [
@@ -194,6 +196,9 @@ export default function AppShell() {
         <header className="app-topbar">
           <div className="app-topbar-title">{pageTitle}</div>
           <div className="app-topbar-actions">
+            {/* In-Session Role Switcher */}
+            <RoleSwitcherDropdown />
+
             {/* Workspace Switcher */}
             {workspaces.length > 1 || isAccountAdmin ? (
               <div ref={workspaceMenuRef} style={{ position: 'relative' }}>
@@ -713,6 +718,7 @@ export default function AppShell() {
             </div>
           </div>
         </header>
+        <AssumedContextBanner />
 
         <div className={`app-workspace ${isNovaOpen ? 'has-nova-sidebar' : ''}`}>
           <div className="app-content">

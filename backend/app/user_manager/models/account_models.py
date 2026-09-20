@@ -40,8 +40,9 @@ class AuthProvider(str, enum.Enum):
 
 
 class PrincipalType(str, enum.Enum):
-    user  = "user"
-    group = "group"
+    user              = "user"
+    group             = "group"
+    service_principal = "service_principal"
 
 
 class InviteTargetScope(str, enum.Enum):
@@ -85,6 +86,7 @@ class UmUser(AccountBase):
 
     refresh_tokens: Mapped[list["UmRefreshToken"]] = relationship(back_populates="user", cascade="all, delete-orphan")
     group_memberships: Mapped[list["UmGroupMember"]] = relationship(back_populates="user", cascade="all, delete-orphan")
+    managed_groups: Mapped[list["UmGroupManager"]] = relationship(back_populates="user", cascade="all, delete-orphan")
     account_role_assignments: Mapped[list["UmAccountRoleAssignment"]] = relationship(
         back_populates="principal_user",
         primaryjoin="and_(UmAccountRoleAssignment.principal_id == UmUser.id, UmAccountRoleAssignment.principal_type == 'user')",
@@ -131,6 +133,19 @@ class UmGroup(AccountBase):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     members: Mapped[list["UmGroupMember"]] = relationship(back_populates="group", cascade="all, delete-orphan")
+    managers: Mapped[list["UmGroupManager"]] = relationship(back_populates="group", cascade="all, delete-orphan")
+    parent_nestings: Mapped[list["UmGroupNesting"]] = relationship(
+        "UmGroupNesting",
+        foreign_keys="UmGroupNesting.child_group_id",
+        back_populates="child_group",
+        cascade="all, delete-orphan",
+    )
+    child_nestings: Mapped[list["UmGroupNesting"]] = relationship(
+        "UmGroupNesting",
+        foreign_keys="UmGroupNesting.parent_group_id",
+        back_populates="parent_group",
+        cascade="all, delete-orphan",
+    )
 
 
 class UmGroupMember(AccountBase):
@@ -265,3 +280,82 @@ class UmObjectRolePermission(AccountBase):
 
     role:       Mapped["UmObjectRole"]  = relationship(back_populates="permissions")
     permission: Mapped["UmPermission"]  = relationship()
+
+
+# ─────────────────────────────────────────────────────────────────
+# service_principals + secrets + acls
+# ─────────────────────────────────────────────────────────────────
+
+class UmServicePrincipal(AccountBase):
+    __tablename__ = "um_service_principals"
+    __table_args__ = (
+        UniqueConstraint("account_id", "application_id", name="uq_um_sp_account_application_id"),
+    )
+
+    id:             Mapped[str]      = mapped_column(UUID(as_uuid=False), primary_key=True, default=_uuid)
+    account_id:     Mapped[str]      = mapped_column(UUID(as_uuid=False), nullable=False, index=True)
+    application_id: Mapped[str]      = mapped_column(UUID(as_uuid=False), nullable=False, default=_uuid)
+    display_name:   Mapped[str]      = mapped_column(String(255), nullable=False)
+    source:         Mapped[str]      = mapped_column(String(20), nullable=False, default="manual")
+    is_active:      Mapped[bool]     = mapped_column(Boolean, nullable=False, default=True)
+    created_at:     Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    secrets: Mapped[list["UmServicePrincipalSecret"]] = relationship(back_populates="service_principal", cascade="all, delete-orphan")
+    acls:    Mapped[list["UmServicePrincipalACL"]]    = relationship(back_populates="service_principal", cascade="all, delete-orphan")
+
+
+class UmServicePrincipalSecret(AccountBase):
+    __tablename__ = "um_service_principal_secrets"
+
+    id:            Mapped[str]           = mapped_column(UUID(as_uuid=False), primary_key=True, default=_uuid)
+    sp_id:         Mapped[str]           = mapped_column(UUID(as_uuid=False), ForeignKey("um_service_principals.id", ondelete="CASCADE"), nullable=False, index=True)
+    secret_hash:   Mapped[str]           = mapped_column(Text, nullable=False)
+    secret_prefix: Mapped[str]           = mapped_column(String(16), nullable=False)
+    expires_at:    Mapped[datetime|None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at:    Mapped[datetime]      = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    service_principal: Mapped["UmServicePrincipal"] = relationship(back_populates="secrets")
+
+
+class UmServicePrincipalACL(AccountBase):
+    """Controls who can MANAGE or USE a Service Principal."""
+    __tablename__ = "um_sp_acls"
+    __table_args__ = (
+        UniqueConstraint("sp_id", "principal_id", "acl_role", name="uq_um_sp_acls_identity"),
+    )
+
+    id:             Mapped[str]      = mapped_column(UUID(as_uuid=False), primary_key=True, default=_uuid)
+    sp_id:          Mapped[str]      = mapped_column(UUID(as_uuid=False), ForeignKey("um_service_principals.id", ondelete="CASCADE"), nullable=False, index=True)
+    principal_id:   Mapped[str]      = mapped_column(UUID(as_uuid=False), nullable=False)
+    principal_type: Mapped[str]      = mapped_column(String(20), nullable=False)   # 'user' | 'group'
+    acl_role:       Mapped[str]      = mapped_column(String(32), nullable=False)   # 'manager' | 'user'
+    granted_at:     Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    service_principal: Mapped["UmServicePrincipal"] = relationship(back_populates="acls")
+
+
+# ─────────────────────────────────────────────────────────────────
+# group_nestings + group_managers
+# ─────────────────────────────────────────────────────────────────
+
+class UmGroupNesting(AccountBase):
+    __tablename__ = "um_group_nestings"
+
+    parent_group_id: Mapped[str]      = mapped_column(UUID(as_uuid=False), ForeignKey("um_groups.id", ondelete="CASCADE"), primary_key=True)
+    child_group_id:  Mapped[str]      = mapped_column(UUID(as_uuid=False), ForeignKey("um_groups.id", ondelete="CASCADE"), primary_key=True, index=True)
+    created_at:      Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    parent_group: Mapped["UmGroup"] = relationship("UmGroup", foreign_keys=[parent_group_id], back_populates="child_nestings")
+    child_group:  Mapped["UmGroup"] = relationship("UmGroup", foreign_keys=[child_group_id], back_populates="parent_nestings")
+
+
+class UmGroupManager(AccountBase):
+    __tablename__ = "um_group_managers"
+
+    group_id:    Mapped[str]      = mapped_column(UUID(as_uuid=False), ForeignKey("um_groups.id", ondelete="CASCADE"), primary_key=True)
+    user_id:     Mapped[str]      = mapped_column(UUID(as_uuid=False), ForeignKey("um_users.id", ondelete="CASCADE"), primary_key=True)
+    assigned_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    group: Mapped["UmGroup"] = relationship(back_populates="managers")
+    user:  Mapped["UmUser"]  = relationship(back_populates="managed_groups")
+

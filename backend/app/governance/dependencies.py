@@ -118,26 +118,73 @@ def get_principal(
         )
 
     user_id = str(ctx.principal_id)
-    principal = Principal(
-        id=user_id,
-        type="user",
-        is_account_admin=ctx.is_account_admin,
-        group_ids=_group_ids(account_db, user_id),
-        workspace_roles={str(ctx.workspace_id): ctx.principal_role},
+
+    # Check for in-session assumed group / role header
+    active_role_id = (
+        request.headers.get("x-active-role-id")
+        or request.headers.get("x-active-group-id")
     )
+    all_user_groups = _group_ids(account_db, user_id)
+
+    if active_role_id and active_role_id in all_user_groups:
+        # Scoped execution: Principal only has permissions from the assumed group and its ancestors
+        scoped_groups = _scoped_group_ids(account_db, active_role_id)
+        principal = Principal(
+            id=user_id,
+            type="user",
+            is_account_admin=False,  # Exclude ambient break-glass in assumed context
+            group_ids=scoped_groups,
+            workspace_roles={str(ctx.workspace_id): ctx.principal_role},
+            on_behalf_of=user_id,
+        )
+    else:
+        principal = Principal(
+            id=user_id,
+            type="user",
+            is_account_admin=ctx.is_account_admin,
+            group_ids=all_user_groups,
+            workspace_roles={str(ctx.workspace_id): ctx.principal_role},
+        )
     request.state.governance_principal = principal
     return principal
 
 
-def _group_ids(account_db: Session, user_id: str) -> tuple[str, ...]:
-    from app.user_manager.models.account_models import UmGroupMember
+def _scoped_group_ids(account_db: Session, group_id: str) -> tuple[str, ...]:
+    from sqlalchemy import text
 
     try:
-        rows = (
-            account_db.query(UmGroupMember.group_id)
-            .filter(UmGroupMember.user_id == user_id)
-            .all()
-        )
+        query = text("""
+            WITH RECURSIVE ancestor_groups AS (
+                SELECT :group_id::text AS group_id
+                UNION
+                SELECT gn.parent_group_id::text
+                FROM um_group_nestings gn
+                JOIN ancestor_groups ag ON gn.child_group_id::text = ag.group_id
+            )
+            SELECT DISTINCT group_id FROM ancestor_groups;
+        """)
+        rows = account_db.execute(query, {"group_id": group_id}).fetchall()
+    except Exception:
+        logger.exception("Scoped group expansion failed for group %s", group_id)
+        return (group_id,)
+    return tuple(str(row[0]) for row in rows)
+
+
+def _group_ids(account_db: Session, user_id: str) -> tuple[str, ...]:
+    from sqlalchemy import text
+
+    try:
+        query = text("""
+            WITH RECURSIVE expanded_groups AS (
+                SELECT group_id FROM um_group_members WHERE user_id = :user_id
+                UNION
+                SELECT gn.parent_group_id
+                FROM um_group_nestings gn
+                JOIN expanded_groups eg ON gn.child_group_id = eg.group_id
+            )
+            SELECT DISTINCT group_id FROM expanded_groups;
+        """)
+        rows = account_db.execute(query, {"user_id": user_id}).fetchall()
     except Exception:  # pragma: no cover - identity store unavailable
         # Failing closed on group expansion would lock out every user whose
         # access is granted via a group. Log and continue with direct grants

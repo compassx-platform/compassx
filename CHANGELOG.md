@@ -5,6 +5,37 @@ All notable changes to the CompassX Platform will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.0] - 2026-09-20
+
+### 🚀 Highlights
+
+CompassX `0.10.0` delivers **Databricks-Inspired Enterprise Identity & Access Management (IAM)**, featuring **First-Class Service Principals with OAuth2 Client Credentials**, **Nested Group Hierarchies & Parent/Child Memberships**, **Unified Account Identity Hub**, and **Dynamic Role & Workspace Context Switching with Assumed Role Banner**.
+
+### ✨ Features & Enhancements
+
+#### First-Class Service Principals (Machine Identities)
+- **Automated Workload Identities**: Added dedicated service principal entities for scripts, CI/CD runners, and background tasks.
+- **OAuth2 Client Credentials**: Support for client ID generation, secure client secret generation, lifecycle management, and rotation.
+- **Access Control**: Service principals can be assigned account and workspace roles and added to groups identically to human users.
+
+#### Nested Groups & Parent-Child Hierarchies
+- **Group Hierarchy Support**: Groups can now contain other groups as members, enabling hierarchical organizational permission modeling.
+- **Recursive Membership Resolution**: Automated computation of direct and inherited group memberships across governance policies.
+- **Group Details Drawer (`GroupDetailsPanel.tsx`)**: Interactive side drawer to inspect group composition, add parent groups, and manage child members.
+
+#### Unified Account Identity Hub
+- **Centralized Identity Directory (`IdentityHubTab.tsx`)**: Single-pane dashboard aggregating Users, Service Principals, and Nested Groups with real-time statistics, global search, and filtering.
+
+#### Dynamic Role Switcher & Assumed Context Banner
+- **Session Role Switcher (`RoleSwitcherDropdown.tsx`)**: Allows multi-role users to switch active persona (e.g. Account Admin, Workspace Admin, Member, Read-Only) dynamically.
+- **Assumed Context Banner (`AssumedContextBanner.tsx`)**: Persistent top notification banner indicating active assumed role/workspace with instant one-click return.
+
+#### Database Migrations & Governance Enforcement
+- **Alembic Migration (`0003_service_principals_and_nested_groups.py`)**: Provisioned tables for `service_principals`, `service_principal_secrets`, and `group_parents`.
+- **Governance Guard Updates (`dependencies.py`)**: Unified principal resolution supporting session role overrides, service principal tokens, and user JWTs.
+
+---
+
 ## [0.9.5] - 2026-09-20
 
 ### 🚀 Highlights

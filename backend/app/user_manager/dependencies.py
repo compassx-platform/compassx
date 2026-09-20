@@ -68,6 +68,19 @@ def get_current_um_user(
 
     user = db.query(UmUser).filter(UmUser.id == user_id).first()
     if user is None:
+        from app.user_manager.models.account_models import UmServicePrincipal
+        sp = db.query(UmServicePrincipal).filter(UmServicePrincipal.id == user_id).first()
+        if sp is not None:
+            if not sp.is_active:
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Service Principal is inactive")
+            user = UmUser(
+                id=sp.id,
+                account_id=sp.account_id,
+                email=f"{sp.application_id}@serviceprincipal.compassx.local",
+                display_name=sp.display_name,
+                status="active",
+            )
+            return user
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
     if user.status in ("suspended", "deactivated"):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"Account is {user.status}")

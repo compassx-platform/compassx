@@ -13,10 +13,14 @@ const BASE = import.meta.env.VITE_API_BASE_URL?.replace(/\/api\/v1\/?$/, "") || 
 
 const api: AxiosInstance = axios.create({ baseURL: BASE, timeout: 20000 });
 
-// ── Request interceptor: attach Bearer token ───────────────────────────────
+import { getActiveSessionRoleId } from "./sessionRoleStore";
+
+// ── Request interceptor: attach Bearer token and active role context ──────
 api.interceptors.request.use((config) => {
   const token = getToken();
   if (token) config.headers["Authorization"] = `Bearer ${token}`;
+  const activeRoleId = getActiveSessionRoleId();
+  if (activeRoleId) config.headers["X-Active-Role-Id"] = activeRoleId;
   return config;
 });
 
@@ -282,6 +286,28 @@ export const useGroups = () =>
 export const useGroupMembers = (groupId: string) =>
   useQuery({ queryKey: ["um-group-members", groupId], queryFn: () => fetchGroupMembers(groupId), enabled: !!groupId });
 
+export const useAddGroupMember = (groupId: string) => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (userId: string) => addGroupMember(groupId, userId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["um-group-members", groupId] });
+      qc.invalidateQueries({ queryKey: ["um-groups"] });
+    },
+  });
+};
+
+export const useRemoveGroupMember = (groupId: string) => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (userId: string) => removeGroupMember(groupId, userId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["um-group-members", groupId] });
+      qc.invalidateQueries({ queryKey: ["um-groups"] });
+    },
+  });
+};
+
 export const useWorkspacesAdmin = () =>
   useQuery({ queryKey: ["um-workspaces-admin"], queryFn: fetchWorkspacesAdmin, staleTime: 30_000 });
 
@@ -370,3 +396,210 @@ export const useAcceptInvite = (token: string) =>
     mutationFn: (payload: { password: string; confirm_password: string; display_name: string }) =>
       acceptInvite(token, payload),
   });
+
+// ── Service Principals & Nested Groups ────────────────────────────────────────
+
+export interface ServicePrincipalOut {
+  id: string;
+  account_id: string;
+  application_id: string;
+  display_name: string;
+  source: string;
+  is_active: boolean;
+  created_at: string;
+  secret_count: number;
+}
+
+export interface SecretMetadataOut {
+  id: string;
+  sp_id: string;
+  secret_prefix: string;
+  expires_at: string | null;
+  created_at: string;
+}
+
+export interface SecretGenerateOut {
+  id: string;
+  sp_id: string;
+  secret_prefix: string;
+  client_secret: string;
+  expires_at: string | null;
+  created_at: string;
+}
+
+export interface GroupManagerOut {
+  user_id: string;
+  email: string;
+  display_name: string | null;
+  assigned_at: string;
+}
+
+export const fetchServicePrincipals = async (): Promise<ServicePrincipalOut[]> =>
+  (await api.get("/api/um/account/service-principals")).data;
+
+export const createServicePrincipal = async (display_name: string): Promise<ServicePrincipalOut> =>
+  (await api.post("/api/um/account/service-principals", { display_name })).data;
+
+export const updateServicePrincipal = async (
+  spId: string,
+  payload: { display_name?: string; is_active?: boolean }
+): Promise<ServicePrincipalOut> =>
+  (await api.patch(`/api/um/account/service-principals/${spId}`, payload)).data;
+
+export const deleteServicePrincipal = async (spId: string): Promise<void> =>
+  (await api.delete(`/api/um/account/service-principals/${spId}`)).data;
+
+export const fetchServicePrincipalSecrets = async (spId: string): Promise<SecretMetadataOut[]> =>
+  (await api.get(`/api/um/account/service-principals/${spId}/secrets`)).data;
+
+export const generateServicePrincipalSecret = async (
+  spId: string,
+  expires_in_days: number = 90
+): Promise<SecretGenerateOut> =>
+  (await api.post(`/api/um/account/service-principals/${spId}/secrets`, { expires_in_days })).data;
+
+export const revokeServicePrincipalSecret = async (spId: string, secretId: string): Promise<void> =>
+  (await api.delete(`/api/um/account/service-principals/${spId}/secrets/${secretId}`)).data;
+
+export const fetchParentGroups = async (groupId: string): Promise<GroupOut[]> =>
+  (await api.get(`/api/um/account/groups/${groupId}/parent-groups`)).data;
+
+export const addParentGroup = async (groupId: string, parentGroupId: string): Promise<void> =>
+  (await api.post(`/api/um/account/groups/${groupId}/parent-groups`, { parent_group_id: parentGroupId })).data;
+
+export const removeParentGroup = async (groupId: string, parentGroupId: string): Promise<void> =>
+  (await api.delete(`/api/um/account/groups/${groupId}/parent-groups/${parentGroupId}`)).data;
+
+export const fetchGroupManagers = async (groupId: string): Promise<GroupManagerOut[]> =>
+  (await api.get(`/api/um/account/groups/${groupId}/managers`)).data;
+
+export const addGroupManager = async (groupId: string, userId: string): Promise<void> =>
+  (await api.post(`/api/um/account/groups/${groupId}/managers`, { user_id: userId })).data;
+
+export const removeGroupManager = async (groupId: string, userId: string): Promise<void> =>
+  (await api.delete(`/api/um/account/groups/${groupId}/managers/${userId}`)).data;
+
+export const useServicePrincipals = () =>
+  useQuery({ queryKey: ["um-service-principals"], queryFn: fetchServicePrincipals, staleTime: 30_000 });
+
+export const useCreateServicePrincipal = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (displayName: string) => createServicePrincipal(displayName),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["um-service-principals"] }),
+  });
+};
+
+export const useUpdateServicePrincipal = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ spId, payload }: { spId: string; payload: { display_name?: string; is_active?: boolean } }) =>
+      updateServicePrincipal(spId, payload),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["um-service-principals"] }),
+  });
+};
+
+export const useDeleteServicePrincipal = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (spId: string) => deleteServicePrincipal(spId),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["um-service-principals"] }),
+  });
+};
+
+export const useServicePrincipalSecrets = (spId: string) =>
+  useQuery({
+    queryKey: ["um-sp-secrets", spId],
+    queryFn: () => fetchServicePrincipalSecrets(spId),
+    enabled: !!spId,
+  });
+
+export const useGenerateSPSecret = (spId: string) => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (expiresInDays: number = 90) => generateServicePrincipalSecret(spId, expiresInDays),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["um-sp-secrets", spId] }),
+  });
+};
+
+export const useRevokeSPSecret = (spId: string) => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (secretId: string) => revokeServicePrincipalSecret(spId, secretId),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["um-sp-secrets", spId] }),
+  });
+};
+
+export const useParentGroups = (groupId: string) =>
+  useQuery({
+    queryKey: ["um-parent-groups", groupId],
+    queryFn: () => fetchParentGroups(groupId),
+    enabled: !!groupId,
+  });
+
+export const useAddParentGroup = (groupId: string) => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (parentGroupId: string) => addParentGroup(groupId, parentGroupId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["um-parent-groups", groupId] });
+      qc.invalidateQueries({ queryKey: ["um-groups"] });
+    },
+  });
+};
+
+export const useRemoveParentGroup = (groupId: string) => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (parentGroupId: string) => removeParentGroup(groupId, parentGroupId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["um-parent-groups", groupId] });
+      qc.invalidateQueries({ queryKey: ["um-groups"] });
+    },
+  });
+};
+
+export const useGroupManagers = (groupId: string) =>
+  useQuery({
+    queryKey: ["um-group-managers", groupId],
+    queryFn: () => fetchGroupManagers(groupId),
+    enabled: !!groupId,
+  });
+
+export const useAddGroupManager = (groupId: string) => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (userId: string) => addGroupManager(groupId, userId),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["um-group-managers", groupId] }),
+  });
+};
+
+export const useRemoveGroupManager = (groupId: string) => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (userId: string) => removeGroupManager(groupId, userId),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["um-group-managers", groupId] }),
+  });
+};
+
+// ── My Assumable Groups ───────────────────────────────────────────────────────
+
+export interface MyGroupOut {
+  id: string;
+  name: string;
+  source: string;
+  member_count: number;
+}
+
+export const fetchMyGroups = async (): Promise<MyGroupOut[]> =>
+  (await api.get("/api/um/auth/my-groups")).data;
+
+export const useMyGroups = () =>
+  useQuery({
+    queryKey: ["um-my-groups"],
+    queryFn: fetchMyGroups,
+    staleTime: 30_000,
+    enabled: !!getToken(),
+  });
+
+
