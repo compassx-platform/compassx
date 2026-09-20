@@ -1,6 +1,6 @@
 """Add Service Principals, Secrets, Nested Groups, and Delegated Managers.
 
-Revision ID: 0003_service_principals_and_nested_groups
+Revision ID: 0003_sp_and_nested_groups
 Revises: 0002_drop_llm_use_for_memory
 Create Date: 2026-09-20
 """
@@ -10,7 +10,7 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects.postgresql import UUID
 
-revision: str = "0003_service_principals_and_nested_groups"
+revision: str = "0003_sp_and_nested_groups"
 down_revision: Union[str, None] = "0002_drop_llm_use_for_memory"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None

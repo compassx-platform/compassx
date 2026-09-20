@@ -31,7 +31,7 @@ CompassX `0.10.0` delivers **Databricks-Inspired Enterprise Identity & Access Ma
 - **Assumed Context Banner (`AssumedContextBanner.tsx`)**: Persistent top notification banner indicating active assumed role/workspace with instant one-click return.
 
 #### Database Migrations & Governance Enforcement
-- **Alembic Migration (`0003_service_principals_and_nested_groups.py`)**: Provisioned tables for `service_principals`, `service_principal_secrets`, and `group_parents`.
+- **Alembic Migration (`0003_sp_and_nested_groups.py`)**: Provisioned tables for `service_principals`, `service_principal_secrets`, and `group_parents`.
 - **Governance Guard Updates (`dependencies.py`)**: Unified principal resolution supporting session role overrides, service principal tokens, and user JWTs.
 
 ---
