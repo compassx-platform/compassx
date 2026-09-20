@@ -536,5 +536,69 @@ export function useDevHeartbeat() {
   });
 }
 
+export interface AppLifecycleData {
+  app_id: string;
+  app_name: string;
+  dev_sandbox: {
+    auto_suspend_enabled: boolean;
+    idle_timeout_minutes: number;
+    auto_reap_enabled: boolean;
+    stale_reap_days: number;
+    status?: string;
+    last_active_at?: string | null;
+  };
+  app_runtime: {
+    auto_suspend_enabled: boolean;
+    idle_timeout_minutes: number;
+    status?: string;
+    last_accessed_at?: string | null;
+  };
+}
+
+export function useAppLifecycle(appId?: string) {
+  return useQuery({
+    queryKey: ['app-lifecycle', appId],
+    queryFn: async () => {
+      if (!appId) throw new Error('App ID required');
+      const res = await api.get<AppLifecycleData>(`/apps/${appId}/lifecycle`);
+      return res.data;
+    },
+    enabled: !!appId,
+    staleTime: 10_000,
+  });
+}
+
+export function useUpdateAppLifecycle() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      appId,
+      payload,
+    }: {
+      appId: string;
+      payload: {
+        dev_sandbox?: {
+          auto_suspend_enabled?: boolean;
+          idle_timeout_minutes?: number;
+          auto_reap_enabled?: boolean;
+          stale_reap_days?: number;
+        };
+        app_runtime?: {
+          auto_suspend_enabled?: boolean;
+          idle_timeout_minutes?: number;
+        };
+      };
+    }) => {
+      const res = await api.put<AppLifecycleData>(`/apps/${appId}/lifecycle`, payload);
+      return res.data;
+    },
+    onSuccess: (_, { appId }) => {
+      qc.invalidateQueries({ queryKey: ['app-lifecycle', appId] });
+      qc.invalidateQueries({ queryKey: ['app-detail', appId] });
+    },
+  });
+}
+
+
 
 

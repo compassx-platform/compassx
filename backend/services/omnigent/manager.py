@@ -72,11 +72,12 @@ class OmnigentManager(BaseServiceManager):
                 ing = build_omnigent_ingress(ns, "cloud", domain)
 
                 try:
-                    try:
-                        k8s.core().create_namespaced_persistent_volume_claim(namespace=ns, body=pvc)
-                    except ApiException as e:
-                        if e.status != 409:
-                            pass
+                    if pvc:
+                        try:
+                            k8s.core().create_namespaced_persistent_volume_claim(namespace=ns, body=pvc)
+                        except ApiException as e:
+                            if e.status != 409:
+                                pass
                     try:
                         k8s.apps().replace_namespaced_deployment(name=omnigent_settings.OMNIGENT_CONTAINER_NAME, namespace=ns, body=dep)
                     except ApiException as e:

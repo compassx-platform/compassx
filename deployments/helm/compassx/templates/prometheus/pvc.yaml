@@ -14,5 +14,5 @@ spec:
   {{- end }}
   resources:
     requests:
-      storage: {{ .Values.prometheus.persistence.size | default "10Gi" }}
+      storage: {{ .Values.prometheus.persistence.size | default "1Gi" }}
 {{- end }}

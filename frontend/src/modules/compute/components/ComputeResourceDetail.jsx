@@ -1,5 +1,6 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import JobLogViewer from './JobLogViewer';
+import { computeApi } from '@/modules/compute/computeApi';
 
 /**
  * Detail view for a compute resource with Configuration and Logs tabs.
@@ -7,6 +8,40 @@ import JobLogViewer from './JobLogViewer';
  */
 export default function ComputeResourceDetail({ resource, onClose }) {
   const [tab, setTab] = useState('configuration');
+  const [autoSuspend, setAutoSuspend] = useState(true);
+  const [idleTimeout, setIdleTimeout] = useState(60);
+  const [savingLifecycle, setSavingLifecycle] = useState(false);
+  const [lifecycleMsg, setLifecycleMsg] = useState(null);
+
+  useEffect(() => {
+    if (resource?.id) {
+      computeApi.getResourceLifecycle(resource.id)
+        .then((data) => {
+          if (data) {
+            setAutoSuspend(data.auto_suspend_enabled ?? true);
+            setIdleTimeout(data.idle_timeout_minutes ?? 60);
+          }
+        })
+        .catch(() => {});
+    }
+  }, [resource?.id]);
+
+  const handleSaveLifecycle = async (newAutoSuspend, newTimeout) => {
+    setSavingLifecycle(true);
+    setLifecycleMsg(null);
+    try {
+      await computeApi.updateResourceLifecycle(resource.id, {
+        auto_suspend_enabled: newAutoSuspend,
+        idle_timeout_minutes: Number(newTimeout),
+      });
+      setLifecycleMsg('Lifecycle settings updated successfully.');
+      setTimeout(() => setLifecycleMsg(null), 3000);
+    } catch (e) {
+      setLifecycleMsg('Failed to update lifecycle settings.');
+    } finally {
+      setSavingLifecycle(false);
+    }
+  };
 
   const statusColor = {
     Running: '#10b981',
@@ -114,13 +149,78 @@ export default function ComputeResourceDetail({ resource, onClose }) {
               </section>
 
               {resource.description && (
-                <section>
+                <section style={{ marginBottom: '24px' }}>
                   <h2 style={{ margin: '0 0 12px', fontSize: '15px', fontWeight: 600 }}>Description</h2>
                   <div style={{ padding: '12px 16px', background: 'var(--color-surface-secondary)', borderRadius: '6px', fontSize: '13px', lineHeight: '1.5' }}>
                     {resource.description}
                   </div>
                 </section>
               )}
+
+              {/* Lifecycle & Auto-Shutdown Section */}
+              <section>
+                <h2 style={{ margin: '0 0 12px', fontSize: '15px', fontWeight: 600 }}>Inactivity & Auto-Shutdown (Reaper)</h2>
+                <div style={{ border: '1px solid var(--color-border)', borderRadius: '8px', padding: '16px 20px', background: 'var(--color-surface)', display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <div>
+                      <span style={{ fontSize: '13px', fontWeight: 600 }}>Auto-Suspend Idle Runtime</span>
+                      <p style={{ margin: '2px 0 0', fontSize: '12px', color: 'var(--color-text-muted)' }}>
+                        Automatically stop runtime pod when no notebooks or queries execute within timeout.
+                      </p>
+                    </div>
+                    <input
+                      type="checkbox"
+                      checked={autoSuspend}
+                      onChange={(e) => {
+                        const val = e.target.checked;
+                        setAutoSuspend(val);
+                        handleSaveLifecycle(val, idleTimeout);
+                      }}
+                      disabled={savingLifecycle}
+                      style={{ width: '18px', height: '18px', cursor: 'pointer' }}
+                    />
+                  </div>
+
+                  {autoSuspend && (
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderTop: '1px solid var(--color-border)', paddingTop: '12px' }}>
+                      <div>
+                        <span style={{ fontSize: '13px', fontWeight: 500 }}>Idle Timeout Duration</span>
+                        <p style={{ margin: '2px 0 0', fontSize: '12px', color: 'var(--color-text-muted)' }}>
+                          Time of zero active kernel executions before suspending compute.
+                        </p>
+                      </div>
+                      <select
+                        value={idleTimeout}
+                        onChange={(e) => {
+                          const val = Number(e.target.value);
+                          setIdleTimeout(val);
+                          handleSaveLifecycle(autoSuspend, val);
+                        }}
+                        disabled={savingLifecycle}
+                        style={{
+                          padding: '6px 12px',
+                          borderRadius: '6px',
+                          border: '1px solid var(--color-border)',
+                          background: 'var(--color-surface-secondary)',
+                          fontSize: '13px',
+                        }}
+                      >
+                        <option value={15}>15 Minutes</option>
+                        <option value={30}>30 Minutes</option>
+                        <option value={60}>1 Hour (60 mins) — Default</option>
+                        <option value={120}>2 Hours (120 mins)</option>
+                        <option value={240}>4 Hours (240 mins)</option>
+                      </select>
+                    </div>
+                  )}
+
+                  {lifecycleMsg && (
+                    <div style={{ fontSize: '12px', color: lifecycleMsg.includes('Failed') ? '#ef4444' : '#10b981' }}>
+                      {lifecycleMsg}
+                    </div>
+                  )}
+                </div>
+              </section>
             </div>
 
             <div style={{ width: '300px', borderLeft: '1px solid var(--color-border)', paddingLeft: '24px', flexShrink: 0 }}>

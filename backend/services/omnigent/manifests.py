@@ -1,25 +1,14 @@
 """Kubernetes manifests builder for Databricks Omnigent Server."""
+from typing import Optional
 from kubernetes import client
 
 from app.config import settings
 from services.omnigent.config import omnigent_settings
 
 
-def build_omnigent_pvc(namespace: str) -> client.V1PersistentVolumeClaim:
-    """PVC for Omnigent Server persistent storage (artifacts, telemetry, cached data)."""
-    return client.V1PersistentVolumeClaim(
-        api_version="v1",
-        kind="PersistentVolumeClaim",
-        metadata=client.V1ObjectMeta(
-            name=omnigent_settings.OMNIGENT_VOLUME_NAME,
-            namespace=namespace,
-            labels={"app": "compassx", "compassx/service": "omnigent-server"},
-        ),
-        spec=client.V1PersistentVolumeClaimSpec(
-            access_modes=["ReadWriteOnce"],
-            resources=client.V1VolumeResourceRequirements(requests={"storage": "10Gi"}),
-        ),
-    )
+def build_omnigent_pvc(namespace: str) -> Optional[client.V1PersistentVolumeClaim]:
+    """Omnigent Server uses the shared compassx-shared-storage volume for artifacts; no separate PVC needed."""
+    return None
 
 
 def build_omnigent_deployment(namespace: str, env: str, llm_env: dict = None) -> client.V1Deployment:
@@ -39,7 +28,13 @@ def build_omnigent_deployment(namespace: str, env: str, llm_env: dict = None) ->
         )
     )
 
-    db_url = getattr(settings, "OMNIGENT_DATABASE_URL", None) or getattr(settings, "DATA_DB_URL", None) or "sqlite:////data/omnigent.db"
+    if getattr(settings, "OMNIGENT_DATABASE_URL", None):
+        db_url = settings.OMNIGENT_DATABASE_URL
+    elif getattr(settings, "PG_HOST", None) and settings.PG_HOST not in ("localhost", "127.0.0.1"):
+        ssl_suffix = "?sslmode=require" if "azure.com" in settings.PG_HOST or getattr(settings, "PG_SSL", False) else ""
+        db_url = f"postgresql+psycopg://{settings.PG_USER}:{settings.PG_PASSWORD}@{settings.PG_HOST}:{settings.PG_PORT}/omnigent{ssl_suffix}"
+    else:
+        db_url = getattr(settings, "OMNIGENT_DATABASE_URL", None) or getattr(settings, "DATA_DB_URL", None) or "sqlite:////data/omnigent.db"
 
     ws_origins = [
         "http://localhost:6767",
@@ -81,8 +76,9 @@ def build_omnigent_deployment(namespace: str, env: str, llm_env: dict = None) ->
         ports=[client.V1ContainerPort(container_port=6767, name="http")],
         volume_mounts=[
             client.V1VolumeMount(
-                name="omnigent-data",
-                mount_path="/data",
+                name="shared-storage",
+                mount_path="/data/artifacts",
+                sub_path="omnigent-artifacts",
             )
         ],
         resources=resources,
@@ -111,9 +107,9 @@ def build_omnigent_deployment(namespace: str, env: str, llm_env: dict = None) ->
                     containers=[container],
                     volumes=[
                         client.V1Volume(
-                            name="omnigent-data",
+                            name="shared-storage",
                             persistent_volume_claim=client.V1PersistentVolumeClaimVolumeSource(
-                                claim_name=omnigent_settings.OMNIGENT_VOLUME_NAME
+                                claim_name="compassx-shared-storage"
                             ),
                         )
                     ],

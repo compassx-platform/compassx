@@ -25,6 +25,7 @@ from app.schemas.apps import (
 )
 from app.services.encryption import encrypt_field
 from app.services.app_runner import app_runner_service
+from app.services.sandbox_reaper_service import unified_reaper_service
 
 logger = logging.getLogger(__name__)
 
@@ -471,6 +472,7 @@ def start_app_instance(
     db.commit()
     db.refresh(app)
 
+    unified_reaper_service.touch_app_activity(app_id)
     app_runner_service.start_app(app)
     status_info = app_runner_service.get_runtime_status(app, db=db)
     return AppRuntimeStatusResponse(**status_info)
@@ -543,4 +545,5 @@ async def proxy_app_traffic(
     app = db.query(App).filter(App.id == app_id).first()
     if not app:
         raise HTTPException(status_code=404, detail=f"App '{app_id}' not found.")
+    unified_reaper_service.touch_app_activity(app_id)
     return await app_runner_service.proxy_request(app, path, request)

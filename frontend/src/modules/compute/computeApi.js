@@ -60,6 +60,21 @@ export const computeApi = {
     return res.data;
   },
 
+  getResourceLifecycle: async (resourceId) => {
+    const res = await api.get(`/compute/resources/${resourceId}/lifecycle`);
+    return res.data;
+  },
+
+  updateResourceLifecycle: async (resourceId, data) => {
+    const res = await api.put(`/compute/resources/${resourceId}/lifecycle`, data);
+    return res.data;
+  },
+
+  touchResourceActivity: async (resourceId) => {
+    const res = await api.post(`/compute/resources/${resourceId}/activity`);
+    return res.data;
+  },
+
   startResourceKernel: async (resourceId) => {
     const res = await api.post(`/compute/resources/${resourceId}/start-kernel`, {}, {
       timeout: 120000,

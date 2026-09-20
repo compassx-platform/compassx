@@ -32,6 +32,7 @@ from services.airflow.manager import get_airflow_manager
 from services.base import ServicePhase, ServiceStatus
 from services.enterprise_gateway.manager import get_eg_manager
 from services.minio.manager import get_minio_manager
+from app.services.sandbox_reaper_service import unified_reaper_service
 
 try:
     from sse_starlette.sse import EventSourceResponse
@@ -549,6 +550,7 @@ def start_compute_resource(
     _require_compute(guard, db, resource_id, Privilege.USE_COMPUTE)
     try:
         service = _service(req_context, db)
+        unified_reaper_service.touch_compute_activity(resource_id)
         return service.start_resource(resource_id, user_id, workspace_id=workspace_id)
     except ValueError as exc:
         return _error("NotFound", str(exc), 404)
@@ -654,6 +656,7 @@ def get_kernel_info(
     # takes the same privilege as running there.
     _require_compute(guard, db, resource_id, Privilege.USE_COMPUTE)
     service = _service(req_context, db)
+    unified_reaper_service.touch_compute_activity(resource_id)
     try:
         resource = service.get_resource_with_status(resource_id, user_id, workspace_id=workspace_id)
     except ValueError as exc:

@@ -185,9 +185,13 @@ export default function AppDetailPage() {
 
   // Dev Sandbox Lifecycle Settings State
   const [autoSuspendEnabled, setAutoSuspendEnabled] = useState(true);
-  const [idleTimeoutMinutes, setIdleTimeoutMinutes] = useState(120);
+  const [idleTimeoutMinutes, setIdleTimeoutMinutes] = useState(60);
   const [autoReapEnabled, setAutoReapEnabled] = useState(true);
   const [staleReapDays, setStaleReapDays] = useState(30);
+
+  // Production App Runtime Lifecycle Settings State
+  const [appAutoSuspendEnabled, setAppAutoSuspendEnabled] = useState(false);
+  const [appIdleTimeoutMinutes, setAppIdleTimeoutMinutes] = useState(120);
 
   // Environment Tab State
   const [envVars, setEnvVars] = useState<Array<{ key: string; value: string; isSecret: boolean }>>([
@@ -353,11 +357,15 @@ export default function AppDetailPage() {
       if (app.config?.resources?.memory) setMemoryLimit(app.config.resources.memory);
       if (app.config?.resources?.replicas) setReplicas(app.config.resources.replicas);
 
-      const devCfg = app.config?.dev_sandbox || {};
+      const devCfg = app.config?.dev_sandbox || app.config?.lifecycle?.dev_sandbox || {};
       setAutoSuspendEnabled(devCfg.auto_suspend_enabled !== false);
-      setIdleTimeoutMinutes(devCfg.idle_timeout_minutes ?? 120);
+      setIdleTimeoutMinutes(devCfg.idle_timeout_minutes ?? 60);
       setAutoReapEnabled(devCfg.auto_reap_enabled !== false);
       setStaleReapDays(devCfg.stale_reap_days ?? 30);
+
+      const appRuntimeCfg = app.config?.app_runtime || app.config?.lifecycle?.app_runtime || {};
+      setAppAutoSuspendEnabled(Boolean(appRuntimeCfg.auto_suspend_enabled));
+      setAppIdleTimeoutMinutes(appRuntimeCfg.idle_timeout_minutes ?? 120);
     }
   }, [app]);
 
@@ -470,6 +478,23 @@ export default function AppDetailPage() {
           idle_timeout_minutes: Number(idleTimeoutMinutes),
           auto_reap_enabled: autoReapEnabled,
           stale_reap_days: Number(staleReapDays),
+        },
+        app_runtime: {
+          auto_suspend_enabled: appAutoSuspendEnabled,
+          idle_timeout_minutes: Number(appIdleTimeoutMinutes),
+        },
+        lifecycle: {
+          ...(currentConfig.lifecycle || {}),
+          dev_sandbox: {
+            auto_suspend_enabled: autoSuspendEnabled,
+            idle_timeout_minutes: Number(idleTimeoutMinutes),
+            auto_reap_enabled: autoReapEnabled,
+            stale_reap_days: Number(staleReapDays),
+          },
+          app_runtime: {
+            auto_suspend_enabled: appAutoSuspendEnabled,
+            idle_timeout_minutes: Number(appIdleTimeoutMinutes),
+          },
         },
       };
       await updateMutation.mutateAsync({
@@ -3320,6 +3345,106 @@ export default function AppDetailPage() {
               <span>
                 Active work protection enabled: Live Omnigent AI sessions, terminal connections, and recent file changes automatically prevent suspension.
               </span>
+            </div>
+          </div>
+
+          {/* Production App Runtime Lifecycle & Inactivity Auto-Shutdown */}
+          <div
+            style={{
+              padding: '18px 20px',
+              border: '1px solid var(--color-border)',
+              borderRadius: 'var(--radius-md, 6px)',
+              background: 'var(--color-bg-subtle, rgba(255,255,255,0.02))',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 16,
+            }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+              <div>
+                <h4 style={{ margin: '0 0 4px', fontSize: '0.92rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <Server size={16} color="var(--color-primary)" />
+                  <span>Deployed App Runtime Lifecycle & Auto-Shutdown</span>
+                </h4>
+                <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>
+                  Configure automatic scale-to-zero when no user visits or HTTP proxy requests occur. (Disabled by default for 24/7 availability).
+                </p>
+              </div>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+              {/* Auto Suspend Toggle & Timeout */}
+              <div
+                style={{
+                  padding: '14px 16px',
+                  borderRadius: 6,
+                  border: '1px solid var(--color-border)',
+                  background: 'var(--color-surface)',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 12,
+                }}
+              >
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div>
+                    <span style={{ fontSize: '0.85rem', fontWeight: 600 }}>Auto-Shutdown on Inactivity</span>
+                    <p style={{ margin: '2px 0 0', fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>
+                      Scale app pod to 0 replicas during prolonged periods of zero traffic.
+                    </p>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={appAutoSuspendEnabled}
+                    onChange={(e) => {
+                      setAppAutoSuspendEnabled(e.target.checked);
+                      setConfigDirty(true);
+                    }}
+                    style={{ width: 18, height: 18, cursor: 'pointer' }}
+                  />
+                </div>
+
+                {appAutoSuspendEnabled && (
+                  <label className="uc-field" style={{ marginBottom: 0 }}>
+                    <span className="uc-field-label">Idle Inactivity Timeout</span>
+                    <select
+                      value={appIdleTimeoutMinutes}
+                      onChange={(e) => {
+                        setAppIdleTimeoutMinutes(Number(e.target.value));
+                        setConfigDirty(true);
+                      }}
+                      className="input-field"
+                    >
+                      <option value={15}>15 Minutes</option>
+                      <option value={30}>30 Minutes</option>
+                      <option value={60}>1 Hour (60 mins)</option>
+                      <option value={120}>2 Hours (120 mins) — Default</option>
+                      <option value={240}>4 Hours (240 mins)</option>
+                      <option value={480}>8 Hours (480 mins)</option>
+                    </select>
+                  </label>
+                )}
+              </div>
+
+              {/* Seamless Auto-Wakeup Information */}
+              <div
+                style={{
+                  padding: '14px 16px',
+                  borderRadius: 6,
+                  border: '1px solid var(--color-border)',
+                  background: 'var(--color-surface)',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  justifyContent: 'center',
+                  gap: 6,
+                }}
+              >
+                <span style={{ fontSize: '0.85rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <Rocket size={14} color="var(--color-primary)" /> Instant Auto-Wakeup
+                </span>
+                <p style={{ margin: 0, fontSize: '0.75rem', color: 'var(--color-text-muted)', lineHeight: '1.45' }}>
+                  When suspended, visiting the app URL or clicking <strong>Open App</strong> automatically triggers fast container scale-up and resumes serving requests.
+                </p>
+              </div>
             </div>
           </div>
 

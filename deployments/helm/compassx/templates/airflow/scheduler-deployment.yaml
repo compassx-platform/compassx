@@ -59,6 +59,14 @@ spec:
             - name: COMPASSX_DAG_SHARD_COUNT
               value: "1"
           volumeMounts:
+            {{- if .Values.sharedStorage.enabled }}
+            - name: shared-storage
+              mountPath: /opt/airflow/dags
+              subPath: airflow-dags
+            - name: shared-storage
+              mountPath: /opt/airflow/logs
+              subPath: airflow-logs
+            {{- else }}
             {{- if .Values.airflow.persistence.dags.enabled }}
             - name: dags
               mountPath: /opt/airflow/dags
@@ -67,9 +75,17 @@ spec:
             - name: logs
               mountPath: /opt/airflow/logs
             {{- end }}
+            {{- end }}
           resources:
             {{- toYaml .Values.airflow.scheduler.resources | nindent 12 }}
+      nodeSelector:
+        {{- toYaml (.Values.airflow.scheduler.nodeSelector | default (dict "kubernetes.azure.com/agentpool" "systempool")) | nindent 8 }}
       volumes:
+        {{- if .Values.sharedStorage.enabled }}
+        - name: shared-storage
+          persistentVolumeClaim:
+            claimName: {{ .Values.sharedStorage.name | default (printf "%s-shared-storage" (include "compassx.fullname" .)) }}
+        {{- else }}
         {{- if .Values.airflow.persistence.dags.enabled }}
         - name: dags
           persistentVolumeClaim:
@@ -79,5 +95,6 @@ spec:
         - name: logs
           persistentVolumeClaim:
             claimName: {{ include "compassx.airflowFullname" . }}-logs
+        {{- end }}
         {{- end }}
 {{- end }}

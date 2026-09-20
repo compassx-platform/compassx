@@ -59,6 +59,8 @@ spec:
             periodSeconds: 10
           resources:
             {{- toYaml .Values.prometheus.resources | nindent 12 }}
+      nodeSelector:
+        {{- toYaml (.Values.prometheus.nodeSelector | default (dict "kubernetes.azure.com/agentpool" "systempool")) | nindent 8 }}
       volumes:
         - name: config
           configMap:

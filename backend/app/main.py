@@ -91,6 +91,7 @@ from app.workspace import workspace_routes as workspace_ws_routes  # noqa: E402
 from app.routes import app_routes  # noqa: E402
 from app.routes import app_dev_routes  # noqa: E402
 from app.routes import app_task_routes  # noqa: E402
+from app.routes import lifecycle_routes  # noqa: E402
 
 # User Manager v1 routes
 from app.user_manager.routes import setup_routes as um_setup_routes  # noqa: E402
@@ -359,7 +360,7 @@ app = FastAPI(
     lifespan=lifespan,
     title="CompassX API",
     description="CompassX Platform API",
-    version="0.9.3",
+    version="0.9.4",
     docs_url="/api/swagger/docs",
     openapi_url="/api/swagger.json",
 )
@@ -438,6 +439,7 @@ app.include_router(sql_warehouse_routes.router)
 app.include_router(app_routes.router)
 app.include_router(app_dev_routes.router)
 app.include_router(app_task_routes.router)
+app.include_router(lifecycle_routes.router)
 
 # Workspace / account / auth routes (legacy - kept for backward compat)
 app.include_router(workspace_auth_routes.router)

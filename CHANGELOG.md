@@ -5,6 +5,32 @@ All notable changes to the CompassX Platform will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.4] - 2026-09-20
+
+### 🚀 Highlights
+
+CompassX `0.9.4` delivers **Unified Inactivity Auto-Shutdown & Scale-to-Zero across Apps, Dev Sandboxes, and Compute Runtimes**, **Live App Startup Console with Real-Time Cluster Events and Elapsed Timers**, **Lifecycle & Activity Management REST API**, and **Shared Storage PVC Architecture**.
+
+### ✨ Features & Enhancements
+
+#### Unified Inactivity Auto-Shutdown & Lifecycle Management
+- **Universal Scale-to-Zero**: Extended the background reaper service (`sandbox_reaper_service.py`) to monitor inactivity and automatically suspend compute across **Dev Sandboxes**, **Deployed User Apps**, and **Compute Runtimes (DuckDB / Jupyter)**.
+- **REST Endpoints (`lifecycle_routes.py`)**: Added dedicated lifecycle querying, configuration, and activity touch endpoints (`/api/v1/apps/{app_id}/lifecycle`, `/api/v1/compute/resources/{resource_id}/lifecycle`).
+- **Activity Touch Interceptors**: User interactions, terminal sessions, and API queries automatically refresh the idle timer to prevent active work disruption.
+
+#### Live App Startup Progress Console & Timeline
+- **Multi-Step Startup Timeline**: Interactive progress bar tracking pod provisioning phases (Init → Scheduling → Pulling Image → Container Startup → Live Health).
+- **Cluster Event Streaming**: Real-time event log viewer displaying Kubernetes scheduling and container lifecycle events.
+- **Elapsed Time Stopwatch**: Live duration counter tracking provisioning and startup latency.
+
+#### Compute Runtime Inactivity Controls
+- **Compute Inactivity Panel**: Added Inactivity Auto-Shutdown settings card on the Compute Resource detail page with configurable timeout thresholds (15 min – 8 hrs).
+
+#### Shared Storage PVC & Helm Infrastructure
+- **Shared Storage Architecture**: Added `shared-storage-pvc.yaml` supporting shared ReadWriteMany / ReadWriteOnce volumes across Airflow, Prometheus, and Omnigent workloads.
+
+---
+
 ## [0.9.3] - 2026-09-18
 
 ### 🚀 Highlights

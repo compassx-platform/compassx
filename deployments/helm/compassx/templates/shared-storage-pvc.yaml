@@ -1,0 +1,20 @@
+{{- if .Values.sharedStorage.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ .Values.sharedStorage.name | default (printf "%s-shared-storage" (include "compassx.fullname" .)) }}
+  labels:
+    {{- include "compassx.labels" . | nindent 4 }}
+    app.kubernetes.io/component: shared-storage
+spec:
+  accessModes:
+    - {{ .Values.sharedStorage.accessMode | default "ReadWriteMany" }}
+  {{- if .Values.sharedStorage.storageClass }}
+  storageClassName: {{ .Values.sharedStorage.storageClass | quote }}
+  {{- else if .Values.global.storageClass }}
+  storageClassName: {{ .Values.global.storageClass | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.sharedStorage.size | default "15Gi" }}
+{{- end }}

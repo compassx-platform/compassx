@@ -7,6 +7,16 @@ global:
   imagePullSecrets: []
   storageClass: ""
 
+# ------------------------------------------------------------------------------
+# Unified Shared Storage (Azure Files / ReadWriteMany volume for Workspaces, Airflow, Omnigent)
+# ------------------------------------------------------------------------------
+sharedStorage:
+  enabled: true
+  name: "compassx-shared-storage"
+  size: 15Gi
+  accessMode: ReadWriteMany
+  storageClass: "azurefile-csi"
+
 nameOverride: ""
 fullnameOverride: ""
 
@@ -32,7 +42,7 @@ backend:
   image:
     repository: ghcr.io/compassx-platform/backend
     pullPolicy: IfNotPresent
-    tag: \"v0.9.3\"
+    tag: \"v0.9.4\"
 
   service:
     type: ClusterIP
@@ -100,7 +110,7 @@ frontend:
   image:
     repository: ghcr.io/compassx-platform/frontend
     pullPolicy: IfNotPresent
-    tag: \"v0.9.3\"
+    tag: \"v0.9.4\"
 
   service:
     type: ClusterIP
@@ -153,6 +163,10 @@ enterpriseGateway:
     EG_PROCESS_PROXY_LAUNCH_TIMEOUT: "60"
     COMPASSX_RUNTIME_DRIVER: "kubernetes"
     EG_REMOTE_KERNEL_MANAGER_CLASS: "enterprise_gateway.services.kernels.remotemanager.RemoteKernelManager"
+    EG_CULL_IDLE_TIMEOUT: "3600"
+    EG_CULL_INTERVAL: "300"
+    EG_CULL_CONNECTED: "false"
+    EG_CULL_BUSY: "false"
 
   resources:
     limits:
@@ -381,7 +395,7 @@ prometheus:
 
   persistence:
     enabled: true
-    size: 10Gi
+    size: 1Gi
     accessMode: ReadWriteOnce
 
   resources:

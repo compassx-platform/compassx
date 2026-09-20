@@ -49,6 +49,14 @@ spec:
               value: {{ .Values.enterpriseGateway.env.COMPASSX_RUNTIME_DRIVER | quote }}
             - name: EG_REMOTE_KERNEL_MANAGER_CLASS
               value: {{ .Values.enterpriseGateway.env.EG_REMOTE_KERNEL_MANAGER_CLASS | quote }}
+            - name: EG_CULL_IDLE_TIMEOUT
+              value: {{ .Values.enterpriseGateway.env.EG_CULL_IDLE_TIMEOUT | default "3600" | quote }}
+            - name: EG_CULL_INTERVAL
+              value: {{ .Values.enterpriseGateway.env.EG_CULL_INTERVAL | default "300" | quote }}
+            - name: EG_CULL_CONNECTED
+              value: {{ .Values.enterpriseGateway.env.EG_CULL_CONNECTED | default "false" | quote }}
+            - name: EG_CULL_BUSY
+              value: {{ .Values.enterpriseGateway.env.EG_CULL_BUSY | default "false" | quote }}
           volumeMounts:
             - name: kernelspecs
               mountPath: /usr/local/share/jupyter/kernels/duckdb_python/kernel.json

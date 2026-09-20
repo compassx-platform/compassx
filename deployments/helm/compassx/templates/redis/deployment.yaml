@@ -50,4 +50,6 @@ spec:
             timeoutSeconds: 3
           resources:
             {{- toYaml .Values.redis.resources | nindent 12 }}
+      nodeSelector:
+        {{- toYaml (.Values.redis.nodeSelector | default (dict "kubernetes.azure.com/agentpool" "systempool")) | nindent 8 }}
 {{- end }}
