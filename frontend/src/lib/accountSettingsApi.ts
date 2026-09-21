@@ -79,9 +79,11 @@ export interface ComputeAccountSettings {
   min_count?: number;
   max_count?: number;
   auto_scale?: boolean;
-  status?: 'active' | 'starting' | 'provisioning' | 'disabled' | 'pending' | 'error';
+  status?: 'active' | 'starting' | 'provisioning' | 'deprovisioning' | 'disabled' | 'not_provisioned' | 'pending' | 'error';
   status_message?: string;
+  is_provisioned?: boolean;
   is_provisioning?: boolean;
+  provisioning_action?: string;
   compute_pool?: {
     name: string;
     vm_size: string;
@@ -91,6 +93,17 @@ export interface ComputeAccountSettings {
     ready_nodes: number;
     nodes: Array<{ name: string; ready: boolean; vm_size: string }>;
   } | null;
+  compute_workloads?: {
+    total_compute: number;
+    compute_pods: Array<{
+      name: string;
+      runtime_type: string;
+      replicas: number;
+      ready_replicas: number;
+      assigned_pool: string;
+      node_selector: Record<string, string>;
+    }>;
+  };
   vm_sizes_catalog?: VmSizeOption[];
 }
 
@@ -125,18 +138,55 @@ export async function triggerNodepoolSwitchover(targetPool?: string): Promise<an
   return resp.data;
 }
 
+export async function triggerComputeProvision(body?: {
+  vm_size?: string;
+  min_count?: number;
+  max_count?: number;
+  pool_name?: string;
+}): Promise<any> {
+  const resp = await authApi.post('/api/account/settings/compute/provision', body || {});
+  return resp.data;
+}
+
+export async function triggerComputeDeprovision(body?: {
+  pool_name?: string;
+  fallback_pool?: string;
+}): Promise<any> {
+  const resp = await authApi.post('/api/account/settings/compute/deprovision', body || {});
+  return resp.data;
+}
+
+export async function triggerComputeSwitchover(targetPool?: string): Promise<any> {
+  const resp = await authApi.post('/api/account/settings/compute/switchover', null, {
+    params: targetPool ? { target_pool: targetPool } : {},
+  });
+  return resp.data;
+}
+
 export function useAccountSettings() {
   return useQuery({
     queryKey: ['account-settings'],
     queryFn: fetchAccountSettings,
-    staleTime: 10_000,
+    staleTime: 5_000,
     refetchInterval: (query) => {
-      // Poll every 4 seconds if webserver or node pool is in transition
+      // Poll every 3.5 seconds if webserver, app node pool, or compute node pool is in transition
       const wsStatus = query.state.data?.settings?.airflow?.webserver_status;
       const poolStatus = query.state.data?.settings?.app_node_pool?.status;
       const isProvisioning = query.state.data?.settings?.app_node_pool?.is_provisioning;
-      if (wsStatus === 'starting' || poolStatus === 'starting' || poolStatus === 'provisioning' || isProvisioning) {
-        return 4000;
+      const compStatus = query.state.data?.settings?.compute?.status;
+      const compIsProvisioning = query.state.data?.settings?.compute?.is_provisioning;
+
+      if (
+        wsStatus === 'starting' ||
+        poolStatus === 'starting' ||
+        poolStatus === 'provisioning' ||
+        isProvisioning ||
+        compStatus === 'starting' ||
+        compStatus === 'provisioning' ||
+        compStatus === 'deprovisioning' ||
+        compIsProvisioning
+      ) {
+        return 3500;
       }
       return false;
     },
@@ -158,6 +208,37 @@ export function useSwitchoverAppNodePool() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (targetPool?: string) => triggerNodepoolSwitchover(targetPool),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['account-settings'] });
+    },
+  });
+}
+
+export function useProvisionComputeNodePool() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body?: { vm_size?: string; min_count?: number; max_count?: number; pool_name?: string }) =>
+      triggerComputeProvision(body),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['account-settings'] });
+    },
+  });
+}
+
+export function useDeprovisionComputeNodePool() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body?: { pool_name?: string; fallback_pool?: string }) => triggerComputeDeprovision(body),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['account-settings'] });
+    },
+  });
+}
+
+export function useSwitchoverComputeNodePool() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (targetPool?: string) => triggerComputeSwitchover(targetPool),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['account-settings'] });
     },

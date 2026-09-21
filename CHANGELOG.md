@@ -5,6 +5,28 @@ All notable changes to the CompassX Platform will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.1] - 2026-09-21
+
+### 🚀 Highlights
+
+CompassX `0.11.1` delivers **Dedicated AKS Compute Node Pool Provisioning & Deprovisioning Lifecycle Management**, **Graceful Workload Migration & Reschedule Switchover**, and **Interactive Compute Pool UI Controls in Account Settings**.
+
+### ✨ Features & Enhancements
+
+#### AKS Compute Node Pool Lifecycle Management
+- **Explicit Provisioning & Deprovisioning Endpoints (`account_routes.py`)**: Added `POST /api/account/settings/compute/provision` and `POST /api/account/settings/compute/deprovision` to manage dedicated AKS compute node pools on-demand.
+- **Graceful Workload Drain & Migration**: Deprovisioning automatically drains and moves running compute and notebook pods to the fallback shared user pool before initiating Azure node pool deletion.
+- **Live Status & Autoscaler Tracking (`node_pool_manager.py`)**: Comprehensive state reporting including provisioned status, current/ready nodes, scale-to-zero detection, and autoscaler bounds.
+
+#### Manual & Rolling Compute Workload Switchover
+- **Workload Rescheduling (`switchover_compute_workloads`)**: Added `POST /api/account/settings/compute/switchover` to patch and roll compute runtime pods onto the target node pool seamlessly.
+
+#### Account Settings UI Enhancements
+- **Compute Pool Action Card (`AccountSettingsPage.tsx`)**: Real-time visual status badge for AKS compute node pool state (Not Provisioned / Provisioned / Provisioning).
+- **Direct AKS Action Buttons**: One-click actions to Provision, Update Autoscaler, Deprovision, and Reschedule & Sync Compute Pods.
+
+---
+
 ## [0.11.0] - 2026-09-21
 
 ### 🚀 Highlights

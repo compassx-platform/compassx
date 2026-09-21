@@ -43,6 +43,27 @@ def test_get_compute_node_selector_dedicated_default(manager):
         assert selector == {"kubernetes.azure.com/agentpool": "computepool"}
 
 
+def test_get_compute_pool_status_not_provisioned(manager):
+    with patch.object(manager, "get_account_compute_settings", return_value={
+        "dedicated_pool_enabled": True,
+        "pool_name": "computepool",
+        "vm_size": "Standard_D4s_v5",
+        "min_count": 0,
+        "max_count": 10,
+        "auto_stop_minutes": 5,
+    }), patch.object(manager, "list_cluster_node_pools", return_value=[]), patch.object(manager, "_get_aks_nodepool_raw", return_value=None):
+        status = manager.get_compute_pool_status()
+        assert status["dedicated_pool_enabled"] is True
+        assert status["pool_name"] == "computepool"
+        assert status["vm_size"] == "Standard_D4s_v5"
+        assert status["vm_capacity_gib"] == 16
+        assert status["min_count"] == 0
+        assert status["auto_stop_minutes"] == 5
+        assert status["is_provisioned"] is False
+        assert status["status"] == "not_provisioned"
+        assert "not provisioned on AKS" in status["status_message"]
+
+
 def test_get_compute_pool_status_scale_to_zero(manager):
     with patch.object(manager, "get_account_compute_settings", return_value={
         "dedicated_pool_enabled": True,
@@ -51,15 +72,46 @@ def test_get_compute_pool_status_scale_to_zero(manager):
         "min_count": 0,
         "max_count": 10,
         "auto_stop_minutes": 5,
-    }), patch.object(manager, "list_cluster_node_pools", return_value=[]):
+    }), patch.object(manager, "list_cluster_node_pools", return_value=[]), patch.object(
+        manager, "_get_aks_nodepool_raw", return_value={"provisioningState": "Succeeded", "count": 0}
+    ):
         status = manager.get_compute_pool_status()
         assert status["dedicated_pool_enabled"] is True
         assert status["pool_name"] == "computepool"
         assert status["vm_size"] == "Standard_D4s_v5"
-        assert status["vm_capacity_gib"] == 16
-        assert status["min_count"] == 0
-        assert status["auto_stop_minutes"] == 5
+        assert status["is_provisioned"] is True
+        assert status["status"] == "active"
         assert "Scale-to-Zero" in status["status_message"]
+
+
+def test_switchover_compute_workloads(manager):
+    mock_core = MagicMock()
+    mock_apps = MagicMock()
+
+    dep1 = MagicMock()
+    dep1.metadata.name = "compassx-runtime-duckdb-1"
+    dep1.metadata.labels = {"compassx/runtime-type": "duckdb", "compassx/runtime-id": "rt-1"}
+    dep1.spec.template.spec.node_selector = {"kubernetes.azure.com/agentpool": "computepool"}
+
+    dep2 = MagicMock()
+    dep2.metadata.name = "compassx-runtime-jupyter-2"
+    dep2.metadata.labels = {"compassx/runtime-type": "jupyter", "compassx/runtime-id": "rt-2"}
+    dep2.spec.template.spec.node_selector = {"kubernetes.azure.com/agentpool": "computepool"}
+
+    dep3 = MagicMock()
+    dep3.metadata.name = "compassx-app-user-app"
+    dep3.metadata.labels = {"compassx/app-id": "app-1"}
+    dep3.spec.template.spec.node_selector = {"kubernetes.azure.com/agentpool": "apppool"}
+
+    mock_apps.list_namespaced_deployment.return_value.items = [dep1, dep2, dep3]
+
+    with patch.object(manager, "_get_k8s_clients", return_value=(mock_core, mock_apps)):
+        res = manager.switchover_compute_workloads(target_pool="userpoolv2")
+
+        assert res["status"] == "success"
+        assert res["target_pool"] == "userpoolv2"
+        assert res["migrated_count"] == 2
+        assert mock_apps.patch_namespaced_deployment.call_count == 2
 
 
 def test_switchover_app_workloads(manager):

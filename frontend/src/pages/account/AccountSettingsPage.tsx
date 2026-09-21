@@ -7,6 +7,7 @@ import {
   Info,
   CheckCircle2,
   AlertCircle,
+  AlertTriangle,
   Clock,
   Loader2,
   Cpu,
@@ -16,11 +17,15 @@ import {
   Sliders,
   Sparkles,
   Zap,
+  Trash2,
 } from 'lucide-react';
 import {
   useAccountSettings,
   useUpdateAccountSettings,
   useSwitchoverAppNodePool,
+  useProvisionComputeNodePool,
+  useDeprovisionComputeNodePool,
+  useSwitchoverComputeNodePool,
   VmSizeOption,
 } from '@/lib/accountSettingsApi';
 import { useToast } from '@/lib/toast';
@@ -31,6 +36,9 @@ export default function AccountSettingsPage() {
   const { data: accountData, isLoading, error } = useAccountSettings();
   const updateSettingsMutation = useUpdateAccountSettings();
   const switchoverMutation = useSwitchoverAppNodePool();
+  const provisionComputeMutation = useProvisionComputeNodePool();
+  const deprovisionComputeMutation = useDeprovisionComputeNodePool();
+  const switchoverComputeMutation = useSwitchoverComputeNodePool();
 
   const settings = accountData?.settings || {};
   
@@ -248,17 +256,19 @@ export default function AccountSettingsPage() {
     );
   };
 
-  const handleSaveNodePoolConfig = (newDedicatedVal?: boolean, newVmSize?: string) => {
+  const handleSaveNodePoolConfig = (newDedicatedVal?: boolean, newVmSize?: string, newMin?: number, newMax?: number) => {
     const dedicated = newDedicatedVal !== undefined ? newDedicatedVal : isDedicatedEnabled;
     const vmSize = newVmSize !== undefined ? newVmSize : selectedVmSize;
+    const minCnt = newMin !== undefined ? newMin : minCount;
+    const maxCnt = newMax !== undefined ? newMax : maxCount;
 
     updateSettingsMutation.mutate(
       {
         app_node_pool: {
           dedicated_pool_enabled: dedicated,
           vm_size: vmSize,
-          min_count: minCount,
-          max_count: maxCount,
+          min_count: minCnt,
+          max_count: maxCnt,
           auto_scale: true,
           pool_name: 'apppool',
           default_pool_name: 'userpoolv2',
@@ -330,6 +340,100 @@ export default function AccountSettingsPage() {
         },
       }
     );
+  };
+
+  const computeIsProvisioned = Boolean(compute.is_provisioned);
+  const computeIsProvisioning = Boolean(
+    compute.is_provisioning ||
+      compute.status === 'provisioning' ||
+      compute.status === 'deprovisioning' ||
+      provisionComputeMutation.isPending ||
+      deprovisionComputeMutation.isPending
+  );
+  const computeAction =
+    compute.provisioning_action ||
+    (deprovisionComputeMutation.isPending
+      ? 'deprovisioning'
+      : provisionComputeMutation.isPending
+      ? 'provisioning'
+      : '');
+  const computeWorkloads = compute.compute_workloads || { total_compute: 0, compute_pods: [] };
+
+  const handleToggleComputeDedicated = (checked: boolean) => {
+    setIsComputeDedicated(checked);
+    if (!checked) {
+      deprovisionComputeMutation.mutate(
+        { pool_name: 'computepool', fallback_pool: compute.default_pool_name || 'userpoolv2' },
+        {
+          onSuccess: () => {
+            toast.success(
+              "Dedicated compute disabled. Active compute pods are rolling over to 'userpoolv2' and 'computepool' is being deprovisioned from AKS."
+            );
+          },
+          onError: (err: any) => {
+            toast.error(err.response?.data?.detail || err.message || 'Failed to deprovision compute pool.');
+          },
+        }
+      );
+    } else {
+      handleSaveComputeConfig({ dedicatedEnabled: true });
+    }
+  };
+
+  const handleTriggerProvisionCompute = () => {
+    provisionComputeMutation.mutate(
+      {
+        pool_name: 'computepool',
+        vm_size: computeVmSize,
+        min_count: computeMinCount,
+        max_count: computeMaxCount,
+      },
+      {
+        onSuccess: () => {
+          toast.success(
+            `Compute pool 'computepool' provisioning initiated on AKS with ${computeVmSize} (Min: ${computeMinCount}, Max: ${computeMaxCount}). Live monitoring is active.`
+          );
+        },
+        onError: (err: any) => {
+          toast.error(err.response?.data?.detail || err.message || 'Failed to dispatch provisioning command.');
+        },
+      }
+    );
+  };
+
+  const handleTriggerDeprovisionCompute = () => {
+    if (
+      window.confirm(
+        "Are you sure you want to deprovision 'computepool' on AKS? Compute pods will gracefully roll over to the shared user pool ('userpoolv2')."
+      )
+    ) {
+      deprovisionComputeMutation.mutate(
+        { pool_name: 'computepool', fallback_pool: compute.default_pool_name || 'userpoolv2' },
+        {
+          onSuccess: () => {
+            setIsComputeDedicated(false);
+            toast.success(
+              "Deprovisioning initiated: pods rolling over to 'userpoolv2' and 'computepool' being deleted from AKS."
+            );
+          },
+          onError: (err: any) => {
+            toast.error(err.response?.data?.detail || err.message || 'Failed to deprovision compute pool.');
+          },
+        }
+      );
+    }
+  };
+
+  const handleManualComputeSwitchover = () => {
+    const targetPool = isComputeDedicated && computeIsProvisioned ? 'computepool' : (compute.default_pool_name || 'userpoolv2');
+    switchoverComputeMutation.mutate(targetPool, {
+      onSuccess: (data: any) => {
+        toast.success(`Compute switchover triggered: ${data.migrated_count || 0} compute deployment(s) updated.`);
+      },
+      onError: (err: any) => {
+        toast.error(err.response?.data?.detail || err.message || 'Failed to trigger compute switchover.');
+      },
+    });
   };
 
   if (isLoading) {
@@ -603,7 +707,111 @@ export default function AccountSettingsPage() {
             </div>
           </div>
 
-          {/* Row 3: Active Workloads & Switchover Summary */}
+          {/* Row 3: App Node Pool Scaling & Node Limits (Min & Max) */}
+          <div className="ws-setting-item" style={{ alignItems: 'flex-start' }}>
+            <div className="ws-setting-info">
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
+                <Layers size={17} style={{ color: 'var(--color-primary, #1b6ef3)' }} />
+                <span className="ws-setting-label" style={{ margin: 0 }}>
+                  Autoscaling Node Limits (Min &amp; Max Nodes)
+                </span>
+              </div>
+              <div className="ws-setting-desc">
+                Configure minimum and maximum virtual machine nodes for <code>apppool</code>. The cluster autoscaler will dynamically scale nodes between these bounds based on deployed app containers and user workloads.
+              </div>
+
+              {/* Quick Min Count Presets */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '12px', flexWrap: 'wrap' }}>
+                <span style={{ fontSize: '0.78rem', fontWeight: 600, color: 'var(--color-text-muted)' }}>Min Nodes:</span>
+                {[
+                  { label: '1 (Standard)', val: 1 },
+                  { label: '2 (High Availability)', val: 2 },
+                  { label: '3 (High Load)', val: 3 },
+                ].map((preset) => (
+                  <button
+                    key={preset.val}
+                    type="button"
+                    disabled={updateSettingsMutation.isPending}
+                    onClick={() => {
+                      setMinCount(preset.val);
+                      handleSaveNodePoolConfig(isDedicatedEnabled, selectedVmSize, preset.val, maxCount);
+                    }}
+                    style={{
+                      padding: '5px 12px',
+                      borderRadius: '6px',
+                      fontSize: '0.8rem',
+                      fontWeight: 500,
+                      cursor: 'pointer',
+                      border: minCount === preset.val ? '1px solid var(--color-primary, #1b6ef3)' : '1px solid var(--color-border, #e5e7eb)',
+                      background: minCount === preset.val ? 'var(--color-primary-bg, #ebf2ff)' : 'var(--color-surface, #ffffff)',
+                      color: minCount === preset.val ? 'var(--color-primary, #1b6ef3)' : 'var(--color-text, #374151)',
+                      transition: 'all 0.15s ease',
+                    }}
+                  >
+                    {preset.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="ws-setting-control" style={{ display: 'flex', alignItems: 'center', gap: '16px', flexWrap: 'wrap' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <label style={{ fontSize: '0.82rem', fontWeight: 600, color: 'var(--color-text-muted)' }}>Min:</label>
+                <input
+                  type="number"
+                  min={1}
+                  max={50}
+                  value={minCount}
+                  disabled={updateSettingsMutation.isPending}
+                  onChange={(e) => {
+                    const val = Math.max(1, parseInt(e.target.value, 10) || 1);
+                    setMinCount(val);
+                  }}
+                  onBlur={() => handleSaveNodePoolConfig(isDedicatedEnabled, selectedVmSize, minCount, maxCount)}
+                  style={{
+                    width: '64px',
+                    padding: '6px 8px',
+                    fontSize: '0.88rem',
+                    borderRadius: '6px',
+                    border: '1px solid var(--color-border, #d1d5db)',
+                    background: 'var(--color-surface, #ffffff)',
+                    color: 'var(--color-text, #111827)',
+                    textAlign: 'center',
+                    fontWeight: 600,
+                  }}
+                />
+              </div>
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <label style={{ fontSize: '0.82rem', fontWeight: 600, color: 'var(--color-text-muted)' }}>Max:</label>
+                <input
+                  type="number"
+                  min={1}
+                  max={100}
+                  value={maxCount}
+                  disabled={updateSettingsMutation.isPending}
+                  onChange={(e) => {
+                    const val = Math.max(1, parseInt(e.target.value, 10) || 1);
+                    setMaxCount(val);
+                  }}
+                  onBlur={() => handleSaveNodePoolConfig(isDedicatedEnabled, selectedVmSize, minCount, maxCount)}
+                  style={{
+                    width: '64px',
+                    padding: '6px 8px',
+                    fontSize: '0.88rem',
+                    borderRadius: '6px',
+                    border: '1px solid var(--color-border, #d1d5db)',
+                    background: 'var(--color-surface, #ffffff)',
+                    color: 'var(--color-text, #111827)',
+                    textAlign: 'center',
+                    fontWeight: 600,
+                  }}
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Row 4: Active Workloads & Switchover Summary */}
           <div
             style={{
               marginTop: '16px',
@@ -822,7 +1030,38 @@ export default function AccountSettingsPage() {
 
             {/* Status Badge */}
             <div>
-              {isComputeDedicated && computeStatus === 'active' && (
+              {computeIsProvisioning && (
+                <span
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 5,
+                    padding: '4px 10px',
+                    borderRadius: 999,
+                    fontSize: '0.75rem',
+                    fontWeight: 600,
+                    background:
+                      computeAction === 'deprovisioning' || compute.status === 'deprovisioning'
+                        ? 'rgba(245, 158, 11, 0.12)'
+                        : 'rgba(27, 110, 243, 0.1)',
+                    color:
+                      computeAction === 'deprovisioning' || compute.status === 'deprovisioning'
+                        ? '#d97706'
+                        : '#1b6ef3',
+                    border:
+                      computeAction === 'deprovisioning' || compute.status === 'deprovisioning'
+                        ? '1px solid #f59e0b'
+                        : '1px solid #1b6ef3',
+                  }}
+                >
+                  <Loader2 size={12} className="spin" style={{ animation: 'spin 1s linear infinite' }} />
+                  {computeAction === 'deprovisioning' || compute.status === 'deprovisioning'
+                    ? 'DEPROVISIONING ON AKS...'
+                    : 'PROVISIONING ON AKS...'}
+                </span>
+              )}
+
+              {!computeIsProvisioning && isComputeDedicated && computeIsProvisioned && (
                 <span
                   style={{
                     display: 'inline-flex',
@@ -838,11 +1077,13 @@ export default function AccountSettingsPage() {
                   }}
                 >
                   <CheckCircle2 size={12} />
-                  {computeMinCount === 0 ? `SCALE-TO-ZERO ACTIVE (${compute.compute_pool?.ready_nodes || 0} Nodes)` : `DEDICATED POOL ACTIVE (${compute.compute_pool?.ready_nodes || 0} Nodes)`}
+                  {computeMinCount === 0
+                    ? `SCALE-TO-ZERO ACTIVE (${compute.compute_pool?.ready_nodes || 0} Nodes - $0/hr Idle)`
+                    : `DEDICATED POOL ACTIVE (${compute.compute_pool?.ready_nodes || 0} Nodes)`}
                 </span>
               )}
 
-              {isComputeDedicated && (computeStatus === 'provisioning' || computeStatus === 'starting') && (
+              {!computeIsProvisioning && isComputeDedicated && !computeIsProvisioned && (
                 <span
                   style={{
                     display: 'inline-flex',
@@ -852,17 +1093,17 @@ export default function AccountSettingsPage() {
                     borderRadius: 999,
                     fontSize: '0.75rem',
                     fontWeight: 600,
-                    background: 'var(--color-primary-bg, rgba(27, 110, 243, 0.1))',
-                    color: 'var(--color-primary, #1b6ef3)',
-                    border: '1px solid var(--color-primary, #1b6ef3)',
+                    background: 'rgba(245, 158, 11, 0.12)',
+                    color: '#d97706',
+                    border: '1px solid rgba(245, 158, 11, 0.4)',
                   }}
                 >
-                  <Loader2 size={12} className="spin" style={{ animation: 'spin 1s linear infinite' }} />
-                  PROVISIONING COMPUTE POOL...
+                  <AlertTriangle size={12} />
+                  NOT PROVISIONED ON AKS
                 </span>
               )}
 
-              {!isComputeDedicated && (
+              {!computeIsProvisioning && !isComputeDedicated && (
                 <span
                   style={{
                     display: 'inline-flex',
@@ -895,7 +1136,7 @@ export default function AccountSettingsPage() {
               </div>
               <div className="ws-setting-desc">
                 When enabled, all notebook kernels and serverless compute run exclusively on a dedicated user node pool (<code>computepool</code>) with Scale-to-Zero support (<code>min_count: 0</code>).
-                When disabled, compute pods are scheduled on the shared node pool.
+                When disabled, compute pods are gracefully migrated to the shared node pool (<code>userpoolv2</code>) and <code>computepool</code> is deprovisioned.
               </div>
             </div>
 
@@ -906,20 +1147,16 @@ export default function AccountSettingsPage() {
                   display: 'inline-block',
                   width: '46px',
                   height: '26px',
-                  cursor: updateSettingsMutation.isPending ? 'not-allowed' : 'pointer',
-                  opacity: updateSettingsMutation.isPending ? 0.6 : 1,
+                  cursor: updateSettingsMutation.isPending || deprovisionComputeMutation.isPending ? 'not-allowed' : 'pointer',
+                  opacity: updateSettingsMutation.isPending || deprovisionComputeMutation.isPending ? 0.6 : 1,
                   userSelect: 'none',
                 }}
               >
                 <input
                   type="checkbox"
                   checked={isComputeDedicated}
-                  disabled={updateSettingsMutation.isPending}
-                  onChange={(e) => {
-                    const checked = e.target.checked;
-                    setIsComputeDedicated(checked);
-                    handleSaveComputeConfig({ dedicatedEnabled: checked });
-                  }}
+                  disabled={updateSettingsMutation.isPending || deprovisionComputeMutation.isPending}
+                  onChange={(e) => handleToggleComputeDedicated(e.target.checked)}
                   style={{ opacity: 0, width: 0, height: 0, position: 'absolute' }}
                 />
                 <span
@@ -1114,6 +1351,125 @@ export default function AccountSettingsPage() {
             </div>
           </div>
 
+          {/* Row: Compute Node Pool Scaling & Node Limits (Min & Max) */}
+          <div className="ws-setting-item" style={{ alignItems: 'flex-start' }}>
+            <div className="ws-setting-info">
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
+                <Layers size={17} style={{ color: 'var(--color-primary, #1b6ef3)' }} />
+                <span className="ws-setting-label" style={{ margin: 0 }}>
+                  Autoscaling Node Limits (Min &amp; Max Nodes)
+                </span>
+                {computeMinCount === 0 && (
+                  <span
+                    style={{
+                      fontSize: '0.72rem',
+                      fontWeight: 600,
+                      padding: '2px 8px',
+                      borderRadius: 999,
+                      background: 'var(--color-success-bg, rgba(34, 197, 94, 0.1))',
+                      color: 'var(--color-success, #22c55e)',
+                      border: '1px solid var(--color-success, #22c55e)',
+                    }}
+                  >
+                    SCALE-TO-ZERO ENABLED ($0 Idle Cost)
+                  </span>
+                )}
+              </div>
+              <div className="ws-setting-desc">
+                Configure minimum and maximum virtual machine nodes for <code>computepool</code>. Set Minimum Nodes to <strong>0</strong> to enable automatic Scale-to-Zero so Azure deallocates nodes when all notebooks are idle.
+              </div>
+
+              {/* Quick Min Count Presets */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '12px', flexWrap: 'wrap' }}>
+                <span style={{ fontSize: '0.78rem', fontWeight: 600, color: 'var(--color-text-muted)' }}>Min Nodes:</span>
+                {[
+                  { label: '0 (Scale-to-Zero - $0/hr idle)', val: 0 },
+                  { label: '1 (Always Warm)', val: 1 },
+                  { label: '2 (High Concurrency)', val: 2 },
+                ].map((preset) => (
+                  <button
+                    key={preset.val}
+                    type="button"
+                    disabled={updateSettingsMutation.isPending || computeIsProvisioning}
+                    onClick={() => {
+                      setComputeMinCount(preset.val);
+                      handleSaveComputeConfig({ minCount: preset.val });
+                    }}
+                    style={{
+                      padding: '5px 12px',
+                      borderRadius: '6px',
+                      fontSize: '0.8rem',
+                      fontWeight: 500,
+                      cursor: computeIsProvisioning ? 'not-allowed' : 'pointer',
+                      border: computeMinCount === preset.val ? '1px solid var(--color-primary, #1b6ef3)' : '1px solid var(--color-border, #e5e7eb)',
+                      background: computeMinCount === preset.val ? 'var(--color-primary-bg, #ebf2ff)' : 'var(--color-surface, #ffffff)',
+                      color: computeMinCount === preset.val ? 'var(--color-primary, #1b6ef3)' : 'var(--color-text, #374151)',
+                      transition: 'all 0.15s ease',
+                    }}
+                  >
+                    {preset.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="ws-setting-control" style={{ display: 'flex', alignItems: 'center', gap: '16px', flexWrap: 'wrap' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <label style={{ fontSize: '0.82rem', fontWeight: 600, color: 'var(--color-text-muted)' }}>Min:</label>
+                <input
+                  type="number"
+                  min={0}
+                  max={50}
+                  value={computeMinCount}
+                  disabled={updateSettingsMutation.isPending || computeIsProvisioning}
+                  onChange={(e) => {
+                    const val = Math.max(0, parseInt(e.target.value, 10) || 0);
+                    setComputeMinCount(val);
+                  }}
+                  onBlur={() => handleSaveComputeConfig({ minCount: computeMinCount })}
+                  style={{
+                    width: '64px',
+                    padding: '6px 8px',
+                    fontSize: '0.88rem',
+                    borderRadius: '6px',
+                    border: '1px solid var(--color-border, #d1d5db)',
+                    background: 'var(--color-surface, #ffffff)',
+                    color: 'var(--color-text, #111827)',
+                    textAlign: 'center',
+                    fontWeight: 600,
+                  }}
+                />
+              </div>
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <label style={{ fontSize: '0.82rem', fontWeight: 600, color: 'var(--color-text-muted)' }}>Max:</label>
+                <input
+                  type="number"
+                  min={1}
+                  max={100}
+                  value={computeMaxCount}
+                  disabled={updateSettingsMutation.isPending || computeIsProvisioning}
+                  onChange={(e) => {
+                    const val = Math.max(1, parseInt(e.target.value, 10) || 1);
+                    setComputeMaxCount(val);
+                  }}
+                  onBlur={() => handleSaveComputeConfig({ maxCount: computeMaxCount })}
+                  style={{
+                    width: '64px',
+                    padding: '6px 8px',
+                    fontSize: '0.88rem',
+                    borderRadius: '6px',
+                    border: '1px solid var(--color-border, #d1d5db)',
+                    background: 'var(--color-surface, #ffffff)',
+                    color: 'var(--color-text, #111827)',
+                    textAlign: 'center',
+                    fontWeight: 600,
+                  }}
+                />
+              </div>
+            </div>
+          </div>
+
           {/* Row 4: Inactivity Duration Selection */}
           {isAutoStopEnabled && (
             <div className="ws-setting-item" style={{ alignItems: 'flex-start' }}>
@@ -1191,6 +1547,224 @@ export default function AccountSettingsPage() {
               </div>
             </div>
           )}
+
+          {/* Row 5: Active Compute Workloads & Switchover Summary */}
+          <div
+            style={{
+              marginTop: '16px',
+              padding: '14px 18px',
+              borderRadius: '10px',
+              background: 'var(--color-surface-hover, #f9fafb)',
+              border: '1px solid var(--color-border, #e5e7eb)',
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              flexWrap: 'wrap',
+              gap: '12px',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+              <Cpu size={18} style={{ color: 'var(--color-primary, #1b6ef3)' }} />
+              <div>
+                <div style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--color-text)' }}>
+                  Active Notebook &amp; Compute Workloads ({computeWorkloads.total_compute} Pods)
+                </div>
+                <div style={{ fontSize: '0.78rem', color: 'var(--color-text-muted)' }}>
+                  Target Pool: <code>{isComputeDedicated && computeIsProvisioned ? 'computepool' : (compute.default_pool_name || 'userpoolv2')}</code>
+                  {compute.status_message && ` • ${compute.status_message}`}
+                </div>
+              </div>
+            </div>
+
+            <button
+              onClick={handleManualComputeSwitchover}
+              disabled={switchoverComputeMutation.isPending || updateSettingsMutation.isPending || computeIsProvisioning}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 6,
+                padding: '7px 14px',
+                borderRadius: '8px',
+                fontSize: '0.82rem',
+                fontWeight: 600,
+                background: 'var(--color-primary, #1b6ef3)',
+                color: '#ffffff',
+                border: 'none',
+                cursor: switchoverComputeMutation.isPending || computeIsProvisioning ? 'not-allowed' : 'pointer',
+                opacity: switchoverComputeMutation.isPending || computeIsProvisioning ? 0.7 : 1,
+                boxShadow: '0 1px 2px rgba(0,0,0,0.05)',
+              }}
+              title="Reschedule all running compute and notebook pods onto the target node pool"
+            >
+              <RefreshCw size={13} className={switchoverComputeMutation.isPending ? 'spin' : ''} />
+              <span>{switchoverComputeMutation.isPending ? 'Syncing Compute...' : 'Reschedule & Sync Compute Pods'}</span>
+            </button>
+          </div>
+
+          {/* Row 6: Provision, Update & Deprovision Compute Pool Action Card */}
+          <div
+            style={{
+              marginTop: '16px',
+              padding: '16px 20px',
+              borderRadius: '10px',
+              background: computeIsProvisioning
+                ? 'rgba(27, 110, 243, 0.04)'
+                : !computeIsProvisioned
+                ? 'rgba(245, 158, 11, 0.04)'
+                : 'var(--color-surface-hover, #f9fafb)',
+              border: computeIsProvisioning
+                ? '1px solid rgba(27, 110, 243, 0.3)'
+                : !computeIsProvisioned
+                ? '1px solid rgba(245, 158, 11, 0.35)'
+                : '1px solid var(--color-border, #e5e7eb)',
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              flexWrap: 'wrap',
+              gap: '16px',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: '14px', flex: 1, minWidth: '260px' }}>
+              <div
+                style={{
+                  width: '38px',
+                  height: '38px',
+                  borderRadius: '8px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  background: computeIsProvisioning
+                    ? 'rgba(27, 110, 243, 0.1)'
+                    : !computeIsProvisioned
+                    ? 'rgba(245, 158, 11, 0.1)'
+                    : 'rgba(34, 197, 94, 0.1)',
+                  color: computeIsProvisioning
+                    ? '#1b6ef3'
+                    : !computeIsProvisioned
+                    ? '#d97706'
+                    : '#22c55e',
+                }}
+              >
+                {computeIsProvisioning ? (
+                  <Loader2 size={20} className="spin" style={{ animation: 'spin 1s linear infinite' }} />
+                ) : !computeIsProvisioned ? (
+                  <AlertTriangle size={20} />
+                ) : (
+                  <Server size={20} />
+                )}
+              </div>
+
+              <div>
+                <div style={{ fontSize: '0.9rem', fontWeight: 600, color: 'var(--color-text)' }}>
+                  Azure AKS Compute Node Pool (<code>computepool</code>)
+                  {!computeIsProvisioned && (
+                    <span style={{ marginLeft: '8px', fontSize: '0.75rem', fontWeight: 500, color: '#d97706' }}>
+                      (Not Provisioned on AKS)
+                    </span>
+                  )}
+                  {computeIsProvisioned && (
+                    <span style={{ marginLeft: '8px', fontSize: '0.75rem', fontWeight: 500, color: '#22c55e' }}>
+                      (Provisioned on AKS)
+                    </span>
+                  )}
+                </div>
+                <div style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)', marginTop: '2px' }}>
+                  {compute.status_message ||
+                    (!computeIsProvisioned
+                      ? `Target VM: ${computeVmSize} • Bounds: ${computeMinCount} to ${computeMaxCount} nodes. Click 'Provision Compute Pool on AKS' to create it.`
+                      : `Target VM: ${computeVmSize} • Bounds: ${computeMinCount} to ${computeMaxCount} nodes • Ready Nodes: ${compute.compute_pool?.ready_nodes || 0}`)}
+                </div>
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+              {/* If NOT provisioned, show prominent "Provision Compute Pool on AKS" button */}
+              {!computeIsProvisioned && (
+                <button
+                  onClick={handleTriggerProvisionCompute}
+                  disabled={computeIsProvisioning}
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 6,
+                    padding: '8px 16px',
+                    borderRadius: '8px',
+                    fontSize: '0.85rem',
+                    fontWeight: 600,
+                    background: 'var(--color-primary, #1b6ef3)',
+                    color: '#ffffff',
+                    border: 'none',
+                    cursor: computeIsProvisioning ? 'not-allowed' : 'pointer',
+                    opacity: computeIsProvisioning ? 0.7 : 1,
+                    boxShadow: '0 1px 3px rgba(27, 110, 243, 0.25)',
+                  }}
+                  title="Provision dedicated compute pool on Azure AKS"
+                >
+                  {computeIsProvisioning ? (
+                    <Loader2 size={14} className="spin" style={{ animation: 'spin 1s linear infinite' }} />
+                  ) : (
+                    <Zap size={14} />
+                  )}
+                  <span>{computeIsProvisioning ? 'Provisioning on AKS...' : 'Provision Compute Pool on AKS'}</span>
+                </button>
+              )}
+
+              {/* If ALREADY provisioned, show Update button & Deprovision button */}
+              {computeIsProvisioned && (
+                <>
+                  <button
+                    onClick={handleTriggerProvisionCompute}
+                    disabled={computeIsProvisioning}
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: 6,
+                      padding: '7px 14px',
+                      borderRadius: '8px',
+                      fontSize: '0.82rem',
+                      fontWeight: 600,
+                      background: 'var(--color-surface, #ffffff)',
+                      color: 'var(--color-primary, #1b6ef3)',
+                      border: '1px solid var(--color-primary, #1b6ef3)',
+                      cursor: computeIsProvisioning ? 'not-allowed' : 'pointer',
+                      opacity: computeIsProvisioning ? 0.7 : 1,
+                    }}
+                    title="Update cluster autoscaler min/max nodes and configuration on AKS"
+                  >
+                    {computeIsProvisioning ? (
+                      <Loader2 size={13} className="spin" style={{ animation: 'spin 1s linear infinite' }} />
+                    ) : (
+                      <RefreshCw size={13} />
+                    )}
+                    <span>{computeIsProvisioning ? 'Updating AKS...' : 'Update Autoscaler on AKS'}</span>
+                  </button>
+
+                  <button
+                    onClick={handleTriggerDeprovisionCompute}
+                    disabled={computeIsProvisioning}
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: 6,
+                      padding: '7px 14px',
+                      borderRadius: '8px',
+                      fontSize: '0.82rem',
+                      fontWeight: 600,
+                      background: 'transparent',
+                      color: 'var(--color-danger, #ef4444)',
+                      border: '1px solid var(--color-danger, #ef4444)',
+                      cursor: computeIsProvisioning ? 'not-allowed' : 'pointer',
+                      opacity: computeIsProvisioning ? 0.6 : 1,
+                    }}
+                    title="Gracefully migrate compute pods to shared user pool and delete this node pool on Azure"
+                  >
+                    <Trash2 size={13} />
+                    <span>Deprovision Pool from AKS</span>
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
         </div>
 
         {/* Section 3: Account & System Information */}

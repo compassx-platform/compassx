@@ -218,10 +218,16 @@ def update_account_settings(
             max_count = int(comp_cfg.get("max_count") or 10)
             auto_scale = bool(comp_cfg.get("auto_scale", True))
             pool_name = str(comp_cfg.get("pool_name") or "computepool")
+            default_pool_name = str(comp_cfg.get("default_pool_name") or settings.AZURE_DEFAULT_USER_NODEPOOL)
 
             if dedicated:
                 node_pool_manager.trigger_provision_compute_nodepool_async(
                     pool_name=pool_name, vm_size=vm_size, min_count=min_count, max_count=max_count, auto_scale=auto_scale
+                )
+            else:
+                # Dedicated compute disabled: gracefully move compute pods to default user pool and deprovision AKS compute pool
+                node_pool_manager.trigger_deprovision_compute_nodepool_async(
+                    pool_name=pool_name, fallback_pool=default_pool_name
                 )
         except Exception as exc:
             logger.warning("Could not apply Compute Node Pool configuration change: %s", exc)
@@ -247,6 +253,77 @@ def get_nodepool_status(
     """Return live node pool status, cluster pools, and app workloads."""
     from app.services.node_pool_manager import node_pool_manager
     return node_pool_manager.get_node_pool_status()
+
+
+@router.post("/settings/compute/provision")
+def trigger_compute_provision(
+    body: Optional[dict] = None,
+    db: Session = Depends(get_account_db),
+    _admin: Principal = Depends(require_account_admin),
+):
+    """Explicitly provision or update compute node pool on AKS."""
+    from app.services.node_pool_manager import node_pool_manager
+    account = db.query(Account).first()
+    saved = (getattr(account, "settings", None) or {}).get("compute", {}) if account else {}
+    req = body or {}
+    vm_size = str(req.get("vm_size") or saved.get("vm_size") or "Standard_D4s_v5")
+    min_count = int(req.get("min_count") if req.get("min_count") is not None else saved.get("min_count", 0))
+    max_count = int(req.get("max_count") or saved.get("max_count", 10))
+    pool_name = str(req.get("pool_name") or saved.get("pool_name", "computepool"))
+
+    node_pool_manager.trigger_provision_compute_nodepool_async(
+        pool_name=pool_name, vm_size=vm_size, min_count=min_count, max_count=max_count, auto_scale=True
+    )
+    return {"status": "provisioning", "message": f"Provisioning '{pool_name}' ({vm_size}, Min: {min_count}, Max: {max_count}) initiated."}
+
+
+@router.post("/settings/compute/deprovision")
+def trigger_compute_deprovision(
+    body: Optional[dict] = None,
+    db: Session = Depends(get_account_db),
+    _admin: Principal = Depends(require_account_admin),
+):
+    """Gracefully migrate compute pods to shared user pool and deprovision compute node pool from AKS."""
+    from app.services.node_pool_manager import node_pool_manager
+    account = db.query(Account).first()
+    saved = (getattr(account, "settings", None) or {}).get("compute", {}) if account else {}
+    req = body or {}
+    pool_name = str(req.get("pool_name") or saved.get("pool_name", "computepool"))
+    fallback_pool = str(req.get("fallback_pool") or saved.get("default_pool_name", settings.AZURE_DEFAULT_USER_NODEPOOL))
+
+    # Mark dedicated_pool_enabled as False in account settings
+    if account:
+        existing = dict(getattr(account, "settings", None) or {})
+        comp_existing = dict(existing.get("compute", {}))
+        comp_existing["dedicated_pool_enabled"] = False
+        existing["compute"] = comp_existing
+        account.settings = existing
+        db.commit()
+
+    node_pool_manager.trigger_deprovision_compute_nodepool_async(
+        pool_name=pool_name, fallback_pool=fallback_pool
+    )
+    return {"status": "deprovisioning", "message": f"Gracefully migrating pods to '{fallback_pool}' and deprovisioning '{pool_name}'."}
+
+
+@router.post("/settings/compute/switchover")
+def trigger_compute_switchover(
+    target_pool: Optional[str] = None,
+    _admin: Principal = Depends(require_account_admin),
+):
+    """Trigger manual rolling switchover of all compute and notebook pods to the target node pool."""
+    from app.services.node_pool_manager import node_pool_manager
+    res = node_pool_manager.switchover_compute_workloads(target_pool=target_pool)
+    return res
+
+
+@router.get("/settings/compute/status")
+def get_compute_status(
+    _admin: Principal = Depends(require_account_admin),
+):
+    """Return live compute node pool status, cluster pools, and compute workloads."""
+    from app.services.node_pool_manager import node_pool_manager
+    return node_pool_manager.get_compute_pool_status()
 
 
 

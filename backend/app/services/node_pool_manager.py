@@ -7,6 +7,7 @@ import re
 import shutil
 import subprocess
 import threading
+import time
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
@@ -112,8 +113,46 @@ class NodePoolManager:
 
     def __init__(self) -> None:
         self._provisioning_lock = threading.Lock()
+        self._cache_lock = threading.Lock()
         self._is_provisioning = False
+        self._provisioning_action = ""  # "provisioning", "deprovisioning", or ""
         self._last_provision_message = ""
+        self._aks_nodepools_cache: Dict[str, Any] = {}
+
+    def _get_aks_nodepool_raw(self, pool_name: str) -> Optional[Dict[str, Any]]:
+        """Query AKS directly via az CLI to check if the nodepool exists (useful for scale-to-zero with 0 nodes)."""
+        now = time.time()
+        with self._cache_lock:
+            cached = self._aks_nodepools_cache.get(pool_name)
+            if cached and (now - cached.get("timestamp", 0) < 20):
+                return cached.get("data")
+
+        az_path = shutil.which("az")
+        if not az_path:
+            return None
+
+        try:
+            cmd = [
+                az_path, "aks", "nodepool", "show",
+                "--resource-group", settings.AZURE_RESOURCE_GROUP,
+                "--cluster-name", settings.AZURE_AKS_CLUSTER_NAME,
+                "--name", pool_name,
+                "-o", "json",
+            ]
+            res = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+            if res.returncode == 0 and res.stdout.strip():
+                import json
+                data = json.loads(res.stdout)
+                with self._cache_lock:
+                    self._aks_nodepools_cache[pool_name] = {"data": data, "timestamp": now}
+                return data
+            else:
+                with self._cache_lock:
+                    self._aks_nodepools_cache[pool_name] = {"data": None, "timestamp": now}
+                return None
+        except Exception as exc:
+            logger.debug("Could not query AKS nodepool %s: %s", pool_name, exc)
+            return None
 
     def _get_k8s_clients(self):
         """Lazy load and return (core_v1, apps_v1) clients."""
@@ -491,8 +530,131 @@ class NodePoolManager:
             finally:
                 self._is_provisioning = False
 
+    def list_compute_deployments_summary(self) -> Dict[str, Any]:
+        """List all compute and notebook runtime deployments in compassx namespace with their current node selector and target."""
+        _, apps_v1 = self._get_k8s_clients()
+        if not apps_v1:
+            return {"total_compute": 0, "compute_pods": []}
+
+        ns = settings.K8S_NAMESPACE
+        try:
+            deps = apps_v1.list_namespaced_deployment(namespace=ns).items
+        except Exception as e:
+            logger.warning("Failed to list deployments in namespace %s: %s", ns, e)
+            return {"total_compute": 0, "compute_pods": []}
+
+        compute_deps = []
+        for dep in deps:
+            name = dep.metadata.name
+            labels = dep.metadata.labels or {}
+            # Match compute/runtime deployments
+            if (
+                "compassx/runtime-id" in labels
+                or "compassx/runtime-type" in labels
+                or name.startswith("compassx-runtime-")
+                or name.startswith("compassx-compute-")
+                or "duckdb" in name
+                or "serverless" in name
+            ):
+                spec = dep.spec.template.spec
+                node_selector = spec.node_selector or {}
+                assigned_pool = (
+                    node_selector.get("kubernetes.azure.com/agentpool")
+                    or node_selector.get("agentpool")
+                    or "unspecified"
+                )
+                compute_deps.append({
+                    "name": name,
+                    "runtime_type": labels.get("compassx/runtime-type") or "runtime",
+                    "replicas": dep.spec.replicas or 0,
+                    "ready_replicas": dep.status.ready_replicas or 0,
+                    "assigned_pool": assigned_pool,
+                    "node_selector": node_selector,
+                })
+
+        return {
+            "total_compute": len(compute_deps),
+            "compute_pods": compute_deps,
+        }
+
+    def switchover_compute_workloads(self, target_pool: Optional[str] = None) -> Dict[str, Any]:
+        """Update nodeSelector on all compassx compute and notebook deployments to gracefully roll over pods to the target pool."""
+        _, apps_v1 = self._get_k8s_clients()
+        if not apps_v1:
+            return {"status": "error", "message": "Kubernetes client unavailable", "migrated_count": 0}
+
+        ns = settings.K8S_NAMESPACE
+        cfg = self.get_account_compute_settings()
+
+        if target_pool is None:
+            if bool(cfg.get("dedicated_pool_enabled", True)):
+                target_pool = cfg.get("pool_name") or "computepool"
+            else:
+                target_pool = cfg.get("default_pool_name") or settings.AZURE_DEFAULT_USER_NODEPOOL
+
+        target_selector = {"kubernetes.azure.com/agentpool": target_pool}
+        now_ts = datetime.now(timezone.utc).isoformat()
+
+        try:
+            deps = apps_v1.list_namespaced_deployment(namespace=ns).items
+        except Exception as e:
+            logger.error("Failed to list compute deployments for switchover: %s", e)
+            return {"status": "error", "message": str(e), "migrated_count": 0}
+
+        migrated = []
+        for dep in deps:
+            name = dep.metadata.name
+            labels = dep.metadata.labels or {}
+            if (
+                "compassx/runtime-id" in labels
+                or "compassx/runtime-type" in labels
+                or name.startswith("compassx-runtime-")
+                or name.startswith("compassx-compute-")
+                or "duckdb" in name
+                or "serverless" in name
+            ):
+                current_selector = dep.spec.template.spec.node_selector or {}
+                patch_body = {
+                    "spec": {
+                        "template": {
+                            "metadata": {
+                                "annotations": {
+                                    "compassx.io/switchover-at": now_ts,
+                                }
+                            },
+                            "spec": {
+                                "nodeSelector": target_selector,
+                            },
+                        }
+                    }
+                }
+                try:
+                    apps_v1.patch_namespaced_deployment(name=name, namespace=ns, body=patch_body)
+                    migrated.append({
+                        "name": name,
+                        "previous_selector": current_selector,
+                        "new_selector": target_selector,
+                        "status": "patched",
+                    })
+                    logger.info("Migrated compute deployment '%s' to node pool '%s'", name, target_pool)
+                except Exception as exc:
+                    logger.error("Failed to patch compute deployment '%s' during switchover: %s", name, exc)
+                    migrated.append({
+                        "name": name,
+                        "error": str(exc),
+                        "status": "failed",
+                    })
+
+        return {
+            "status": "success",
+            "target_pool": target_pool,
+            "migrated_count": len([m for m in migrated if m.get("status") == "patched"]),
+            "deployments": migrated,
+            "timestamp": now_ts,
+        }
+
     def get_compute_pool_status(self) -> Dict[str, Any]:
-        """Aggregate account settings, live K8s nodes, and provisioning state for compute pool."""
+        """Aggregate account settings, live K8s nodes, Azure nodepool metadata, and provisioning state for compute pool."""
         cfg = self.get_account_compute_settings()
         dedicated_enabled = bool(cfg.get("dedicated_pool_enabled", True))
         pool_name = cfg.get("pool_name") or "computepool"
@@ -507,27 +669,46 @@ class NodePoolManager:
         cluster_pools = self.list_cluster_node_pools()
         compute_pool_info = next((p for p in cluster_pools if p["name"] == pool_name), None)
 
-        status = "disabled"
-        status_message = "Compute pods scheduled on shared user node pool."
+        # Check Azure nodepool directly (Scale-to-Zero pool may have 0 K8s node objects)
+        aks_info = self._get_aks_nodepool_raw(pool_name) if not compute_pool_info else None
+        is_provisioned = bool(
+            compute_pool_info is not None
+            or (aks_info and aks_info.get("provisioningState") in ("Succeeded", "Updating", "Creating"))
+        )
 
-        if dedicated_enabled:
+        compute_workloads = self.list_compute_deployments_summary()
+
+        status = "disabled"
+        status_message = f"Compute pods scheduled on shared user node pool ('{default_pool_name}')."
+
+        if self._is_provisioning:
+            if self._provisioning_action == "deprovisioning":
+                status = "deprovisioning"
+                status_message = self._last_provision_message or f"Deprovisioning compute pool '{pool_name}' from AKS..."
+            else:
+                status = "provisioning"
+                status_message = self._last_provision_message or f"Provisioning compute pool '{pool_name}' on AKS..."
+        elif not dedicated_enabled:
+            status = "disabled"
+            status_message = f"Dedicated compute pool disabled. Workloads routed to '{default_pool_name}'."
+        elif not is_provisioned:
+            status = "not_provisioned"
+            status_message = f"Compute pool '{pool_name}' is not provisioned on AKS yet. Click 'Provision Compute Pool on AKS' to create it."
+        else:
+            # Provisioned on AKS
             if compute_pool_info and compute_pool_info["ready_nodes"] > 0:
                 status = "active"
                 status_message = f"Compute pool '{pool_name}' active with {compute_pool_info['ready_nodes']} ready node(s)."
-            elif min_count == 0 and compute_pool_info and compute_pool_info["total_nodes"] == 0:
+            elif min_count == 0:
                 status = "active"
-                status_message = f"Scale-to-Zero active on '{pool_name}' (0 nodes idle, scales on demand)."
-            elif self._is_provisioning:
-                status = "provisioning"
-                status_message = self._last_provision_message or "Provisioning dedicated compute node pool..."
+                status_message = f"Scale-to-Zero active on '{pool_name}' (0 nodes idle - $0 cost, auto-scales on demand)."
             elif compute_pool_info and compute_pool_info["total_nodes"] > 0:
                 status = "starting"
                 status_message = f"Compute pool '{pool_name}' starting ({compute_pool_info['ready_nodes']}/{compute_pool_info['total_nodes']} ready)."
             else:
-                status = "pending"
-                status_message = f"Compute pool '{pool_name}' configured (Scale-to-Zero enabled)."
+                status = "active"
+                status_message = f"Compute pool '{pool_name}' active on AKS ({selected_vm_size})."
 
-        # Determine RAM capacity in GiB for selected VM size
         vm_meta = next((v for v in AZURE_VM_SIZES if v["id"] == selected_vm_size), None)
         vm_capacity_gib = vm_meta["memory_gib"] if vm_meta else 16
 
@@ -544,14 +725,23 @@ class NodePoolManager:
             "auto_stop_minutes": auto_stop_minutes,
             "status": status,
             "status_message": status_message,
+            "is_provisioned": is_provisioned,
             "is_provisioning": self._is_provisioning,
+            "provisioning_action": self._provisioning_action,
             "compute_pool": compute_pool_info,
+            "aks_info": aks_info,
             "cluster_pools": cluster_pools,
+            "compute_workloads": compute_workloads,
             "vm_sizes_catalog": self.get_vm_sizes_catalog(),
         }
 
     def trigger_provision_compute_nodepool_async(
-        self, pool_name: str = "computepool", vm_size: str = "Standard_D4s_v5", min_count: int = 0, max_count: int = 10, auto_scale: bool = True
+        self,
+        pool_name: str = "computepool",
+        vm_size: str = "Standard_D4s_v5",
+        min_count: int = 0,
+        max_count: int = 10,
+        auto_scale: bool = True,
     ) -> None:
         """Asynchronously triggers AKS compute nodepool creation or update via az CLI in a background thread."""
         thread = threading.Thread(
@@ -567,12 +757,13 @@ class NodePoolManager:
         """Worker thread executing compute nodepool create/update command."""
         with self._provisioning_lock:
             self._is_provisioning = True
-            self._last_provision_message = f"Provisioning compute pool '{pool_name}' ({vm_size})..."
+            self._provisioning_action = "provisioning"
+            self._last_provision_message = f"Provisioning compute pool '{pool_name}' on AKS ({vm_size}, Min: {min_count}, Max: {max_count})..."
             try:
                 az_path = shutil.which("az")
                 if not az_path:
                     logger.warning("Azure CLI ('az') not found on system path; skipping live AKS compute nodepool command.")
-                    self._last_provision_message = "Azure CLI not installed; nodeSelector updated for existing or external pool."
+                    self._last_provision_message = "Azure CLI not installed; nodeSelector updated for external pool."
                     return
 
                 # Check if nodepool already exists
@@ -588,6 +779,7 @@ class NodePoolManager:
 
                 if res.returncode == 0:
                     logger.info("Compute node pool '%s' already exists on AKS. Updating parameters...", pool_name)
+                    self._last_provision_message = f"Updating compute pool '{pool_name}' autoscaling on AKS (Min: {min_count}, Max: {max_count})..."
                     update_cmd = [
                         az_path, "aks", "nodepool", "update",
                         "--resource-group", settings.AZURE_RESOURCE_GROUP,
@@ -599,9 +791,10 @@ class NodePoolManager:
                         "--no-wait",
                     ]
                     subprocess.run(update_cmd, capture_output=True, text=True, timeout=60)
-                    self._last_provision_message = f"Compute node pool '{pool_name}' update initiated."
+                    self._last_provision_message = f"Compute node pool '{pool_name}' update initiated on AKS."
                 else:
-                    logger.info("Creating AKS compute node pool '%s' with VM size %s (min=%d)...", pool_name, vm_size, min_count)
+                    logger.info("Creating AKS compute node pool '%s' with VM size %s (min=%d, max=%d)...", pool_name, vm_size, min_count, max_count)
+                    self._last_provision_message = f"Creating AKS node pool '{pool_name}' ({vm_size}, Min: {min_count}, Max: {max_count})..."
                     create_cmd = [
                         az_path, "aks", "nodepool", "add",
                         "--resource-group", settings.AZURE_RESOURCE_GROUP,
@@ -622,16 +815,91 @@ class NodePoolManager:
 
                     run_res = subprocess.run(create_cmd, capture_output=True, text=True, timeout=90)
                     if run_res.returncode == 0:
-                        self._last_provision_message = f"Compute node pool '{pool_name}' provisioning in progress on Azure."
+                        self._last_provision_message = f"Compute pool '{pool_name}' provisioning in progress on Azure AKS."
                         logger.info("AKS compute nodepool add dispatched successfully.")
                     else:
                         self._last_provision_message = f"Provisioning failed: {run_res.stderr.strip()[:200]}"
                         logger.warning("AKS compute nodepool add returned error: %s", run_res.stderr)
+
+                # Gracefully switchover compute workloads to computepool
+                self.switchover_compute_workloads(target_pool=pool_name)
             except Exception as exc:
                 logger.error("Error during compute node pool provisioning worker: %s", exc)
                 self._last_provision_message = f"Provisioning error: {str(exc)}"
             finally:
                 self._is_provisioning = False
+                self._provisioning_action = ""
+                with self._cache_lock:
+                    self._aks_nodepools_cache.pop(pool_name, None)
+
+    def trigger_deprovision_compute_nodepool_async(
+        self,
+        pool_name: str = "computepool",
+        fallback_pool: str = "userpoolv2",
+    ) -> None:
+        """Asynchronously gracefully migrates compute pods to fallback pool and deprovisions AKS nodepool."""
+        thread = threading.Thread(
+            target=self._deprovision_compute_nodepool_worker,
+            args=(pool_name, fallback_pool),
+            daemon=True,
+        )
+        thread.start()
+
+    def _deprovision_compute_nodepool_worker(self, pool_name: str, fallback_pool: str) -> None:
+        """Worker thread executing compute nodepool deprovisioning command."""
+        with self._provisioning_lock:
+            self._is_provisioning = True
+            self._provisioning_action = "deprovisioning"
+            self._last_provision_message = f"Gracefully migrating compute pods to '{fallback_pool}' and deprovisioning '{pool_name}' on AKS..."
+            try:
+                # 1. Gracefully migrate running compute pods to fallback pool
+                logger.info("Switching over compute pods to fallback pool '%s'...", fallback_pool)
+                self.switchover_compute_workloads(target_pool=fallback_pool)
+
+                az_path = shutil.which("az")
+                if not az_path:
+                    logger.warning("Azure CLI ('az') not found on system path; skipping AKS delete command.")
+                    self._last_provision_message = f"Compute pods migrated to '{fallback_pool}'."
+                    return
+
+                # Check if pool exists
+                check_cmd = [
+                    az_path, "aks", "nodepool", "show",
+                    "--resource-group", settings.AZURE_RESOURCE_GROUP,
+                    "--cluster-name", settings.AZURE_AKS_CLUSTER_NAME,
+                    "--name", pool_name,
+                    "-o", "json",
+                ]
+                res = subprocess.run(check_cmd, capture_output=True, text=True, timeout=60)
+                if res.returncode != 0:
+                    logger.info("AKS compute nodepool '%s' does not exist; nothing to delete.", pool_name)
+                    self._last_provision_message = f"Compute pool '{pool_name}' not present on AKS. Workloads assigned to '{fallback_pool}'."
+                    return
+
+                logger.info("Deprovisioning AKS compute node pool '%s'...", pool_name)
+                del_cmd = [
+                    az_path, "aks", "nodepool", "delete",
+                    "--resource-group", settings.AZURE_RESOURCE_GROUP,
+                    "--cluster-name", settings.AZURE_AKS_CLUSTER_NAME,
+                    "--name", pool_name,
+                    "--yes",
+                    "--no-wait",
+                ]
+                del_res = subprocess.run(del_cmd, capture_output=True, text=True, timeout=90)
+                if del_res.returncode == 0:
+                    self._last_provision_message = f"Deprovisioning of compute pool '{pool_name}' initiated on Azure AKS. Pods running on '{fallback_pool}'."
+                    logger.info("AKS nodepool delete dispatched successfully.")
+                else:
+                    self._last_provision_message = f"Deprovisioning failed: {del_res.stderr.strip()[:200]}"
+                    logger.warning("AKS nodepool delete returned error: %s", del_res.stderr)
+            except Exception as exc:
+                logger.error("Error during compute nodepool deprovision worker: %s", exc)
+                self._last_provision_message = f"Deprovisioning error: {str(exc)}"
+            finally:
+                self._is_provisioning = False
+                self._provisioning_action = ""
+                with self._cache_lock:
+                    self._aks_nodepools_cache.pop(pool_name, None)
 
 
 # Singleton instance
