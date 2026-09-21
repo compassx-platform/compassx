@@ -5,6 +5,7 @@ import ComputeResourceDetail from '@/modules/compute/components/ComputeResourceD
 import { computeApi } from '@/modules/compute/computeApi';
 import { useScopedNavigate } from '@/lib/appNavigation';
 import { getPrincipalInfo } from '@/lib/auth';
+import './compute-page.css';
 
 const POLL_INTERVAL = 10000;
 
@@ -49,22 +50,33 @@ export default function ComputeResourceDetailPage() {
   if (error || !resource) {
     return (
       <div style={{ padding: '24px' }}>
-        <button
-          onClick={() => navigate('/compute')}
-          style={{
-            padding: '8px 16px',
-            background: 'var(--color-accent, #6366f1)',
-            color: '#fff',
-            border: 'none',
-            borderRadius: '6px',
-            fontSize: '13px',
-            fontWeight: 600,
-            cursor: 'pointer',
-            marginBottom: '16px',
-          }}
-        >
-          ← Back to Compute
-        </button>
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 6,
+          fontSize: '13px',
+          marginBottom: '16px',
+        }}>
+          <button
+            type="button"
+            onClick={() => navigate('/compute')}
+            style={{
+              background: 'none',
+              border: 'none',
+              padding: 0,
+              color: 'var(--color-primary, #6366f1)',
+              cursor: 'pointer',
+              fontWeight: 500,
+              fontSize: '13px',
+            }}
+          >
+            Compute
+          </button>
+          <span style={{ color: 'var(--color-text-muted)', opacity: 0.5 }}>/</span>
+          <span style={{ color: 'var(--color-text-muted)', fontSize: '13px' }}>
+            Resource Details
+          </span>
+        </div>
         <div style={{ color: 'var(--color-error, #ef4444)' }}>
           {error || 'Resource not found'}
         </div>
@@ -76,6 +88,7 @@ export default function ComputeResourceDetailPage() {
     <ComputeResourceDetail
       resource={resource}
       onClose={() => navigate('/compute')}
+      onRefresh={fetchResource}
     />
   );
 }

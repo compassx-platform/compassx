@@ -98,6 +98,8 @@ export default function AppShell() {
     if (scopedPathname.startsWith('/ingestion/job-configs/')) return 'Job Config';
     if (scopedPathname.startsWith('/ingestion/job-configs')) return 'Job Configs';
     if (scopedPathname.startsWith('/ingestion/runs/')) return 'Ingestion Run';
+    if (/^\/compute\/[^/]+/.test(scopedPathname)) return 'Compute Detail';
+    if (scopedPathname.startsWith('/compute')) return 'Compute';
     if (scopedPathname.startsWith('/icons')) return 'Custom Icons';
     if (scopedPathname.startsWith('/logo') || scopedPathname.startsWith('/brand-logo')) return 'Logo Showcase';
     if (scopedPathname.startsWith('/design-system')) return 'Design System';

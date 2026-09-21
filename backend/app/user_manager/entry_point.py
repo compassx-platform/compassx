@@ -80,11 +80,9 @@ def _get_user_workspace_ids(user_id: str, system_db: Session, account_db: Sessio
         .all()
     )
 
-    # Via group
-    group_ids = [
-        gm.group_id
-        for gm in account_db.query(UmGroupMember).filter(UmGroupMember.user_id == user_id).all()
-    ]
+    # Via group (including recursive parent groups)
+    from app.governance.dependencies import _group_ids
+    group_ids = list(_group_ids(account_db, user_id))
     group_rows = []
     if group_ids:
         group_rows = (

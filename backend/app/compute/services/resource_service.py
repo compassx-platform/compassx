@@ -14,7 +14,7 @@ from app.models.compute_resources import ComputeResource
 from compute.config import compute_settings
 from compute.manager import ComputeManager, JobNotFoundError, get_compute_manager
 from compute.profiles import get_profile
-from compute.schemas import ComputeResourceRequest, ComputeResourceResponse, ComputeResourceStatus
+from compute.schemas import ComputeResourceRequest, ComputeResourceResponse, ComputeResourceStatus, ComputeResourceUpdateRequest
 from compassx.runtime.db_models import PlatformRuntime
 
 logger = logging.getLogger(__name__)
@@ -239,6 +239,198 @@ class ComputeResourceService:
                 logger.warning("Could not start runtime during resource creation for %s (desired_status remains running): %s", resource_id, start_err)
 
         return self._to_response(resource)
+
+    def update_resource(
+        self,
+        resource_id: str,
+        request: ComputeResourceUpdateRequest,
+        user_id: str,
+        workspace_id: str | None = None,
+    ) -> ComputeResourceResponse:
+        """Update compute resource configuration and re-apply to running deployment if active."""
+        resource = self._get_resource_row(resource_id, user_id, workspace_id)
+
+        target_runtime = request.runtime.value if request.runtime is not None else resource.runtime
+        target_profile = request.profile.value if request.profile is not None else resource.profile
+
+        # Validate profile & runtime compatibility
+        profile = get_profile(target_profile, compute_settings.COMPASSX_ENV)
+        if target_runtime == "duckdb" and profile.id not in {"local", "cloud-xs", "cloud-s"}:
+            raise ValueError("DuckDB is only valid with profiles: local, cloud-xs, cloud-s")
+
+        was_running = (resource.desired_status == "running")
+
+        # Stop existing runtime / deployment if active to apply new spec
+        if was_running:
+            try:
+                self.stop_resource(resource_id, user_id, workspace_id)
+            except Exception as stop_err:
+                logger.warning("Could not stop resource %s before update: %s", resource_id, stop_err)
+
+        if request.name is not None:
+            resource.name = request.name
+        if request.runtime is not None:
+            resource.runtime = request.runtime.value
+        if request.profile is not None:
+            resource.profile = request.profile.value
+        if request.description is not None:
+            resource.description = request.description
+        if request.custom_image is not None:
+            resource.custom_image = request.custom_image
+        if request.extra_env is not None:
+            resource.extra_env = json.dumps(request.extra_env)
+
+        self.db.commit()
+        self.db.refresh(resource)
+
+        if was_running:
+            try:
+                self.start_resource(resource_id, user_id, workspace_id)
+                self.db.refresh(resource)
+            except Exception as start_err:
+                logger.warning("Could not restart updated resource %s: %s", resource_id, start_err)
+
+        return self._to_response(resource)
+
+    def ensure_serverless_resource(
+        self,
+        user_id: str,
+        workspace_id: str | None = None,
+        created_by: str = "system",
+        notebook_id: str | None = None,
+        notebook_name: str | None = None,
+    ) -> ComputeResourceStatus:
+        """Ensure a serverless DuckDB compute resource exists for a notebook (or workspace) and return its status."""
+        from compute.schemas import ComputeProfileId, RuntimeType
+
+        profile_name = compute_settings.resolved_default_compute_profile()
+        try:
+            profile_enum = ComputeProfileId(profile_name)
+        except Exception:
+            profile_enum = ComputeProfileId.LOCAL
+
+        # 1. If notebook_id is provided, check if the notebook is already bound to a compute resource
+        if notebook_id:
+            target_resource_id = None
+            resolved_notebook_name = notebook_name
+            try:
+                from app.database import AccountSessionLocal
+                from app.catalog.models import UnifiedCatalogNotebook
+                if AccountSessionLocal:
+                    with AccountSessionLocal() as acc_db:
+                        nb_record = (
+                            acc_db.query(UnifiedCatalogNotebook)
+                            .filter(UnifiedCatalogNotebook.id == notebook_id)
+                            .first()
+                        )
+                        if nb_record:
+                            if nb_record.last_compute_resource_id:
+                                target_resource_id = nb_record.last_compute_resource_id
+                            if not resolved_notebook_name and nb_record.name:
+                                resolved_notebook_name = nb_record.name
+            except Exception as e:
+                logger.debug("Could not lookup notebook %s in account db: %s", notebook_id, e)
+
+            # Check if target_resource_id exists and is valid
+            if target_resource_id:
+                existing_res = (
+                    self.db.query(ComputeResource)
+                    .filter(ComputeResource.id == target_resource_id)
+                    .first()
+                )
+                if existing_res:
+                    if existing_res.desired_status != "running":
+                        try:
+                            self.start_resource(existing_res.id, user_id, workspace_id)
+                        except Exception as start_err:
+                            logger.warning(
+                                "Could not auto-start notebook %s compute resource %s: %s",
+                                notebook_id,
+                                existing_res.id,
+                                start_err,
+                            )
+                    return self.get_resource_with_status(existing_res.id, user_id, workspace_id)
+
+            # If no linked resource exists for this notebook, create a dedicated one
+            label = resolved_notebook_name.strip() if resolved_notebook_name else f"Notebook {notebook_id[:8]}"
+            req = ComputeResourceRequest(
+                name=f"Serverless - {label}",
+                runtime=RuntimeType.DUCKDB,
+                profile=profile_enum,
+                description=f"Auto-provisioned Serverless DuckDB compute for notebook: {label}",
+            )
+            created = self.create_resource(
+                req,
+                user_id=user_id,
+                created_by=created_by,
+                workspace_id=workspace_id,
+                is_default=False,
+                auto_start=True,
+            )
+
+            # Link the newly created compute resource to the notebook record
+            try:
+                from app.database import AccountSessionLocal
+                from app.catalog.models import UnifiedCatalogNotebook
+                if AccountSessionLocal:
+                    with AccountSessionLocal() as acc_db:
+                        nb_record = (
+                            acc_db.query(UnifiedCatalogNotebook)
+                            .filter(UnifiedCatalogNotebook.id == notebook_id)
+                            .first()
+                        )
+                        if nb_record:
+                            nb_record.last_compute_resource_id = created.id
+                            acc_db.commit()
+            except Exception as link_err:
+                logger.warning(
+                    "Failed to link compute resource %s to notebook %s: %s",
+                    created.id,
+                    notebook_id,
+                    link_err,
+                )
+
+            return self.get_resource_with_status(created.id, user_id, workspace_id)
+
+        # 2. Fallback when notebook_id is not provided (workspace default serverless)
+        query = self.db.query(ComputeResource)
+        if workspace_id:
+            query = query.filter(ComputeResource.workspace_id == workspace_id)
+        else:
+            query = query.filter(ComputeResource.workspace_id == None, ComputeResource.user_id == user_id)
+
+        serverless = query.filter(
+            (ComputeResource.name.ilike("%serverless%")) | (ComputeResource.is_default.is_(True))
+        ).first()
+
+        if serverless is None:
+            serverless = query.first()
+
+        if serverless is None:
+            req = ComputeResourceRequest(
+                name="Serverless Compute",
+                runtime=RuntimeType.DUCKDB,
+                profile=profile_enum,
+                description="Auto-provisioned Serverless DuckDB compute.",
+            )
+            created = self.create_resource(
+                req,
+                user_id=user_id,
+                created_by=created_by,
+                workspace_id=workspace_id,
+                is_default=True,
+                auto_start=True,
+            )
+            return self.get_resource_with_status(created.id, user_id, workspace_id)
+
+        if serverless.desired_status != "running":
+            try:
+                self.start_resource(serverless.id, user_id, workspace_id)
+            except Exception as start_err:
+                logger.warning("Could not auto-start existing serverless compute %s: %s", serverless.id, start_err)
+
+        return self.get_resource_with_status(serverless.id, user_id, workspace_id)
+
 
     def list_resources(self, user_id: str, workspace_id: str | None = None) -> list[ComputeResourceResponse]:
         query = self.db.query(ComputeResource)

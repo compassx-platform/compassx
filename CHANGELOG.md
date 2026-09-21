@@ -5,6 +5,33 @@ All notable changes to the CompassX Platform will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.0] - 2026-09-21
+
+### 🚀 Highlights
+
+CompassX `0.11.0` delivers **Interactive Notebook Studio 2.0 with Integrated Web Terminal**, **Compute Resource Lifecycle Reconciliation & Auto-Recovery**, **Workspace-Level Service Principals & Member Management Overhaul**, and **Node Pool Hardware Tiering & Azure VM Catalog Expansion**.
+
+### ✨ Features & Enhancements
+
+#### Interactive Notebook Studio 2.0 & Web Terminal
+- **Integrated Web Terminal**: Embedded `xterm.js` web terminal with dynamic pod selector and WebSocket streaming directly inside the notebook interface.
+- **Sidebar Drawers & Navigation**: Quick-access collapsible drawers for compute resources, kernel runtime selection, files, and cluster status.
+- **Kernel State Narrowing & Resiliency**: Hardened kernel attachment and execution lifecycle against unassigned resources and transient pod disconnections.
+
+#### Compute Resource Lifecycle Reconciliation & Auto-Recovery
+- **Automated Pod-to-DB Sync**: Background reconciliation service syncing live Kubernetes pod state with PostgreSQL resource records.
+- **Auto-Recovery Loop**: Detects desynchronized or failed compute workloads and triggers automatic state correction and pod reinstatement.
+
+#### Workspace-Level Service Principals & Member Management
+- **Workspace SP Assignments (`0008_ws_service_principals.py`)**: Direct assignment of Service Principals to workspaces with granular access roles (Admin, Editor, Viewer).
+- **Workspace Members Directory**: Redesigned workspace membership drawer supporting human users and machine identities in a unified view.
+
+#### Node Pool Hardware Tiering & VM Catalog
+- **Tier Matching**: Intelligent node pool selection routing interactive and heavy workloads to target hardware tiers (`userpoolv2`, `systempoolv2`).
+- **VM Catalog Extension**: Expanded Azure VM series catalog with cost, CPU, memory, and acceleration specifications.
+
+---
+
 ## [0.10.0] - 2026-09-20
 
 ### 🚀 Highlights

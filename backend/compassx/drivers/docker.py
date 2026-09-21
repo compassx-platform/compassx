@@ -170,13 +170,19 @@ class DockerDriver(ResourceDriver):
 
     async def create_runtime(self, spec: RuntimeSpec) -> str:
         try:
-            self._find_container(spec.runtime_id)
+            c = self._find_container(spec.runtime_id)
         except RuntimeNotFoundError:
             pass
         else:
-            raise RuntimeAlreadyExistsError(
-                f"Docker runtime already exists: {spec.runtime_id}"
-            )
+            if c.status in ("created", "exited", "stopped", "dead"):
+                try:
+                    c.remove(force=True)
+                except Exception:
+                    pass
+            else:
+                raise RuntimeAlreadyExistsError(
+                    f"Docker runtime already exists: {spec.runtime_id}"
+                )
 
         labels = {
             **spec.labels,
@@ -199,9 +205,37 @@ class DockerDriver(ResourceDriver):
                     "mode": "ro" if v.read_only else "rw",
                 }
 
+        # Resolve best available image tag if target GHCR tag is not cached locally
+        image_to_use = spec.container_image
+        try:
+            self._client.images.get(image_to_use)
+        except Exception:
+            raw_name = image_to_use.split("/")[-1].split(":")[0]
+            for candidate in [f"compassx-{raw_name}:latest", f"{raw_name}:latest", f"compassx-{raw_name}"]:
+                try:
+                    self._client.images.get(candidate)
+                    logger.info("Docker driver: mapped image %s -> local %s", spec.container_image, candidate)
+                    image_to_use = candidate
+                    break
+                except Exception:
+                    pass
+            else:
+                try:
+                    for img in self._client.images.list():
+                        for tag in img.tags or []:
+                            if raw_name in tag:
+                                logger.info("Docker driver: mapped image %s -> local tag %s", spec.container_image, tag)
+                                image_to_use = tag
+                                break
+                        if image_to_use != spec.container_image:
+                            break
+                except Exception:
+                    pass
+
+        container_name = self._build_container_name(spec)
         run_kwargs: dict = {
-            "image": spec.container_image,
-            "name": self._build_container_name(spec),
+            "image": image_to_use,
+            "name": container_name,
             "detach": True,
             "labels": labels,
             "environment": environment,
@@ -225,13 +259,24 @@ class DockerDriver(ResourceDriver):
             run_kwargs["mem_limit"] = mem
 
         def _run():
-            return self._client.containers.run(**run_kwargs)
+            try:
+                return self._client.containers.run(**run_kwargs)
+            except self._errors.APIError as api_err:
+                # If name conflict, remove conflicting container and retry
+                if getattr(api_err, "status_code", None) == 409 or "Conflict" in str(api_err):
+                    try:
+                        old_c = self._client.containers.get(container_name)
+                        old_c.remove(force=True)
+                        return self._client.containers.run(**run_kwargs)
+                    except Exception:
+                        pass
+                raise
 
         try:
             container = await asyncio.to_thread(_run)
         except self._errors.ImageNotFound as exc:
             raise RuntimeProvisionError(
-                f"Image not found: {spec.container_image}"
+                f"Image not found: {image_to_use}"
             ) from exc
         except self._errors.APIError as exc:
             raise RuntimeProvisionError(
@@ -241,7 +286,7 @@ class DockerDriver(ResourceDriver):
             "Docker runtime created: runtime_id=%s container=%s image=%s",
             spec.runtime_id,
             container.short_id,
-            spec.container_image,
+            image_to_use,
         )
         return container.id
 

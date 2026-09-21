@@ -35,7 +35,7 @@ export default function ConfirmActionModal({
     <div
       className="modal-backdrop"
       onClick={onCancel}
-      style={{ zIndex: 100 }}
+      style={{ zIndex: 10000 }}
     >
       <div
         className="modal-panel"

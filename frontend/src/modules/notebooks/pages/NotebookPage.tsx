@@ -31,6 +31,7 @@ export default function NotebookPage({
   const isDirty = useNotebookStore((s) => s.isDirty);
   const setNotebookPath = useNotebookStore((s) => s.setNotebookPath);
   const setNotebookId = useNotebookStore((s) => s.setNotebookId);
+  const setNotebookMetadata = useNotebookStore((s) => s.setNotebookMetadata);
   const markClean = useNotebookStore((s) => s.markClean);
   const setCells = useNotebookStore((s) => s.setCells);
 
@@ -39,13 +40,14 @@ export default function NotebookPage({
     setIsLoading(true);
     setCells([]); // Clear previous notebook cells immediately so old notebook code is not shown
     setNotebookPath(notebookPath);
+    setNotebookMetadata(null);
     // Reset compute, pod & kernel state so compute/kernel connection is evaluated fresh for the new notebook
     useNotebookStore.getState().setLastComputeInfo(null);
     useNotebookStore.getState().setSelectedPod(null);
     useNotebookStore.getState().setKernel(null);
     useNotebookStore.getState().setKernelStatus('unknown');
     useNotebookStore.setState({ notebookComputeLoaded: false });
-  }, [notebookPath, setNotebookPath, setCells]);
+  }, [notebookPath, setNotebookPath, setCells, setNotebookMetadata]);
 
   // Load existing notebook from backend or diff props
   useEffect(() => {
@@ -116,9 +118,10 @@ export default function NotebookPage({
         const loaded = deserialize(data);
         setCells(loaded);
         // Store catalog metadata for compute persistence and auto-reconnect
-        const catalog = data._catalog as { id?: string; last_compute_resource_id?: string; last_kernel_name?: string } | undefined;
-        if (catalog?.id) {
-          setNotebookId(catalog.id);
+        const catalog = data._catalog as any;
+        if (catalog) {
+          if (catalog.id) setNotebookId(catalog.id);
+          setNotebookMetadata(catalog);
         }
         // Trigger auto-reconnect if last compute is stored
         if (catalog?.last_compute_resource_id) {
@@ -143,13 +146,20 @@ export default function NotebookPage({
     return () => {
       isCancelled = true;
     };
-  }, [notebookPath, beforeContent, afterContent, setCells, setNotebookId]);
+  }, [notebookPath, beforeContent, afterContent, setCells, setNotebookId, setNotebookMetadata]);
 
   const saveNotebook = useCallback(async () => {
     const nb = serialize(cells);
     await api.put(`/notebook/files/${notebookPath}`, nb);
     markClean();
-  }, [cells, notebookPath, markClean]);
+    const currentMeta = useNotebookStore.getState().notebookMetadata;
+    if (currentMeta) {
+      setNotebookMetadata({
+        ...currentMeta,
+        updated_at: new Date().toISOString(),
+      });
+    }
+  }, [cells, notebookPath, markClean, setNotebookMetadata]);
 
   // Keyboard shortcut Cmd/Ctrl+S
   useEffect(() => {

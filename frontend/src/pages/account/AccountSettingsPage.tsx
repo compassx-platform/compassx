@@ -60,6 +60,36 @@ export default function AccountSettingsPage() {
   const [minCount, setMinCount] = useState<number>(Number(appNodePool.min_count || 1));
   const [maxCount, setMaxCount] = useState<number>(Number(appNodePool.max_count || 5));
 
+  // Compute & Dedicated Node Pool settings
+  const compute = settings.compute || {
+    auto_stop_enabled: true,
+    auto_stop_minutes: 5,
+    dedicated_pool_enabled: true,
+    pool_name: 'computepool',
+    vm_size: 'Standard_D4s_v5',
+    min_count: 0,
+    max_count: 10,
+    auto_scale: true,
+  };
+  const [isAutoStopEnabled, setIsAutoStopEnabled] = useState<boolean>(
+    compute.auto_stop_enabled !== false
+  );
+  const [autoStopMinutes, setAutoStopMinutes] = useState<number>(
+    compute.auto_stop_minutes || 5
+  );
+  const [isComputeDedicated, setIsComputeDedicated] = useState<boolean>(
+    compute.dedicated_pool_enabled !== false
+  );
+  const [computeVmSize, setComputeVmSize] = useState<string>(
+    compute.vm_size || 'Standard_D4s_v5'
+  );
+  const [computeMinCount, setComputeMinCount] = useState<number>(
+    compute.min_count !== undefined ? Number(compute.min_count) : 0
+  );
+  const [computeMaxCount, setComputeMaxCount] = useState<number>(
+    compute.max_count !== undefined ? Number(compute.max_count) : 10
+  );
+
   // Sync state when data arrives
   useEffect(() => {
     if (appNodePool) {
@@ -68,7 +98,34 @@ export default function AccountSettingsPage() {
       if (appNodePool.min_count !== undefined) setMinCount(Number(appNodePool.min_count));
       if (appNodePool.max_count !== undefined) setMaxCount(Number(appNodePool.max_count));
     }
-  }, [appNodePool.dedicated_pool_enabled, appNodePool.vm_size, appNodePool.min_count, appNodePool.max_count]);
+    if (settings.compute) {
+      setIsAutoStopEnabled(settings.compute.auto_stop_enabled !== false);
+      if (settings.compute.auto_stop_minutes) {
+        setAutoStopMinutes(Number(settings.compute.auto_stop_minutes));
+      }
+      setIsComputeDedicated(settings.compute.dedicated_pool_enabled !== false);
+      if (settings.compute.vm_size) {
+        setComputeVmSize(settings.compute.vm_size);
+      }
+      if (settings.compute.min_count !== undefined) {
+        setComputeMinCount(Number(settings.compute.min_count));
+      }
+      if (settings.compute.max_count !== undefined) {
+        setComputeMaxCount(Number(settings.compute.max_count));
+      }
+    }
+  }, [
+    appNodePool.dedicated_pool_enabled,
+    appNodePool.vm_size,
+    appNodePool.min_count,
+    appNodePool.max_count,
+    settings.compute?.auto_stop_enabled,
+    settings.compute?.auto_stop_minutes,
+    settings.compute?.dedicated_pool_enabled,
+    settings.compute?.vm_size,
+    settings.compute?.min_count,
+    settings.compute?.max_count,
+  ]);
 
   const vmSizesCatalog: VmSizeOption[] = appNodePool.vm_sizes_catalog || [
     {
@@ -162,6 +219,12 @@ export default function AccountSettingsPage() {
   ];
 
   const selectedVmMeta = vmSizesCatalog.find((v) => v.id === selectedVmSize) || vmSizesCatalog[0];
+  const computeVmMeta = vmSizesCatalog.find((v) => v.id === computeVmSize) || vmSizesCatalog[4] || vmSizesCatalog[0];
+  const computeStatus = compute.status || (isComputeDedicated ? 'active' : 'disabled');
+
+  const handleSaveComputeAutoStop = (enabled: boolean, mins: number) => {
+    handleSaveComputeConfig({ autoStopEnabled: enabled, autoStopMins: mins });
+  };
 
   const handleToggleAirflowWebserver = (newVal: boolean) => {
     updateSettingsMutation.mutate(
@@ -228,6 +291,45 @@ export default function AccountSettingsPage() {
         toast.error(err.response?.data?.detail || err.message || 'Failed to trigger switchover.');
       },
     });
+  };
+
+  const handleSaveComputeConfig = (opts?: {
+    autoStopEnabled?: boolean;
+    autoStopMins?: number;
+    dedicatedEnabled?: boolean;
+    vmSize?: string;
+    minCount?: number;
+    maxCount?: number;
+  }) => {
+    const autoStopEnabled = opts?.autoStopEnabled !== undefined ? opts.autoStopEnabled : isAutoStopEnabled;
+    const autoStopMins = opts?.autoStopMins !== undefined ? opts.autoStopMins : autoStopMinutes;
+    const dedicated = opts?.dedicatedEnabled !== undefined ? opts.dedicatedEnabled : isComputeDedicated;
+    const vmSize = opts?.vmSize !== undefined ? opts.vmSize : computeVmSize;
+    const minCnt = opts?.minCount !== undefined ? opts.minCount : computeMinCount;
+    const maxCnt = opts?.maxCount !== undefined ? opts.maxCount : computeMaxCount;
+
+    updateSettingsMutation.mutate(
+      {
+        compute: {
+          auto_stop_enabled: autoStopEnabled,
+          auto_stop_minutes: autoStopMins,
+          dedicated_pool_enabled: dedicated,
+          pool_name: 'computepool',
+          vm_size: vmSize,
+          min_count: minCnt,
+          max_count: maxCnt,
+          auto_scale: true,
+        },
+      },
+      {
+        onSuccess: () => {
+          toast.success('Compute settings updated successfully.');
+        },
+        onError: (err: any) => {
+          toast.error(err.response?.data?.detail || err.message || 'Failed to update compute settings.');
+        },
+      }
+    );
   };
 
   if (isLoading) {
@@ -706,6 +808,389 @@ export default function AccountSettingsPage() {
               </label>
             </div>
           </div>
+        </div>
+
+        {/* Section: Notebooks & Compute Node Pool Isolation (Scale-to-Zero) */}
+        <div className="ws-section">
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+            <div>
+              <h2 className="ws-section-header" style={{ margin: 0 }}>Notebooks &amp; Compute Node Pool Isolation</h2>
+              <div style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)', marginTop: '4px' }}>
+                Isolate notebook sessions and serverless compute pods onto a dedicated user node pool (<code>computepool</code>) with Scale-to-Zero ($0 idle compute cost). System and platform services remain on the system node pool.
+              </div>
+            </div>
+
+            {/* Status Badge */}
+            <div>
+              {isComputeDedicated && computeStatus === 'active' && (
+                <span
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 5,
+                    padding: '4px 10px',
+                    borderRadius: 999,
+                    fontSize: '0.75rem',
+                    fontWeight: 600,
+                    background: 'var(--color-success-bg, rgba(34, 197, 94, 0.1))',
+                    color: 'var(--color-success, #22c55e)',
+                    border: '1px solid var(--color-success, #22c55e)',
+                  }}
+                >
+                  <CheckCircle2 size={12} />
+                  {computeMinCount === 0 ? `SCALE-TO-ZERO ACTIVE (${compute.compute_pool?.ready_nodes || 0} Nodes)` : `DEDICATED POOL ACTIVE (${compute.compute_pool?.ready_nodes || 0} Nodes)`}
+                </span>
+              )}
+
+              {isComputeDedicated && (computeStatus === 'provisioning' || computeStatus === 'starting') && (
+                <span
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 5,
+                    padding: '4px 10px',
+                    borderRadius: 999,
+                    fontSize: '0.75rem',
+                    fontWeight: 600,
+                    background: 'var(--color-primary-bg, rgba(27, 110, 243, 0.1))',
+                    color: 'var(--color-primary, #1b6ef3)',
+                    border: '1px solid var(--color-primary, #1b6ef3)',
+                  }}
+                >
+                  <Loader2 size={12} className="spin" style={{ animation: 'spin 1s linear infinite' }} />
+                  PROVISIONING COMPUTE POOL...
+                </span>
+              )}
+
+              {!isComputeDedicated && (
+                <span
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 5,
+                    padding: '4px 10px',
+                    borderRadius: 999,
+                    fontSize: '0.75rem',
+                    fontWeight: 600,
+                    background: 'var(--color-surface-hover, #f3f4f6)',
+                    color: 'var(--color-text-muted, #6b7280)',
+                    border: '1px solid var(--color-border, #e5e7eb)',
+                  }}
+                >
+                  <Server size={12} />
+                  SHARED USER POOL ({compute.default_pool_name || 'userpoolv2'})
+                </span>
+              )}
+            </div>
+          </div>
+
+          {/* Row 1: Dedicated Compute Pool Toggle */}
+          <div className="ws-setting-item">
+            <div className="ws-setting-info">
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
+                <Box size={17} style={{ color: 'var(--color-primary, #1b6ef3)' }} />
+                <span className="ws-setting-label" style={{ margin: 0 }}>
+                  Run Compute Pods on Dedicated Pool (<code>computepool</code>)
+                </span>
+              </div>
+              <div className="ws-setting-desc">
+                When enabled, all notebook kernels and serverless compute run exclusively on a dedicated user node pool (<code>computepool</code>) with Scale-to-Zero support (<code>min_count: 0</code>).
+                When disabled, compute pods are scheduled on the shared node pool.
+              </div>
+            </div>
+
+            <div className="ws-setting-control">
+              <label
+                style={{
+                  position: 'relative',
+                  display: 'inline-block',
+                  width: '46px',
+                  height: '26px',
+                  cursor: updateSettingsMutation.isPending ? 'not-allowed' : 'pointer',
+                  opacity: updateSettingsMutation.isPending ? 0.6 : 1,
+                  userSelect: 'none',
+                }}
+              >
+                <input
+                  type="checkbox"
+                  checked={isComputeDedicated}
+                  disabled={updateSettingsMutation.isPending}
+                  onChange={(e) => {
+                    const checked = e.target.checked;
+                    setIsComputeDedicated(checked);
+                    handleSaveComputeConfig({ dedicatedEnabled: checked });
+                  }}
+                  style={{ opacity: 0, width: 0, height: 0, position: 'absolute' }}
+                />
+                <span
+                  style={{
+                    position: 'absolute',
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                    backgroundColor: isComputeDedicated ? 'var(--color-primary, #1b6ef3)' : 'var(--color-border, #d1d5db)',
+                    borderRadius: '26px',
+                    transition: 'all 0.25s ease',
+                    boxShadow: 'inset 0 1px 2px rgba(0,0,0,0.1)',
+                  }}
+                >
+                  <span
+                    style={{
+                      position: 'absolute',
+                      content: '""',
+                      height: '20px',
+                      width: '20px',
+                      left: isComputeDedicated ? '23px' : '3px',
+                      bottom: '3px',
+                      backgroundColor: '#ffffff',
+                      borderRadius: '50%',
+                      transition: 'all 0.25s cubic-bezier(0.4, 0, 0.2, 1)',
+                      boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
+                    }}
+                  />
+                </span>
+              </label>
+            </div>
+          </div>
+
+          {/* Row 2: Compute VM Size Selection */}
+          <div className="ws-setting-item" style={{ alignItems: 'flex-start' }}>
+            <div className="ws-setting-info">
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
+                <Cpu size={17} style={{ color: 'var(--color-primary, #1b6ef3)' }} />
+                <span className="ws-setting-label" style={{ margin: 0 }}>
+                  Compute Node Pool Virtual Machine Type
+                </span>
+                {computeVmMeta && (
+                  <span
+                    style={{
+                      fontSize: '0.72rem',
+                      fontWeight: 600,
+                      padding: '2px 8px',
+                      borderRadius: '6px',
+                      background: 'var(--color-primary-bg, rgba(27, 110, 243, 0.1))',
+                      color: 'var(--color-primary, #1b6ef3)',
+                    }}
+                  >
+                    {computeVmMeta.cpu} vCPU &bull; {computeVmMeta.memory_gib} GiB RAM &bull; {computeVmMeta.architecture}
+                  </span>
+                )}
+              </div>
+              <div className="ws-setting-desc">
+                Select the Azure VM instance size for notebook &amp; serverless compute. Notebook hardware options in the sidebar will be dynamically gated by this VM&apos;s RAM capacity ({computeVmMeta?.memory_gib || 16} GiB limit).
+              </div>
+
+              {computeVmMeta && (
+                <div
+                  style={{
+                    marginTop: '8px',
+                    padding: '8px 12px',
+                    borderRadius: '8px',
+                    fontSize: '0.8rem',
+                    background: 'var(--color-surface-hover, rgba(0,0,0,0.02))',
+                    border: '1px solid var(--color-border, #e5e7eb)',
+                    color: 'var(--color-text-muted)',
+                  }}
+                >
+                  <span style={{ fontWeight: 600, color: 'var(--color-text)' }}>{computeVmMeta.category}: </span>
+                  {computeVmMeta.description}
+                </div>
+              )}
+            </div>
+
+            <div className="ws-setting-control" style={{ minWidth: '280px' }}>
+              <select
+                value={computeVmSize}
+                disabled={updateSettingsMutation.isPending}
+                onChange={(e) => {
+                  const newVm = e.target.value;
+                  setComputeVmSize(newVm);
+                  handleSaveComputeConfig({ vmSize: newVm });
+                }}
+                style={{
+                  width: '100%',
+                  padding: '8px 12px',
+                  borderRadius: '8px',
+                  fontSize: '0.85rem',
+                  fontWeight: 500,
+                  background: 'var(--color-surface, #ffffff)',
+                  border: '1px solid var(--color-border, #d1d5db)',
+                  color: 'var(--color-text)',
+                  cursor: 'pointer',
+                  outline: 'none',
+                }}
+              >
+                {vmSizesCatalog.map((vm) => (
+                  <option key={vm.id} value={vm.id}>
+                    {vm.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          {/* Row 3: Auto-Stop Idle Compute */}
+          <div className="ws-setting-item">
+            <div className="ws-setting-info">
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
+                <Zap size={17} style={{ color: 'var(--color-primary, #1b6ef3)' }} />
+                <span className="ws-setting-label" style={{ margin: 0 }}>
+                  Auto-Stop Inactive Compute
+                </span>
+                {isAutoStopEnabled && (
+                  <span
+                    style={{
+                      fontSize: '0.72rem',
+                      fontWeight: 600,
+                      padding: '2px 8px',
+                      borderRadius: 999,
+                      background: 'var(--color-success-bg, rgba(34, 197, 94, 0.1))',
+                      color: 'var(--color-success, #22c55e)',
+                      border: '1px solid var(--color-success, #22c55e)',
+                    }}
+                  >
+                    {autoStopMinutes} min inactivity
+                  </span>
+                )}
+              </div>
+              <div className="ws-setting-desc">
+                When enabled, idle compute pods and Jupyter kernels automatically shut down after no cell executions or WebSocket activity during the inactivity window.
+              </div>
+            </div>
+
+            <div className="ws-setting-control">
+              <label
+                style={{
+                  position: 'relative',
+                  display: 'inline-block',
+                  width: '46px',
+                  height: '26px',
+                  cursor: updateSettingsMutation.isPending ? 'not-allowed' : 'pointer',
+                  opacity: updateSettingsMutation.isPending ? 0.6 : 1,
+                  userSelect: 'none',
+                }}
+              >
+                <input
+                  type="checkbox"
+                  checked={isAutoStopEnabled}
+                  disabled={updateSettingsMutation.isPending}
+                  onChange={(e) => {
+                    const checked = e.target.checked;
+                    setIsAutoStopEnabled(checked);
+                    handleSaveComputeAutoStop(checked, autoStopMinutes);
+                  }}
+                  style={{ opacity: 0, width: 0, height: 0, position: 'absolute' }}
+                />
+                <span
+                  style={{
+                    position: 'absolute',
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                    backgroundColor: isAutoStopEnabled ? 'var(--color-primary, #1b6ef3)' : 'var(--color-border, #d1d5db)',
+                    borderRadius: '26px',
+                    transition: 'all 0.25s ease',
+                    boxShadow: 'inset 0 1px 2px rgba(0,0,0,0.1)',
+                  }}
+                >
+                  <span
+                    style={{
+                      position: 'absolute',
+                      content: '""',
+                      height: '20px',
+                      width: '20px',
+                      left: isAutoStopEnabled ? '23px' : '3px',
+                      bottom: '3px',
+                      backgroundColor: '#ffffff',
+                      borderRadius: '50%',
+                      transition: 'all 0.25s cubic-bezier(0.4, 0, 0.2, 1)',
+                      boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
+                    }}
+                  />
+                </span>
+              </label>
+            </div>
+          </div>
+
+          {/* Row 4: Inactivity Duration Selection */}
+          {isAutoStopEnabled && (
+            <div className="ws-setting-item" style={{ alignItems: 'flex-start' }}>
+              <div className="ws-setting-info">
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
+                  <Clock size={17} style={{ color: 'var(--color-primary, #1b6ef3)' }} />
+                  <span className="ws-setting-label" style={{ margin: 0 }}>
+                    Inactivity Timeout Duration
+                  </span>
+                </div>
+                <div className="ws-setting-desc">
+                  Specify how long compute should remain idle before automatic suspension. Default is 5 minutes.
+                </div>
+
+                {/* Quick Presets */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '12px', flexWrap: 'wrap' }}>
+                  {[
+                    { label: '5 min (Default)', val: 5 },
+                    { label: '10 min', val: 10 },
+                    { label: '15 min', val: 15 },
+                    { label: '30 min', val: 30 },
+                    { label: '60 min', val: 60 },
+                  ].map((preset) => (
+                    <button
+                      key={preset.val}
+                      type="button"
+                      disabled={updateSettingsMutation.isPending}
+                      onClick={() => {
+                        setAutoStopMinutes(preset.val);
+                        handleSaveComputeAutoStop(isAutoStopEnabled, preset.val);
+                      }}
+                      style={{
+                        padding: '5px 12px',
+                        borderRadius: '6px',
+                        fontSize: '0.8rem',
+                        fontWeight: 500,
+                        cursor: 'pointer',
+                        border: autoStopMinutes === preset.val ? '1px solid var(--color-primary, #1b6ef3)' : '1px solid var(--color-border, #e5e7eb)',
+                        background: autoStopMinutes === preset.val ? 'var(--color-primary-bg, #ebf2ff)' : 'var(--color-surface, #ffffff)',
+                        color: autoStopMinutes === preset.val ? 'var(--color-primary, #1b6ef3)' : 'var(--color-text, #374151)',
+                        transition: 'all 0.15s ease',
+                      }}
+                    >
+                      {preset.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="ws-setting-control" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <input
+                  type="number"
+                  min={1}
+                  max={720}
+                  value={autoStopMinutes}
+                  disabled={updateSettingsMutation.isPending}
+                  onChange={(e) => {
+                    const val = Math.max(1, parseInt(e.target.value, 10) || 1);
+                    setAutoStopMinutes(val);
+                  }}
+                  onBlur={() => handleSaveComputeAutoStop(isAutoStopEnabled, autoStopMinutes)}
+                  style={{
+                    width: '72px',
+                    padding: '6px 10px',
+                    fontSize: '0.88rem',
+                    borderRadius: '6px',
+                    border: '1px solid var(--color-border, #d1d5db)',
+                    background: 'var(--color-surface, #ffffff)',
+                    color: 'var(--color-text, #111827)',
+                    textAlign: 'center',
+                    fontWeight: 600,
+                  }}
+                />
+                <span style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)' }}>min</span>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Section 3: Account & System Information */}

@@ -24,8 +24,9 @@ def _uuid() -> str:
 
 
 class UmPrincipalType(str, enum.Enum):
-    user  = "user"
-    group = "group"
+    user              = "user"
+    group             = "group"
+    service_principal = "service_principal"
 
 
 # ─────────────────────────────────────────────────────────────────

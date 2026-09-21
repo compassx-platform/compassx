@@ -144,6 +144,17 @@ class ComputeManager:
 
         if pod.status:
             for container_status in pod.status.container_statuses or []:
+                if container_status.state and container_status.state.waiting:
+                    reason = container_status.state.waiting.reason or "ContainerCreating"
+                    msg = container_status.state.waiting.message or ""
+                    if reason in ("ErrImagePull", "ImagePullBackOff"):
+                        message = f"Image pull failed: {msg or reason}"
+                        phase = "Failed"
+                    elif reason == "CrashLoopBackOff":
+                        message = f"Container crashed: {msg or reason}"
+                        phase = "Failed"
+                    elif not message:
+                        message = f"Container status: {reason}"
                 if container_status.state and container_status.state.terminated:
                     terminated = container_status.state.terminated
                     finished_at = terminated.finished_at
@@ -155,6 +166,11 @@ class ComputeManager:
                         phase = "Failed"
                     elif terminated.exit_code and terminated.exit_code != 0:
                         message = terminated.message or f"Container exited with code {terminated.exit_code}"
+            if not message and pod.status.conditions:
+                for cond in pod.status.conditions:
+                    if cond.reason == "Unschedulable" or cond.status == "False":
+                        message = cond.message or cond.reason
+                        break
 
         labels = pod.metadata.labels or {}
         annotations = pod.metadata.annotations or {}

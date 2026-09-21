@@ -31,7 +31,7 @@ export default function JobFormModal({ job, onSave, onCancel }: Props) {
   }
 
   return (
-    <div className="modal-backdrop" onClick={onCancel} style={{ zIndex: 100 }}>
+    <div className="modal-backdrop" onClick={onCancel} style={{ zIndex: 10000 }}>
       <div
         className="modal-panel"
         onClick={(e) => e.stopPropagation()}

@@ -154,6 +154,23 @@ class NodePoolManager:
             logger.debug("Could not read account settings for app node pool: %s", e)
         return {}
 
+    def get_account_compute_settings(self) -> Dict[str, Any]:
+        """Read account settings for compute node pool from database."""
+        try:
+            from app.database import SessionLocalAccount
+            from app.workspace.models import Account
+            if SessionLocalAccount:
+                db = SessionLocalAccount()
+                try:
+                    account = db.query(Account).first()
+                    if account and account.settings:
+                        return account.settings.get("compute") or {}
+                finally:
+                    db.close()
+        except Exception as e:
+            logger.debug("Could not read account settings for compute: %s", e)
+        return {}
+
     def get_app_node_selector(self) -> Dict[str, str]:
         """Resolve the target nodeSelector for newly deployed app pods based on account settings."""
         cfg = self.get_account_pool_settings()
@@ -163,7 +180,17 @@ class NodePoolManager:
             return {"kubernetes.azure.com/agentpool": pool_name}
         else:
             default_pool = cfg.get("default_pool_name") or settings.AZURE_DEFAULT_USER_NODEPOOL
-            # Route to default userpool
+            return {"kubernetes.azure.com/agentpool": default_pool}
+
+    def get_compute_node_selector(self) -> Dict[str, str]:
+        """Resolve the target nodeSelector for compute / notebook pods based on account settings."""
+        cfg = self.get_account_compute_settings()
+        dedicated = bool(cfg.get("dedicated_pool_enabled", True))
+        if dedicated:
+            pool_name = cfg.get("pool_name") or "computepool"
+            return {"kubernetes.azure.com/agentpool": pool_name}
+        else:
+            default_pool = cfg.get("default_pool_name") or settings.AZURE_DEFAULT_USER_NODEPOOL
             return {"kubernetes.azure.com/agentpool": default_pool}
 
     def list_cluster_node_pools(self) -> List[Dict[str, Any]]:
@@ -460,6 +487,148 @@ class NodePoolManager:
                         logger.warning("AKS nodepool add returned error: %s", run_res.stderr)
             except Exception as exc:
                 logger.error("Error during node pool provisioning worker: %s", exc)
+                self._last_provision_message = f"Provisioning error: {str(exc)}"
+            finally:
+                self._is_provisioning = False
+
+    def get_compute_pool_status(self) -> Dict[str, Any]:
+        """Aggregate account settings, live K8s nodes, and provisioning state for compute pool."""
+        cfg = self.get_account_compute_settings()
+        dedicated_enabled = bool(cfg.get("dedicated_pool_enabled", True))
+        pool_name = cfg.get("pool_name") or "computepool"
+        default_pool_name = cfg.get("default_pool_name") or settings.AZURE_DEFAULT_USER_NODEPOOL
+        selected_vm_size = cfg.get("vm_size") or "Standard_D4s_v5"
+        min_count = int(cfg.get("min_count", 0))
+        max_count = int(cfg.get("max_count", 10))
+        auto_scale = bool(cfg.get("auto_scale", True))
+        auto_stop_enabled = bool(cfg.get("auto_stop_enabled", True))
+        auto_stop_minutes = int(cfg.get("auto_stop_minutes", 5))
+
+        cluster_pools = self.list_cluster_node_pools()
+        compute_pool_info = next((p for p in cluster_pools if p["name"] == pool_name), None)
+
+        status = "disabled"
+        status_message = "Compute pods scheduled on shared user node pool."
+
+        if dedicated_enabled:
+            if compute_pool_info and compute_pool_info["ready_nodes"] > 0:
+                status = "active"
+                status_message = f"Compute pool '{pool_name}' active with {compute_pool_info['ready_nodes']} ready node(s)."
+            elif min_count == 0 and compute_pool_info and compute_pool_info["total_nodes"] == 0:
+                status = "active"
+                status_message = f"Scale-to-Zero active on '{pool_name}' (0 nodes idle, scales on demand)."
+            elif self._is_provisioning:
+                status = "provisioning"
+                status_message = self._last_provision_message or "Provisioning dedicated compute node pool..."
+            elif compute_pool_info and compute_pool_info["total_nodes"] > 0:
+                status = "starting"
+                status_message = f"Compute pool '{pool_name}' starting ({compute_pool_info['ready_nodes']}/{compute_pool_info['total_nodes']} ready)."
+            else:
+                status = "pending"
+                status_message = f"Compute pool '{pool_name}' configured (Scale-to-Zero enabled)."
+
+        # Determine RAM capacity in GiB for selected VM size
+        vm_meta = next((v for v in AZURE_VM_SIZES if v["id"] == selected_vm_size), None)
+        vm_capacity_gib = vm_meta["memory_gib"] if vm_meta else 16
+
+        return {
+            "dedicated_pool_enabled": dedicated_enabled,
+            "pool_name": pool_name,
+            "default_pool_name": default_pool_name,
+            "vm_size": selected_vm_size,
+            "vm_capacity_gib": vm_capacity_gib,
+            "min_count": min_count,
+            "max_count": max_count,
+            "auto_scale": auto_scale,
+            "auto_stop_enabled": auto_stop_enabled,
+            "auto_stop_minutes": auto_stop_minutes,
+            "status": status,
+            "status_message": status_message,
+            "is_provisioning": self._is_provisioning,
+            "compute_pool": compute_pool_info,
+            "cluster_pools": cluster_pools,
+            "vm_sizes_catalog": self.get_vm_sizes_catalog(),
+        }
+
+    def trigger_provision_compute_nodepool_async(
+        self, pool_name: str = "computepool", vm_size: str = "Standard_D4s_v5", min_count: int = 0, max_count: int = 10, auto_scale: bool = True
+    ) -> None:
+        """Asynchronously triggers AKS compute nodepool creation or update via az CLI in a background thread."""
+        thread = threading.Thread(
+            target=self._provision_compute_nodepool_worker,
+            args=(pool_name, vm_size, min_count, max_count, auto_scale),
+            daemon=True,
+        )
+        thread.start()
+
+    def _provision_compute_nodepool_worker(
+        self, pool_name: str, vm_size: str, min_count: int, max_count: int, auto_scale: bool
+    ) -> None:
+        """Worker thread executing compute nodepool create/update command."""
+        with self._provisioning_lock:
+            self._is_provisioning = True
+            self._last_provision_message = f"Provisioning compute pool '{pool_name}' ({vm_size})..."
+            try:
+                az_path = shutil.which("az")
+                if not az_path:
+                    logger.warning("Azure CLI ('az') not found on system path; skipping live AKS compute nodepool command.")
+                    self._last_provision_message = "Azure CLI not installed; nodeSelector updated for existing or external pool."
+                    return
+
+                # Check if nodepool already exists
+                check_cmd = [
+                    az_path, "aks", "nodepool", "show",
+                    "--resource-group", settings.AZURE_RESOURCE_GROUP,
+                    "--cluster-name", settings.AZURE_AKS_CLUSTER_NAME,
+                    "--name", pool_name,
+                    "-o", "json",
+                ]
+                logger.info("Checking AKS compute nodepool '%s'...", pool_name)
+                res = subprocess.run(check_cmd, capture_output=True, text=True, timeout=60)
+
+                if res.returncode == 0:
+                    logger.info("Compute node pool '%s' already exists on AKS. Updating parameters...", pool_name)
+                    update_cmd = [
+                        az_path, "aks", "nodepool", "update",
+                        "--resource-group", settings.AZURE_RESOURCE_GROUP,
+                        "--cluster-name", settings.AZURE_AKS_CLUSTER_NAME,
+                        "--name", pool_name,
+                        "--update-cluster-autoscaler",
+                        "--min-count", str(min_count),
+                        "--max-count", str(max_count),
+                        "--no-wait",
+                    ]
+                    subprocess.run(update_cmd, capture_output=True, text=True, timeout=60)
+                    self._last_provision_message = f"Compute node pool '{pool_name}' update initiated."
+                else:
+                    logger.info("Creating AKS compute node pool '%s' with VM size %s (min=%d)...", pool_name, vm_size, min_count)
+                    create_cmd = [
+                        az_path, "aks", "nodepool", "add",
+                        "--resource-group", settings.AZURE_RESOURCE_GROUP,
+                        "--cluster-name", settings.AZURE_AKS_CLUSTER_NAME,
+                        "--name", pool_name,
+                        "--node-vm-size", vm_size,
+                        "--mode", "User",
+                    ]
+                    if auto_scale:
+                        create_cmd.extend([
+                            "--enable-cluster-autoscaler",
+                            "--min-count", str(min_count),
+                            "--max-count", str(max_count),
+                        ])
+                    else:
+                        create_cmd.extend(["--node-count", str(min_count)])
+                    create_cmd.append("--no-wait")
+
+                    run_res = subprocess.run(create_cmd, capture_output=True, text=True, timeout=90)
+                    if run_res.returncode == 0:
+                        self._last_provision_message = f"Compute node pool '{pool_name}' provisioning in progress on Azure."
+                        logger.info("AKS compute nodepool add dispatched successfully.")
+                    else:
+                        self._last_provision_message = f"Provisioning failed: {run_res.stderr.strip()[:200]}"
+                        logger.warning("AKS compute nodepool add returned error: %s", run_res.stderr)
+            except Exception as exc:
+                logger.error("Error during compute node pool provisioning worker: %s", exc)
                 self._last_provision_message = f"Provisioning error: {str(exc)}"
             finally:
                 self._is_provisioning = False

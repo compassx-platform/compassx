@@ -110,9 +110,27 @@ export interface WorkspaceAdminOut {
 }
 
 export interface WorkspaceMemberOut {
-  assignment_id: string; user_id: string | null; group_id: string | null;
-  principal_type: string; email: string | null; display_name: string | null;
-  role_id: string; is_default: boolean; granted_at: string;
+  assignment_id: string;
+  principal_id: string;
+  user_id: string | null;
+  group_id: string | null;
+  sp_id?: string | null;
+  principal_type: "user" | "group" | "service_principal" | string;
+  email: string | null;
+  display_name: string | null;
+  client_id?: string | null;
+  member_count?: number | null;
+  role_id: string;
+  is_default: boolean;
+  granted_at: string;
+}
+
+export interface CandidatePrincipalOut {
+  id: string;
+  type: "user" | "group" | "service_principal";
+  display_name: string;
+  email_or_client_id?: string | null;
+  details?: string | null;
 }
 
 export interface AuditLogItem {
@@ -228,6 +246,14 @@ export const fetchAuditLog = async (params?: {
 export const fetchWorkspaceMembers = async (workspaceId: string): Promise<WorkspaceMemberOut[]> =>
   (await api.get(`/api/um/workspaces/${workspaceId}/members`)).data;
 
+export const fetchCandidatePrincipals = async (workspaceId: string): Promise<CandidatePrincipalOut[]> =>
+  (await api.get(`/api/um/workspaces/${workspaceId}/candidate-principals`)).data;
+
+export const assignWorkspacePrincipal = async (
+  workspaceId: string,
+  payload: { principal_id: string; principal_type: "user" | "group" | "service_principal"; role_id: string }
+) => (await api.post(`/api/um/workspaces/${workspaceId}/members/assign`, payload)).data;
+
 export const inviteToWorkspace = async (
   workspaceId: string, emailOrUserId: string, roleId: string
 ) => (await api.post(`/api/um/workspaces/${workspaceId}/members/invite`, {
@@ -238,11 +264,11 @@ export const createWorkspaceUser = async (
   workspaceId: string, payload: { email: string; display_name: string; password: string; role_id: string }
 ) => (await api.post(`/api/um/workspaces/${workspaceId}/members/create`, payload)).data;
 
-export const updateMemberRole = async (workspaceId: string, userId: string, roleId: string) =>
-  (await api.patch(`/api/um/workspaces/${workspaceId}/members/${userId}/role`, { role_id: roleId })).data;
+export const updateMemberRole = async (workspaceId: string, principalId: string, roleId: string) =>
+  (await api.patch(`/api/um/workspaces/${workspaceId}/members/${principalId}/role`, { role_id: roleId })).data;
 
-export const removeWorkspaceMember = async (workspaceId: string, userId: string) =>
-  (await api.delete(`/api/um/workspaces/${workspaceId}/members/${userId}`)).data;
+export const removeWorkspaceMember = async (workspaceId: string, principalId: string) =>
+  (await api.delete(`/api/um/workspaces/${workspaceId}/members/${principalId}`)).data;
 
 export const setDefaultWorkspace = async (workspaceId: string) =>
   (await api.post(`/api/um/workspaces/${workspaceId}/set-default`)).data;
@@ -356,12 +382,34 @@ export const useCreateGroup = () => {
   return useMutation({ mutationFn: (name: string) => createGroup(name), onSuccess: () => qc.invalidateQueries({ queryKey: ["um-groups"] }) });
 };
 
+export const useCandidatePrincipals = (workspaceId: string) =>
+  useQuery({
+    queryKey: ["um-candidate-principals", workspaceId],
+    queryFn: () => fetchCandidatePrincipals(workspaceId),
+    enabled: !!workspaceId,
+  });
+
+export const useAssignWorkspacePrincipal = (workspaceId: string) => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (payload: { principal_id: string; principal_type: "user" | "group" | "service_principal"; role_id: string }) =>
+      assignWorkspacePrincipal(workspaceId, payload),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["um-ws-members", workspaceId] });
+      qc.invalidateQueries({ queryKey: ["um-candidate-principals", workspaceId] });
+    },
+  });
+};
+
 export const useInviteToWorkspace = (workspaceId: string) => {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ emailOrUserId, roleId }: { emailOrUserId: string; roleId: string }) =>
       inviteToWorkspace(workspaceId, emailOrUserId, roleId),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["um-ws-members", workspaceId] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["um-ws-members", workspaceId] });
+      qc.invalidateQueries({ queryKey: ["um-candidate-principals", workspaceId] });
+    },
   });
 };
 
@@ -370,15 +418,18 @@ export const useCreateWorkspaceUser = (workspaceId: string) => {
   return useMutation({
     mutationFn: (payload: { email: string; display_name: string; password: string; role_id: string }) =>
       createWorkspaceUser(workspaceId, payload),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["um-ws-members", workspaceId] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["um-ws-members", workspaceId] });
+      qc.invalidateQueries({ queryKey: ["um-candidate-principals", workspaceId] });
+    },
   });
 };
 
 export const useUpdateMemberRole = (workspaceId: string) => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ userId, roleId }: { userId: string; roleId: string }) =>
-      updateMemberRole(workspaceId, userId, roleId),
+    mutationFn: ({ principalId, roleId }: { principalId: string; roleId: string }) =>
+      updateMemberRole(workspaceId, principalId, roleId),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["um-ws-members", workspaceId] }),
   });
 };
@@ -386,8 +437,11 @@ export const useUpdateMemberRole = (workspaceId: string) => {
 export const useRemoveWorkspaceMember = (workspaceId: string) => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (userId: string) => removeWorkspaceMember(workspaceId, userId),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["um-ws-members", workspaceId] }),
+    mutationFn: (principalId: string) => removeWorkspaceMember(workspaceId, principalId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["um-ws-members", workspaceId] });
+      qc.invalidateQueries({ queryKey: ["um-candidate-principals", workspaceId] });
+    },
   });
 };
 

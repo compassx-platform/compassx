@@ -37,6 +37,31 @@ def test_get_app_node_selector_dedicated_enabled(manager):
         assert selector == {"kubernetes.azure.com/agentpool": "apppool"}
 
 
+def test_get_compute_node_selector_dedicated_default(manager):
+    with patch.object(manager, "get_account_compute_settings", return_value={"dedicated_pool_enabled": True, "pool_name": "computepool"}):
+        selector = manager.get_compute_node_selector()
+        assert selector == {"kubernetes.azure.com/agentpool": "computepool"}
+
+
+def test_get_compute_pool_status_scale_to_zero(manager):
+    with patch.object(manager, "get_account_compute_settings", return_value={
+        "dedicated_pool_enabled": True,
+        "pool_name": "computepool",
+        "vm_size": "Standard_D4s_v5",
+        "min_count": 0,
+        "max_count": 10,
+        "auto_stop_minutes": 5,
+    }), patch.object(manager, "list_cluster_node_pools", return_value=[]):
+        status = manager.get_compute_pool_status()
+        assert status["dedicated_pool_enabled"] is True
+        assert status["pool_name"] == "computepool"
+        assert status["vm_size"] == "Standard_D4s_v5"
+        assert status["vm_capacity_gib"] == 16
+        assert status["min_count"] == 0
+        assert status["auto_stop_minutes"] == 5
+        assert "Scale-to-Zero" in status["status_message"]
+
+
 def test_switchover_app_workloads(manager):
     mock_core = MagicMock()
     mock_apps = MagicMock()

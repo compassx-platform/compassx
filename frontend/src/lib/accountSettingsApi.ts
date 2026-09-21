@@ -68,9 +68,36 @@ export interface AppNodePoolSettings {
   vm_sizes_catalog?: VmSizeOption[];
 }
 
+export interface ComputeAccountSettings {
+  auto_stop_enabled: boolean;
+  auto_stop_minutes: number;
+  dedicated_pool_enabled?: boolean;
+  pool_name?: string;
+  default_pool_name?: string;
+  vm_size?: string;
+  vm_capacity_gib?: number;
+  min_count?: number;
+  max_count?: number;
+  auto_scale?: boolean;
+  status?: 'active' | 'starting' | 'provisioning' | 'disabled' | 'pending' | 'error';
+  status_message?: string;
+  is_provisioning?: boolean;
+  compute_pool?: {
+    name: string;
+    vm_size: string;
+    architecture: string;
+    os: string;
+    total_nodes: number;
+    ready_nodes: number;
+    nodes: Array<{ name: string; ready: boolean; vm_size: string }>;
+  } | null;
+  vm_sizes_catalog?: VmSizeOption[];
+}
+
 export interface AccountSettingsData {
   airflow?: AirflowAccountSettings;
   app_node_pool?: AppNodePoolSettings;
+  compute?: ComputeAccountSettings;
   [key: string]: any;
 }
 

@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 SPARK_IMAGE = "apache/spark:3.5.0"
 FLINK_IMAGE = "flink:1.18-scala_2.12"
 RAY_IMAGE = "rayproject/ray:2.9.0"
-DUCKDB_IMAGE = "ghcr.io/compassx-platform/compute-duckdb:v0.10.0"
+DUCKDB_IMAGE = "ghcr.io/compassx-platform/compute-duckdb:v0.11.0"
 
 # Runtimes valid only with certain profiles
 DUCKDB_VALID_PROFILES = {"local", "cloud-xs", "cloud-s"}
@@ -239,13 +239,19 @@ def build_pod_spec(
 
     pod_name = f"compassx-{runtime}-{job_id}"
 
-    # TODO: TESTING ONLY — For local minikube with image pull cert issues.
-    # Remove or conditionally apply based on COMPASSX_ENV in production.
-    # In production, use proper image registries with valid certs and auth.
+    # Resolve target nodeSelector from Account compute node pool configuration
+    try:
+        from app.services.node_pool_manager import node_pool_manager
+        compute_node_selector = node_pool_manager.get_compute_node_selector()
+    except Exception:
+        compute_node_selector = None
+
     pod_spec_kwargs = {
         "containers": [container],
         "restart_policy": "Never",
     }
+    if compute_node_selector:
+        pod_spec_kwargs["node_selector"] = compute_node_selector
 
     # Add image pull secrets if configured (for private registries in prod)
     # Currently minikube bypasses cert check — this is a temp workaround

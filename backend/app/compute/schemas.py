@@ -62,6 +62,23 @@ class ComputeResourceRequest(BaseModel):
     extra_env: dict[str, str] | None = None
 
 
+class EnsureServerlessRequest(BaseModel):
+    """Request payload to ensure a serverless compute pod, optionally for a notebook."""
+    notebook_id: str | None = None
+    notebook_name: str | None = None
+
+
+
+class ComputeResourceUpdateRequest(BaseModel):
+    """Request to update an existing compute resource configuration."""
+    name: str | None = None
+    runtime: RuntimeType | None = None
+    profile: ComputeProfileId | None = None
+    description: str | None = None
+    custom_image: str | None = None
+    extra_env: dict[str, str] | None = None
+
+
 class ComputeResourceResponse(BaseModel):
     """Response for compute resource."""
     id: str

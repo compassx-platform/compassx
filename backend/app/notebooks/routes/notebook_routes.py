@@ -415,9 +415,16 @@ async def load_notebook(
     if not await _notebook_exists(db, schema, notebook.blob_path):
         raise HTTPException(status_code=404, detail="Notebook not found")
     content = await _read_notebook_content(db, schema, notebook.blob_path)
-    # Inject catalog metadata so frontend can auto-reconnect to last compute
+    # Inject catalog metadata so frontend can auto-reconnect to last compute and show info
     content["_catalog"] = {
         "id": notebook.id,
+        "name": notebook.name,
+        "catalog_name": notebook.catalog_name,
+        "schema_name": notebook.schema_name,
+        "created_at": notebook.created_at.isoformat() if notebook.created_at else None,
+        "updated_at": notebook.updated_at.isoformat() if notebook.updated_at else None,
+        "created_by": notebook.created_by,
+        "updated_by": notebook.updated_by,
         "last_compute_resource_id": notebook.last_compute_resource_id,
         "last_kernel_name": notebook.last_kernel_name,
     }

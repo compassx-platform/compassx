@@ -19,9 +19,9 @@ logger = logging.getLogger(__name__)
 # Default timeouts
 DEFAULT_DEV_IDLE_SUSPEND_SECONDS = 3600    # 1 hour default for dev sandboxes
 DEFAULT_APP_IDLE_SUSPEND_SECONDS = 7200    # 2 hours default for deployed apps (when auto_suspend_enabled=True)
-DEFAULT_COMPUTE_IDLE_SUSPEND_SECONDS = 3600 # 1 hour default for compute runtimes
+DEFAULT_COMPUTE_IDLE_SUSPEND_SECONDS = 300 # 5 minutes default for compute runtimes / notebooks
 DEFAULT_STALE_REAP_DAYS = 30               # 30 days offline -> reclaim storage
-SWEEP_INTERVAL_SECONDS = 120               # Sweep check every 2 minutes
+SWEEP_INTERVAL_SECONDS = 30                # Sweep check every 30 seconds
 
 
 def _parse_datetime(dt_val: Any) -> Optional[datetime]:
@@ -323,11 +323,30 @@ class SandboxReaperService:
     def _sync_sweep_idle_compute_resources(self) -> None:
         """Identify running compute runtimes with auto_suspend_enabled and no activity beyond idle threshold."""
         try:
-            from app.database import SystemSessionLocal
+            from app.database import SystemSessionLocal, AccountSessionLocal
             from app.models.compute_resources import ComputeResource
             from app.compute.services.resource_service import ComputeResourceService
+            from app.workspace.models import Account
 
             now = datetime.now(timezone.utc)
+
+            # 1. Load organization/account level compute settings
+            account_compute_cfg = {}
+            try:
+                with AccountSessionLocal() as acc_db:
+                    acc = acc_db.query(Account).first()
+                    if acc and acc.settings:
+                        account_compute_cfg = acc.settings.get("compute", {})
+            except Exception as acc_err:
+                logger.debug("Could not query account-level compute settings: %s", acc_err)
+                account_compute_cfg = {}
+
+            account_auto_stop_enabled = account_compute_cfg.get("auto_stop_enabled", True)
+            account_auto_stop_minutes = account_compute_cfg.get("auto_stop_minutes", 5)
+            try:
+                account_idle_secs = max(60, int(account_auto_stop_minutes) * 60)
+            except (ValueError, TypeError):
+                account_idle_secs = self.compute_idle_timeout_seconds
 
             with SystemSessionLocal() as db:
                 running_resources = (
@@ -350,19 +369,22 @@ class SandboxReaperService:
                             extra_env = {}
 
                     lifecycle_cfg = extra_env.get("lifecycle", {})
-                    # By default, compute runtimes auto-suspend when idle (default=True)
-                    auto_suspend_enabled = lifecycle_cfg.get("auto_suspend_enabled", extra_env.get("auto_suspend_enabled", True))
-                    if not auto_suspend_enabled:
+                    # Per-resource override takes priority; otherwise fall back to account setting
+                    res_auto_suspend = lifecycle_cfg.get(
+                        "auto_suspend_enabled",
+                        extra_env.get("auto_suspend_enabled", account_auto_stop_enabled)
+                    )
+                    if not res_auto_suspend:
                         continue
 
                     idle_timeout_mins = lifecycle_cfg.get("idle_timeout_minutes", extra_env.get("idle_timeout_minutes"))
                     if idle_timeout_mins is not None:
                         try:
-                            idle_timeout_secs = max(300, int(idle_timeout_mins) * 60)
+                            idle_timeout_secs = max(60, int(idle_timeout_mins) * 60)
                         except (ValueError, TypeError):
-                            idle_timeout_secs = self.compute_idle_timeout_seconds
+                            idle_timeout_secs = account_idle_secs
                     else:
-                        idle_timeout_secs = self.compute_idle_timeout_seconds
+                        idle_timeout_secs = account_idle_secs
 
                     cutoff = now - timedelta(seconds=idle_timeout_secs)
 

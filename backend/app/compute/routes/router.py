@@ -26,7 +26,9 @@ from compute.schemas import (
     ComputeResourceRequest,
     ComputeResourceResponse,
     ComputeResourceStatus,
+    ComputeResourceUpdateRequest,
     ComputeServiceInfo,
+    EnsureServerlessRequest,
 )
 from services.airflow.manager import get_airflow_manager
 from services.base import ServicePhase, ServiceStatus
@@ -468,6 +470,59 @@ def create_compute_resource(
     return resource
 
 
+@router.put("/resources/{resource_id}", response_model=ComputeResourceResponse)
+def update_compute_resource(
+    req_context: Request,
+    resource_id: str,
+    body: ComputeResourceUpdateRequest,
+    db=Depends(get_system_db),
+    guard: Guard = Depends(get_guard),
+):
+    """Update a compute resource configuration and apply changes."""
+    user_id, workspace_id = _caller(req_context, guard)
+    _require_compute(guard, db, resource_id, Privilege.USE_COMPUTE)
+    try:
+        service = _service(req_context, db)
+        return service.update_resource(
+            resource_id,
+            body,
+            user_id,
+            workspace_id=workspace_id,
+        )
+    except ValueError as exc:
+        return _error("InvalidRequest", str(exc), 400)
+    except Exception as exc:
+        logger.exception("Error updating compute resource")
+        return _error("InternalError", str(exc), 500)
+
+
+@router.post("/resources/serverless/ensure", response_model=ComputeResourceStatus)
+def ensure_serverless_compute(
+    req_context: Request,
+    body: EnsureServerlessRequest | None = None,
+    notebook_id: str | None = Query(None),
+    notebook_name: str | None = Query(None),
+    db=Depends(get_system_db),
+    guard: Guard = Depends(get_guard),
+):
+    """Ensure a serverless compute pod exists for a notebook (or workspace) and return its status."""
+    user_id, workspace_id = _caller(req_context, guard)
+    effective_notebook_id = (body and body.notebook_id) or notebook_id
+    effective_notebook_name = (body and body.notebook_name) or notebook_name
+    try:
+        service = _service(req_context, db)
+        return service.ensure_serverless_resource(
+            user_id,
+            workspace_id=workspace_id,
+            created_by=user_id,
+            notebook_id=effective_notebook_id,
+            notebook_name=effective_notebook_name,
+        )
+    except Exception as exc:
+        logger.exception("Error ensuring serverless compute resource")
+        return _error("InternalError", str(exc), 500)
+
+
 @router.get("/resources", response_model=list[ComputeResourceStatus])
 def list_compute_resources(
     req_context: Request,
@@ -622,7 +677,7 @@ async def get_resource_logs(
                 async for line in rm.stream_logs(resource_id):
                     yield {"data": line}
             except RuntimeNotFoundError:
-                yield {"data": f"[error] Runtime not found: {resource_id}"}
+                yield {"data": f"[info] Compute runtime {resource_id} is initializing. Logs will appear once the container starts."}
 
         return EventSourceResponse(platform_log_generator())
 

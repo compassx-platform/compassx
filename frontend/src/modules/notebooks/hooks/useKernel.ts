@@ -110,7 +110,7 @@ export function useKernel(notebookPath: string) {
     }
   }
 
-  // Auto-reconnect when lastComputeInfo is available and no kernel connected yet
+  // Auto-connect to serverless (or reconnect to lastComputeInfo) on notebook load
   useEffect(() => {
     if (!config) return;
     if (selectedPodKernelId) return; // already have kernel
@@ -119,45 +119,73 @@ export function useKernel(notebookPath: string) {
     // Wait until NotebookPage has finished loading the notebook and set compute info
     if (!notebookComputeLoaded) return;
 
-    if (!lastComputeInfo) {
-      setAutoConnectDone(true);
-      return;
-    }
-
-    const resourceId = lastComputeInfo.resource_id;
-    if (autoConnectAttemptedRef.current === resourceId) return;
-    autoConnectAttemptedRef.current = resourceId;
-    setAutoConnectDone(true);
-
     const currentUserId = getPrincipalInfo()?.principal_id;
     if (!currentUserId) return;
 
+    const resourceId = lastComputeInfo?.resource_id;
+    const attemptKey = resourceId || 'auto-serverless';
+    if (autoConnectAttemptedRef.current === attemptKey) return;
+    autoConnectAttemptedRef.current = attemptKey;
+    setAutoConnectDone(true);
+
     (async () => {
       try {
-        // Set starting pod immediately so UI trigger shows connecting spinner right away
-        setSelectedPod({
-          resource_id: resourceId,
-          runtime_id: null,
-          runtime: 'duckdb',
-          kernel_id: null,
-          kernel_name: null,
-          state: 'starting',
-        });
-        setKernelStatus('connecting');
+        let targetResourceId = resourceId;
 
-        const kernelResp = await computeApi.startResourceKernel(resourceId) as { id: string; name: string };
+        // If no last compute resource is stored, auto-provision dedicated serverless compute for this notebook
+        if (!targetResourceId) {
+          const currentNotebookId = useNotebookStore.getState().notebookId;
+          const currentMetadata = useNotebookStore.getState().notebookMetadata;
+          const notebookName = currentMetadata?.name || undefined;
+
+          setSelectedPod({
+            resource_id: 'pending-serverless',
+            runtime_id: null,
+            runtime: 'duckdb',
+            kernel_id: null,
+            kernel_name: null,
+            state: 'starting',
+          });
+          setKernelStatus('connecting');
+
+          const serverless = await computeApi.ensureServerlessCompute(currentNotebookId || undefined, notebookName);
+          targetResourceId = serverless.id;
+        } else {
+          setSelectedPod({
+            resource_id: targetResourceId,
+            runtime_id: null,
+            runtime: 'duckdb',
+            kernel_id: null,
+            kernel_name: null,
+            state: 'starting',
+          });
+          setKernelStatus('connecting');
+        }
+
+        if (!targetResourceId) {
+          throw new Error('Failed to resolve compute resource ID');
+        }
+
+        const res = await computeApi.ensureResourceRunningAndStartKernel(targetResourceId);
         const pod: SelectedPod = {
-          resource_id: resourceId,
-          runtime_id: null,
-          runtime: 'duckdb',
-          kernel_id: kernelResp.id,
-          kernel_name: kernelResp.name || kernelResp.id,
+          resource_id: targetResourceId,
+          runtime_id: res.resource?.runtime_id ?? targetResourceId,
+          runtime: res.resource?.runtime || 'duckdb',
+          kernel_id: res.kernel.id,
+          kernel_name: res.kernel.name || res.kernel.id,
           state: 'starting',
         };
         setSelectedPod(pod);
-        // connectToKernel will fire from the selectedPodKernelId effect below
+
+        const currentNbId = useNotebookStore.getState().notebookId;
+        if (currentNbId && !resourceId) {
+          api.put(`/notebook/${currentNbId}/compute`, {
+            resource_id: targetResourceId,
+            kernel_name: res.kernel.name || res.kernel.id,
+          }).catch(() => {});
+        }
       } catch (err) {
-        console.warn('[notebook] auto-reconnect failed:', err);
+        console.warn('[notebook] auto-connect failed:', err);
         setSelectedPod(null);
         setKernelStatus('unknown');
       }

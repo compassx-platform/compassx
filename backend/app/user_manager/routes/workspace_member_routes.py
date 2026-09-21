@@ -25,8 +25,10 @@ from app.user_manager.dependencies import (
     require_workspace_admin,
 )
 from app.user_manager.entry_point import invalidate_entry_point_cache
-from app.user_manager.models.account_models import UmUser, UmInvite
-from app.user_manager.models.system_models import UmWorkspaceRoleAssignment, UmWorkspaceRole
+from app.user_manager.models.account_models import (
+    UmUser, UmInvite, UmGroup, UmServicePrincipal, UmAccountRoleAssignment,
+)
+from app.user_manager.models.system_models import UmWorkspaceRoleAssignment, UmWorkspaceRole, UmPrincipalType
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/um/workspaces", tags=["um-workspace-members"])
@@ -36,14 +38,32 @@ router = APIRouter(prefix="/api/um/workspaces", tags=["um-workspace-members"])
 
 class MemberOut(BaseModel):
     assignment_id: str
-    user_id: str | None
-    group_id: str | None
+    principal_id: str
+    user_id: str | None = None
+    group_id: str | None = None
+    sp_id: str | None = None
     principal_type: str
-    email: str | None
-    display_name: str | None
+    email: str | None = None
+    display_name: str | None = None
+    client_id: str | None = None
+    member_count: int | None = None
     role_id: str
     is_default: bool
     granted_at: datetime
+
+
+class CandidatePrincipalOut(BaseModel):
+    id: str
+    type: str  # "user" | "group" | "service_principal"
+    display_name: str
+    email_or_client_id: str | None = None
+    details: str | None = None
+
+
+class AssignPrincipalIn(BaseModel):
+    principal_id: str
+    principal_type: str  # "user" | "group" | "service_principal"
+    role_id: str = "analyst"
 
 
 class InviteOrAddIn(BaseModel):
@@ -94,21 +114,175 @@ def list_workspace_members(
 
     result = []
     for row in rows:
-        email = display = None
-        if row.principal_type == "user":
+        email = None
+        display = None
+        client_id = None
+        member_count = None
+        pt = str(row.principal_type.value if hasattr(row.principal_type, "value") else row.principal_type)
+
+        if pt == "user":
             u = account_db.query(UmUser).filter(UmUser.id == row.principal_id).first()
             if u:
-                email, display = u.email, u.display_name
+                email = u.email
+                display = u.display_name or u.email
+        elif pt == "group":
+            g = account_db.query(UmGroup).filter(UmGroup.id == row.principal_id).first()
+            if g:
+                display = g.name
+                member_count = len(g.members)
+        elif pt == "service_principal":
+            sp = account_db.query(UmServicePrincipal).filter(UmServicePrincipal.id == row.principal_id).first()
+            if sp:
+                display = sp.display_name
+                client_id = sp.client_id
+
         result.append(MemberOut(
             assignment_id=row.id,
-            user_id=row.principal_id if row.principal_type == "user" else None,
-            group_id=row.principal_id if row.principal_type == "group" else None,
-            principal_type=row.principal_type,
-            email=email, display_name=display,
-            role_id=row.role_id, is_default=row.is_default,
+            principal_id=row.principal_id,
+            user_id=row.principal_id if pt == "user" else None,
+            group_id=row.principal_id if pt == "group" else None,
+            sp_id=row.principal_id if pt == "service_principal" else None,
+            principal_type=pt,
+            email=email,
+            display_name=display,
+            client_id=client_id,
+            member_count=member_count,
+            role_id=row.role_id,
+            is_default=row.is_default,
             granted_at=row.granted_at,
         ))
     return result
+
+
+@router.get("/{workspace_id}/candidate-principals", response_model=list[CandidatePrincipalOut])
+def list_candidate_principals(
+    workspace_id: str,
+    user: UmUser = Depends(get_current_um_user),
+    account_db: Session = Depends(get_account_db),
+    system_db: Session = Depends(get_system_db),
+):
+    """Return all account-level users, groups, and service principals NOT yet assigned to this workspace."""
+    _require_ws_admin(workspace_id, user, account_db, system_db)
+
+    # Get already assigned principal IDs
+    assigned_rows = system_db.query(UmWorkspaceRoleAssignment.principal_id).filter(
+        UmWorkspaceRoleAssignment.workspace_id == workspace_id
+    ).all()
+    assigned_ids = {r[0] for r in assigned_rows}
+
+    candidates: list[CandidatePrincipalOut] = []
+
+    # 1. Users
+    users = account_db.query(UmUser).filter(
+        UmUser.account_id == user.account_id,
+        UmUser.status != "deactivated",
+    ).all()
+    for u in users:
+        if u.id not in assigned_ids:
+            candidates.append(CandidatePrincipalOut(
+                id=u.id,
+                type="user",
+                display_name=u.display_name or u.email,
+                email_or_client_id=u.email,
+                details=f"User ({u.status})",
+            ))
+
+    # 2. Groups
+    groups = account_db.query(UmGroup).filter(
+        UmGroup.account_id == user.account_id
+    ).all()
+    for g in groups:
+        if g.id not in assigned_ids:
+            candidates.append(CandidatePrincipalOut(
+                id=g.id,
+                type="group",
+                display_name=g.name,
+                details=f"Group · {len(g.members)} members",
+            ))
+
+    # 3. Service Principals
+    sps = account_db.query(UmServicePrincipal).filter(
+        UmServicePrincipal.account_id == user.account_id,
+        UmServicePrincipal.active == True,
+    ).all()
+    for sp in sps:
+        if sp.id not in assigned_ids:
+            candidates.append(CandidatePrincipalOut(
+                id=sp.id,
+                type="service_principal",
+                display_name=sp.display_name,
+                email_or_client_id=sp.client_id,
+                details="Service Principal (OAuth)",
+            ))
+
+    return candidates
+
+
+@router.post("/{workspace_id}/members/assign", status_code=201)
+def assign_principal_to_workspace(
+    workspace_id: str,
+    body: AssignPrincipalIn,
+    user: UmUser = Depends(get_current_um_user),
+    account_db: Session = Depends(get_account_db),
+    system_db: Session = Depends(get_system_db),
+):
+    """Assign an existing Account User, Group, or Service Principal to a workspace."""
+    _require_ws_admin(workspace_id, user, account_db, system_db)
+    assert_workspace_exists_in_account_db(workspace_id, account_db)
+    _valid_ws_role(body.role_id, system_db)
+
+    # Validate principal exists in account_db
+    if body.principal_type == "user":
+        target = account_db.query(UmUser).filter(
+            UmUser.id == body.principal_id,
+            UmUser.account_id == user.account_id,
+        ).first()
+        if not target:
+            raise HTTPException(status_code=404, detail="Account user not found")
+    elif body.principal_type == "group":
+        target = account_db.query(UmGroup).filter(
+            UmGroup.id == body.principal_id,
+            UmGroup.account_id == user.account_id,
+        ).first()
+        if not target:
+            raise HTTPException(status_code=404, detail="Account group not found")
+    elif body.principal_type == "service_principal":
+        target = account_db.query(UmServicePrincipal).filter(
+            UmServicePrincipal.id == body.principal_id,
+            UmServicePrincipal.account_id == user.account_id,
+        ).first()
+        if not target:
+            raise HTTPException(status_code=404, detail="Account service principal not found")
+    else:
+        raise HTTPException(status_code=400, detail=f"Unsupported principal type: {body.principal_type}")
+
+    # Check existing assignment
+    existing = system_db.query(UmWorkspaceRoleAssignment).filter(
+        UmWorkspaceRoleAssignment.workspace_id == workspace_id,
+        UmWorkspaceRoleAssignment.principal_id == body.principal_id,
+    ).first()
+
+    if existing:
+        existing.role_id = body.role_id
+        existing.principal_type = body.principal_type
+        existing.granted_by = user.id
+    else:
+        system_db.add(UmWorkspaceRoleAssignment(
+            workspace_id=workspace_id,
+            principal_id=body.principal_id,
+            principal_type=body.principal_type,
+            role_id=body.role_id,
+            granted_by=user.id,
+        ))
+
+    log_action(account_db, user.account_id, "workspace_principal_assigned", body.principal_type,
+               actor_user_id=user.id, target_id=body.principal_id, workspace_id=workspace_id,
+               metadata={"role_id": body.role_id, "principal_type": body.principal_type})
+    system_db.commit()
+    account_db.commit()
+    invalidate_entry_point_cache(body.principal_id if body.principal_type == "user" else None)
+
+    return {"status": "assigned", "principal_id": body.principal_id, "role_id": body.role_id}
 
 
 @router.post("/{workspace_id}/members/invite", status_code=201)
@@ -175,10 +349,10 @@ def invite_or_add_member(
     existing = system_db.query(UmWorkspaceRoleAssignment).filter(
         UmWorkspaceRoleAssignment.workspace_id == workspace_id,
         UmWorkspaceRoleAssignment.principal_id == target_user.id,
-        UmWorkspaceRoleAssignment.principal_type == "user",
     ).first()
     if existing:
         existing.role_id = body.role_id
+        existing.principal_type = "user"
         existing.granted_by = user.id
     else:
         system_db.add(UmWorkspaceRoleAssignment(
@@ -220,10 +394,10 @@ def create_workspace_user(
         ass = system_db.query(UmWorkspaceRoleAssignment).filter(
             UmWorkspaceRoleAssignment.workspace_id == workspace_id,
             UmWorkspaceRoleAssignment.principal_id == existing_user.id,
-            UmWorkspaceRoleAssignment.principal_type == "user",
         ).first()
         if ass:
             ass.role_id = body.role_id
+            ass.principal_type = "user"
             ass.granted_by = user.id
         else:
             system_db.add(UmWorkspaceRoleAssignment(
@@ -242,7 +416,6 @@ def create_workspace_user(
         raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
 
     from app.user_manager.auth_utils import hash_password
-    from app.user_manager.models.account_models import UmAccountRoleAssignment
 
     new_user = UmUser(
         account_id=user.account_id,
@@ -283,10 +456,10 @@ def create_workspace_user(
     return {"type": "created", "user_id": new_user.id, "email": new_user.email, "role_id": body.role_id}
 
 
-@router.patch("/{workspace_id}/members/{user_id}/role", status_code=200)
+@router.patch("/{workspace_id}/members/{principal_id}/role", status_code=200)
 def update_member_role(
     workspace_id: str,
-    user_id: str,
+    principal_id: str,
     body: RolePatch,
     actor: UmUser = Depends(get_current_um_user),
     account_db: Session = Depends(get_account_db),
@@ -297,26 +470,25 @@ def update_member_role(
 
     row = system_db.query(UmWorkspaceRoleAssignment).filter(
         UmWorkspaceRoleAssignment.workspace_id == workspace_id,
-        UmWorkspaceRoleAssignment.principal_id == user_id,
-        UmWorkspaceRoleAssignment.principal_type == "user",
+        UmWorkspaceRoleAssignment.principal_id == principal_id,
     ).first()
     if not row:
         raise HTTPException(status_code=404, detail="Membership not found")
     row.role_id = body.role_id
     row.granted_by = actor.id
-    log_action(account_db, actor.account_id, "role_changed", "user",
-               actor_user_id=actor.id, target_id=user_id, workspace_id=workspace_id,
+    log_action(account_db, actor.account_id, "role_changed", str(row.principal_type),
+               actor_user_id=actor.id, target_id=principal_id, workspace_id=workspace_id,
                metadata={"role_id": body.role_id})
     system_db.commit()
     account_db.commit()
-    invalidate_entry_point_cache(user_id)
-    return {"user_id": user_id, "workspace_id": workspace_id, "role_id": body.role_id}
+    invalidate_entry_point_cache(principal_id)
+    return {"principal_id": principal_id, "workspace_id": workspace_id, "role_id": body.role_id}
 
 
-@router.delete("/{workspace_id}/members/{user_id}", status_code=200)
+@router.delete("/{workspace_id}/members/{principal_id}", status_code=200)
 def remove_workspace_member(
     workspace_id: str,
-    user_id: str,
+    principal_id: str,
     actor: UmUser = Depends(get_current_um_user),
     account_db: Session = Depends(get_account_db),
     system_db: Session = Depends(get_system_db),
@@ -325,18 +497,18 @@ def remove_workspace_member(
 
     row = system_db.query(UmWorkspaceRoleAssignment).filter(
         UmWorkspaceRoleAssignment.workspace_id == workspace_id,
-        UmWorkspaceRoleAssignment.principal_id == user_id,
-        UmWorkspaceRoleAssignment.principal_type == "user",
+        UmWorkspaceRoleAssignment.principal_id == principal_id,
     ).first()
     if not row:
         raise HTTPException(status_code=404, detail="Membership not found")
+    pt = str(row.principal_type)
     system_db.delete(row)
-    log_action(account_db, actor.account_id, "member_removed", "user",
-               actor_user_id=actor.id, target_id=user_id, workspace_id=workspace_id)
+    log_action(account_db, actor.account_id, "member_removed", pt,
+               actor_user_id=actor.id, target_id=principal_id, workspace_id=workspace_id)
     system_db.commit()
     account_db.commit()
-    invalidate_entry_point_cache(user_id)
-    return {"status": "removed", "user_id": user_id, "workspace_id": workspace_id}
+    invalidate_entry_point_cache(principal_id)
+    return {"status": "removed", "principal_id": principal_id, "workspace_id": workspace_id}
 
 
 @router.post("/{workspace_id}/set-default", status_code=200)

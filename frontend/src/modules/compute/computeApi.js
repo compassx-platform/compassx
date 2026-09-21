@@ -60,6 +60,26 @@ export const computeApi = {
     return res.data;
   },
 
+  updateResource: async (resourceId, { name, runtime, profile, description, customImage, extraEnv }) => {
+    const res = await api.put(`/compute/resources/${resourceId}`, {
+      name,
+      runtime,
+      profile,
+      description: description ?? null,
+      custom_image: customImage ?? null,
+      extra_env: extraEnv ?? null,
+    });
+    return res.data;
+  },
+
+  ensureServerlessCompute: async (notebookId, notebookName) => {
+    const payload = {};
+    if (notebookId) payload.notebook_id = notebookId;
+    if (notebookName) payload.notebook_name = notebookName;
+    const res = await api.post('/compute/resources/serverless/ensure', payload);
+    return res.data;
+  },
+
   getResourceLifecycle: async (resourceId) => {
     const res = await api.get(`/compute/resources/${resourceId}/lifecycle`);
     return res.data;
@@ -80,6 +100,44 @@ export const computeApi = {
       timeout: 120000,
     });
     return res.data;
+  },
+
+  ensureResourceRunningAndStartKernel: async (resourceId, onProgress) => {
+    let status = await computeApi.getResourceStatus(resourceId);
+    let phase = (status?.phase || '').toLowerCase();
+
+    if (phase !== 'running') {
+      if (onProgress) onProgress('Starting compute container...');
+      try {
+        await computeApi.startResource(resourceId);
+      } catch (err) {
+        console.warn('Start resource call returned:', err);
+      }
+
+      const start = Date.now();
+      const timeoutMs = 90000;
+      while (Date.now() - start < timeoutMs) {
+        await new Promise((r) => setTimeout(r, 1500));
+        status = await computeApi.getResourceStatus(resourceId);
+        phase = (status?.phase || '').toLowerCase();
+        if (phase === 'running') break;
+        if (phase === 'failed' || phase === 'error') {
+          throw new Error(status?.message || `Compute failed to start (${status?.phase || phase})`);
+        }
+        if (onProgress) onProgress(`Starting compute (${status?.phase || phase})...`);
+      }
+
+      if (phase !== 'running') {
+        throw new Error(status?.message || `Compute is still ${status?.phase || 'Pending'}. Please wait a moment for the container/pod to finish initializing.`);
+      }
+    }
+
+    if (onProgress) onProgress('Starting Jupyter kernel...');
+    const kernelResp = await computeApi.startResourceKernel(resourceId);
+    return {
+      resource: status,
+      kernel: kernelResp,
+    };
   },
 
   // EventSource cannot set headers, so the token and workspace ride in the

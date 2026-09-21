@@ -20,6 +20,8 @@ import { GripVertical, Plus } from 'lucide-react';
 import { useNotebookStore } from '../store/notebookStore';
 import { useKernel } from '../hooks/useKernel';
 import NotebookToolbar from './Toolbar/NotebookToolbar';
+import NotebookRightSidebar from './Sidebar/NotebookRightSidebar';
+import NotebookBottomTerminal from './Terminal/NotebookBottomTerminal';
 import CodeCell from './Cell/CodeCell';
 import MarkdownCell from './Cell/MarkdownCell';
 
@@ -135,63 +137,70 @@ export default function Notebook({ notebookPath = 'notebooks/untitled.ipynb', is
     <div className="notebook-container">
       <NotebookToolbar notebookPath={notebookPath} onDelete={onDelete} />
 
-      <div className="notebook-body">
-        <div className="notebook-scroll-area">
-          <div className="notebook-cells">
-            {isLoading ? (
-              <NotebookSkeleton />
-            ) : (
-              <>
-                <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
-                  <SortableContext items={cells.map((c) => c.id)} strategy={verticalListSortingStrategy}>
-                    {cells.map((cell, index) => (
-                      <div key={cell.id}>
-                        <SortableCell id={cell.id}>
-                          {cell.type === 'code' ? (
-                            <CodeCell cellId={cell.id} cellIndex={index} />
-                          ) : (
-                            <MarkdownCell cellId={cell.id} cellIndex={index} />
-                          )}
-                        </SortableCell>
-                        <div className="notebook-add-cell-divider">
-                          <div className="notebook-add-cell-actions">
-                            <button
-                              className="notebook-add-cell-pill"
-                              onClick={() => addCell('code', cell.id)}
-                              title="Add Code cell below"
-                            >
-                              <Plus size={13} /> <span>Code</span>
-                            </button>
-                            <button
-                              className="notebook-add-cell-pill"
-                              onClick={() => addCell('markdown', cell.id)}
-                              title="Add Text cell below"
-                            >
-                              <Plus size={13} /> <span>Text</span>
-                            </button>
+      <div className="notebook-main-layout">
+        <div className="notebook-body">
+          <div className="notebook-scroll-area">
+            <div className="notebook-cells">
+              {isLoading ? (
+                <NotebookSkeleton />
+              ) : (
+                <>
+                  <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
+                    <SortableContext items={cells.map((c) => c.id)} strategy={verticalListSortingStrategy}>
+                      {cells.map((cell, index) => (
+                        <div key={cell.id} data-cell-id={cell.id} id={`cell-${cell.id}`}>
+                          <SortableCell id={cell.id}>
+                            {cell.type === 'code' ? (
+                              <CodeCell cellId={cell.id} cellIndex={index} />
+                            ) : (
+                              <MarkdownCell cellId={cell.id} cellIndex={index} />
+                            )}
+                          </SortableCell>
+                          <div className="notebook-add-cell-divider">
+                            <div className="notebook-add-cell-actions">
+                              <button
+                                className="notebook-add-cell-pill"
+                                onClick={() => addCell('code', cell.id)}
+                                title="Add Code cell below"
+                              >
+                                <Plus size={13} /> <span>Code</span>
+                              </button>
+                              <button
+                                className="notebook-add-cell-pill"
+                                onClick={() => addCell('markdown', cell.id)}
+                                title="Add Text cell below"
+                              >
+                                <Plus size={13} /> <span>Text</span>
+                              </button>
+                            </div>
                           </div>
                         </div>
-                      </div>
-                    ))}
-                  </SortableContext>
-                </DndContext>
+                      ))}
+                    </SortableContext>
+                  </DndContext>
 
-                {cells.length === 0 && (
-                  <div className="notebook-add-cell-divider notebook-add-cell-divider--empty">
-                    <div className="notebook-add-cell-actions">
-                      <button className="notebook-add-cell-pill" onClick={() => addCell('code')}>
-                        <Plus size={13} /> <span>Code</span>
-                      </button>
-                      <button className="notebook-add-cell-pill" onClick={() => addCell('markdown')}>
-                        <Plus size={13} /> <span>Text</span>
-                      </button>
+                  {cells.length === 0 && (
+                    <div className="notebook-add-cell-divider notebook-add-cell-divider--empty">
+                      <div className="notebook-add-cell-actions">
+                        <button className="notebook-add-cell-pill" onClick={() => addCell('code')}>
+                          <Plus size={13} /> <span>Code</span>
+                        </button>
+                        <button className="notebook-add-cell-pill" onClick={() => addCell('markdown')}>
+                          <Plus size={13} /> <span>Text</span>
+                        </button>
+                      </div>
                     </div>
-                  </div>
-                )}
-              </>
-            )}
+                  )}
+                </>
+              )}
+            </div>
           </div>
+
+          {/* ── Interactive Pod Terminal Drawer ── */}
+          <NotebookBottomTerminal />
         </div>
+
+        <NotebookRightSidebar />
       </div>
     </div>
   );

@@ -241,6 +241,15 @@ async def proxy_kernel_ws(websocket: WebSocket, kernel_id: str) -> None:
                         if websocket.client_state != WebSocketState.CONNECTED:
                             break
                         msg = await websocket.receive()
+                        # Reset idle timer for active compute resource
+                        res_id = _KERNEL_TO_RESOURCE.get(kernel_id)
+                        if res_id:
+                            try:
+                                from app.services.sandbox_reaper_service import sandbox_reaper_service
+                                sandbox_reaper_service.touch_compute_activity(res_id)
+                            except Exception:
+                                pass
+
                         if "bytes" in msg and msg["bytes"] is not None:
                             await upstream_ws.send(msg["bytes"])
                         elif "text" in msg and msg["text"] is not None:

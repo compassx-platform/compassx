@@ -10,6 +10,10 @@ from app.user_manager.models.account_models import (
     UmGroupManager,
     UmServicePrincipalACL,
 )
+from app.user_manager.models.system_models import (
+    UmPrincipalType,
+    UmWorkspaceRoleAssignment,
+)
 from app.governance.dependencies import _scoped_group_ids, _group_ids
 
 
@@ -62,7 +66,6 @@ def test_cycle_detection_logic():
 def test_role_switcher_scoping_behavior():
     """Test in-session role assumption scoping."""
     # Given user belongs to [G1, G2]
-    # G1's parent is G_Parent
     user_direct_groups = {"G1", "G2"}
     
     # When user assumes G1, active_role_id = G1
@@ -72,3 +75,23 @@ def test_role_switcher_scoping_behavior():
     # When user attempts to assume G3 (not a member)
     invalid_role_id = "G3"
     assert invalid_role_id not in user_direct_groups
+
+
+def test_workspace_principal_types_and_candidate_filtering():
+    """Test workspace identity assignment supporting users, groups, and service principals."""
+    assert UmPrincipalType.user == "user"
+    assert UmPrincipalType.group == "group"
+    assert UmPrincipalType.service_principal == "service_principal"
+
+    # Candidate filtering logic: All account entities minus assigned
+    account_entities = [
+        {"id": "u1", "type": "user", "name": "Alice"},
+        {"id": "u2", "type": "user", "name": "Bob"},
+        {"id": "g1", "type": "group", "name": "Engineers"},
+        {"id": "sp1", "type": "service_principal", "name": "CI Bot"},
+    ]
+    assigned_ids = {"u1", "g1"}
+
+    candidates = [e for e in account_entities if e["id"] not in assigned_ids]
+    assert len(candidates) == 2
+    assert [c["id"] for c in candidates] == ["u2", "sp1"]

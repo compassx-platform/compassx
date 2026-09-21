@@ -193,10 +193,18 @@ class KubernetesDriver(ResourceDriver):
             working_dir=spec.working_dir or None,
         )
 
+        # Resolve target nodeSelector from Account compute node pool configuration
+        try:
+            from app.services.node_pool_manager import node_pool_manager
+            compute_node_selector = node_pool_manager.get_compute_node_selector()
+        except Exception:
+            compute_node_selector = None
+
         pod_spec = m.V1PodSpec(
             containers=[container],
             restart_policy="Always",
             volumes=volumes or None,
+            node_selector=compute_node_selector or None,
         )
 
         return m.V1Deployment(
@@ -361,12 +369,17 @@ class KubernetesDriver(ResourceDriver):
 
         if pod.status:
             for cs in pod.status.container_statuses or []:
-                if cs.state and cs.state.waiting and cs.state.waiting.reason in (
-                    "ErrImagePull",
-                    "ImagePullBackOff",
-                ):
-                    message = "Image could not be pulled. Check runtime image."
-                    phase = RuntimePhase.FAILED
+                if cs.state and cs.state.waiting:
+                    reason = cs.state.waiting.reason or "ContainerCreating"
+                    msg = cs.state.waiting.message or ""
+                    if reason in ("ErrImagePull", "ImagePullBackOff"):
+                        message = f"Image pull failed: {msg or reason}"
+                        phase = RuntimePhase.FAILED
+                    elif reason == "CrashLoopBackOff":
+                        message = f"Container crashed: {msg or reason}"
+                        phase = RuntimePhase.FAILED
+                    elif not message:
+                        message = f"Container status: {reason}"
                 if cs.state and cs.state.terminated:
                     terminated = cs.state.terminated
                     finished_at = terminated.finished_at
@@ -378,6 +391,11 @@ class KubernetesDriver(ResourceDriver):
                             terminated.message
                             or f"Container exited with code {terminated.exit_code}"
                         )
+            if not message and pod.status.conditions:
+                for cond in pod.status.conditions:
+                    if cond.reason == "Unschedulable" or cond.status == "False":
+                        message = cond.message or cond.reason
+                        break
 
         labels = pod.metadata.labels or {}
         return RuntimeInfo(

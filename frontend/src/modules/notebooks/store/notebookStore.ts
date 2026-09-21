@@ -6,6 +6,7 @@ import type { ISessionConnection } from '@jupyterlab/services/lib/session/sessio
 export type CellType = 'code' | 'markdown' | 'raw';
 export type KernelStatus = 'idle' | 'busy' | 'dead' | 'unknown' | 'connecting';
 export type AgentEditAction = 'replace_focused' | 'replace_cell' | 'insert_below' | 'append_to_focused';
+export type RightSidebarTab = 'config' | 'variables' | 'logs' | 'info';
 
 export interface AgentCellEditProposal {
   action: AgentEditAction;
@@ -87,6 +88,19 @@ export interface LastComputeInfo {
   kernel_name: string | null;
 }
 
+export interface NotebookMetadata {
+  id?: string;
+  name?: string;
+  catalog_name?: string;
+  schema_name?: string;
+  created_at?: string;
+  updated_at?: string;
+  created_by?: string;
+  updated_by?: string;
+  owner?: string;
+  language?: string;
+}
+
 interface NotebookStore {
   cells: Cell[];
   kernelRef: IKernelConnection | null;
@@ -96,6 +110,8 @@ interface NotebookStore {
   isDirty: boolean;
   notebookPath: string;
   notebookId: string | null;
+  notebookMetadata: NotebookMetadata | null;
+  setNotebookMetadata: (meta: NotebookMetadata | null) => void;
   focusedCellId: string | null;
   showLineNumbers: boolean;
   collapsedOutputs: Set<string>;
@@ -134,7 +150,16 @@ interface NotebookStore {
   notebookComputeLoaded: boolean;
   setLastComputeInfo: (info: LastComputeInfo | null) => void;
 
-  // UI state
+  isRightSidebarOpen: boolean;
+  activeRightSidebarTab: RightSidebarTab | null;
+  setRightSidebarOpen: (open: boolean) => void;
+  setActiveRightSidebarTab: (tab: RightSidebarTab | null) => void;
+  toggleRightSidebarTab: (tab: RightSidebarTab) => void;
+
+  isBottomTerminalOpen: boolean;
+  setBottomTerminalOpen: (open: boolean) => void;
+  toggleBottomTerminal: () => void;
+
   setFocusedCell: (id: string | null) => void;
   setNotebookPath: (path: string) => void;
   setNotebookId: (id: string | null) => void;
@@ -177,6 +202,8 @@ const notebookStoreCreator: StateCreator<NotebookStore> = (set, get) => ({
   isDirty: false,
   notebookPath: 'notebooks/untitled.ipynb',
   notebookId: null,
+  notebookMetadata: null,
+  setNotebookMetadata: (meta) => set({ notebookMetadata: meta }),
   selectedPod: null,
   lastComputeInfo: null,
   notebookComputeLoaded: false,
@@ -185,6 +212,21 @@ const notebookStoreCreator: StateCreator<NotebookStore> = (set, get) => ({
   collapsedOutputs: new Set(),
   collapsedCells: new Set(),
   variables: [],
+  isRightSidebarOpen: false,
+  activeRightSidebarTab: null,
+  setRightSidebarOpen: (open) => set({ isRightSidebarOpen: open }),
+  setActiveRightSidebarTab: (tab) => set({ activeRightSidebarTab: tab, isRightSidebarOpen: tab !== null }),
+  toggleRightSidebarTab: (tab) =>
+    set((s) => {
+      if (s.isRightSidebarOpen && s.activeRightSidebarTab === tab) {
+        return { isRightSidebarOpen: false, activeRightSidebarTab: null };
+      }
+      return { isRightSidebarOpen: true, activeRightSidebarTab: tab };
+    }),
+
+  isBottomTerminalOpen: false,
+  setBottomTerminalOpen: (open) => set({ isBottomTerminalOpen: open }),
+  toggleBottomTerminal: () => set((s) => ({ isBottomTerminalOpen: !s.isBottomTerminalOpen })),
 
   addCell: (type, afterId) =>
     set((s) => {

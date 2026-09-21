@@ -29,6 +29,9 @@ class _Db:
             def all(self):
                 return self._items
 
+            def first(self):
+                return self._items[0] if self._items else None
+
         return _Query(self._resources)
 
 
@@ -124,6 +127,67 @@ def test_reconcile_runtime_states_skips_already_running_resources():
 
     assert reconciled == 0
     service.start_resource.assert_not_called()
+
+
+def test_update_resource_updates_fields_and_restarts_if_running():
+    from compute.schemas import ComputeProfileId, ComputeResourceUpdateRequest, RuntimeType
+
+    resource = _resource(desired_status="running")
+    db = _Db(resources=[resource])
+    service = _service(db, RuntimePhase.RUNNING)
+    service._get_resource_row = MagicMock(return_value=resource)
+    service.stop_resource = MagicMock()
+    service.start_resource = MagicMock()
+
+    update_req = ComputeResourceUpdateRequest(
+        runtime=RuntimeType.SPARK,
+        profile=ComputeProfileId.CLOUD_S,
+    )
+
+    resp = service.update_resource("compute-1", update_req, "user-1")
+
+    assert resource.runtime == "spark"
+    assert resource.profile == "cloud-s"
+    assert resp.runtime == "spark"
+    service.stop_resource.assert_called_once_with("compute-1", "user-1", None)
+    service.start_resource.assert_called_once_with("compute-1", "user-1", None)
+
+
+def test_ensure_serverless_resource_returns_existing():
+    resource = _resource(desired_status="running", resource_id="serverless-1")
+    resource.name = "Serverless Compute"
+    resource.is_default = True
+    db = _Db(resources=[resource])
+    service = _service(db, RuntimePhase.RUNNING)
+    service._use_platform = lambda: True
+
+    status = service.ensure_serverless_resource("user-1", None)
+    assert status.id == "serverless-1"
+
+
+def test_ensure_serverless_resource_creates_dedicated_for_new_notebook():
+    db = _Db(resources=[])
+    service = _service(db, RuntimePhase.RUNNING)
+    service._use_platform = lambda: True
+    created_res = _resource(desired_status="running", resource_id="nb-res-1")
+    created_res.name = "Serverless - Untitled 4"
+    created_res.is_default = False
+    service.create_resource = MagicMock(return_value=created_res)
+    service.get_resource_with_status = MagicMock(return_value=SimpleNamespace(id="nb-res-1", name="Serverless - Untitled 4", is_default=False))
+
+    status = service.ensure_serverless_resource(
+        "user-1", None, notebook_id="nb-4-uuid", notebook_name="Untitled 4"
+    )
+
+    assert status.id == "nb-res-1"
+    service.create_resource.assert_called_once()
+    call_args = service.create_resource.call_args
+    req = call_args[0][0]
+    assert req.name == "Serverless - Untitled 4"
+    assert call_args[1]["is_default"] is False
+    assert call_args[1]["auto_start"] is True
+
+
 
 
 import pytest

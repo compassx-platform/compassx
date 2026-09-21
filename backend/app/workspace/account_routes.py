@@ -80,6 +80,16 @@ DEFAULT_ACCOUNT_SETTINGS = {
         "max_count": 5,
         "auto_scale": True,
     },
+    "compute": {
+        "auto_stop_enabled": True,
+        "auto_stop_minutes": 5,
+        "dedicated_pool_enabled": True,
+        "pool_name": "computepool",
+        "vm_size": "Standard_D4s_v5",
+        "min_count": 0,
+        "max_count": 10,
+        "auto_scale": True,
+    },
 }
 
 
@@ -94,7 +104,7 @@ def get_account_settings(
 
     saved = getattr(account, "settings", None) or {}
     merged = {**DEFAULT_ACCOUNT_SETTINGS, **saved}
-    for k in ["airflow", "app_node_pool"]:
+    for k in ["airflow", "app_node_pool", "compute"]:
         if k in DEFAULT_ACCOUNT_SETTINGS and isinstance(DEFAULT_ACCOUNT_SETTINGS[k], dict):
             merged[k] = {**DEFAULT_ACCOUNT_SETTINGS[k], **saved.get(k, {})}
 
@@ -118,6 +128,14 @@ def get_account_settings(
         merged["app_node_pool"] = {**merged.get("app_node_pool", {}), **pool_status}
     except Exception as exc:
         logger.debug("Could not query live node pool status: %s", exc)
+
+    # Enrich with live Compute Node Pool status
+    try:
+        from app.services.node_pool_manager import node_pool_manager
+        comp_status = node_pool_manager.get_compute_pool_status()
+        merged["compute"] = {**merged.get("compute", {}), **comp_status}
+    except Exception as exc:
+        logger.debug("Could not query live compute node pool status: %s", exc)
 
     return {
         "account_id": str(account.id),
@@ -188,6 +206,25 @@ def update_account_settings(
             node_pool_manager.switchover_app_workloads(target_pool=target)
         except Exception as exc:
             logger.warning("Could not apply App Node Pool configuration change: %s", exc)
+
+    # 3. Apply Compute Node Pool configuration if requested
+    if "compute" in body and isinstance(body["compute"], dict):
+        comp_cfg = body["compute"]
+        try:
+            from app.services.node_pool_manager import node_pool_manager
+            dedicated = bool(comp_cfg.get("dedicated_pool_enabled", existing.get("compute", {}).get("dedicated_pool_enabled", True)))
+            vm_size = str(comp_cfg.get("vm_size") or existing.get("compute", {}).get("vm_size") or "Standard_D4s_v5")
+            min_count = int(comp_cfg.get("min_count") if comp_cfg.get("min_count") is not None else 0)
+            max_count = int(comp_cfg.get("max_count") or 10)
+            auto_scale = bool(comp_cfg.get("auto_scale", True))
+            pool_name = str(comp_cfg.get("pool_name") or "computepool")
+
+            if dedicated:
+                node_pool_manager.trigger_provision_compute_nodepool_async(
+                    pool_name=pool_name, vm_size=vm_size, min_count=min_count, max_count=max_count, auto_scale=auto_scale
+                )
+        except Exception as exc:
+            logger.warning("Could not apply Compute Node Pool configuration change: %s", exc)
 
     return get_account_settings(db=db, _admin=_admin)
 

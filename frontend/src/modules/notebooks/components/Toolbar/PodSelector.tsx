@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { getPrincipalInfo } from '@/lib/auth';
 import { useScopedNavigate } from '@/lib/appNavigation';
-import { ChevronDown, Plus, RefreshCw, Loader2 } from 'lucide-react';
+import { ChevronDown, Plus, RefreshCw, Loader2, Zap, Sliders, Check } from 'lucide-react';
 import { computeApi } from '@/modules/compute/computeApi';
 import api from '@/lib/api';
 import { useNotebookStore } from '../../store/notebookStore';
@@ -14,11 +14,7 @@ interface ResourcePod {
   phase: string;
   runtime: string;
   profile: string;
-}
-
-interface KernelStartResponse {
-  id: string;
-  name: string;
+  is_default?: boolean;
 }
 
 function getPhaseDotClass(phase: string): string {
@@ -29,21 +25,18 @@ function getPhaseDotClass(phase: string): string {
   return 'notebook-pod-dot--unknown';
 }
 
-function getPhaseLabel(phase: string): string {
-  const normalized = (phase || '').trim().toLowerCase();
-  return normalized || 'unknown';
-}
-
 export default function PodSelector() {
   const currentUserId = getPrincipalInfo()?.principal_id;
   const selectedPod = useNotebookStore((s) => s.selectedPod);
   const setSelectedPod = useNotebookStore((s) => s.setSelectedPod);
   const kernelStatus = useNotebookStore((s) => s.kernelStatus);
+  const toggleRightSidebarTab = useNotebookStore((s) => s.toggleRightSidebarTab);
   const navigate = useScopedNavigate();
 
   const [resources, setResources] = useState<ResourcePod[]>([]);
   const [loading, setLoading] = useState(false);
   const [connecting, setConnecting] = useState(false);
+  const [connectingMessage, setConnectingMessage] = useState<string>('Connecting to kernel...');
   const [error, setError] = useState<string | null>(null);
   const [isOpen, setIsOpen] = useState(false);
 
@@ -78,7 +71,7 @@ export default function PodSelector() {
 
       const currentSelection = useNotebookStore.getState().selectedPod;
       if (currentSelection && !currentResources.some((resource) => resource.id === currentSelection.resource_id)) {
-        setSelectedPod(null);
+        // Keep selection if it is active, otherwise reset
       }
     } catch (err: any) {
       setResources([]);
@@ -97,6 +90,62 @@ export default function PodSelector() {
     setIsOpen((prev) => !prev);
   }
 
+  async function handleSelectServerless() {
+    setIsOpen(false);
+    setConnecting(true);
+    setError(null);
+    setConnectingMessage('Provisioning Serverless DuckDB...');
+
+    try {
+      const currentNotebookId = useNotebookStore.getState().notebookId;
+      const currentMetadata = useNotebookStore.getState().notebookMetadata;
+      const notebookName = currentMetadata?.name || undefined;
+
+      // 1. Ensure serverless compute exists for this notebook
+      const serverless = await computeApi.ensureServerlessCompute(currentNotebookId || undefined, notebookName);
+      const resourceId = serverless.id;
+
+      const startingPod: SelectedPod = {
+        resource_id: resourceId,
+        runtime_id: serverless.runtime_id ?? resourceId,
+        runtime: serverless.runtime || 'duckdb',
+        kernel_id: null,
+        kernel_name: null,
+        state: 'starting',
+      };
+      setSelectedPod(startingPod);
+
+      // 2. Ensure running and start kernel
+      const res = await computeApi.ensureResourceRunningAndStartKernel(resourceId, (msg: string) => {
+        setConnectingMessage(msg);
+      });
+
+      const connectedPod: SelectedPod = {
+        ...startingPod,
+        kernel_id: res.kernel.id,
+        kernel_name: res.kernel.name || res.kernel.id,
+      };
+      setSelectedPod(connectedPod);
+
+      const notebookId = useNotebookStore.getState().notebookId;
+      if (notebookId) {
+        api.put(`/notebook/${notebookId}/compute`, {
+          resource_id: resourceId,
+          kernel_name: res.kernel.name || res.kernel.id,
+        }).catch((err: any) => {
+          console.warn('[notebook] Failed to save last compute info:', err);
+        });
+      }
+    } catch (err: any) {
+      const msg = err?.response?.data?.message ?? err?.message ?? 'Failed to start serverless compute.';
+      setError(msg);
+      setSelectedPod(null);
+    } finally {
+      setConnecting(false);
+      setConnectingMessage('Connecting to kernel...');
+    }
+  }
+
   async function handleSelectResource(resource: ResourcePod | null) {
     setIsOpen(false);
     if (!resource) {
@@ -106,6 +155,7 @@ export default function PodSelector() {
 
     setConnecting(true);
     setError(null);
+    setConnectingMessage('Starting compute pod...');
 
     const startingPod: SelectedPod = {
       resource_id: resource.id,
@@ -118,11 +168,14 @@ export default function PodSelector() {
     setSelectedPod(startingPod);
 
     try {
-      const kernelResp = await computeApi.startResourceKernel(resource.id) as KernelStartResponse;
+      const res = await computeApi.ensureResourceRunningAndStartKernel(resource.id, (msg: string) => {
+        setConnectingMessage(msg);
+      });
+
       const connectedPod: SelectedPod = {
         ...startingPod,
-        kernel_id: kernelResp.id,
-        kernel_name: kernelResp.name || kernelResp.id,
+        kernel_id: res.kernel.id,
+        kernel_name: res.kernel.name || res.kernel.id,
       };
       setSelectedPod(connectedPod);
 
@@ -130,17 +183,18 @@ export default function PodSelector() {
       if (notebookId) {
         api.put(`/notebook/${notebookId}/compute`, {
           resource_id: resource.id,
-          kernel_name: kernelResp.name || kernelResp.id,
+          kernel_name: res.kernel.name || res.kernel.id,
         }).catch((err: any) => {
           console.warn('[notebook] Failed to save last compute info:', err);
         });
       }
     } catch (err: any) {
-      const msg = err?.response?.data?.message ?? 'Failed to start kernel.';
+      const msg = err?.response?.data?.message ?? err?.message ?? 'Failed to start kernel.';
       setError(msg);
       setSelectedPod(null);
     } finally {
       setConnecting(false);
+      setConnectingMessage('Connecting to kernel...');
     }
   }
 
@@ -149,7 +203,7 @@ export default function PodSelector() {
     if (!selectedPod) return null;
     if (isStarting || kernelStatus === 'connecting') {
       return (
-        <span title="Connecting to kernel...">
+        <span title={connectingMessage}>
           <Loader2 size={12} className="notebook-pod-spinner" />
         </span>
       );
@@ -165,9 +219,10 @@ export default function PodSelector() {
 
   // Get selected resource object for display label
   const selectedResource = resources.find((r) => r.id === selectedPod?.resource_id);
-  const selectedPodLabel = selectedResource
-    ? (selectedResource.name || selectedResource.runtime)
-    : (selectedPod?.runtime || 'Select compute...');
+  const isServerlessSelected = selectedResource?.is_default || selectedResource?.name?.toLowerCase().includes('serverless') || (selectedPod && !selectedResource && selectedPod.runtime === 'duckdb');
+  const selectedPodLabel = selectedPod
+    ? (selectedResource?.name || (isServerlessSelected ? `Serverless (${selectedPod.runtime.toUpperCase()})` : selectedPod.runtime))
+    : 'Select compute...';
 
   return (
     <div className="notebook-pod-selector-wrapper" ref={containerRef} title={error ?? undefined}>
@@ -178,7 +233,7 @@ export default function PodSelector() {
           </span>
         )}
         <span className="notebook-pod-trigger-text">
-          {loading ? 'Loading pods...' : selectedPod ? selectedPodLabel : 'Select compute...'}
+          {isStarting ? connectingMessage : loading ? 'Loading pods...' : selectedPodLabel}
         </span>
         <ChevronDown size={13} className="notebook-pod-chevron" />
       </div>
@@ -186,24 +241,39 @@ export default function PodSelector() {
       {isOpen && (
         <div className="notebook-pod-menu">
           <div className="notebook-pod-menu-header">
-            <span>Compute Pods</span>
-            <button className="notebook-pod-refresh-btn" onClick={loadResources} title="Refresh compute pods">
+            <span>Compute</span>
+            <button className="notebook-pod-refresh-btn" onClick={loadResources} title="Refresh compute">
               <RefreshCw size={11} className={loading ? 'is-spinning' : ''} />
             </button>
           </div>
 
           <div className="notebook-pod-menu-list">
-            {/* None option */}
+            {/* 1. Serverless Option */}
             <button
               type="button"
-              className={`notebook-pod-menu-item ${!selectedPod ? 'is-selected' : ''}`}
-              onClick={() => handleSelectResource(null)}
+              className={`notebook-pod-menu-item ${
+                isServerlessSelected && selectedPod ? 'is-selected' : ''
+              }`}
+              onClick={handleSelectServerless}
             >
-              <span className="notebook-pod-menu-item-name" style={{ color: '#6b7280' }}>
-                No compute selected
-              </span>
+              <Zap size={14} className="notebook-pod-item-icon" />
+              <div className="notebook-pod-menu-item-content">
+                <div className="notebook-pod-menu-item-title-row">
+                  <span className="notebook-pod-menu-item-name">Serverless (DuckDB)</span>
+                  <span className="notebook-pod-badge-pill">Serverless</span>
+                </div>
+                <span className="notebook-pod-menu-item-sub">Auto-provisioned • Small</span>
+              </div>
+              {isServerlessSelected && selectedPod && (
+                <Check size={14} className="notebook-pod-check" />
+              )}
             </button>
 
+            {/* 2. Custom Pods Section */}
+            {resources.length > 0 && <div className="notebook-pod-section-divider" />}
+            {resources.length > 0 && (
+              <div className="notebook-pod-section-title">All-Purpose Compute</div>
+            )}
             {resources.map((resource) => {
               const isCurrent = selectedPod?.resource_id === resource.id;
               return (
@@ -214,16 +284,22 @@ export default function PodSelector() {
                   onClick={() => handleSelectResource(resource)}
                 >
                   <span className={`notebook-pod-dot ${getPhaseDotClass(resource.phase)}`} />
-                  <span className="notebook-pod-menu-item-name">
-                    {resource.name || resource.runtime}
-                  </span>
+                  <div className="notebook-pod-menu-item-content">
+                    <span className="notebook-pod-menu-item-name">
+                      {resource.name || resource.runtime}
+                    </span>
+                    <span className="notebook-pod-menu-item-sub">
+                      {resource.runtime.toUpperCase()} • {resource.profile} • {resource.phase}
+                    </span>
+                  </div>
+                  {isCurrent && <Check size={14} className="notebook-pod-check" />}
                 </button>
               );
             })}
 
             {!loading && resources.length === 0 && (
               <div className="notebook-pod-menu-empty">
-                No compute pods available
+                No custom compute created
               </div>
             )}
           </div>
@@ -231,14 +307,26 @@ export default function PodSelector() {
           <div className="notebook-pod-menu-footer">
             <button
               type="button"
-              className="notebook-pod-create-btn"
+              className="notebook-pod-action-item"
+              onClick={() => {
+                setIsOpen(false);
+                toggleRightSidebarTab('config');
+              }}
+              title="Configure runtime and memory sizing"
+            >
+              <Sliders size={13} />
+              <span>Configure Environment</span>
+            </button>
+            <button
+              type="button"
+              className="notebook-pod-action-item"
               onClick={() => {
                 setIsOpen(false);
                 navigate('/compute');
               }}
             >
-              <Plus size={12} />
-              <span>Create / Manage Pods</span>
+              <Plus size={13} />
+              <span>Manage Compute</span>
             </button>
           </div>
         </div>
