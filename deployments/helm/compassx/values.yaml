@@ -21,6 +21,20 @@ nameOverride: ""
 fullnameOverride: ""
 
 # ------------------------------------------------------------------------------
+# Dedicated Compute Node Pool (Serverless & Notebook Workloads)
+# ------------------------------------------------------------------------------
+computePool:
+  enabled: true
+  poolName: "computepool"
+  vmSize: "Standard_D4ads_v5"
+  minCount: 0
+  maxCount: 10
+  autoScale: true
+  autoStopEnabled: true
+  autoStopMinutes: 5
+  isProvisioned: true
+
+# ------------------------------------------------------------------------------
 # Secrets & Encryption Keys
 # ------------------------------------------------------------------------------
 secrets:
@@ -42,7 +56,7 @@ backend:
   image:
     repository: ghcr.io/compassx-platform/backend
     pullPolicy: IfNotPresent
-    tag: \"v0.11.1\"
+    tag: \"v0.11.2\"
 
   service:
     type: ClusterIP
@@ -110,7 +124,7 @@ frontend:
   image:
     repository: ghcr.io/compassx-platform/frontend
     pullPolicy: IfNotPresent
-    tag: \"v0.11.1\"
+    tag: \"v0.11.2\"
 
   service:
     type: ClusterIP

@@ -126,3 +126,35 @@ class ComputeServiceInfo(BaseModel):
     phase: str
     message: str = ""
     details: dict = Field(default_factory=dict)
+
+
+class ComputeMetricPoint(BaseModel):
+    """Single time-series data point for compute metrics."""
+    timestamp: datetime
+    value: float
+
+
+class ComputeMetricsResponse(BaseModel):
+    """Live resource utilization and time-series telemetry for a compute instance."""
+    resource_id: str
+    status: str
+    phase: str | None = None
+    pod_name: str | None = None
+    node_name: str | None = None
+    runtime: str = "duckdb"
+    profile: str = "local"
+    # Resource allocations (Requests vs Limits)
+    cpu_cores_limit: float = 1.0
+    cpu_cores_request: float = 0.25
+    memory_limit_mb: float = 2048.0
+    memory_request_mb: float = 512.0
+    # Live measurements
+    cpu_percent: float = 0.0
+    cpu_millicores: float = 0.0
+    memory_mb: float = 0.0
+    memory_percent: float = 0.0
+    # Historical telemetry time-series
+    cpu_timeseries: list[ComputeMetricPoint] = Field(default_factory=list)
+    memory_timeseries: list[ComputeMetricPoint] = Field(default_factory=list)
+    collected_at: datetime
+

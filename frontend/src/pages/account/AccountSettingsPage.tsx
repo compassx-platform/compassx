@@ -74,10 +74,11 @@ export default function AccountSettingsPage() {
     auto_stop_minutes: 5,
     dedicated_pool_enabled: true,
     pool_name: 'computepool',
-    vm_size: 'Standard_D4s_v5',
+    vm_size: 'Standard_D4ads_v5',
     min_count: 0,
     max_count: 10,
     auto_scale: true,
+    is_provisioned: true,
   };
   const [isAutoStopEnabled, setIsAutoStopEnabled] = useState<boolean>(
     compute.auto_stop_enabled !== false
@@ -89,7 +90,7 @@ export default function AccountSettingsPage() {
     compute.dedicated_pool_enabled !== false
   );
   const [computeVmSize, setComputeVmSize] = useState<string>(
-    compute.vm_size || 'Standard_D4s_v5'
+    compute.vm_size || 'Standard_D4ads_v5'
   );
   const [computeMinCount, setComputeMinCount] = useState<number>(
     compute.min_count !== undefined ? Number(compute.min_count) : 0
@@ -137,6 +138,28 @@ export default function AccountSettingsPage() {
 
   const vmSizesCatalog: VmSizeOption[] = appNodePool.vm_sizes_catalog || [
     {
+      id: 'Standard_D4ads_v5',
+      name: 'Standard_D4ads_v5',
+      label: 'Standard_D4ads_v5 (4 vCPU, 16 GiB RAM - AMD EPYC)',
+      cpu: 4,
+      memory_gib: 16,
+      architecture: 'x86_64',
+      category: 'High Performance Compute',
+      description: 'Production compute tier for high concurrency, fast DuckDB analytics, and heavy notebook processing.',
+      recommended: true,
+    },
+    {
+      id: 'Standard_D2ads_v5',
+      name: 'Standard_D2ads_v5',
+      label: 'Standard_D2ads_v5 (2 vCPU, 8 GiB RAM - AMD EPYC)',
+      cpu: 2,
+      memory_gib: 8,
+      architecture: 'x86_64',
+      category: 'General Purpose (Dedicated)',
+      description: 'Consistent performance for medium workloads and development sessions.',
+      recommended: false,
+    },
+    {
       id: 'Standard_B2s_v2',
       name: 'Standard_B2s_v2',
       label: 'Standard_B2s_v2 (2 vCPU, 4 GiB RAM)',
@@ -145,7 +168,7 @@ export default function AccountSettingsPage() {
       architecture: 'x86_64',
       category: 'Burstable (General Purpose)',
       description: 'Economical burstable VM ideal for lightweight apps, dev environments, and dashboards.',
-      recommended: true,
+      recommended: false,
     },
     {
       id: 'Standard_B2als_v2',
@@ -342,7 +365,7 @@ export default function AccountSettingsPage() {
     );
   };
 
-  const computeIsProvisioned = Boolean(compute.is_provisioned);
+  const computeIsProvisioned = compute.is_provisioned !== undefined ? Boolean(compute.is_provisioned) : true;
   const computeIsProvisioning = Boolean(
     compute.is_provisioning ||
       compute.status === 'provisioning' ||
@@ -352,11 +375,11 @@ export default function AccountSettingsPage() {
   );
   const computeAction =
     compute.provisioning_action ||
-    (deprovisionComputeMutation.isPending
-      ? 'deprovisioning'
-      : provisionComputeMutation.isPending
-      ? 'provisioning'
-      : '');
+      (deprovisionComputeMutation.isPending
+        ? 'deprovisioning'
+        : provisionComputeMutation.isPending
+        ? 'provisioning'
+        : '');
   const computeWorkloads = compute.compute_workloads || { total_compute: 0, compute_pods: [] };
 
   const handleToggleComputeDedicated = (checked: boolean) => {
@@ -367,7 +390,7 @@ export default function AccountSettingsPage() {
         {
           onSuccess: () => {
             toast.success(
-              "Dedicated compute disabled. Active compute pods are rolling over to 'userpoolv2' and 'computepool' is being deprovisioned from AKS."
+              "Dedicated compute disabled. Active compute pods are rolling over to 'userpoolv2' and 'computepool' is being deprovisioned."
             );
           },
           onError: (err: any) => {
@@ -391,7 +414,7 @@ export default function AccountSettingsPage() {
       {
         onSuccess: () => {
           toast.success(
-            `Compute pool 'computepool' provisioning initiated on AKS with ${computeVmSize} (Min: ${computeMinCount}, Max: ${computeMaxCount}). Live monitoring is active.`
+            `Compute pool 'computepool' provisioning initiated with ${computeVmSize} (Min: ${computeMinCount}, Max: ${computeMaxCount}). Live monitoring is active.`
           );
         },
         onError: (err: any) => {
@@ -404,7 +427,7 @@ export default function AccountSettingsPage() {
   const handleTriggerDeprovisionCompute = () => {
     if (
       window.confirm(
-        "Are you sure you want to deprovision 'computepool' on AKS? Compute pods will gracefully roll over to the shared user pool ('userpoolv2')."
+        "Are you sure you want to deprovision 'computepool'? Compute pods will gracefully roll over to the shared user pool ('userpoolv2')."
       )
     ) {
       deprovisionComputeMutation.mutate(
@@ -413,7 +436,7 @@ export default function AccountSettingsPage() {
           onSuccess: () => {
             setIsComputeDedicated(false);
             toast.success(
-              "Deprovisioning initiated: pods rolling over to 'userpoolv2' and 'computepool' being deleted from AKS."
+              "Deprovisioning initiated: pods rolling over to 'userpoolv2' and 'computepool' being deleted."
             );
           },
           onError: (err: any) => {
@@ -654,7 +677,7 @@ export default function AccountSettingsPage() {
                 )}
               </div>
               <div className="ws-setting-desc">
-                Select the Azure VM instance size for the dedicated app node pool. Higher capacity VMs provide dedicated compute
+                Select the virtual machine instance type for the dedicated app node pool. Higher capacity VMs provide dedicated compute
                 and memory headroom for compute-intensive Python data pipelines, Streamlit dashboards, and full-stack containers.
               </div>
 
@@ -1056,8 +1079,8 @@ export default function AccountSettingsPage() {
                 >
                   <Loader2 size={12} className="spin" style={{ animation: 'spin 1s linear infinite' }} />
                   {computeAction === 'deprovisioning' || compute.status === 'deprovisioning'
-                    ? 'DEPROVISIONING ON AKS...'
-                    : 'PROVISIONING ON AKS...'}
+                    ? 'DEPROVISIONING ON CLUSTER...'
+                    : 'PROVISIONING ON CLUSTER...'}
                 </span>
               )}
 
@@ -1099,7 +1122,7 @@ export default function AccountSettingsPage() {
                   }}
                 >
                   <AlertTriangle size={12} />
-                  NOT PROVISIONED ON AKS
+                  NOT PROVISIONED ON CLUSTER
                 </span>
               )}
 
@@ -1215,7 +1238,7 @@ export default function AccountSettingsPage() {
                 )}
               </div>
               <div className="ws-setting-desc">
-                Select the Azure VM instance size for notebook &amp; serverless compute. Notebook hardware options in the sidebar will be dynamically gated by this VM&apos;s RAM capacity ({computeVmMeta?.memory_gib || 16} GiB limit).
+                Select the virtual machine instance type for notebook &amp; serverless compute. Notebook hardware options in the sidebar will be dynamically gated by this VM&apos;s RAM capacity ({computeVmMeta?.memory_gib || 16} GiB limit).
               </div>
 
               {computeVmMeta && (
@@ -1376,7 +1399,7 @@ export default function AccountSettingsPage() {
                 )}
               </div>
               <div className="ws-setting-desc">
-                Configure minimum and maximum virtual machine nodes for <code>computepool</code>. Set Minimum Nodes to <strong>0</strong> to enable automatic Scale-to-Zero so Azure deallocates nodes when all notebooks are idle.
+                Configure minimum and maximum virtual machine nodes for <code>computepool</code>. Set Minimum Nodes to <strong>0</strong> to enable automatic Scale-to-Zero so idle nodes are automatically deallocated when all notebooks are inactive.
               </div>
 
               {/* Quick Min Count Presets */}
@@ -1656,29 +1679,29 @@ export default function AccountSettingsPage() {
 
               <div>
                 <div style={{ fontSize: '0.9rem', fontWeight: 600, color: 'var(--color-text)' }}>
-                  Azure AKS Compute Node Pool (<code>computepool</code>)
+                  Dedicated Compute Node Pool (<code>computepool</code>)
                   {!computeIsProvisioned && (
                     <span style={{ marginLeft: '8px', fontSize: '0.75rem', fontWeight: 500, color: '#d97706' }}>
-                      (Not Provisioned on AKS)
+                      (Not Provisioned on Cluster)
                     </span>
                   )}
                   {computeIsProvisioned && (
                     <span style={{ marginLeft: '8px', fontSize: '0.75rem', fontWeight: 500, color: '#22c55e' }}>
-                      (Provisioned on AKS)
+                      (Provisioned on Cluster)
                     </span>
                   )}
                 </div>
                 <div style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)', marginTop: '2px' }}>
                   {compute.status_message ||
                     (!computeIsProvisioned
-                      ? `Target VM: ${computeVmSize} • Bounds: ${computeMinCount} to ${computeMaxCount} nodes. Click 'Provision Compute Pool on AKS' to create it.`
+                      ? `Target VM: ${computeVmSize} • Bounds: ${computeMinCount} to ${computeMaxCount} nodes. Click 'Provision Compute Pool' to create it.`
                       : `Target VM: ${computeVmSize} • Bounds: ${computeMinCount} to ${computeMaxCount} nodes • Ready Nodes: ${compute.compute_pool?.ready_nodes || 0}`)}
                 </div>
               </div>
             </div>
 
             <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
-              {/* If NOT provisioned, show prominent "Provision Compute Pool on AKS" button */}
+              {/* If NOT provisioned, show prominent "Provision Compute Pool" button */}
               {!computeIsProvisioned && (
                 <button
                   onClick={handleTriggerProvisionCompute}
@@ -1698,14 +1721,14 @@ export default function AccountSettingsPage() {
                     opacity: computeIsProvisioning ? 0.7 : 1,
                     boxShadow: '0 1px 3px rgba(27, 110, 243, 0.25)',
                   }}
-                  title="Provision dedicated compute pool on Azure AKS"
+                  title="Provision dedicated compute pool on cluster"
                 >
                   {computeIsProvisioning ? (
                     <Loader2 size={14} className="spin" style={{ animation: 'spin 1s linear infinite' }} />
                   ) : (
                     <Zap size={14} />
                   )}
-                  <span>{computeIsProvisioning ? 'Provisioning on AKS...' : 'Provision Compute Pool on AKS'}</span>
+                  <span>{computeIsProvisioning ? 'Provisioning Pool...' : 'Provision Compute Pool'}</span>
                 </button>
               )}
 
@@ -1729,14 +1752,14 @@ export default function AccountSettingsPage() {
                       cursor: computeIsProvisioning ? 'not-allowed' : 'pointer',
                       opacity: computeIsProvisioning ? 0.7 : 1,
                     }}
-                    title="Update cluster autoscaler min/max nodes and configuration on AKS"
+                    title="Update cluster autoscaler min/max nodes and configuration"
                   >
                     {computeIsProvisioning ? (
                       <Loader2 size={13} className="spin" style={{ animation: 'spin 1s linear infinite' }} />
                     ) : (
                       <RefreshCw size={13} />
                     )}
-                    <span>{computeIsProvisioning ? 'Updating AKS...' : 'Update Autoscaler on AKS'}</span>
+                    <span>{computeIsProvisioning ? 'Updating Autoscaler...' : 'Update Autoscaler'}</span>
                   </button>
 
                   <button
@@ -1756,10 +1779,10 @@ export default function AccountSettingsPage() {
                       cursor: computeIsProvisioning ? 'not-allowed' : 'pointer',
                       opacity: computeIsProvisioning ? 0.6 : 1,
                     }}
-                    title="Gracefully migrate compute pods to shared user pool and delete this node pool on Azure"
+                    title="Gracefully migrate compute pods to shared user pool and delete this node pool"
                   >
                     <Trash2 size={13} />
-                    <span>Deprovision Pool from AKS</span>
+                    <span>Deprovision Compute Pool</span>
                   </button>
                 </>
               )}
@@ -1778,7 +1801,7 @@ export default function AccountSettingsPage() {
             </div>
             <div className="ws-setting-control">
               <span style={{ fontSize: '0.88rem', fontWeight: 600, color: 'var(--color-text)' }}>
-                {accountData.account_name}
+                {accountData?.account_name || 'CompassX'}
               </span>
             </div>
           </div>
@@ -1790,7 +1813,7 @@ export default function AccountSettingsPage() {
             </div>
             <div className="ws-setting-control">
               <code style={{ fontSize: '0.8rem', padding: '3px 8px', background: 'var(--color-surface-hover)', borderRadius: '6px' }}>
-                {accountData.account_slug} ({accountData.account_id})
+                {accountData?.account_slug || 'default'} ({accountData?.account_id || 'default-account'})
               </code>
             </div>
           </div>
@@ -1812,7 +1835,7 @@ export default function AccountSettingsPage() {
                 }}
               >
                 <Server size={14} />
-                Kubernetes Cloud (AKS)
+                Kubernetes Cloud
               </span>
             </div>
           </div>

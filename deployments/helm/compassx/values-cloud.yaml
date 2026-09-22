@@ -25,6 +25,18 @@ frontend:
 enterpriseGateway:
   replicaCount: 2
 
+# Dedicated Compute Node Pool (Serverless & Notebook Workloads)
+computePool:
+  enabled: true
+  poolName: "computepool"
+  vmSize: "Standard_D4ads_v5"
+  minCount: 0
+  maxCount: 10
+  autoScale: true
+  autoStopEnabled: true
+  autoStopMinutes: 5
+  isProvisioned: true
+
 # In-cluster stateful stores can be disabled when using cloud-managed DBs
 postgresql:
   enabled: false

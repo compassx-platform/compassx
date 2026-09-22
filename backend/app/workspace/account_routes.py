@@ -85,10 +85,11 @@ DEFAULT_ACCOUNT_SETTINGS = {
         "auto_stop_minutes": 5,
         "dedicated_pool_enabled": True,
         "pool_name": "computepool",
-        "vm_size": "Standard_D4s_v5",
+        "vm_size": "Standard_D4ads_v5",
         "min_count": 0,
         "max_count": 10,
         "auto_scale": True,
+        "is_provisioned": True,
     },
 }
 
@@ -213,7 +214,7 @@ def update_account_settings(
         try:
             from app.services.node_pool_manager import node_pool_manager
             dedicated = bool(comp_cfg.get("dedicated_pool_enabled", existing.get("compute", {}).get("dedicated_pool_enabled", True)))
-            vm_size = str(comp_cfg.get("vm_size") or existing.get("compute", {}).get("vm_size") or "Standard_D4s_v5")
+            vm_size = str(comp_cfg.get("vm_size") or existing.get("compute", {}).get("vm_size") or "Standard_D4ads_v5")
             min_count = int(comp_cfg.get("min_count") if comp_cfg.get("min_count") is not None else 0)
             max_count = int(comp_cfg.get("max_count") or 10)
             auto_scale = bool(comp_cfg.get("auto_scale", True))
@@ -261,15 +262,31 @@ def trigger_compute_provision(
     db: Session = Depends(get_account_db),
     _admin: Principal = Depends(require_account_admin),
 ):
-    """Explicitly provision or update compute node pool on AKS."""
+    """Explicitly provision or update compute node pool."""
     from app.services.node_pool_manager import node_pool_manager
     account = db.query(Account).first()
     saved = (getattr(account, "settings", None) or {}).get("compute", {}) if account else {}
     req = body or {}
-    vm_size = str(req.get("vm_size") or saved.get("vm_size") or "Standard_D4s_v5")
+    vm_size = str(req.get("vm_size") or saved.get("vm_size") or "Standard_D4ads_v5")
     min_count = int(req.get("min_count") if req.get("min_count") is not None else saved.get("min_count", 0))
     max_count = int(req.get("max_count") or saved.get("max_count", 10))
     pool_name = str(req.get("pool_name") or saved.get("pool_name", "computepool"))
+
+    # Persist provisioning state to DB
+    if account:
+        existing = dict(getattr(account, "settings", None) or {})
+        comp_existing = dict(existing.get("compute", {}))
+        comp_existing.update({
+            "dedicated_pool_enabled": True,
+            "pool_name": pool_name,
+            "vm_size": vm_size,
+            "min_count": min_count,
+            "max_count": max_count,
+            "is_provisioned": True,
+        })
+        existing["compute"] = comp_existing
+        account.settings = existing
+        db.commit()
 
     node_pool_manager.trigger_provision_compute_nodepool_async(
         pool_name=pool_name, vm_size=vm_size, min_count=min_count, max_count=max_count, auto_scale=True
@@ -283,7 +300,7 @@ def trigger_compute_deprovision(
     db: Session = Depends(get_account_db),
     _admin: Principal = Depends(require_account_admin),
 ):
-    """Gracefully migrate compute pods to shared user pool and deprovision compute node pool from AKS."""
+    """Gracefully migrate compute pods to shared user pool and deprovision compute node pool."""
     from app.services.node_pool_manager import node_pool_manager
     account = db.query(Account).first()
     saved = (getattr(account, "settings", None) or {}).get("compute", {}) if account else {}
@@ -291,11 +308,12 @@ def trigger_compute_deprovision(
     pool_name = str(req.get("pool_name") or saved.get("pool_name", "computepool"))
     fallback_pool = str(req.get("fallback_pool") or saved.get("default_pool_name", settings.AZURE_DEFAULT_USER_NODEPOOL))
 
-    # Mark dedicated_pool_enabled as False in account settings
+    # Mark dedicated_pool_enabled as False and is_provisioned as False in account settings
     if account:
         existing = dict(getattr(account, "settings", None) or {})
         comp_existing = dict(existing.get("compute", {}))
         comp_existing["dedicated_pool_enabled"] = False
+        comp_existing["is_provisioned"] = False
         existing["compute"] = comp_existing
         account.settings = existing
         db.commit()

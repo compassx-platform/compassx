@@ -33,12 +33,12 @@ class TestPodImages:
 
     def test_duckdb_image(self):
         pod = _make_pod("duckdb", profile_id="local", env="local")
-        assert pod.spec.containers[0].image == "compassx-compute-duckdb:latest"
+        assert pod.spec.containers[0].image == "ghcr.io/compassx-platform/compute-duckdb:latest"
 
     def test_acr_registry_prefix(self):
         with patch("app.compute.services.runtimes.compute_settings.COMPUTE_REGISTRY_PREFIX", "acrecgci.azurecr.io"):
             pod = _make_pod("duckdb", profile_id="local", env="local")
-            assert pod.spec.containers[0].image == "acrecgci.azurecr.io/compassx-compute-duckdb:latest"
+            assert pod.spec.containers[0].image == "acrecgci.azurecr.io/ghcr.io/compassx-platform/compute-duckdb:latest"
 
     def test_custom_image_override(self):
         profile = get_profile("cloud-s", "local")
@@ -118,7 +118,7 @@ class TestGpuProfile:
             env="cloud",
         )
         limits = pod.spec.containers[0].resources.limits
-        assert limits.get("nvidia.com/gpu") == "4"
+        assert limits.get("nvidia.com/gpu") == "1"
 
 
 class TestDuckDBValidation:

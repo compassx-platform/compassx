@@ -3769,3 +3769,283 @@ div:hover > .notebook-drag-handle:hover { opacity: 1; color: #6b7280; cursor: gr
     background-position: -200% 0;
   }
 }
+
+/* ── Databricks-style Compute Metrics Panel ── */
+.dbx-metrics-container {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow-y: auto;
+  background: #ffffff;
+  padding: 12px 0 16px 0;
+}
+
+.dbx-metrics-empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 48px 24px;
+  text-align: center;
+  gap: 12px;
+  color: #64748b;
+}
+
+.dbx-metrics-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 14px 10px 14px;
+  border-bottom: 1px solid #f1f5f9;
+  margin-bottom: 10px;
+}
+
+.dbx-metrics-status-badge-wrap {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.dbx-metrics-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.dbx-range-pill-group {
+  display: flex;
+  background: #f1f5f9;
+  padding: 2px;
+  border-radius: 4px;
+  gap: 2px;
+}
+
+.dbx-range-pill {
+  border: none;
+  background: transparent;
+  padding: 2px 6px;
+  font-size: 11px;
+  font-weight: 500;
+  color: #64748b;
+  border-radius: 3px;
+  cursor: pointer;
+  transition: all 0.1s ease;
+}
+
+.dbx-range-pill.is-active {
+  background: #ffffff;
+  color: #0f172a;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+  font-weight: 600;
+}
+
+.dbx-gauges-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  padding: 0 12px;
+  margin-bottom: 12px;
+}
+
+.dbx-gauge-card {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.dbx-gauge-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.dbx-gauge-title-wrap {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.dbx-gauge-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: #475569;
+}
+
+.dbx-gauge-value {
+  font-size: 12px;
+  font-weight: 700;
+  font-family: var(--font-mono, monospace);
+}
+
+.dbx-progress-track {
+  width: 100%;
+  height: 6px;
+  background: #e2e8f0;
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.dbx-progress-bar {
+  height: 100%;
+  border-radius: 999px;
+  transition: width 0.3s ease, background-color 0.3s ease;
+}
+
+.dbx-gauge-footer {
+  display: flex;
+  justify-content: space-between;
+  font-size: 10px;
+  color: #64748b;
+  line-height: 1.2;
+}
+
+.dbx-charts-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 0 12px;
+}
+
+.dbx-section-heading {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #64748b;
+  margin-bottom: -4px;
+}
+
+.dbx-chart-card {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.02);
+}
+
+.dbx-chart-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.dbx-chart-header-left {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.dbx-chart-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: #0f172a;
+}
+
+.dbx-chart-latest {
+  font-size: 11px;
+  font-weight: 700;
+  font-family: var(--font-mono, monospace);
+}
+
+.dbx-chart-avg {
+  font-size: 10px;
+  color: #64748b;
+}
+
+.dbx-chart-svg-wrapper {
+  position: relative;
+  width: 100%;
+  height: 110px;
+}
+
+.dbx-metric-svg {
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.dbx-chart-axis-label {
+  font-size: 9px;
+  fill: #94a3b8;
+  font-family: var(--font-mono, monospace);
+}
+
+.dbx-chart-limit-label {
+  font-size: 8px;
+  fill: #ef4444;
+  font-weight: 600;
+  font-family: var(--font-mono, monospace);
+}
+
+.dbx-chart-point {
+  cursor: pointer;
+  transition: r 0.15s ease;
+}
+
+.dbx-chart-tooltip {
+  position: absolute;
+  transform: translate(-50%, -100%);
+  background: rgba(15, 23, 42, 0.92);
+  color: #ffffff;
+  padding: 3px 6px;
+  border-radius: 4px;
+  font-size: 10px;
+  pointer-events: none;
+  white-space: nowrap;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.15);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  z-index: 10;
+}
+
+.dbx-tooltip-val {
+  font-weight: 700;
+}
+
+.dbx-tooltip-time {
+  font-size: 8.5px;
+  color: #cbd5e1;
+}
+
+.dbx-chart-footer {
+  display: flex;
+  justify-content: space-between;
+  font-size: 9.5px;
+  color: #94a3b8;
+  font-family: var(--font-mono, monospace);
+  padding: 0 4px;
+}
+
+.dbx-chart-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 90px;
+  color: #94a3b8;
+  font-size: 11px;
+  background: #f8fafc;
+  border-radius: 4px;
+}
+
+.dbx-metrics-footer {
+  display: flex;
+  justify-content: center;
+  gap: 6px;
+  font-size: 10px;
+  color: #94a3b8;
+  margin-top: 14px;
+}
+

@@ -55,6 +55,15 @@ class Settings(BaseSettings):
     AZURE_APP_NODEPOOL_NAME: str = "apppool"
     AZURE_APP_NODEPOOL_DEFAULT_VM_SIZE: str = "Standard_B2s_v2"
 
+    # Dedicated Compute Node Pool (Serverless & Notebook Workloads)
+    COMPUTE_NODEPOOL_NAME: str = "computepool"
+    COMPUTE_NODEPOOL_DEFAULT_VM_SIZE: str = "Standard_D4ads_v5"
+    COMPUTE_NODEPOOL_MIN_NODES: int = 0
+    COMPUTE_NODEPOOL_MAX_NODES: int = 10
+    COMPUTE_NODEPOOL_AUTO_SCALE: bool = True
+    COMPUTE_NODEPOOL_ENABLED: bool = True
+    COMPUTE_NODEPOOL_IS_PROVISIONED: bool = True
+
     # CORS
     FRONTEND_ORIGIN: str = "http://localhost:5173"
 

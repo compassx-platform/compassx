@@ -22,6 +22,7 @@ from compute.manager import ComputeManager, JobNotFoundError, get_compute_manage
 from compute.profiles import get_available_profiles
 from compute.resource_service import ComputeResourceService
 from compute.schemas import (
+    ComputeMetricsResponse,
     ComputeProfileInfo,
     ComputeResourceRequest,
     ComputeResourceResponse,
@@ -566,6 +567,29 @@ def get_compute_resource_status(
         return _error("NotFound", str(exc), 404)
     except Exception as exc:
         logger.exception("Error getting compute resource")
+        return _error("InternalError", str(exc), 500)
+
+
+@router.get("/resources/{resource_id}/metrics", response_model=ComputeMetricsResponse)
+def get_compute_resource_metrics(
+    req_context: Request,
+    resource_id: str,
+    range: str = Query(default="15m", pattern="^(15m|1h|6h|24h)$"),
+    db=Depends(get_system_db),
+    guard: Guard = Depends(get_guard),
+):
+    """Get live CPU & Memory usage along with Prometheus time-series telemetry."""
+    user_id, workspace_id = _caller(req_context, guard)
+    _require_compute(guard, db, resource_id, Privilege.BROWSE)
+    try:
+        service = _service(req_context, db)
+        return service.get_resource_metrics(
+            resource_id, user_id, workspace_id=workspace_id, time_range=range
+        )
+    except ValueError as exc:
+        return _error("NotFound", str(exc), 404)
+    except Exception as exc:
+        logger.exception("Error fetching compute resource metrics")
         return _error("InternalError", str(exc), 500)
 
 

@@ -7,11 +7,13 @@ from compute.profiles import ComputeProfile
 
 logger = logging.getLogger(__name__)
 
+import os
+
 # Runtime image constants
 SPARK_IMAGE = "apache/spark:3.5.0"
 FLINK_IMAGE = "flink:1.18-scala_2.12"
 RAY_IMAGE = "rayproject/ray:2.9.0"
-DUCKDB_IMAGE = "ghcr.io/compassx-platform/compute-duckdb:v0.11.1"
+DUCKDB_IMAGE = os.environ.get("COMPASSX_DUCKDB_IMAGE", "ghcr.io/compassx-platform/compute-duckdb:latest")
 
 # Runtimes valid only with certain profiles
 DUCKDB_VALID_PROFILES = {"local", "cloud-xs", "cloud-s"}

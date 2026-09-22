@@ -53,12 +53,68 @@ const RUNTIME_OPTIONS = [
   { id: 'flink', label: 'Apache Flink (Streaming)', version: 'Flink 1.18 • Python 3.12' },
 ];
 
-const MEMORY_PROFILES = [
-  { id: 'local', label: 'Small (2GB • 0.5 vCPU)', raw: 'local', ramGb: 2 },
-  { id: 'cloud-s', label: 'Medium (4GB • 1 vCPU)', raw: 'cloud-s', ramGb: 4 },
-  { id: 'cloud-l', label: 'Standard (16GB • 2 vCPU)', raw: 'cloud-l', ramGb: 16 },
-  { id: 'heavy', label: 'Large (64GB • 8 vCPU)', raw: 'cloud-l', ramGb: 64 },
-  { id: 'gpu', label: 'GPU (32GB • NVIDIA Dedicated)', raw: 'gpu', ramGb: 32 },
+export interface MemoryProfileOption {
+  id: string;
+  label: string;
+  raw: string;
+  ramGb: number;
+  cpuLimit: string;
+  cpuRequest: string;
+  ramLimit: string;
+  ramRequest: string;
+}
+
+const MEMORY_PROFILES: MemoryProfileOption[] = [
+  {
+    id: 'local',
+    label: 'Small (2GB • 1 vCPU)',
+    raw: 'local',
+    ramGb: 2,
+    cpuLimit: '1 vCPU',
+    cpuRequest: '250m',
+    ramLimit: '2 GB',
+    ramRequest: '512 MB',
+  },
+  {
+    id: 'cloud-s',
+    label: 'Medium (4GB • 2 vCPU)',
+    raw: 'cloud-s',
+    ramGb: 4,
+    cpuLimit: '2 vCPU',
+    cpuRequest: '1 vCPU',
+    ramLimit: '4 GB',
+    ramRequest: '2 GB',
+  },
+  {
+    id: 'cloud-l',
+    label: 'Standard (16GB • 4 vCPU)',
+    raw: 'cloud-l',
+    ramGb: 16,
+    cpuLimit: '4 vCPU',
+    cpuRequest: '2 vCPU',
+    ramLimit: '16 GB',
+    ramRequest: '8 GB',
+  },
+  {
+    id: 'heavy',
+    label: 'Large (64GB • 8 vCPU)',
+    raw: 'cloud-l',
+    ramGb: 64,
+    cpuLimit: '8 vCPU',
+    cpuRequest: '4 vCPU',
+    ramLimit: '64 GB',
+    ramRequest: '32 GB',
+  },
+  {
+    id: 'gpu',
+    label: 'GPU (32GB • 4 vCPU • NVIDIA Dedicated)',
+    raw: 'gpu',
+    ramGb: 32,
+    cpuLimit: '4 vCPU',
+    cpuRequest: '4 vCPU',
+    ramLimit: '32 GB (1 GPU)',
+    ramRequest: '16 GB',
+  },
 ];
 
 export default function ComputeConfigPanel() {
@@ -523,6 +579,21 @@ except Exception as _e:
                       );
                     })}
                   </select>
+                  {(() => {
+                    const activeProf = MEMORY_PROFILES.find((p) => p.raw === selectedProfile || p.id === selectedProfile) || MEMORY_PROFILES[0];
+                    return (
+                      <div style={{ marginTop: '6px', fontSize: '0.74rem', color: '#64748b', display: 'flex', flexDirection: 'column', gap: '3px', background: '#f8fafc', padding: '6px 8px', borderRadius: '4px', border: '1px solid #e2e8f0' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                          <span>Allocation Limit:</span>
+                          <strong style={{ color: '#0f172a' }}>{activeProf.cpuLimit} • {activeProf.ramLimit}</strong>
+                        </div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                          <span>Guaranteed Request:</span>
+                          <span style={{ color: '#475569' }}>{activeProf.cpuRequest} • {activeProf.ramRequest}</span>
+                        </div>
+                      </div>
+                    );
+                  })()}
                   <div style={{ marginTop: '6px', fontSize: '0.74rem', color: 'var(--color-text-muted)', lineHeight: '1.35' }}>
                     Constrained by <strong>{currentVmName}</strong> ({vmCapacityGib} GB RAM node pool). Upgrade in Account Settings to unlock higher tiers.
                   </div>

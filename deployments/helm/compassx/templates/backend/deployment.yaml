@@ -92,6 +92,18 @@ spec:
                   key: catalog-encryption-key
             - name: SKIP_DB_INIT
               value: {{ .Values.backend.env.SKIP_DB_INIT | quote }}
+            - name: COMPUTE_NODEPOOL_NAME
+              value: {{ .Values.computePool.poolName | default "computepool" | quote }}
+            - name: COMPUTE_NODEPOOL_DEFAULT_VM_SIZE
+              value: {{ .Values.computePool.vmSize | default "Standard_D4ads_v5" | quote }}
+            - name: COMPUTE_NODEPOOL_MIN_NODES
+              value: {{ .Values.computePool.minCount | default 0 | quote }}
+            - name: COMPUTE_NODEPOOL_MAX_NODES
+              value: {{ .Values.computePool.maxCount | default 10 | quote }}
+            - name: COMPUTE_NODEPOOL_ENABLED
+              value: {{ .Values.computePool.enabled | default true | quote }}
+            - name: COMPUTE_NODEPOOL_IS_PROVISIONED
+              value: {{ .Values.computePool.isProvisioned | default true | quote }}
           {{- with .Values.backend.probes.liveness }}
           livenessProbe:
             {{- toYaml . | nindent 12 }}

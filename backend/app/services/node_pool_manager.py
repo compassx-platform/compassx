@@ -18,15 +18,37 @@ logger = logging.getLogger(__name__)
 # Supported Azure VM Sizes Catalog with hardware specs and categorization
 AZURE_VM_SIZES = [
     {
-        "id": "Standard_B2s_v2",
-        "name": "Standard_B2s_v2",
-        "label": "Standard_B2s_v2 (2 vCPU, 4 GiB RAM)",
-        "cpu": 2,
-        "memory_gib": 4,
+        "id": "Standard_D4ads_v5",
+        "name": "Standard_D4ads_v5",
+        "label": "Standard_D4ads_v5 (4 vCPU, 16 GiB RAM - AMD EPYC)",
+        "cpu": 4,
+        "memory_gib": 16,
         "architecture": "x86_64",
-        "category": "Burstable (General Purpose)",
-        "description": "Economical burstable VM ideal for lightweight apps, dev environments, and dashboards.",
+        "category": "High Performance Compute",
+        "description": "Production compute tier for high concurrency, fast DuckDB analytics, and heavy notebook processing.",
         "recommended": True,
+    },
+    {
+        "id": "Standard_D2ads_v5",
+        "name": "Standard_D2ads_v5",
+        "label": "Standard_D2ads_v5 (2 vCPU, 8 GiB RAM - AMD EPYC)",
+        "cpu": 2,
+        "memory_gib": 8,
+        "architecture": "x86_64",
+        "category": "General Purpose (Dedicated)",
+        "description": "Consistent performance for medium workloads and development sessions.",
+        "recommended": False,
+    },
+    {
+        "id": "Standard_D4s_v4",
+        "name": "Standard_D4s_v4",
+        "label": "Standard_D4s_v4 (4 vCPU, 16 GiB RAM - Intel Xeon)",
+        "cpu": 4,
+        "memory_gib": 16,
+        "architecture": "x86_64",
+        "category": "High Performance Intel",
+        "description": "Intel Xeon powered compute tier with high memory and stable compute.",
+        "recommended": False,
     },
     {
         "id": "Standard_B2als_v2",
@@ -37,6 +59,17 @@ AZURE_VM_SIZES = [
         "architecture": "arm64",
         "category": "ARM64 Ampere",
         "description": "Energy-efficient ARM64 architecture with high cost performance.",
+        "recommended": False,
+    },
+    {
+        "id": "Standard_B2s_v2",
+        "name": "Standard_B2s_v2",
+        "label": "Standard_B2s_v2 (2 vCPU, 4 GiB RAM)",
+        "cpu": 2,
+        "memory_gib": 4,
+        "architecture": "x86_64",
+        "category": "Burstable (General Purpose)",
+        "description": "Economical burstable VM ideal for lightweight apps, dev environments, and dashboards.",
         "recommended": False,
     },
     {
@@ -249,7 +282,13 @@ class NodePoolManager:
             labels = node.metadata.labels or {}
             pool_name = (
                 labels.get("kubernetes.azure.com/agentpool")
+                or labels.get("eks.amazonaws.com/nodegroup")
+                or labels.get("karpenter.sh/nodepool")
+                or labels.get("cloud.google.com/gke-nodepool")
+                or labels.get("node.kubernetes.io/nodepool")
+                or labels.get("compassx.io/nodepool")
                 or labels.get("agentpool")
+                or labels.get("nodepool")
                 or "default"
             )
             vm_size = (
@@ -512,6 +551,7 @@ class NodePoolManager:
                             "--enable-cluster-autoscaler",
                             "--min-count", str(min_count),
                             "--max-count", str(max_count),
+                            "--node-count", str(min_count),
                         ])
                     else:
                         create_cmd.extend(["--node-count", str(min_count)])
@@ -659,7 +699,7 @@ class NodePoolManager:
         dedicated_enabled = bool(cfg.get("dedicated_pool_enabled", True))
         pool_name = cfg.get("pool_name") or "computepool"
         default_pool_name = cfg.get("default_pool_name") or settings.AZURE_DEFAULT_USER_NODEPOOL
-        selected_vm_size = cfg.get("vm_size") or "Standard_D4s_v5"
+        selected_vm_size = cfg.get("vm_size") or "Standard_D4ads_v5"
         min_count = int(cfg.get("min_count", 0))
         max_count = int(cfg.get("max_count", 10))
         auto_scale = bool(cfg.get("auto_scale", True))
@@ -669,12 +709,26 @@ class NodePoolManager:
         cluster_pools = self.list_cluster_node_pools()
         compute_pool_info = next((p for p in cluster_pools if p["name"] == pool_name), None)
 
-        # Check Azure nodepool directly (Scale-to-Zero pool may have 0 K8s node objects)
+        # Check cloud nodepool directly (Scale-to-Zero pool may have 0 K8s node objects)
         aks_info = self._get_aks_nodepool_raw(pool_name) if not compute_pool_info else None
         is_provisioned = bool(
             compute_pool_info is not None
             or (aks_info and aks_info.get("provisioningState") in ("Succeeded", "Updating", "Creating"))
+            or cfg.get("is_provisioned") is True
         )
+
+        if not compute_pool_info and is_provisioned:
+            if aks_info:
+                selected_vm_size = aks_info.get("vmSize") or selected_vm_size
+            compute_pool_info = {
+                "name": pool_name,
+                "vm_size": selected_vm_size,
+                "architecture": "x86_64",
+                "os": (aks_info.get("osType") if aks_info else None) or "Linux",
+                "total_nodes": int((aks_info.get("count") if aks_info else None) or 0),
+                "ready_nodes": 0,
+                "nodes": [],
+            }
 
         compute_workloads = self.list_compute_deployments_summary()
 
@@ -684,18 +738,18 @@ class NodePoolManager:
         if self._is_provisioning:
             if self._provisioning_action == "deprovisioning":
                 status = "deprovisioning"
-                status_message = self._last_provision_message or f"Deprovisioning compute pool '{pool_name}' from AKS..."
+                status_message = self._last_provision_message or f"Deprovisioning compute pool '{pool_name}'..."
             else:
                 status = "provisioning"
-                status_message = self._last_provision_message or f"Provisioning compute pool '{pool_name}' on AKS..."
+                status_message = self._last_provision_message or f"Provisioning compute pool '{pool_name}'..."
         elif not dedicated_enabled:
             status = "disabled"
             status_message = f"Dedicated compute pool disabled. Workloads routed to '{default_pool_name}'."
         elif not is_provisioned:
             status = "not_provisioned"
-            status_message = f"Compute pool '{pool_name}' is not provisioned on AKS yet. Click 'Provision Compute Pool on AKS' to create it."
+            status_message = f"Compute pool '{pool_name}' is not provisioned on the cluster yet. Click 'Provision Compute Pool' to create it."
         else:
-            # Provisioned on AKS
+            # Provisioned
             if compute_pool_info and compute_pool_info["ready_nodes"] > 0:
                 status = "active"
                 status_message = f"Compute pool '{pool_name}' active with {compute_pool_info['ready_nodes']} ready node(s)."
@@ -707,7 +761,7 @@ class NodePoolManager:
                 status_message = f"Compute pool '{pool_name}' starting ({compute_pool_info['ready_nodes']}/{compute_pool_info['total_nodes']} ready)."
             else:
                 status = "active"
-                status_message = f"Compute pool '{pool_name}' active on AKS ({selected_vm_size})."
+                status_message = f"Compute pool '{pool_name}' active on cluster ({selected_vm_size})."
 
         vm_meta = next((v for v in AZURE_VM_SIZES if v["id"] == selected_vm_size), None)
         vm_capacity_gib = vm_meta["memory_gib"] if vm_meta else 16
@@ -738,7 +792,7 @@ class NodePoolManager:
     def trigger_provision_compute_nodepool_async(
         self,
         pool_name: str = "computepool",
-        vm_size: str = "Standard_D4s_v5",
+        vm_size: str = "Standard_D4ads_v5",
         min_count: int = 0,
         max_count: int = 10,
         auto_scale: bool = True,
@@ -758,12 +812,12 @@ class NodePoolManager:
         with self._provisioning_lock:
             self._is_provisioning = True
             self._provisioning_action = "provisioning"
-            self._last_provision_message = f"Provisioning compute pool '{pool_name}' on AKS ({vm_size}, Min: {min_count}, Max: {max_count})..."
+            self._last_provision_message = f"Provisioning compute pool '{pool_name}' ({vm_size}, Min: {min_count}, Max: {max_count})..."
             try:
                 az_path = shutil.which("az")
                 if not az_path:
-                    logger.warning("Azure CLI ('az') not found on system path; skipping live AKS compute nodepool command.")
-                    self._last_provision_message = "Azure CLI not installed; nodeSelector updated for external pool."
+                    logger.warning("Cloud CLI not found on system path; skipping live node pool creation command.")
+                    self._last_provision_message = f"Compute pool '{pool_name}' enabled ({vm_size}, Min: {min_count}, Max: {max_count}). Workloads routed to '{pool_name}'."
                     return
 
                 # Check if nodepool already exists
@@ -774,12 +828,12 @@ class NodePoolManager:
                     "--name", pool_name,
                     "-o", "json",
                 ]
-                logger.info("Checking AKS compute nodepool '%s'...", pool_name)
+                logger.info("Checking compute nodepool '%s'...", pool_name)
                 res = subprocess.run(check_cmd, capture_output=True, text=True, timeout=60)
 
                 if res.returncode == 0:
-                    logger.info("Compute node pool '%s' already exists on AKS. Updating parameters...", pool_name)
-                    self._last_provision_message = f"Updating compute pool '{pool_name}' autoscaling on AKS (Min: {min_count}, Max: {max_count})..."
+                    logger.info("Compute node pool '%s' already exists on cluster. Updating parameters...", pool_name)
+                    self._last_provision_message = f"Updating compute pool '{pool_name}' autoscaling (Min: {min_count}, Max: {max_count})..."
                     update_cmd = [
                         az_path, "aks", "nodepool", "update",
                         "--resource-group", settings.AZURE_RESOURCE_GROUP,
@@ -791,10 +845,10 @@ class NodePoolManager:
                         "--no-wait",
                     ]
                     subprocess.run(update_cmd, capture_output=True, text=True, timeout=60)
-                    self._last_provision_message = f"Compute node pool '{pool_name}' update initiated on AKS."
+                    self._last_provision_message = f"Compute node pool '{pool_name}' update initiated."
                 else:
-                    logger.info("Creating AKS compute node pool '%s' with VM size %s (min=%d, max=%d)...", pool_name, vm_size, min_count, max_count)
-                    self._last_provision_message = f"Creating AKS node pool '{pool_name}' ({vm_size}, Min: {min_count}, Max: {max_count})..."
+                    logger.info("Creating compute node pool '%s' with VM size %s (min=%d, max=%d)...", pool_name, vm_size, min_count, max_count)
+                    self._last_provision_message = f"Creating compute node pool '{pool_name}' ({vm_size}, Min: {min_count}, Max: {max_count})..."
                     create_cmd = [
                         az_path, "aks", "nodepool", "add",
                         "--resource-group", settings.AZURE_RESOURCE_GROUP,
@@ -808,6 +862,7 @@ class NodePoolManager:
                             "--enable-cluster-autoscaler",
                             "--min-count", str(min_count),
                             "--max-count", str(max_count),
+                            "--node-count", str(min_count),
                         ])
                     else:
                         create_cmd.extend(["--node-count", str(min_count)])
@@ -815,11 +870,11 @@ class NodePoolManager:
 
                     run_res = subprocess.run(create_cmd, capture_output=True, text=True, timeout=90)
                     if run_res.returncode == 0:
-                        self._last_provision_message = f"Compute pool '{pool_name}' provisioning in progress on Azure AKS."
-                        logger.info("AKS compute nodepool add dispatched successfully.")
+                        self._last_provision_message = f"Compute pool '{pool_name}' provisioning in progress."
+                        logger.info("Compute nodepool add dispatched successfully.")
                     else:
                         self._last_provision_message = f"Provisioning failed: {run_res.stderr.strip()[:200]}"
-                        logger.warning("AKS compute nodepool add returned error: %s", run_res.stderr)
+                        logger.warning("Compute nodepool add returned error: %s", run_res.stderr)
 
                 # Gracefully switchover compute workloads to computepool
                 self.switchover_compute_workloads(target_pool=pool_name)
@@ -837,7 +892,7 @@ class NodePoolManager:
         pool_name: str = "computepool",
         fallback_pool: str = "userpoolv2",
     ) -> None:
-        """Asynchronously gracefully migrates compute pods to fallback pool and deprovisions AKS nodepool."""
+        """Asynchronously gracefully migrates compute pods to fallback pool and deprovisions nodepool."""
         thread = threading.Thread(
             target=self._deprovision_compute_nodepool_worker,
             args=(pool_name, fallback_pool),
@@ -850,7 +905,7 @@ class NodePoolManager:
         with self._provisioning_lock:
             self._is_provisioning = True
             self._provisioning_action = "deprovisioning"
-            self._last_provision_message = f"Gracefully migrating compute pods to '{fallback_pool}' and deprovisioning '{pool_name}' on AKS..."
+            self._last_provision_message = f"Gracefully migrating compute pods to '{fallback_pool}' and deprovisioning '{pool_name}'..."
             try:
                 # 1. Gracefully migrate running compute pods to fallback pool
                 logger.info("Switching over compute pods to fallback pool '%s'...", fallback_pool)
@@ -858,7 +913,7 @@ class NodePoolManager:
 
                 az_path = shutil.which("az")
                 if not az_path:
-                    logger.warning("Azure CLI ('az') not found on system path; skipping AKS delete command.")
+                    logger.warning("Cloud CLI not found on system path; skipping live delete command.")
                     self._last_provision_message = f"Compute pods migrated to '{fallback_pool}'."
                     return
 
@@ -872,11 +927,11 @@ class NodePoolManager:
                 ]
                 res = subprocess.run(check_cmd, capture_output=True, text=True, timeout=60)
                 if res.returncode != 0:
-                    logger.info("AKS compute nodepool '%s' does not exist; nothing to delete.", pool_name)
-                    self._last_provision_message = f"Compute pool '{pool_name}' not present on AKS. Workloads assigned to '{fallback_pool}'."
+                    logger.info("Compute nodepool '%s' does not exist; nothing to delete.", pool_name)
+                    self._last_provision_message = f"Compute pool '{pool_name}' not present. Workloads assigned to '{fallback_pool}'."
                     return
 
-                logger.info("Deprovisioning AKS compute node pool '%s'...", pool_name)
+                logger.info("Deprovisioning compute node pool '%s'...", pool_name)
                 del_cmd = [
                     az_path, "aks", "nodepool", "delete",
                     "--resource-group", settings.AZURE_RESOURCE_GROUP,
@@ -887,11 +942,11 @@ class NodePoolManager:
                 ]
                 del_res = subprocess.run(del_cmd, capture_output=True, text=True, timeout=90)
                 if del_res.returncode == 0:
-                    self._last_provision_message = f"Deprovisioning of compute pool '{pool_name}' initiated on Azure AKS. Pods running on '{fallback_pool}'."
-                    logger.info("AKS nodepool delete dispatched successfully.")
+                    self._last_provision_message = f"Deprovisioning of compute pool '{pool_name}' initiated. Pods running on '{fallback_pool}'."
+                    logger.info("Compute nodepool delete dispatched successfully.")
                 else:
                     self._last_provision_message = f"Deprovisioning failed: {del_res.stderr.strip()[:200]}"
-                    logger.warning("AKS nodepool delete returned error: %s", del_res.stderr)
+                    logger.warning("Compute nodepool delete returned error: %s", del_res.stderr)
             except Exception as exc:
                 logger.error("Error during compute nodepool deprovision worker: %s", exc)
                 self._last_provision_message = f"Deprovisioning error: {str(exc)}"

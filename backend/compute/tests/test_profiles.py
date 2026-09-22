@@ -29,8 +29,9 @@ class TestLocalProfiles:
 
     def test_local_resource_limits(self):
         p = get_profile("local", "local")
-        assert p.requests["cpu"] == "500m"
+        assert p.requests["cpu"] == "250m"
         assert p.requests["memory"] == "512Mi"
+        assert p.limits["cpu"] == "1"
         assert p.limits["memory"] == "2Gi"
 
     def test_cloud_s_local_resource_limits(self):
@@ -44,20 +45,23 @@ class TestCloudProfiles:
     def test_cloud_s_available_in_cloud(self):
         p = get_profile("cloud-s", "cloud")
         assert p.available is True
-        assert p.requests["cpu"] == "4"
-        assert p.requests["memory"] == "16Gi"
-        assert p.limits["memory"] == "32Gi"
+        assert p.requests["cpu"] == "1"
+        assert p.requests["memory"] == "2Gi"
+        assert p.limits["cpu"] == "2"
+        assert p.limits["memory"] == "4Gi"
 
     def test_cloud_l_available_in_cloud(self):
         p = get_profile("cloud-l", "cloud")
         assert p.available is True
-        assert p.requests["cpu"] == "16"
-        assert p.requests["memory"] == "64Gi"
+        assert p.requests["cpu"] == "2"
+        assert p.requests["memory"] == "8Gi"
+        assert p.limits["cpu"] == "4"
+        assert p.limits["memory"] == "16Gi"
 
     def test_gpu_available_in_cloud(self):
         p = get_profile("gpu", "cloud")
         assert p.available is True
-        assert p.limits.get("nvidia.com/gpu") == "4"
+        assert p.limits.get("nvidia.com/gpu") == "1"
 
     def test_local_profile_blocked_in_cloud(self):
         with pytest.raises(ProfileNotAvailableError):

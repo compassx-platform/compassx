@@ -45,6 +45,13 @@ export const computeApi = {
     return res.data;
   },
 
+  getResourceMetrics: async (resourceId, range = '15m') => {
+    const res = await api.get(`/compute/resources/${resourceId}/metrics`, {
+      params: { range },
+    });
+    return res.data;
+  },
+
   deleteResource: async (resourceId) => {
     const res = await api.delete(`/compute/resources/${resourceId}`);
     return res.data;

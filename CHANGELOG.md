@@ -5,6 +5,29 @@ All notable changes to the CompassX Platform will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.2] - 2026-09-22
+
+### 🚀 Highlights
+
+CompassX `0.11.2` delivers **Real-Time Compute Resource Metrics & Telemetry**, **Interactive Notebook Metrics Panel in Notebook Studio**, **Prometheus & cAdvisor Telemetry Integration**, and **Enhanced AKS Node Pool Autoscaler Management**.
+
+### ✨ Features & Enhancements
+
+#### Real-Time Compute Resource Metrics & Telemetry
+- **Telemetry Collection Service (`resource_service.py`)**: Real-time metric gathering for compute runtimes and Jupyter kernels via Prometheus and cAdvisor.
+- **Dedicated Metrics API (`GET /api/v1/compute/resources/{resource_id}/metrics`)**: Returns CPU utilization %, Memory usage (MB/GB/%), Disk I/O, Network I/O, and historical sparkline series with automated fallback.
+- **Configurable Metrics Backend**: Direct integration with cluster-internal Prometheus (`compassx-prometheus`) with fallback system telemetry.
+
+#### Interactive Notebook Metrics Panel
+- **Notebook Studio Metrics Drawer (`ComputeMetricsPanel.tsx`)**: Real-time telemetry monitoring drawer inside the Notebook Studio right sidebar.
+- **Visual Utilization Gauges & Sparklines**: Instant visual feedback on active CPU load, memory breakdown, and resource pressure indicators during heavy computations.
+
+#### AKS Node Pool Autoscaling & Compute Profile Refinements
+- **Autoscaler Synchronization**: Refined node pool autoscaling configuration handling and status reporting in Account Settings.
+- **Catalog Explorer Navigation**: Improved stability and tree node selection in Catalog Explorer.
+
+---
+
 ## [0.11.1] - 2026-09-21
 
 ### 🚀 Highlights

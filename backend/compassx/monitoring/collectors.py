@@ -464,8 +464,8 @@ class KubernetesCollector(ResourceCollector):
             # Identify specific service/component name
             component = labels.get("app.kubernetes.io/component")
             if not component:
-                runtime_type = labels.get("compassx/runtime-type")
-                runtime_id = labels.get("compassx/runtime-id") or labels.get("compassx/job")
+                runtime_type = labels.get("compassx/runtime-type") or labels.get("runtime")
+                runtime_id = labels.get("compassx/resource") or labels.get("compassx/runtime-id") or labels.get("compassx/job")
                 if runtime_type or runtime_id:
                     component = f"{runtime_type or 'compute'}-{runtime_id}"
                 else:

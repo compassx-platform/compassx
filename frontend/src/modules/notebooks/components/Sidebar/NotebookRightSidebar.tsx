@@ -1,5 +1,6 @@
 import React from 'react';
 import {
+  Activity,
   SlidersHorizontal,
   Terminal,
   X,
@@ -7,6 +8,7 @@ import {
 } from 'lucide-react';
 import { useNotebookStore, type RightSidebarTab } from '../../store/notebookStore';
 import ComputeConfigPanel from './ComputeConfigPanel';
+import ComputeMetricsPanel from './ComputeMetricsPanel';
 import VariablesPanel from './VariablesPanel';
 import PodLogsPanel from './PodLogsPanel';
 import InfoPanel from './InfoPanel';
@@ -58,6 +60,12 @@ export default function NotebookRightSidebar() {
       icon: SlidersHorizontal,
     },
     {
+      id: 'metrics',
+      label: 'Metrics & Telemetry',
+      title: 'Compute Metrics',
+      icon: Activity,
+    },
+    {
       id: 'info',
       label: 'Information',
       title: 'Information',
@@ -90,6 +98,7 @@ export default function NotebookRightSidebar() {
           {/* Body */}
           <div className="dbx-drawer-body">
             {activeRightSidebarTab === 'config' && <ComputeConfigPanel />}
+            {activeRightSidebarTab === 'metrics' && <ComputeMetricsPanel />}
             {activeRightSidebarTab === 'variables' && <VariablesPanel />}
             {activeRightSidebarTab === 'logs' && <PodLogsPanel />}
             {activeRightSidebarTab === 'info' && <InfoPanel />}

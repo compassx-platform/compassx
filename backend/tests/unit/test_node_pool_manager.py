@@ -61,7 +61,7 @@ def test_get_compute_pool_status_not_provisioned(manager):
         assert status["auto_stop_minutes"] == 5
         assert status["is_provisioned"] is False
         assert status["status"] == "not_provisioned"
-        assert "not provisioned on AKS" in status["status_message"]
+        assert "not provisioned" in status["status_message"]
 
 
 def test_get_compute_pool_status_scale_to_zero(manager):

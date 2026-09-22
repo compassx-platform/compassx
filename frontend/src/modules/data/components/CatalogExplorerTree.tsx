@@ -144,7 +144,7 @@ export const CatalogExplorerTree: React.FC<CatalogExplorerTreeProps> = ({
       </div>
 
       {/* Tree View */}
-      <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: '6px 0', fontSize: 12 }}>
+      <div className="sidebar-hover-scrollbar" style={{ flex: 1, minHeight: 0, padding: '6px 0', fontSize: 12 }}>
         {catalogsQuery.isLoading && (
           <div style={{ padding: '12px', fontSize: 11, color: 'var(--color-text-muted)' }}>
             Loading catalogs...

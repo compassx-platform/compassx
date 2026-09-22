@@ -53,6 +53,7 @@ def _ensure_database_exists(db_name: str) -> None:
 # ---------------------------------------------------------------------------
 account_engine = None
 AccountSessionLocal = None
+SessionLocalAccount = None  # Alias for backward compatibility
 _account_db_connection_failed = False
 
 
@@ -73,6 +74,7 @@ try:
         connect_args={"connect_timeout": 5},
     )
     AccountSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=account_engine)
+    SessionLocalAccount = AccountSessionLocal
     if not settings.SKIP_DB_INIT:
         with account_engine.connect() as conn:
             conn.execute(text("SELECT 1"))

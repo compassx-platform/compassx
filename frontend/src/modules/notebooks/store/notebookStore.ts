@@ -6,7 +6,7 @@ import type { ISessionConnection } from '@jupyterlab/services/lib/session/sessio
 export type CellType = 'code' | 'markdown' | 'raw';
 export type KernelStatus = 'idle' | 'busy' | 'dead' | 'unknown' | 'connecting';
 export type AgentEditAction = 'replace_focused' | 'replace_cell' | 'insert_below' | 'append_to_focused';
-export type RightSidebarTab = 'config' | 'variables' | 'logs' | 'info';
+export type RightSidebarTab = 'config' | 'metrics' | 'variables' | 'logs' | 'info';
 
 export interface AgentCellEditProposal {
   action: AgentEditAction;
