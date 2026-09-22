@@ -593,7 +593,7 @@ def read_table(
 
 
 @router.get("/tables/{catalog}/{schema_name}/{table_name}/sample-data", response_model=SampleDataRead)
-def read_sample_data(
+async def read_sample_data(
     catalog: str,
     schema_name: str,
     table_name: str,
@@ -604,7 +604,7 @@ def read_sample_data(
     # Rows, so SELECT — a preview of real data is not metadata.
     guard.require(Privilege.SELECT, Securable.table(catalog, schema_name, table_name))
     try:
-        return get_sample_data(db, f"{catalog}.{schema_name}.{table_name}", limit=limit)
+        return await get_sample_data(db, f"{catalog}.{schema_name}.{table_name}", limit=limit)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
