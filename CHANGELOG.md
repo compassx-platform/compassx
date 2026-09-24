@@ -5,6 +5,28 @@ All notable changes to the CompassX Platform will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.4] - 2026-09-24
+
+### 🚀 Highlights
+
+CompassX `0.11.4` delivers **Real-Time Agent Notebook Operations Streaming & Execution Engine**, **Live Multi-Agent Handoff & Plan Timeline Integration**, and **Granular Agent Cache Synchronization**.
+
+### ✨ Features & Enhancements
+
+#### Real-Time Agent Notebook Streaming & Execution
+- **Dynamic Notebook Action Streaming (`AgentSidePanel.tsx`)**: Live handling and rendering of notebook operations (`edit_cell`, `propose_cell_edit`, `apply_notebook_edit`, `add_multiple_cells`, `run_cell`, `approve_cell_edit`, `reject_cell_edit`) directly into the active Notebook Studio session.
+- **Batch Cell Insertion & Diffs**: Seamless batch creation of multiple code and markdown cells with cell explanation banners and inline diff previews.
+- **Live Output Stream Rendering**: Real-time streaming capture of stdout, stderr, execution result objects, and execution counters dispatched from the agent runtime.
+
+#### Multi-Agent Handoff & Plan Timeline Streaming
+- **Handoff Tracking**: Live visual indicators when tasks are transferred between specialized agents with explicit reason metadata.
+- **Interactive Plan Stepping**: Streaming timeline updates for `create_plan`, `mark_step`, and `approve_plan` tool execution.
+
+#### Cache & Session State Synchronization
+- **Optimistic Cache Invalidation**: Automatic real-time refresh of agent changes, context memory, and execution plans upon tool completion.
+
+---
+
 ## [0.11.3] - 2026-09-24
 
 ### 🚀 Highlights

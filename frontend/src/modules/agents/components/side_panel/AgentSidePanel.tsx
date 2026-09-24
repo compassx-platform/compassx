@@ -41,6 +41,7 @@ import { useCurrentPageContext } from '@/modules/agents/hooks/useCurrentPageCont
 import { ChatMessageList } from '@/modules/agents/components/chat/ChatMessageList';
 import { ChatComposer } from '@/modules/agents/components/chat/ChatComposer';
 import { PlanTaskViewer } from '@/modules/agents/components/PlanTaskViewer';
+import { parseThoughtContent } from '@/modules/agents/components/chat/ThoughtAccordion';
 import { useNotebookStore } from '@/modules/notebooks/store/notebookStore';
 
 export default function AgentSidePanel() {
@@ -126,6 +127,7 @@ export default function AgentSidePanel() {
     setStreaming,
     setActiveTool,
     addStreamingTimelineItem,
+    setStreamingAgent,
     resetStream,
   } = useChatStore();
 
@@ -274,23 +276,35 @@ export default function AgentSidePanel() {
     const pageContext = buildPageContextPayload();
     const token = getToken();
 
+    const baseUrl = (import.meta.env.VITE_API_BASE_URL || '/api/v1').replace(/\/$/, '');
+    const match = window.location.pathname.match(/^\/w\/([^/]+)/);
+    const workspaceSlug = match ? match[1] : null;
+    const url = `${baseUrl}/agents/${effectiveAgentId}/sessions/${activeSessionId}/stream${workspaceSlug ? `?workspace=${workspaceSlug}` : ''}`;
+
     try {
-      const resp = await fetch(`/api/v1/agents/${effectiveAgentId}/chat/stream`, {
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (token) {
+        headers['authkey'] = token;
+        headers['Authorization'] = `Bearer ${token}`;
+      }
+      if (workspaceSlug) headers['X-Workspace-Slug'] = workspaceSlug;
+
+      const resp = await fetch(url, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
+        headers,
         body: JSON.stringify({
-          session_id: activeSessionId,
           content: textToSend,
-          context: pageContext,
+          sandbox: false,
           llm_connection_id: selectedLlmConnectionId ?? undefined,
+          context: pageContext,
+          document_ids: uploadedDocIds.length > 0 ? uploadedDocIds : undefined,
         }),
       });
 
+      setUploadedDocIds([]);
+
       if (!resp.ok) {
-        throw new Error(`HTTP error ${resp.status}`);
+        throw new Error(`Chat request failed with status ${resp.status}`);
       }
 
       const reader = resp.body?.getReader();
@@ -314,33 +328,123 @@ export default function AgentSidePanel() {
 
           try {
             const ev = JSON.parse(raw);
+
+            // Swarm: update which agent is currently streaming
+            if (ev.agent_name !== undefined) {
+              setStreamingAgent(
+                ev.agent_name ?? null,
+                ev.agent_color ?? null,
+                ev.invocation_depth ?? 0
+              );
+            }
+
             if (ev.type === 'text' && ev.delta) {
               appendStreamingText(ev.delta);
             } else if (ev.type === 'tool_start') {
-              setActiveTool(ev.tool_name, ev.args);
-              addStreamingTimelineItem({
-                type: 'tool',
-                name: ev.tool_name,
-                args: ev.args,
-                ok: undefined,
-              });
+              const currentText = useChatStore.getState().streamingText;
+              if (currentText) {
+                const { thought } = parseThoughtContent(currentText);
+                if (thought) {
+                  const items = thought
+                    .split(/\n+/)
+                    .map((item) => item.trim().replace(/^[-*•]\s*/, ''))
+                    .filter((item) => item.length > 0);
+                  items.forEach((txt) => addStreamingTimelineItem({ type: 'thought', text: txt }));
+                }
+                useChatStore.setState({ streamingText: '' });
+              }
+              setActiveTool(ev.tool_name ?? 'tool', ev.args);
             } else if (ev.type === 'tool_end') {
-              setActiveTool(null);
               addStreamingTimelineItem({
                 type: 'tool',
-                name: ev.tool_name,
+                name: ev.tool_name ?? 'tool',
                 args: ev.args,
                 result: ev.result,
                 error: ev.error,
                 ok: ev.ok,
-              } as any);
+              });
+              setActiveTool(null);
 
               // Apply live notebook cell operations if returned
-              if (ev.tool_name === 'notebook_manager' && ev.ok && ev.result) {
-                const resData = ev.result;
-                const operation = resData.operation || ev.args?.operation;
-                if (operation === 'create_notebook' || operation === 'edit_cell' || operation === 'insert_cell') {
-                  queryClient.invalidateQueries({ queryKey: ['notebooks'] });
+              if (ev.ok && ev.tool_name === 'notebook_manager') {
+                const operation = typeof ev.args?.operation === 'string' ? ev.args.operation : undefined;
+                const payload = (ev.args?.payload as Record<string, unknown> | undefined) ?? {};
+                const data = (ev.result?.data as Record<string, unknown> | undefined) ?? (ev.result as Record<string, unknown> | undefined);
+
+                if (operation === 'edit_cell' || operation === 'propose_cell_edit' || operation === 'apply_notebook_edit') {
+                  const code = (payload.code as string | undefined) ?? (data?.code as string | undefined);
+                  const cellIndex = Number(payload.cell_index ?? data?.cell_index);
+                  const cellType = (payload.cell_type as string | undefined) === 'markdown' ? 'markdown' : 'code';
+                  const explanation = (payload.explanation as string | undefined) ?? (data?.explanation as string | undefined);
+
+                  if (code) {
+                    const currentCells = useNotebookStore.getState().cells;
+                    const targetId = Number.isInteger(cellIndex) && cellIndex >= 0 ? currentCells[cellIndex]?.id : undefined;
+                    useNotebookStore.getState().proposeAgentCellEdit({
+                      action: 'replace_cell',
+                      cellType,
+                      proposedSource: code,
+                      targetId,
+                      explanation,
+                    });
+                  }
+                } else if (operation === 'add_multiple_cells' || operation === 'add_cells') {
+                  const cellsList = Array.isArray(payload.cells) ? payload.cells : Array.isArray(data?.cells) ? data.cells : [];
+                  const insertAfterIndex = Number(payload.insert_after_cell_index ?? data?.insert_after_cell_index);
+                  const currentCells = useNotebookStore.getState().cells;
+                  let afterId = Number.isInteger(insertAfterIndex) && insertAfterIndex >= 0 ? currentCells[insertAfterIndex]?.id : undefined;
+
+                  cellsList.forEach((c: any) => {
+                    const code = c?.code?.trim();
+                    if (!code) return;
+                    const cellType = c?.cell_type === 'markdown' || c?.cell_type === 'raw' ? c.cell_type : 'code';
+                    const createdId = useNotebookStore.getState().proposeAgentCellEdit({
+                      action: 'insert_below',
+                      cellType,
+                      proposedSource: code,
+                      afterId,
+                      explanation: c?.explanation || (payload.explanation as string | undefined),
+                    });
+                    afterId = createdId ?? afterId;
+                  });
+                } else if (operation === 'run_cell') {
+                  const cellIndex = Number(payload.cell_index ?? data?.cell_index);
+                  const cell = Number.isInteger(cellIndex) ? useNotebookStore.getState().cells[cellIndex] : undefined;
+                  if (cell && cell.type === 'code' && data?.outputs) {
+                    useNotebookStore.getState().clearOutput(cell.id);
+                    const outputs = Array.isArray(data.outputs) ? data.outputs : [];
+                    outputs.forEach((out: any) => {
+                      useNotebookStore.getState().appendOutput(cell.id, {
+                        type: out.output_type === 'stream' ? 'stream'
+                          : out.output_type === 'execute_result' ? 'result'
+                          : out.output_type === 'display_data' ? 'display'
+                          : 'error',
+                        name: out.name === 'stderr' ? 'stderr' : 'stdout',
+                        text: Array.isArray(out.text) ? out.text.join('') : (out.text || ''),
+                        execution_count: out.execution_count ?? null,
+                        data: out.data || {},
+                        metadata: out.metadata || {},
+                        ename: out.ename || '',
+                        evalue: out.evalue || '',
+                        traceback: out.traceback || [],
+                      } as any);
+                    });
+                    if (data.execution_count !== undefined) {
+                      useNotebookStore.getState().setExecutionCount(cell.id, data.execution_count as number);
+                    }
+                  }
+                } else if (operation === 'approve_cell_edit' && data) {
+                  const cellIndex = Number(data.cell_index);
+                  const cell = Number.isInteger(cellIndex) ? useNotebookStore.getState().cells[cellIndex] : undefined;
+                  if (cell) {
+                    useNotebookStore.getState().acceptAgentCellEdit(cell.id);
+                  }
+                } else if (operation === 'reject_cell_edit' && data) {
+                  const cellIndex = Number(data.cell_index);
+                  const cell = Number.isInteger(cellIndex) ? useNotebookStore.getState().cells[cellIndex] : undefined;
+                  if (cell) {
+                    useNotebookStore.getState().rejectAgentCellEdit(cell.id);
+                  }
                 }
               }
 
@@ -349,6 +453,18 @@ export default function AgentSidePanel() {
               });
               queryClient.invalidateQueries({
                 queryKey: ['agents', effectiveAgentId, 'sessions', activeSessionId, 'plans'],
+              });
+            } else if (ev.tool_name === 'create_plan' || ev.tool_name === 'mark_step' || ev.tool_name === 'approve_plan') {
+              queryClient.invalidateQueries({
+                queryKey: ['agents', effectiveAgentId, 'sessions', activeSessionId, 'plans'],
+              });
+            } else if (ev.type === 'handoff') {
+              addStreamingTimelineItem({
+                type: 'tool',
+                name: 'handoff',
+                args: { target_agent: ev.target_agent, reason: ev.reason },
+                result: { success: true },
+                ok: true,
               });
             } else if (ev.type === 'error') {
               const errMsg = ev.message ?? 'Agent error';
@@ -377,6 +493,12 @@ export default function AgentSidePanel() {
       queryClient.invalidateQueries({
         queryKey: ['agents', effectiveAgentId, 'sessions', activeSessionId, 'messages'],
       }).then(() => setOptimisticUserMsg(null));
+      queryClient.invalidateQueries({
+        queryKey: ['agents', effectiveAgentId, 'sessions', activeSessionId, 'changes'],
+      });
+      queryClient.invalidateQueries({
+        queryKey: ['agents', effectiveAgentId, 'sessions', activeSessionId, 'context'],
+      });
       queryClient.invalidateQueries({
         queryKey: ['agents', effectiveAgentId, 'sessions', activeSessionId, 'plans'],
       });
