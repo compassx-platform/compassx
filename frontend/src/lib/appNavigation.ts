@@ -1,8 +1,8 @@
 import { useCallback, type ElementType } from 'react';
 import { useLocation, useNavigate, useParams, type NavigateOptions, type To } from 'react-router-dom';
-import { Briefcase, Code2, Layers, Zap, LayoutDashboard, FileText, Database, GitBranch, Cable, BookOpen, ServerCog, History, Activity, Home, Sparkles, Network, LayoutGrid } from 'lucide-react';
+import { Briefcase, Code2, Layers, Zap, LayoutDashboard, FileText, Database, GitBranch, Cable, BookOpen, ServerCog, History, Activity, Home, Sparkles, Network, LayoutGrid, Compass, BarChart2, Globe, Folder } from 'lucide-react';
 
-export const APP_IDS = ['platform', 'apps'] as const;
+export const APP_IDS = ['platform', 'apps', 'portal'] as const;
 export type AppId = (typeof APP_IDS)[number];
 
 export const DEFAULT_APP_ID: AppId = 'platform';
@@ -56,6 +56,7 @@ const PLATFORM_NAV_GROUPS: NavGroup[] = [
     title: 'AI & Meaning',
     items: [
       { to: '/agents', icon: Layers, label: 'Agents', end: false },
+      { to: '/ai-gateway', icon: Sparkles, label: 'AI Gateway', end: false },
       { to: '/ontology', icon: Network, label: 'Ontology', end: false },
       { to: '/connections', icon: Cable, label: 'Connections', end: false },
     ],
@@ -77,6 +78,14 @@ const APPS_NAV_GROUPS: NavGroup[] = [
   },
 ];
 
+const PORTAL_NAV_GROUPS: NavGroup[] = [
+  {
+    items: [
+      { to: '/portal', icon: Compass, label: 'Portal', end: false },
+    ],
+  },
+];
+
 export const APP_DEFINITIONS: Record<AppId, AppDefinition> = {
   platform: {
     id: 'platform',
@@ -89,6 +98,7 @@ export const APP_DEFINITIONS: Record<AppId, AppDefinition> = {
       '/jobs',
       '/notebooks',
       '/agents',
+      '/ai-gateway',
       '/ontology',
       '/topology',
       '/data-catalog',
@@ -115,6 +125,25 @@ export const APP_DEFINITIONS: Record<AppId, AppDefinition> = {
     allowedPrefixes: [
       '/home',
       '/apps',
+      '/icons',
+      '/logo',
+      '/brand-logo',
+      '/design-system',
+      '/settings',
+      '/workspace-settings',
+    ],
+  },
+  portal: {
+    id: 'portal',
+    label: 'Portal',
+    defaultPath: '/home',
+    navGroups: PORTAL_NAV_GROUPS,
+    navItems: PORTAL_NAV_GROUPS.flatMap((g) => g.items),
+    allowedPrefixes: [
+      '/home',
+      '/portal',
+      '/app',
+      '/dashboard',
       '/icons',
       '/logo',
       '/brand-logo',

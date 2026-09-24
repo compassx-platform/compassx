@@ -20,8 +20,8 @@ import { useMe } from '@/lib/userManagerApi';
 import { useScopedNavigate } from '@/lib/appNavigation';
 import { useAgents } from '@/modules/agents/hooks/useAgents';
 import { useDashboards } from '@/modules/dashboards/hooks/useDashboard';
-import { useNovaStore, type NovaTarget } from '@/modules/nova/stores/novaStore';
-import AppNovaSidebar from '@/modules/nova/components/AppNovaSidebar';
+import { useAgentSidePanelStore } from '@/modules/agents/stores/agentSidePanelStore';
+import AgentSidePanel from '@/modules/agents/components/side_panel/AgentSidePanel';
 import * as jobsApi from '@/modules/jobs/lib/jobsApi';
 import './landing-page.css';
 
@@ -91,9 +91,8 @@ export default function LandingPage() {
     }
   });
 
-  const setOpen = useNovaStore((s) => s.setOpen);
-  const setRequirement = useNovaStore((s) => s.setRequirement);
-  const setSelectedTarget = useNovaStore((s) => s.setSelectedTarget);
+  const openWithAgent = useAgentSidePanelStore((s) => s.openWithAgent);
+  const setSidePanelOpen = useAgentSidePanelStore((s) => s.setOpen);
 
   const activeAgents = useMemo(() => agents.filter((a) => a.is_active), [agents]);
 
@@ -112,18 +111,13 @@ export default function LandingPage() {
     });
   }
 
-  function openAssistant(prompt: string, target?: NovaTarget | null) {
-    let resolvedTarget: NovaTarget | null = null;
-    if (target !== undefined) {
-      resolvedTarget = target;
-    } else if (activeAgents.length > 0) {
-      resolvedTarget = { type: 'agent', agentId: activeAgents[0].id };
+  function openAssistant(prompt: string, agentId?: number | null) {
+    const targetAgentId = agentId || (activeAgents.length > 0 ? activeAgents[0].id : null);
+    if (targetAgentId) {
+      openWithAgent(targetAgentId);
+    } else {
+      setSidePanelOpen(true);
     }
-
-    setSelectedTarget(resolvedTarget);
-    setRequirement(prompt);
-    setOpen(false);
-    setChatActive(true);
   }
 
   function handlePromptSubmit() {
@@ -294,7 +288,7 @@ export default function LandingPage() {
           </span>
         </div>
         <div style={{ flex: 1, minHeight: 0 }}>
-          <AppNovaSidebar />
+          <AgentSidePanel />
         </div>
       </div>
     );
@@ -386,10 +380,7 @@ export default function LandingPage() {
                     if (item.targetUrl) {
                       navigate(item.targetUrl);
                     } else if (item.agentId) {
-                      openAssistant(`Hi ${item.name}, `, {
-                        type: 'agent',
-                        agentId: item.agentId,
-                      });
+                      openAssistant(`Hi ${item.name}, `, item.agentId);
                     }
                   }}
                 >

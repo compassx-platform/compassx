@@ -124,6 +124,8 @@ def create_agent(
         max_tokens=body.max_tokens,
         is_orchestrator=body.is_orchestrator,
         visibility=body.visibility,
+        status=body.status or "active",
+        manifest=body.manifest or {},
         created_by=str(guard.principal.id),
     )
     db.add(agent)
@@ -228,6 +230,8 @@ def clone_agent(
         max_tokens=source.max_tokens,
         is_orchestrator=source.is_orchestrator,
         visibility=source.visibility,
+        status=source.status or "active",
+        manifest=source.manifest or {},
         created_by=str(guard.principal.id),
     )
     db.add(clone)

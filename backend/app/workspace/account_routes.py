@@ -74,7 +74,7 @@ DEFAULT_ACCOUNT_SETTINGS = {
     "app_node_pool": {
         "dedicated_pool_enabled": False,
         "pool_name": "apppool",
-        "default_pool_name": "userpoolv2",
+        "default_pool_name": "systempoolv2",
         "vm_size": "Standard_B2s_v2",
         "min_count": 1,
         "max_count": 5,
@@ -191,7 +191,7 @@ def update_account_settings(
             max_count = int(pool_cfg.get("max_count") or 5)
             auto_scale = bool(pool_cfg.get("auto_scale", True))
             pool_name = str(pool_cfg.get("pool_name") or "apppool")
-            default_pool_name = str(pool_cfg.get("default_pool_name") or "userpoolv2")
+            default_pool_name = str(pool_cfg.get("default_pool_name") or "systempoolv2")
 
             if dedicated:
                 # Trigger AKS nodepool provision/update in background

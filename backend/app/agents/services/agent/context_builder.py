@@ -63,7 +63,18 @@ def build_agent_system_prompt(
     if hasattr(agent, "skills") and agent.skills:
         parts.append(SKILLS_STANDING_INSTRUCTION.strip())
 
-    # 3.3 Runtime Asset Manager Context
+    # 3.3 Connected External MCP Servers
+    manifest_data = getattr(agent, "manifest", None) or {}
+    mcp_servers = manifest_data.get("mcp_servers") if isinstance(manifest_data, dict) else []
+    if mcp_servers:
+        mcp_list_str = ", ".join(str(s) for s in mcp_servers)
+        parts.append(
+            f"## Connected External MCP Servers\n"
+            f"This agent has active integrations with the following external MCP servers: {mcp_list_str}.\n"
+            f"When answering questions or performing queries relating to these external MCP servers or their connected databases, ALWAYS prioritize and use their designated tools (e.g. `query` for postgres_mcp)."
+        )
+
+    # 3.4 Runtime Asset Manager Context
     if runtime_context:
         runtime_section = _build_runtime_context_section(runtime_context)
         if runtime_section:

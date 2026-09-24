@@ -165,6 +165,57 @@ def _build_extra_tools(
     except Exception as exc:
         logger.warning("Could not load external catalog tools into manifest: %s", exc)
 
+    # Discover attached external MCP servers from agent manifest
+    try:
+        from app.database import AccountSessionLocal
+        from app.ai_gateway.models.mcp import MCPServer as MCPServerModel
+        from app.agents.services.agent.tools.mcp_client_tool import ExternalMCPTool
+
+        manifest_mcp_servers = []
+        if hasattr(agent, "manifest") and isinstance(agent.manifest, dict):
+            manifest_mcp_servers = agent.manifest.get("mcp_servers") or []
+
+        if manifest_mcp_servers and AccountSessionLocal is not None:
+            with AccountSessionLocal() as adb:
+                for mcp_ref in manifest_mcp_servers:
+                    srv = None
+                    ref_str = str(mcp_ref).strip()
+                    if "." in ref_str:
+                        parts = ref_str.split(".")
+                        if len(parts) == 3:
+                            srv = adb.query(MCPServerModel).filter(
+                                MCPServerModel.catalog_name == parts[0],
+                                MCPServerModel.schema_name == parts[1],
+                                MCPServerModel.name == parts[2],
+                            ).first()
+                        elif len(parts) == 2:
+                            srv = adb.query(MCPServerModel).filter(
+                                MCPServerModel.schema_name == parts[0],
+                                MCPServerModel.name == parts[1],
+                            ).first()
+                    if not srv:
+                        if ref_str.isdigit():
+                            srv = adb.query(MCPServerModel).filter(MCPServerModel.id == int(ref_str)).first()
+                        else:
+                            srv = adb.query(MCPServerModel).filter(MCPServerModel.name == ref_str).first()
+
+                    if srv and srv.cached_tools and srv.is_enabled:
+                        for ct in srv.cached_tools:
+                            tool_name = ct.get("name")
+                            if tool_name and tool_name not in extra:
+                                desc = ct.get("description") or f"MCP tool: {tool_name}"
+                                extra[tool_name] = ExternalMCPTool(
+                                    server_id=srv.id,
+                                    server_name=srv.name,
+                                    tool_name=tool_name,
+                                    description=f"[MCP Server: {srv.name}] {desc}",
+                                    input_schema=ct.get("inputSchema") or {"type": "object", "properties": {}},
+                                    session_id=str(session_id),
+                                    invoked_by=user_id,
+                                )
+    except Exception as exc:
+        logger.warning("Could not load attached MCP tools into manifest: %s", exc)
+
     return extra
 
 

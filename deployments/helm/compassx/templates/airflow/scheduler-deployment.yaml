@@ -79,7 +79,7 @@ spec:
           resources:
             {{- toYaml .Values.airflow.scheduler.resources | nindent 12 }}
       nodeSelector:
-        {{- toYaml (.Values.airflow.scheduler.nodeSelector | default (dict "kubernetes.azure.com/agentpool" "systempool")) | nindent 8 }}
+        {{- toYaml (.Values.airflow.scheduler.nodeSelector | default (dict "kubernetes.azure.com/agentpool" "systempoolv2")) | nindent 8 }}
       volumes:
         {{- if .Values.sharedStorage.enabled }}
         - name: shared-storage

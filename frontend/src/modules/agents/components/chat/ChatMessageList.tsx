@@ -161,7 +161,7 @@ export const ChatMessageList: React.FC<ChatMessageListProps> = React.memo(({
           display: 'flex',
           flexDirection: 'column',
           gap: 20,
-          paddingBottom: 'calc(100vh - 140px)',
+          paddingBottom: 80,
         }}
       >
         {groups.map((grp, idx) => {
@@ -430,7 +430,7 @@ export const ChatMessageList: React.FC<ChatMessageListProps> = React.memo(({
             </div>
           );
         })}
-        <div ref={messagesEndRef} style={{ height: 32, flexShrink: 0 }} />
+        <div ref={messagesEndRef} style={{ height: 12, flexShrink: 0 }} />
       </div>
     </div>
   );

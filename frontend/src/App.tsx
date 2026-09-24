@@ -59,7 +59,9 @@ import LogoShowcasePage from '@/pages/LogoShowcasePage';
 import DesignSystemShowcasePage from '@/pages/DesignSystemShowcasePage';
 import AppsHomePage from '@/modules/apps/pages/AppsHomePage';
 import AppDetailPage from '@/modules/apps/pages/AppDetailPage';
+import PortalPage from '@/modules/portal/pages/PortalPage';
 import WorkspaceSettingsPage from '@/pages/workspace/WorkspaceSettingsPage';
+import AIGatewayPage from '@/modules/ai_gateway/pages/AIGatewayPage';
 import { DEFAULT_APP_ID, isAppId, normalizeAppId, stripAppScope, getDefaultPathForApp, useCurrentAppId } from '@/lib/appNavigation';
 import { useMyWorkspaces } from '@/lib/workspaceApi';
 
@@ -201,6 +203,9 @@ function WorkspaceHomePage() {
   if (appId === 'apps') {
     return <AppsHomePage />;
   }
+  if (appId === 'portal') {
+    return <PortalPage />;
+  }
   return <LandingPage />;
 }
 
@@ -282,9 +287,13 @@ export default function App() {
                 <Route path=":appId" element={<AppScopeGuard />}>
                   <Route index element={<AppHomeRedirect />} />
                   <Route path="home" element={<WorkspaceHomePage />} />
+                  <Route path="portal" element={<PortalPage />} />
+                  <Route path="portal/app/:portalAppId" element={<PortalPage />} />
+                  <Route path="portal/dashboard/:dashboardId" element={<PortalPage />} />
+                  <Route path="app/:portalAppId" element={<PortalPage />} />
+                  <Route path="dashboard/:dashboardId" element={<PortalPage />} />
                   <Route path="apps" element={<AppsHomePage />} />
                   <Route path="apps/:applicationId" element={<AppDetailPage />} />
-                  <Route path="apps/:appId" element={<AppDetailPage />} />
                   <Route path="data-catalog" element={<DataCatalog />} />
                   <Route path="data-catalog/:catalog" element={<DataCatalog />} />
                   <Route path="data-catalog/:catalog/:schema" element={<DataCatalog />} />
@@ -310,6 +319,7 @@ export default function App() {
                   <Route path="agents/:agentId/customizations" element={<AgentChatPage initialView="customizations" />} />
                   <Route path="agents/:agentId/chat" element={<AgentChatPage />} />
                   <Route path="agents/:agentId/chat/:sessionId" element={<AgentChatPage />} />
+                  <Route path="ai-gateway" element={<AIGatewayPage />} />
                   <Route path="ontology" element={<OntologyPage />} />
                   <Route path="topology" element={<OntologyPage />} />
                   <Route path="connections" element={<ConnectionsPage />} />

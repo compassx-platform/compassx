@@ -51,5 +51,5 @@ spec:
           resources:
             {{- toYaml .Values.redis.resources | nindent 12 }}
       nodeSelector:
-        {{- toYaml (.Values.redis.nodeSelector | default (dict "kubernetes.azure.com/agentpool" "systempool")) | nindent 8 }}
+        {{- toYaml (.Values.redis.nodeSelector | default (dict "kubernetes.azure.com/agentpool" "systempoolv2")) | nindent 8 }}
 {{- end }}

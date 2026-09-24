@@ -2519,7 +2519,7 @@ export default function SqlWarehousePage() {
               inset: 0,
               background: 'rgba(0,0,0,0.5)',
               backdropFilter: 'blur(3px)',
-              zIndex: 999,
+              zIndex: 2500,
               display: 'flex',
               justifyContent: 'flex-end',
             }}

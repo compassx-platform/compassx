@@ -114,3 +114,5 @@ spec:
           {{- end }}
           resources:
             {{- toYaml .Values.backend.resources | nindent 12 }}
+      nodeSelector:
+        {{- toYaml (.Values.backend.nodeSelector | default (dict "kubernetes.azure.com/agentpool" "systempoolv2")) | nindent 8 }}

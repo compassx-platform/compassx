@@ -52,12 +52,18 @@ from app.workspace import data_models as workspace_data_models  # noqa: E402, F4
 from app.catalog import search_models as catalog_search_models  # noqa: E402, F401  (catalog_search_*)
 from app.ingestion import models as ingestion_models  # noqa: E402, F401
 from app.ontology.models import ontology as ontology_models  # noqa: E402, F401
-from app.models import app as _app_models, app_task as _app_task_models, dev_workspace as _dev_workspace_models  # noqa: E402, F401
+from app.models import (
+    app as _app_models,
+    app_task as _app_task_models,
+    dev_workspace as _dev_workspace_models,
+    portal_config as _portal_config_models,
+)  # noqa: E402, F401
 from app.monitoring import routes as monitoring_routes  # noqa: E402
 
 # User Manager v1 models (registers tables with AccountBase / SystemBase)
 from app.user_manager.models import account_models as _um_account_models  # noqa: E402, F401
 from app.user_manager.models import system_models as _um_system_models    # noqa: E402, F401
+from app.ai_gateway import models as ai_gateway_models  # noqa: E402, F401
 
 # Now import routes
 from app.data.routes import data_catalog_routes  # noqa: E402
@@ -91,6 +97,7 @@ from app.workspace import workspace_routes as workspace_ws_routes  # noqa: E402
 from app.routes import app_routes  # noqa: E402
 from app.routes import app_dev_routes  # noqa: E402
 from app.routes import app_task_routes  # noqa: E402
+from app.routes import portal_routes  # noqa: E402
 from app.routes import lifecycle_routes  # noqa: E402
 
 # User Manager v1 routes
@@ -100,6 +107,14 @@ from app.user_manager.routes import account_routes as um_account_routes  # noqa:
 from app.user_manager.routes import workspace_member_routes as um_ws_member_routes  # noqa: E402
 from app.user_manager.routes import invite_routes as um_invite_routes  # noqa: E402
 from app.user_manager.routes import entry_point_routes as um_entry_point_routes  # noqa: E402
+
+# AI Gateway routes
+from app.ai_gateway.routes import (  # noqa: E402
+    provider_router as ai_gateway_provider_router,
+    mcp_router as ai_gateway_mcp_router,
+    proxy_router as ai_gateway_proxy_router,
+    log_router as ai_gateway_log_router,
+)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -251,10 +266,104 @@ async def lifespan(app: FastAPI):
                     # Ensure settings column exists on accounts
                     _conn.execute(_text("ALTER TABLE accounts ADD COLUMN IF NOT EXISTS settings JSONB DEFAULT '{}'::jsonb;"))
 
+                    # Ensure AI Gateway account tables and columns exist
+                    _conn.execute(_text("""
+                        CREATE TABLE IF NOT EXISTS ai_providers (
+                            id SERIAL PRIMARY KEY,
+                            workspace_id UUID,
+                            catalog_name VARCHAR(255),
+                            schema_name VARCHAR(255),
+                            name VARCHAR(100) NOT NULL,
+                            provider_type VARCHAR(50) NOT NULL,
+                            api_key_enc TEXT,
+                            base_url TEXT,
+                            config JSONB DEFAULT '{}'::jsonb,
+                            is_active BOOLEAN NOT NULL DEFAULT TRUE,
+                            created_by VARCHAR(255) DEFAULT 'system',
+                            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                        );
+                    """))
+                    _conn.execute(_text("ALTER TABLE ai_providers ADD COLUMN IF NOT EXISTS catalog_name VARCHAR(255);"))
+                    _conn.execute(_text("ALTER TABLE ai_providers ADD COLUMN IF NOT EXISTS schema_name VARCHAR(255);"))
+                    _conn.execute(_text("ALTER TABLE ai_providers ADD COLUMN IF NOT EXISTS api_key_enc TEXT;"))
+                    _conn.execute(_text("ALTER TABLE ai_providers ADD COLUMN IF NOT EXISTS base_url TEXT;"))
+                    _conn.execute(_text("ALTER TABLE ai_providers ADD COLUMN IF NOT EXISTS config JSONB DEFAULT '{}'::jsonb;"))
+                    _conn.execute(_text("ALTER TABLE ai_providers ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE;"))
+                    _conn.execute(_text("ALTER TABLE ai_providers ADD COLUMN IF NOT EXISTS created_by VARCHAR(255) DEFAULT 'system';"))
+                    try:
+                        _conn.execute(_text("ALTER TABLE ai_providers ALTER COLUMN provider_type TYPE VARCHAR(50) USING provider_type::varchar;"))
+                    except Exception:
+                        pass
+
+                    _conn.execute(_text("""
+                        CREATE TABLE IF NOT EXISTS ai_model_endpoints (
+                            id SERIAL PRIMARY KEY,
+                            workspace_id UUID,
+                            name VARCHAR(100) NOT NULL,
+                            provider_id INTEGER NOT NULL REFERENCES ai_providers(id) ON DELETE CASCADE,
+                            upstream_model_name VARCHAR(100) NOT NULL,
+                            fallback_endpoint_ids INTEGER[] DEFAULT '{}',
+                            timeout_s INTEGER NOT NULL DEFAULT 120,
+                            max_tokens INTEGER NOT NULL DEFAULT 8192,
+                            temperature_default NUMERIC(3, 2) DEFAULT 0.7,
+                            rate_limit_rpm INTEGER,
+                            rate_limit_tpm INTEGER,
+                            input_cost_per_1k_tokens NUMERIC(10, 4),
+                            output_cost_per_1k_tokens NUMERIC(10, 4),
+                            cost_currency VARCHAR(10) DEFAULT 'USD',
+                            use_for_embedding BOOLEAN NOT NULL DEFAULT FALSE,
+                            is_default BOOLEAN NOT NULL DEFAULT FALSE,
+                            guardrail_config JSONB DEFAULT '{}'::jsonb,
+                            is_active BOOLEAN NOT NULL DEFAULT TRUE,
+                            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                        );
+                    """))
+                    _conn.execute(_text("ALTER TABLE ai_model_endpoints ADD COLUMN IF NOT EXISTS fallback_endpoint_ids INTEGER[] DEFAULT '{}';"))
+                    _conn.execute(_text("ALTER TABLE ai_model_endpoints ADD COLUMN IF NOT EXISTS timeout_s INTEGER NOT NULL DEFAULT 120;"))
+                    _conn.execute(_text("ALTER TABLE ai_model_endpoints ADD COLUMN IF NOT EXISTS max_tokens INTEGER NOT NULL DEFAULT 8192;"))
+                    _conn.execute(_text("ALTER TABLE ai_model_endpoints ADD COLUMN IF NOT EXISTS temperature_default NUMERIC(3, 2) DEFAULT 0.7;"))
+                    _conn.execute(_text("ALTER TABLE ai_model_endpoints ADD COLUMN IF NOT EXISTS rate_limit_rpm INTEGER;"))
+                    _conn.execute(_text("ALTER TABLE ai_model_endpoints ADD COLUMN IF NOT EXISTS rate_limit_tpm INTEGER;"))
+                    _conn.execute(_text("ALTER TABLE ai_model_endpoints ADD COLUMN IF NOT EXISTS input_cost_per_1k_tokens NUMERIC(10, 4);"))
+                    _conn.execute(_text("ALTER TABLE ai_model_endpoints ADD COLUMN IF NOT EXISTS output_cost_per_1k_tokens NUMERIC(10, 4);"))
+                    _conn.execute(_text("ALTER TABLE ai_model_endpoints ADD COLUMN IF NOT EXISTS cost_currency VARCHAR(10) DEFAULT 'USD';"))
+                    _conn.execute(_text("ALTER TABLE ai_model_endpoints ADD COLUMN IF NOT EXISTS use_for_embedding BOOLEAN NOT NULL DEFAULT FALSE;"))
+                    _conn.execute(_text("ALTER TABLE ai_model_endpoints ADD COLUMN IF NOT EXISTS is_default BOOLEAN NOT NULL DEFAULT FALSE;"))
+                    _conn.execute(_text("ALTER TABLE ai_model_endpoints ADD COLUMN IF NOT EXISTS guardrail_config JSONB DEFAULT '{}'::jsonb;"))
+                    _conn.execute(_text("ALTER TABLE ai_model_endpoints ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE;"))
+
+                    _conn.execute(_text("""
+                        CREATE TABLE IF NOT EXISTS mcp_servers (
+                            id SERIAL PRIMARY KEY,
+                            workspace_id UUID,
+                            name VARCHAR(100) NOT NULL,
+                            description TEXT,
+                            server_type VARCHAR(50) NOT NULL DEFAULT 'native',
+                            endpoint_url TEXT,
+                            auth_config_enc TEXT,
+                            command TEXT,
+                            env_vars_enc TEXT,
+                            is_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+                            cached_tools JSONB DEFAULT '[]'::jsonb,
+                            last_synced_at TIMESTAMPTZ,
+                            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                        );
+                    """))
+                    try:
+                        _conn.execute(_text("ALTER TABLE mcp_servers ALTER COLUMN server_type TYPE VARCHAR(50) USING server_type::varchar;"))
+                        _conn.execute(_text("ALTER TABLE mcp_servers ADD COLUMN IF NOT EXISTS catalog_name VARCHAR(255);"))
+                        _conn.execute(_text("ALTER TABLE mcp_servers ADD COLUMN IF NOT EXISTS schema_name VARCHAR(255);"))
+                        _conn.execute(_text("ALTER TABLE mcp_servers ADD COLUMN IF NOT EXISTS created_by VARCHAR(255) DEFAULT 'system';"))
+                    except Exception:
+                        pass
+
                     _conn.commit()
             except Exception as _conn_tbl_err:
                 logger.debug("catalog schema migration check non-fatal: %s", _conn_tbl_err)
-            logger.info("User Manager: account_db tables verified/created")
+            logger.info("User Manager & AI Gateway: account_db tables verified/created")
 
         if system_engine is not None:
             with system_engine.connect() as _conn:
@@ -360,7 +469,7 @@ app = FastAPI(
     lifespan=lifespan,
     title="CompassX API",
     description="CompassX Platform API",
-    version="0.11.2",
+    version="0.11.3",
     docs_url="/api/swagger/docs",
     openapi_url="/api/swagger.json",
 )
@@ -431,6 +540,12 @@ app.include_router(catalog_tool_routes.router)
 app.include_router(agent_tool_routes.router)
 app.include_router(catalog_connection_routes.router)
 
+# AI Gateway routers
+app.include_router(ai_gateway_provider_router)
+app.include_router(ai_gateway_mcp_router)
+app.include_router(ai_gateway_proxy_router)
+app.include_router(ai_gateway_log_router)
+
 app.include_router(notebook_routes.router)
 app.include_router(jupyter_proxy.router)
 app.include_router(dashboard_routes.router)
@@ -439,6 +554,7 @@ app.include_router(sql_warehouse_routes.router)
 app.include_router(app_routes.router)
 app.include_router(app_dev_routes.router)
 app.include_router(app_task_routes.router)
+app.include_router(portal_routes.router)
 app.include_router(lifecycle_routes.router)
 
 # Workspace / account / auth routes (legacy - kept for backward compat)

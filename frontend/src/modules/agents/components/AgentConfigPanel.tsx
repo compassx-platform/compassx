@@ -25,6 +25,7 @@ export interface AgentManifestData {
       diff_capture: boolean;
     };
   };
+  mcp_servers?: string[];
 }
 
 const WRITE_CATEGORIES = ['catalog', 'storage', 'scheduler', 'dashboard', 'app'];
@@ -40,6 +41,7 @@ const DEFAULT_MANIFEST: AgentManifestData = {
     document_upload: { enabled: true, accepted_types: ['pdf', 'docx', 'xlsx', 'csv', 'txt', 'md', 'json', 'png', 'jpg', 'jpeg', 'webp', 'gif', 'svg'] },
     artifact_visibility: { enabled: true, link_resolution: true, diff_capture: true },
   },
+  mcp_servers: [],
 };
 
 interface AgentConfigPanelProps {

@@ -252,6 +252,8 @@ class NodePoolManager:
             return {"kubernetes.azure.com/agentpool": pool_name}
         else:
             default_pool = cfg.get("default_pool_name") or settings.AZURE_DEFAULT_USER_NODEPOOL
+            if default_pool in ("userpoolv2", "userpool", ""):
+                default_pool = settings.AZURE_DEFAULT_USER_NODEPOOL
             return {"kubernetes.azure.com/agentpool": default_pool}
 
     def get_compute_node_selector(self) -> Dict[str, str]:
@@ -263,6 +265,8 @@ class NodePoolManager:
             return {"kubernetes.azure.com/agentpool": pool_name}
         else:
             default_pool = cfg.get("default_pool_name") or settings.AZURE_DEFAULT_USER_NODEPOOL
+            if default_pool in ("userpoolv2", "userpool", ""):
+                default_pool = settings.AZURE_DEFAULT_USER_NODEPOOL
             return {"kubernetes.azure.com/agentpool": default_pool}
 
     def list_cluster_node_pools(self) -> List[Dict[str, Any]]:
@@ -890,7 +894,7 @@ class NodePoolManager:
     def trigger_deprovision_compute_nodepool_async(
         self,
         pool_name: str = "computepool",
-        fallback_pool: str = "userpoolv2",
+        fallback_pool: str = "systempoolv2",
     ) -> None:
         """Asynchronously gracefully migrates compute pods to fallback pool and deprovisions nodepool."""
         thread = threading.Thread(

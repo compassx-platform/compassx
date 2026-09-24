@@ -15,6 +15,7 @@ import {
   Loader2,
   History,
   Database,
+  Minimize2,
 } from 'lucide-react';
 import type { ChatSession } from '@/modules/agents/hooks/useChat';
 import { CatalogExplorerTree } from '@/modules/data/components/CatalogExplorerTree';
@@ -248,6 +249,7 @@ interface ChatSessionsSidebarProps {
   sidebarMode?: 'chats' | 'catalog';
   onSidebarModeChange?: (mode: 'chats' | 'catalog') => void;
   onInsertTable?: (identifier: string) => void;
+  onOpenInSidePanel?: () => void;
 }
 
 export function ChatSessionsSidebar({
@@ -266,6 +268,7 @@ export function ChatSessionsSidebar({
   sidebarMode: propSidebarMode,
   onSidebarModeChange,
   onInsertTable,
+  onOpenInSidePanel,
 }: ChatSessionsSidebarProps) {
   const [internalSidebarMode, setInternalSidebarMode] = useState<'chats' | 'catalog'>('chats');
   const currentSidebarMode = propSidebarMode ?? internalSidebarMode;
@@ -371,7 +374,32 @@ export function ChatSessionsSidebar({
         }}
       >
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 14, width: '100%' }}>
-          {/* 1. Expand sidebar */}
+          {/* 1. Open in Side Panel */}
+          {onOpenInSidePanel && (
+            <button
+              type="button"
+              onClick={onOpenInSidePanel}
+              title="Open in Side Panel"
+              style={{
+                background: 'none',
+                border: 'none',
+                cursor: 'pointer',
+                padding: '6px',
+                color: '#475569',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                borderRadius: 6,
+                transition: 'all 0.15s ease',
+              }}
+              onMouseEnter={(e) => (e.currentTarget.style.color = '#0f172a')}
+              onMouseLeave={(e) => (e.currentTarget.style.color = '#475569')}
+            >
+              <Minimize2 size={16} />
+            </button>
+          )}
+
+          {/* 2. Expand sidebar */}
           <button
             type="button"
             onClick={onToggleSidebar}
@@ -777,6 +805,35 @@ export function ChatSessionsSidebar({
         </span>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+          {onOpenInSidePanel && (
+            <button
+              type="button"
+              onClick={onOpenInSidePanel}
+              style={{
+                background: 'none',
+                border: 'none',
+                cursor: 'pointer',
+                padding: '4px',
+                color: '#64748b',
+                display: 'flex',
+                alignItems: 'center',
+                borderRadius: 4,
+                transition: 'color 0.15s ease, background 0.15s ease',
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.color = '#0f172a';
+                e.currentTarget.style.background = '#f1f5f9';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.color = '#64748b';
+                e.currentTarget.style.background = 'none';
+              }}
+              title="Open in Side Panel"
+            >
+              <Minimize2 size={16} />
+            </button>
+          )}
+
           <button
             type="button"
             onClick={onToggleSidebar}

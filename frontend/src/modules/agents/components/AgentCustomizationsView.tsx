@@ -21,7 +21,13 @@ import {
   ArrowLeft,
   ArrowRight,
   Bot,
+  Server,
+  Terminal,
+  Globe,
+  Database,
+  Cpu,
 } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
 import { useAgent, useCreateAgent, useUpdateAgent, type Agent } from "@/modules/agents/hooks/useAgents";
 import { useLLMConnections } from "@/modules/agents/hooks/useLLMConnections";
 import {
@@ -34,6 +40,8 @@ import {
 import { useSkills } from "@/modules/agents/hooks/useSkills";
 import { AVAILABLE_TOOLS, getAvailableTool } from "@/modules/agents/toolCatalog";
 import { AgentConfigPanel, type AgentManifestData } from "@/modules/agents/components/AgentConfigPanel";
+import { fetchMCPServers } from "@/modules/ai_gateway/api";
+import { type MCPServer } from "@/modules/ai_gateway/types";
 import { PageTabs } from "@/components/common/PageTabs";
 import { useToast } from "@/lib/toast";
 
@@ -49,6 +57,7 @@ export const CUSTOMIZATION_TABS = [
   { value: "about", label: "About" },
   { value: "instruction", label: "Instruction" },
   { value: "tools", label: "Tools" },
+  { value: "mcp", label: "MCP" },
   { value: "skills", label: "Skills" },
   { value: "context", label: "Context" },
 ] as const;
@@ -80,6 +89,17 @@ export const AgentCustomizationsView: React.FC<AgentCustomizationsViewProps> = (
   const updateContextMutation = useUpdateAgentContext();
   const deleteContextMutation = useDeleteAgentContext();
 
+  const { data: allMcpServers = [] } = useQuery({
+    queryKey: ["ai-gateway-mcp-servers"],
+    queryFn: fetchMCPServers,
+    staleTime: 30_000,
+  });
+
+  // Only external MCP servers (subprocess or remote_sse, non-builtin)
+  const externalMcpServers = (allMcpServers || []).filter(
+    (s) => !s.is_builtin && s.server_type !== "native"
+  );
+
   const [activeTab, setActiveTab] = useState<CustomizationTab>("about");
 
   // Form State
@@ -99,8 +119,10 @@ export const AgentCustomizationsView: React.FC<AgentCustomizationsViewProps> = (
       document_upload: { enabled: true, accepted_types: ["pdf", "docx", "xlsx", "csv", "txt", "md", "json", "png", "jpg", "jpeg", "webp", "gif", "svg"] },
       artifact_visibility: { enabled: true, link_resolution: true, diff_capture: true },
     },
+    mcp_servers: [],
   });
   const [selectedTools, setSelectedTools] = useState<string[]>([]);
+  const [selectedMcpServers, setSelectedMcpServers] = useState<string[]>([]);
   const [selectedSkills, setSelectedSkills] = useState<{ skill_id: number; position: number }[]>([]);
 
   // Draft context entries for new agent creation before save
@@ -131,8 +153,15 @@ export const AgentCustomizationsView: React.FC<AgentCustomizationsViewProps> = (
           document_upload: { enabled: true, accepted_types: ["pdf", "docx", "xlsx", "csv", "txt", "md", "json", "png", "jpg", "jpeg", "webp", "gif", "svg"] },
           artifact_visibility: { enabled: true, link_resolution: true, diff_capture: true },
         },
+        mcp_servers: [],
       });
       setSelectedTools((agent.tools ?? []).map((t) => t.tool_name));
+      const mcpList = (agent.manifest as any)?.mcp_servers;
+      if (Array.isArray(mcpList)) {
+        setSelectedMcpServers(mcpList);
+      } else {
+        setSelectedMcpServers([]);
+      }
       setSelectedSkills(
         (agent.skills ?? []).map((s: any, idx: number) => ({
           skill_id: s.skill_id,
@@ -158,7 +187,10 @@ export const AgentCustomizationsView: React.FC<AgentCustomizationsViewProps> = (
       llm_connection_id: llmConnectionId ?? undefined,
       visibility,
       is_orchestrator: isOrchestrator,
-      manifest: manifest as any,
+      manifest: {
+        ...(manifest as any),
+        mcp_servers: selectedMcpServers,
+      },
       tools: selectedTools.map((t) => ({ tool_name: t })),
       skills: selectedSkills.map((s, idx) => ({ skill_id: s.skill_id, position: idx })),
     };
@@ -215,11 +247,21 @@ export const AgentCustomizationsView: React.FC<AgentCustomizationsViewProps> = (
   const [expandedToolKeys, setExpandedToolKeys] = useState<Record<string, boolean>>({});
   const toolSearchRef = useRef<HTMLDivElement>(null);
 
+  // MCP Tab Search & Dropdown State
+  const [mcpSearchQuery, setMcpSearchQuery] = useState("");
+  const [isMcpDropdownOpen, setIsMcpDropdownOpen] = useState(false);
+  const [expandedMcpKeys, setExpandedMcpKeys] = useState<Record<string, boolean>>({});
+  const mcpSearchRef = useRef<HTMLDivElement>(null);
+  const mcpInputRef = useRef<HTMLInputElement>(null);
+
   // Close dropdown on click outside
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       if (toolSearchRef.current && !toolSearchRef.current.contains(event.target as Node)) {
         setIsToolDropdownOpen(false);
+      }
+      if (mcpSearchRef.current && !mcpSearchRef.current.contains(event.target as Node)) {
+        setIsMcpDropdownOpen(false);
       }
     };
     document.addEventListener("mousedown", handleClickOutside);
@@ -243,6 +285,89 @@ export const AgentCustomizationsView: React.FC<AgentCustomizationsViewProps> = (
       [toolKey]: !prev[toolKey],
     }));
   };
+
+  // MCP Server Helpers
+  const getMcpIdentifier = (server: MCPServer): string => {
+    if (server.full_name) return server.full_name;
+    if (server.catalog_name && server.schema_name) {
+      return `${server.catalog_name}.${server.schema_name}.${server.name}`;
+    }
+    return server.name;
+  };
+
+  const findServerByKey = (mcpKey: string): MCPServer | undefined => {
+    return externalMcpServers.find((s) => {
+      const key = getMcpIdentifier(s);
+      return key === mcpKey || s.name === mcpKey || String(s.id) === mcpKey || s.full_name === mcpKey;
+    });
+  };
+
+  const getMcpDisplayParts = (mcpKey: string, server?: MCPServer) => {
+    if (server?.catalog_name && server?.schema_name) {
+      return {
+        location: `${server.catalog_name}.${server.schema_name}`,
+        name: server.name,
+      };
+    }
+    if (mcpKey.includes(".")) {
+      const parts = mcpKey.split(".");
+      if (parts.length === 3) {
+        return {
+          location: `${parts[0]}.${parts[1]}`,
+          name: parts[2],
+        };
+      } else if (parts.length === 2) {
+        return {
+          location: parts[0],
+          name: parts[1],
+        };
+      }
+    }
+    return {
+      location: null,
+      name: server?.name || mcpKey,
+    };
+  };
+
+  const handleAddMcpServer = (mcpKey: string) => {
+    if (!selectedMcpServers.includes(mcpKey)) {
+      setSelectedMcpServers((prev) => [...prev, mcpKey]);
+      setExpandedMcpKeys((prev) => ({ ...prev, [mcpKey]: false }));
+    }
+  };
+
+  const handleRemoveMcpServer = (mcpKey: string) => {
+    setSelectedMcpServers((prev) => prev.filter((k) => k !== mcpKey));
+  };
+
+  const toggleMcpExpand = (mcpKey: string) => {
+    setExpandedMcpKeys((prev) => ({
+      ...prev,
+      [mcpKey]: !prev[mcpKey],
+    }));
+  };
+
+  const filteredExternalMcpServers = externalMcpServers.filter((server) => {
+    const q = mcpSearchQuery.trim().toLowerCase();
+    if (!q) return true;
+    const idKey = getMcpIdentifier(server).toLowerCase();
+    if (idKey.includes(q)) return true;
+    if (server.name.toLowerCase().includes(q)) return true;
+    if (server.description && server.description.toLowerCase().includes(q)) return true;
+    if (server.command && server.command.toLowerCase().includes(q)) return true;
+    if (server.endpoint_url && server.endpoint_url.toLowerCase().includes(q)) return true;
+    if (server.server_type.toLowerCase().includes(q)) return true;
+    if (
+      server.cached_tools?.some(
+        (t) =>
+          t.name.toLowerCase().includes(q) ||
+          (t.description && t.description.toLowerCase().includes(q))
+      )
+    ) {
+      return true;
+    }
+    return false;
+  });
 
   const filteredAvailableTools = AVAILABLE_TOOLS.filter((tool) => {
     const q = toolSearchQuery.trim().toLowerCase();
@@ -833,7 +958,296 @@ export const AgentCustomizationsView: React.FC<AgentCustomizationsViewProps> = (
           </div>
         )}
 
-        {/* 4. Skills */}
+        {/* 4. External MCP Servers */}
+        {activeTab === "mcp" && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 18, width: "100%" }}>
+            {/* Header & MCP Search Bar */}
+            <div style={{ display: "flex", flexDirection: "column", gap: 8, width: "100%" }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                <div>
+                  <label className="form-label" style={{ fontWeight: 600, fontSize: "0.82rem", margin: 0, color: "#1e293b" }}>
+                    External MCP Servers
+                  </label>
+                  <div style={{ fontSize: "0.73rem", color: "#64748b", marginTop: 2 }}>
+                    Attach external Model Context Protocol tool servers (Remote SSE or Subprocess) to grant live tool execution and data connectivity.
+                  </div>
+                </div>
+                <span style={{ fontSize: "0.72rem", color: "#64748b" }}>
+                  {selectedMcpServers.length} {selectedMcpServers.length === 1 ? "server" : "servers"} attached
+                </span>
+              </div>
+
+              {/* Search Bar with Dropdown */}
+              <div ref={mcpSearchRef} style={{ position: "relative", width: "100%" }}>
+                <div style={{ position: "relative", display: "flex", alignItems: "center", width: "100%" }}>
+                  <Search
+                    size={15}
+                    style={{
+                      position: "absolute",
+                      left: 12,
+                      color: "#94a3b8",
+                      pointerEvents: "none",
+                    }}
+                  />
+                  <input
+                    ref={mcpInputRef}
+                    type="text"
+                    className="form-input"
+                    placeholder="Search external MCP servers (e.g. postgres_mcp, github, remote sse)..."
+                    value={mcpSearchQuery}
+                    onChange={(e) => {
+                      setMcpSearchQuery(e.target.value);
+                      setIsMcpDropdownOpen(true);
+                    }}
+                    onFocus={() => setIsMcpDropdownOpen(true)}
+                    style={{
+                      paddingLeft: 34,
+                      paddingRight: mcpSearchQuery ? 30 : 12,
+                      height: 36,
+                      fontSize: "0.8rem",
+                      background: "#ffffff",
+                      border: "1px solid #e2e8f0",
+                      borderRadius: 8,
+                      width: "100%",
+                      boxSizing: "border-box",
+                    }}
+                  />
+                  {mcpSearchQuery && (
+                    <button
+                      type="button"
+                      className="btn-icon"
+                      onClick={() => {
+                        setMcpSearchQuery("");
+                      }}
+                      style={{
+                        position: "absolute",
+                        right: 8,
+                        color: "#94a3b8",
+                        padding: 3,
+                      }}
+                    >
+                      <X size={13} />
+                    </button>
+                  )}
+                </div>
+
+                {/* Dropdown Menu */}
+                {isMcpDropdownOpen && (
+                  <div
+                    style={{
+                      position: "absolute",
+                      top: "calc(100% + 4px)",
+                      left: 0,
+                      right: 0,
+                      background: "#ffffff",
+                      borderRadius: 8,
+                      border: "1px solid #e2e8f0",
+                      boxShadow: "0 10px 25px -5px rgba(0, 0, 0, 0.08), 0 8px 10px -6px rgba(0, 0, 0, 0.04)",
+                      zIndex: 50,
+                      maxHeight: 320,
+                      overflowY: "auto",
+                    }}
+                  >
+                    {externalMcpServers.length === 0 ? (
+                      <div style={{ padding: "16px 18px", textAlign: "center", color: "#64748b", fontSize: "0.78rem" }}>
+                        No external MCP servers registered in AI Gateway.
+                      </div>
+                    ) : filteredExternalMcpServers.length === 0 ? (
+                      <div style={{ padding: "14px 16px", textAlign: "center", color: "#64748b", fontSize: "0.78rem" }}>
+                        No MCP servers matching "{mcpSearchQuery}".
+                      </div>
+                    ) : (
+                      <div style={{ display: "flex", flexDirection: "column", padding: "4px" }}>
+                        {filteredExternalMcpServers.map((server) => {
+                          const mcpKey = getMcpIdentifier(server);
+                          const isSelected = selectedMcpServers.includes(mcpKey) || selectedMcpServers.includes(server.name) || selectedMcpServers.includes(String(server.id));
+                          const { location, name: serverName } = getMcpDisplayParts(mcpKey, server);
+
+                          return (
+                            <div
+                              key={server.id}
+                              onClick={() => {
+                                if (isSelected) {
+                                  handleRemoveMcpServer(mcpKey);
+                                  handleRemoveMcpServer(server.name);
+                                  handleRemoveMcpServer(String(server.id));
+                                } else {
+                                  handleAddMcpServer(mcpKey);
+                                }
+                              }}
+                              style={{
+                                padding: "8px 12px",
+                                borderRadius: 6,
+                                cursor: "pointer",
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "space-between",
+                                gap: 12,
+                                background: isSelected ? "#f1f5f9" : "transparent",
+                                transition: "background 0.12s ease",
+                              }}
+                              onMouseEnter={(e) => {
+                                if (!isSelected) e.currentTarget.style.background = "#f8fafc";
+                              }}
+                              onMouseLeave={(e) => {
+                                if (!isSelected) e.currentTarget.style.background = "transparent";
+                              }}
+                            >
+                              <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0, flex: 1 }}>
+                                <Database size={13} style={{ color: "#64748b", flexShrink: 0 }} />
+                                <div style={{ fontSize: "0.8rem", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                                  {location ? (
+                                    <>
+                                      <span style={{ fontWeight: 600, color: "#0f172a" }}>{location}.</span>
+                                      <span style={{ fontWeight: 400, color: "#64748b" }}>{serverName}</span>
+                                    </>
+                                  ) : (
+                                    <span style={{ fontWeight: 400, color: "#64748b" }}>{serverName}</span>
+                                  )}
+                                </div>
+                              </div>
+
+                              <div style={{ flexShrink: 0 }}>
+                                {isSelected ? (
+                                  <span
+                                    style={{
+                                      display: "inline-flex",
+                                      alignItems: "center",
+                                      gap: 3,
+                                      fontSize: "0.7rem",
+                                      color: "#16a34a",
+                                      fontWeight: 600,
+                                      background: "#dcfce7",
+                                      padding: "2px 7px",
+                                      borderRadius: 5,
+                                    }}
+                                  >
+                                    <Check size={11} /> Attached
+                                  </span>
+                                ) : (
+                                  <span
+                                    style={{
+                                      display: "inline-flex",
+                                      alignItems: "center",
+                                      gap: 3,
+                                      fontSize: "0.7rem",
+                                      color: "#2563eb",
+                                      fontWeight: 600,
+                                      background: "#eff6ff",
+                                      padding: "2px 7px",
+                                      borderRadius: 5,
+                                    }}
+                                  >
+                                    <Plus size={11} /> Attach
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Selected MCP Servers List on the Page */}
+            <div style={{ display: "flex", flexDirection: "column", gap: 8, width: "100%" }}>
+              {selectedMcpServers.length === 0 ? (
+                <div
+                  style={{
+                    padding: "32px 16px",
+                    borderRadius: 8,
+                    border: "1px dashed #cbd5e1",
+                    background: "#fafafa",
+                    textAlign: "center",
+                    display: "flex",
+                    flexDirection: "column",
+                    alignItems: "center",
+                    gap: 10,
+                    width: "100%",
+                    boxSizing: "border-box",
+                  }}
+                >
+                  <Server size={22} style={{ color: "#94a3b8" }} />
+                  <div style={{ fontSize: "0.8rem", fontWeight: 500, color: "#475569" }}>
+                    No external MCP servers attached yet
+                  </div>
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    onClick={() => {
+                      setIsMcpDropdownOpen(true);
+                      mcpInputRef.current?.focus();
+                    }}
+                    style={{ fontSize: "0.78rem", height: 30, padding: "0 12px", marginTop: 2 }}
+                  >
+                    <Plus size={13} /> Add MCP Server
+                  </button>
+                </div>
+              ) : (
+                selectedMcpServers.map((mcpKey) => {
+                  const server = findServerByKey(mcpKey);
+                  const { location, name: serverName } = getMcpDisplayParts(mcpKey, server);
+
+                  return (
+                    <div
+                      key={mcpKey}
+                      style={{
+                        borderRadius: 8,
+                        border: "1px solid #e2e8f0",
+                        background: "#ffffff",
+                        boxShadow: "0 1px 2px rgba(0,0,0,0.02)",
+                        padding: "10px 14px",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "space-between",
+                        gap: 12,
+                        width: "100%",
+                        boxSizing: "border-box",
+                      }}
+                    >
+                      <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0, flex: 1 }}>
+                        <Database size={14} style={{ color: "#2563eb", flexShrink: 0 }} />
+                        <div style={{ fontSize: "0.82rem", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                          {location ? (
+                            <>
+                              <span style={{ fontWeight: 600, color: "#0f172a" }}>{location}.</span>
+                              <span style={{ fontWeight: 400, color: "#64748b" }}>{serverName}</span>
+                            </>
+                          ) : (
+                            <span style={{ fontWeight: 400, color: "#64748b" }}>{serverName}</span>
+                          )}
+                        </div>
+                      </div>
+
+                      <button
+                        type="button"
+                        className="btn-icon"
+                        style={{ color: "#94a3b8", padding: 3, flexShrink: 0 }}
+                        title="Remove MCP server"
+                        onClick={() => {
+                          handleRemoveMcpServer(mcpKey);
+                          if (server) {
+                            handleRemoveMcpServer(server.name);
+                            handleRemoveMcpServer(String(server.id));
+                          }
+                        }}
+                        onMouseEnter={(e) => (e.currentTarget.style.color = "#ef4444")}
+                        onMouseLeave={(e) => (e.currentTarget.style.color = "#94a3b8")}
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* 5. Skills */}
         {activeTab === "skills" && (
           <div style={{ display: "flex", flexDirection: "column", gap: 16, width: "100%" }}>
             <p style={{ fontSize: "0.8rem", color: "#64748b", margin: 0 }}>

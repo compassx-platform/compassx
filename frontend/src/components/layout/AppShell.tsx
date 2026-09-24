@@ -15,10 +15,15 @@ import {
   Palette,
   Image,
   ArrowDownToLine,
+  BarChart2,
+  Globe,
+  LayoutGrid,
 } from 'lucide-react';
 import { CompassXLogo } from '@/components/common/CompassXLogo';
-import AppNovaSidebar from '@/modules/nova/components/AppNovaSidebar';
-import { useNovaStore } from '@/modules/nova/stores/novaStore';
+import AgentSidePanel from '@/modules/agents/components/side_panel/AgentSidePanel';
+import { useAgentSidePanelStore } from '@/modules/agents/stores/agentSidePanelStore';
+import { usePortalConfig } from '@/modules/portal/hooks/usePortalConfig';
+import { CustomizeSidebarDrawer } from '@/modules/portal/components/CustomizeSidebarDrawer';
 import {
   APP_IDS,
   APP_DEFINITIONS,
@@ -67,29 +72,43 @@ export default function AppShell() {
   const workspaceSlug = useCurrentWorkspaceSlug();
   const workspaceCtx = useWorkspaceContext();
   const isAccountAdmin = Boolean(me?.account_role === "account_admin" || me?.is_account_admin || workspaceCtx?.is_account_admin);
-  const isWorkspaceAdmin = Boolean(isAccountAdmin || workspaceCtx?.current_user_role === "workspace_admin");
+  const isWorkspaceAdmin = Boolean(isAccountAdmin || workspaceCtx?.current_user_role === "workspace_admin" || workspaceCtx?.current_user_role === "admin");
+  const isWorkspaceDeveloper = Boolean(isWorkspaceAdmin || workspaceCtx?.current_user_role === "workspace_developer");
   const [searchParams] = useSearchParams();
   const hideSidebar = searchParams.get('sidebar') === 'false' || searchParams.get('embed') === '1';
-  const isNovaOpen = useNovaStore((s) => s.isOpen);
-  const toggleNova = useNovaStore((s) => s.toggleOpen);
+  const isAgentSidePanelOpen = useAgentSidePanelStore((s) => s.isOpen);
+  const toggleAgentSidePanel = useAgentSidePanelStore((s) => s.toggleOpen);
   const profileMenuRef = useRef<HTMLDivElement | null>(null);
   const appMenuRef = useRef<HTMLDivElement | null>(null);
   const workspaceMenuRef = useRef<HTMLDivElement | null>(null);
   const [workspaceMenuOpen, setWorkspaceMenuOpen] = useState(false);
+  const [isCustomizeDrawerOpen, setIsCustomizeDrawerOpen] = useState(false);
   const { data: workspaces = [] } = useMyWorkspaces();
+  const { data: portalConfig, refetch: refetchPortalConfig } = usePortalConfig();
 
   const activeAppId: AppId = isAppId(appId) ? appId : DEFAULT_APP_ID;
+
+  // Role-based visible modules in top switcher:
+  // Standard members/viewers only see 'portal'. Admins & Developers see Platform, Apps, Portal.
+  const candidateAppIds = useMemo(() => {
+    if (!isAccountAdmin && !isWorkspaceDeveloper) {
+      return ['portal'] as AppId[];
+    }
+    return APP_IDS;
+  }, [isAccountAdmin, isWorkspaceDeveloper]);
 
   const navGroups = useMemo(() => getNavGroupsForApp(activeAppId), [activeAppId]);
   const navItems = useMemo(() => getNavItemsForApp(activeAppId), [activeAppId]);
 
   const pageTitle = useMemo(() => {
-    if (scopedPathname.startsWith('/home')) return activeAppId === 'apps' ? 'Apps' : 'Home';
+    if (scopedPathname.startsWith('/home')) return activeAppId === 'apps' ? 'Apps' : activeAppId === 'portal' ? 'Portal' : 'Home';
+    if (scopedPathname.startsWith('/portal')) return 'Workspace Portal';
     if (scopedPathname.startsWith('/apps')) return 'Apps';
     if (scopedPathname.startsWith('/notebooks/open')) return 'Notebook';
     if (scopedPathname.startsWith('/notebooks')) return 'Notebooks';
     if (scopedPathname.startsWith('/dashboards')) return 'Dashboards';
     if (scopedPathname.startsWith('/agents')) return 'Agents';
+    if (scopedPathname.startsWith('/ai-gateway')) return 'AI Gateway';
     if (/^\/jobs\/[^/]+\/runs\//.test(scopedPathname)) return 'Run Detail';
     if (/^\/jobs\/[^/]+/.test(scopedPathname)) return 'Job Detail';
     if (scopedPathname.startsWith('/jobs')) return 'Jobs';
@@ -168,29 +187,114 @@ export default function AppShell() {
             </div>
           </div>
 
-          <div className="app-sidebar-section">
-            {navGroups.map((group, groupIdx) => (
-              <div key={group.title || `group-${groupIdx}`} className="app-sidebar-group">
-                {group.title && (
-                  <div className="app-sidebar-divider-label">
-                    {group.title}
+          {activeAppId === 'portal' ? (
+            <div className="app-sidebar-section" style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+              <div style={{ flex: 1, overflowY: 'auto' }}>
+                {portalConfig?.sections.map((sec) => {
+                  const visibleItems = sec.items.filter((it) => it.is_visible);
+                  if (visibleItems.length === 0) return null;
+                  return (
+                    <div key={sec.id} className="app-sidebar-group">
+                      {sec.title && (
+                        <div className="app-sidebar-divider-label">
+                          {sec.title}
+                        </div>
+                      )}
+                      {visibleItems.map((it) => {
+                        const itemTo =
+                          it.type === 'app'
+                            ? `/portal/app/${it.target_id}`
+                            : it.type === 'dashboard'
+                            ? `/portal/dashboard/${it.target_id}`
+                            : it.url || '/portal';
+
+                        const ItemIcon =
+                          it.type === 'app'
+                            ? (it.app_type === 'streamlit' ? Sparkles : LayoutGrid)
+                            : it.type === 'dashboard'
+                            ? BarChart2
+                            : Globe;
+
+                        if (it.type === 'external_link' && it.url) {
+                          return (
+                            <a
+                              key={it.id}
+                              href={it.url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="app-sidebar-link"
+                              title={it.title}
+                            >
+                              <ItemIcon size={16} className="app-sidebar-link-icon" />
+                              <span className="app-sidebar-link-label">{it.title}</span>
+                            </a>
+                          );
+                        }
+
+                        return (
+                          <NavLink
+                            key={it.id}
+                            to={appPath(itemTo)}
+                            className={({ isActive }) => `app-sidebar-link ${isActive ? 'is-active' : ''}`}
+                            title={it.title}
+                          >
+                            <ItemIcon size={16} className="app-sidebar-link-icon" />
+                            <span className="app-sidebar-link-label">{it.title}</span>
+                          </NavLink>
+                        );
+                      })}
+                    </div>
+                  );
+                })}
+
+                {(!portalConfig?.sections || portalConfig.sections.every((s) => s.items.filter((i) => i.is_visible).length === 0)) && (
+                  <div style={{ padding: '16px 12px', fontSize: '0.8rem', color: 'var(--color-text-muted)', textAlign: 'center' }}>
+                    No items pinned to sidebar.
                   </div>
                 )}
-                {group.items.map((item) => (
-                  <NavLink
-                    key={item.to}
-                    to={appPath(item.to)}
-                    end={item.end}
-                    className={({ isActive }) => `app-sidebar-link ${isActive ? 'is-active' : ''}`}
-                    title={item.label}
-                  >
-                    <item.icon size={16} className="app-sidebar-link-icon" />
-                    <span className="app-sidebar-link-label">{item.label}</span>
-                  </NavLink>
-                ))}
               </div>
-            ))}
-          </div>
+
+              {/* Admin Customize Sidebar Button */}
+              {isWorkspaceAdmin && (
+                <div className="app-sidebar-group" style={{ marginTop: 'auto', paddingTop: 12, borderTop: '1px solid var(--color-border)' }}>
+                  <button
+                    type="button"
+                    onClick={() => setIsCustomizeDrawerOpen(true)}
+                    className="app-sidebar-link"
+                    style={{ width: '100%', background: 'transparent', border: 'none', cursor: 'pointer', textAlign: 'left', color: 'var(--color-primary)' }}
+                    title="Customize Sidebar"
+                  >
+                    <Sliders size={16} className="app-sidebar-link-icon" />
+                    <span className="app-sidebar-link-label" style={{ fontWeight: 600 }}>Customize Sidebar</span>
+                  </button>
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="app-sidebar-section">
+              {navGroups.map((group, groupIdx) => (
+                <div key={group.title || `group-${groupIdx}`} className="app-sidebar-group">
+                  {group.title && (
+                    <div className="app-sidebar-divider-label">
+                      {group.title}
+                    </div>
+                  )}
+                  {group.items.map((item) => (
+                    <NavLink
+                      key={item.to}
+                      to={appPath(item.to)}
+                      end={item.end}
+                      className={({ isActive }) => `app-sidebar-link ${isActive ? 'is-active' : ''}`}
+                      title={item.label}
+                    >
+                      <item.icon size={16} className="app-sidebar-link-icon" />
+                      <span className="app-sidebar-link-label">{item.label}</span>
+                    </NavLink>
+                  ))}
+                </div>
+              ))}
+            </div>
+          )}
         </nav>
       )}
 
@@ -335,7 +439,7 @@ export default function AppShell() {
                   <div className="app-switcher-menu-header">
                     <div className="app-switcher-menu-title">Switch app</div>
                   </div>
-                  {APP_IDS.map((candidate) => (
+                  {candidateAppIds.map((candidate) => (
                     <button
                     key={candidate}
                     type="button"
@@ -353,10 +457,10 @@ export default function AppShell() {
               )}
             </div>
             <button
-              className={`app-topbar-icon-btn app-nova-btn ${isNovaOpen ? 'is-active' : ''}`}
+              className={`app-topbar-icon-btn app-nova-btn ${isAgentSidePanelOpen ? 'is-active' : ''}`}
               type="button"
-              onClick={toggleNova}
-              title={isNovaOpen ? 'Close Nova' : 'Open Nova'}
+              onClick={toggleAgentSidePanel}
+              title={isAgentSidePanelOpen ? 'Close Agent Copilot' : 'Open Agent Copilot'}
             >
               <Sparkles size={16} strokeWidth={2.1} />
             </button>
@@ -722,20 +826,29 @@ export default function AppShell() {
         </header>
         <AssumedContextBanner />
 
-        <div className={`app-workspace ${isNovaOpen ? 'has-nova-sidebar' : ''}`}>
+        <div className={`app-workspace ${isAgentSidePanelOpen ? 'has-nova-sidebar' : ''}`}>
           <div className="app-content">
             <div className="page-content">
               <Outlet />
             </div>
           </div>
 
-          {isNovaOpen && (
-            <aside className="app-nova-sidebar">
-              <AppNovaSidebar />
+          {isAgentSidePanelOpen && (
+            <aside className="app-nova-sidebar" style={{ width: 'auto', flexShrink: 0 }}>
+              <AgentSidePanel />
             </aside>
           )}
         </div>
       </main>
+
+      <CustomizeSidebarDrawer
+        isOpen={isCustomizeDrawerOpen}
+        onClose={() => {
+          setIsCustomizeDrawerOpen(false);
+          refetchPortalConfig();
+        }}
+        currentConfig={portalConfig}
+      />
     </div>
   );
 }

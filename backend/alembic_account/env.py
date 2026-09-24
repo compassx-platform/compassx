@@ -33,6 +33,7 @@ from app.dashboards.models import dashboard as dashboard_models  # noqa: F401, E
 from app.storage import db_models as storage_models  # noqa: F401, E402
 from app.data.models import data_catalog as legacy_catalog_models  # noqa: F401, E402
 import app.agents.models.agents  # noqa: F401, E402  (LLMConnection, DBConnection, GitConnection)
+import app.ai_gateway.models  # noqa: F401, E402 (AIProvider, AIModelEndpoint, MCPServer)
 
 from app.database import AccountBase  # noqa: E402
 

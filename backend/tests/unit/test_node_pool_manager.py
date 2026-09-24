@@ -26,9 +26,9 @@ def test_vm_sizes_catalog(manager):
 
 
 def test_get_app_node_selector_default_disabled(manager):
-    with patch.object(manager, "get_account_pool_settings", return_value={"dedicated_pool_enabled": False, "default_pool_name": "userpoolv2"}):
+    with patch.object(manager, "get_account_pool_settings", return_value={"dedicated_pool_enabled": False, "default_pool_name": "systempoolv2"}):
         selector = manager.get_app_node_selector()
-        assert selector == {"kubernetes.azure.com/agentpool": "userpoolv2"}
+        assert selector == {"kubernetes.azure.com/agentpool": "systempoolv2"}
 
 
 def test_get_app_node_selector_dedicated_enabled(manager):
@@ -106,10 +106,10 @@ def test_switchover_compute_workloads(manager):
     mock_apps.list_namespaced_deployment.return_value.items = [dep1, dep2, dep3]
 
     with patch.object(manager, "_get_k8s_clients", return_value=(mock_core, mock_apps)):
-        res = manager.switchover_compute_workloads(target_pool="userpoolv2")
+        res = manager.switchover_compute_workloads(target_pool="systempoolv2")
 
         assert res["status"] == "success"
-        assert res["target_pool"] == "userpoolv2"
+        assert res["target_pool"] == "systempoolv2"
         assert res["migrated_count"] == 2
         assert mock_apps.patch_namespaced_deployment.call_count == 2
 
@@ -122,7 +122,7 @@ def test_switchover_app_workloads(manager):
     dep1 = MagicMock()
     dep1.metadata.name = "compassx-app-test1"
     dep1.metadata.labels = {"compassx/app-id": "test1", "compassx/role": "prod"}
-    dep1.spec.template.spec.node_selector = {"kubernetes.azure.com/agentpool": "userpoolv2"}
+    dep1.spec.template.spec.node_selector = {"kubernetes.azure.com/agentpool": "systempoolv2"}
 
     dep2 = MagicMock()
     dep2.metadata.name = "compassx-app-dev-test1"
@@ -159,7 +159,7 @@ def test_list_cluster_node_pools(manager):
     node1 = MagicMock()
     node1.metadata.name = "node-user-1"
     node1.metadata.labels = {
-        "kubernetes.azure.com/agentpool": "userpoolv2",
+        "kubernetes.azure.com/agentpool": "systempoolv2",
         "node.kubernetes.io/instance-type": "Standard_B2als_v2",
         "kubernetes.io/arch": "amd64",
         "kubernetes.io/os": "linux",
@@ -187,7 +187,7 @@ def test_list_cluster_node_pools(manager):
     with patch.object(manager, "_get_k8s_clients", return_value=(mock_core, mock_apps)):
         pools = manager.list_cluster_node_pools()
         pool_names = [p["name"] for p in pools]
-        assert "userpoolv2" in pool_names
+        assert "systempoolv2" in pool_names
         assert "apppool" in pool_names
         app_pool = next(p for p in pools if p["name"] == "apppool")
         assert app_pool["ready_nodes"] == 1

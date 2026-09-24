@@ -5,6 +5,31 @@ All notable changes to the CompassX Platform will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.3] - 2026-09-24
+
+### 🚀 Highlights
+
+CompassX `0.11.3` delivers **AI Gateway with Multi-Provider LLM Orchestration & MCP Integration**, **Universal Context-Aware Agent Copilot & Side Panel**, **Enterprise Portal Customization Engine**, and **Decommissioning of Legacy Nova Sidebars**.
+
+### ✨ Features & Enhancements
+
+#### AI Gateway & Model Context Protocol (MCP) Integration
+- **Centralized AI Gateway (`backend/app/ai_gateway/`)**: Unified LLM provider routing (OpenAI, Anthropic Claude, Google Gemini, Ollama) with automated retry, token accounting, inference logging, and fallback pipelines.
+- **Model Context Protocol (MCP) Server & Client Tools**: Integrated MCP manager and built-in connectors (`catalog_search_mcp.py`, `sql_warehouse_mcp.py`) allowing autonomous agents to execute catalog inspections and live database analytics safely.
+
+#### Universal Agent Copilot & Side Panel
+- **Universal Copilot Side Panel (`AppShell.tsx`)**: Global, responsive AI Copilot drawer accessible from anywhere in the platform with persistent chat sessions, prompt suggestions, and customization settings.
+- **Context-Aware Screen Intelligence (`useCurrentPageContext.ts`)**: Automatic extraction and injection of active page routes, query context, dataset details, and notebook metadata into agent prompts.
+- **Agent Customizations & Skills Management (`AgentCustomizationsView.tsx`)**: Granular control over system instructions, custom prompt skills, model parameter tuning, and MCP tool permissions.
+
+#### Enterprise Portal Customization & Landing Configuration
+- **Portal Management API (`portal_routes.py`, `portal_config.py`)**: Centralized workspace portal branding, announcements, quick link curation, and customizable layout widgets.
+
+#### Architectural Cleanup
+- **Legacy Module Retirement**: Safely removed outdated Nova sidebar components (`AppNovaSidebar`, `NovaSidePanel`, `nova.css`, `useNovaAttachments`, `novaStore`) in favor of the unified Agent Copilot architecture.
+
+---
+
 ## [0.11.2] - 2026-09-22
 
 ### 🚀 Highlights

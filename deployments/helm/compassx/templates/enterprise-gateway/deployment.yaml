@@ -86,3 +86,5 @@ spec:
         - name: kernelspecs
           configMap:
             name: {{ include "compassx.fullname" . }}-kernelspecs
+      nodeSelector:
+        {{- toYaml (.Values.enterpriseGateway.nodeSelector | default (dict "kubernetes.azure.com/agentpool" "systempoolv2")) | nindent 8 }}

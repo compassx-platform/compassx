@@ -57,20 +57,29 @@ def compose_embedding_text(
 
 
 def _get_embedding_connection():
-    """Return the LLMConnection marked use_for_embedding, or None."""
+    """Return the AIModelEndpoint or legacy LLMConnection marked use_for_embedding, or None."""
     try:
         from app.database import AccountSessionLocal
-        from app.models.agents import LLMConnection
+        from app.ai_gateway.models.provider import AIModelEndpoint
 
         db = AccountSessionLocal()
         try:
+            ep = db.query(AIModelEndpoint).filter(
+                AIModelEndpoint.use_for_embedding == True,  # noqa: E712
+                AIModelEndpoint.is_active == True,  # noqa: E712
+            ).first()
+            if ep:
+                return ep
+
+            # Fallback to legacy LLMConnection
+            from app.models.agents import LLMConnection
             return db.query(LLMConnection).filter(
                 LLMConnection.use_for_embedding == True  # noqa: E712
             ).first()
         finally:
             db.close()
     except Exception as exc:
-        logger.warning("Could not query embedding LLM connection: %s", exc)
+        logger.warning("Could not query embedding connection: %s", exc)
         return None
 
 

@@ -51,6 +51,7 @@ class AgentManifest(BaseModel):
     display_name: str = "AI Data Engineer"
     base_profile: BaseProfile = BaseProfile.REACTIVE_AGENT
     capabilities: AgentCapabilities = Field(default_factory=AgentCapabilities)
+    mcp_servers: List[str] = Field(default_factory=list)
 
     @classmethod
     def default_for_profile(cls, profile: BaseProfile, agent_id: str = "agent", display_name: str = "Agent") -> AgentManifest:

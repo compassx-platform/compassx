@@ -75,7 +75,7 @@ export default function AppDetailPage() {
   const params = useParams<{ applicationId?: string; appId?: string }>();
   const resolvedAppId =
     params.applicationId ||
-    (params.appId && params.appId !== 'apps' && params.appId !== 'platform' ? params.appId : undefined);
+    (params.appId && params.appId !== 'apps' && params.appId !== 'platform' && params.appId !== 'portal' ? params.appId : undefined);
 
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useScopedNavigate();

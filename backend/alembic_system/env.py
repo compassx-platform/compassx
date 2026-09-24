@@ -48,6 +48,7 @@ import app.compute.models.compute_resources  # noqa: F401, E402
 import app.data.models.dataset  # noqa: F401, E402
 import app.user_manager.models.system_models  # noqa: F401, E402
 import app.governance.models  # noqa: F401, E402  (ObjectGrant, SecurableOwner, ...)
+import app.ai_gateway.models  # noqa: F401, E402 (AIGatewayInferenceLog, AIGatewayToolLog)
 
 from app.database import SystemBase  # noqa: E402
 

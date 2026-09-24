@@ -5,7 +5,7 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { useParams } from 'react-router-dom';
 import { useScopedNavigate } from '@/lib/appNavigation';
-import { Bot, Plus, Terminal, PanelLeftOpen, ChevronDown } from 'lucide-react';
+import { Bot, Plus, Terminal, PanelLeftOpen, ChevronDown, SlidersHorizontal, Minimize2 } from 'lucide-react';
 import {
   useChatSessions,
   useChatMessages,
@@ -17,6 +17,7 @@ import {
 import { useAgent } from '@/modules/agents/hooks/useAgents';
 import { useLLMConnections } from '@/modules/agents/hooks/useLLMConnections';
 import { useChatStore } from '@/modules/agents/stores/chatStore';
+import { useAgentSidePanelStore } from '@/modules/agents/stores/agentSidePanelStore';
 import { useToast } from '@/lib/toast';
 import { useQueryClient } from '@tanstack/react-query';
 import { getToken } from '@/lib/auth';
@@ -266,11 +267,7 @@ export default function AgentChatPage({ initialView }: AgentChatPageProps = {}) 
 
   // Scroll to bottom logic
   const scrollToBottom = useCallback((behavior: ScrollBehavior = 'smooth') => {
-    if (latestUserMsgRef.current && behavior === 'auto') {
-      latestUserMsgRef.current.scrollIntoView({ behavior: 'auto', block: 'start' });
-      return;
-    }
-    messagesEndRef.current?.scrollIntoView({ behavior });
+    messagesEndRef.current?.scrollIntoView({ behavior, block: 'end' });
   }, []);
 
   const handleMessagesScroll = useCallback(() => {
@@ -757,6 +754,23 @@ export default function AgentChatPage({ initialView }: AgentChatPageProps = {}) 
     );
   }, [storedPlans, messages]);
 
+  const { setOpen: setSidePanelOpen, setSelectedAgentId, setActiveSession } = useAgentSidePanelStore();
+
+  const handleOpenInSidePanel = useCallback(() => {
+    if (agentId) {
+      setSelectedAgentId(agentId);
+      if (effectiveSessionId) {
+        setActiveSession(agentId, effectiveSessionId);
+      }
+    }
+    setSidePanelOpen(true);
+    if (window.history.length > 1) {
+      navigate(-1);
+    } else {
+      navigate('/notebooks');
+    }
+  }, [agentId, effectiveSessionId, setSelectedAgentId, setActiveSession, setSidePanelOpen, navigate]);
+
   const handleInsertTable = useCallback((identifier: string) => {
     setInput((prev) => (prev ? `${prev.trim()} \`${identifier}\` ` : `\`${identifier}\` `));
     toast.success(`Inserted ${identifier} into prompt`);
@@ -779,6 +793,7 @@ export default function AgentChatPage({ initialView }: AgentChatPageProps = {}) 
         sidebarWidth={sidebarWidth}
         onSidebarWidthChange={handleSidebarWidthChange}
         onInsertTable={handleInsertTable}
+        onOpenInSidePanel={handleOpenInSidePanel}
       />
 
       {/* 2. Main Center / Right View */}
@@ -789,6 +804,18 @@ export default function AgentChatPage({ initialView }: AgentChatPageProps = {}) 
           sessionId={activeSessionId}
           onClose={() => setMainView('chat')}
         />
+      ) : mainView === 'customizations' && agentId ? (
+        <div style={{ flex: 1, overflow: 'auto', background: '#ffffff', height: '100%' }}>
+          <AgentCustomizationsView
+            agentId={agentId}
+            onClose={() => setMainView('chat')}
+            onSaveSuccess={() => {
+              qc.invalidateQueries({ queryKey: ['agents', agentId] });
+              qc.invalidateQueries({ queryKey: ['agents'] });
+              setMainView('chat');
+            }}
+          />
+        </div>
       ) : (
         <div
           style={{
@@ -824,8 +851,35 @@ export default function AgentChatPage({ initialView }: AgentChatPageProps = {}) 
                 minHeight: 42,
               }}
             >
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                {agentId && (
+                  <button
+                    type="button"
+                    onClick={() => setMainView('customizations')}
+                    title="Customize Agent settings, prompt, tools, MCP, and skills"
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: 6,
+                      padding: '5px 10px',
+                      borderRadius: 6,
+                      border: '1px solid #e2e8f0',
+                      background: mainView === 'customizations' ? '#f1f5f9' : '#ffffff',
+                      color: mainView === 'customizations' ? '#0f172a' : '#475569',
+                      fontSize: '0.76rem',
+                      fontWeight: 500,
+                      cursor: 'pointer',
+                      boxShadow: '0 1px 2px rgba(0,0,0,0.03)',
+                      transition: 'all 0.15s ease',
+                    }}
+                    onMouseEnter={(e) => (e.currentTarget.style.color = '#0f172a')}
+                    onMouseLeave={(e) => (e.currentTarget.style.color = mainView === 'customizations' ? '#0f172a' : '#475569')}
+                  >
+                    <SlidersHorizontal size={13} color="#2563eb" />
+                    <span>Customizations</span>
+                  </button>
+                )}
 
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 {activeSessionId && (
                   <button
                     type="button"
@@ -838,19 +892,53 @@ export default function AgentChatPage({ initialView }: AgentChatPageProps = {}) 
                       padding: '5px 10px',
                       borderRadius: 6,
                       border: '1px solid #e2e8f0',
-                      background: '#ffffff',
-                      color: '#475569',
+                      background: mainView === 'logs' ? '#f1f5f9' : '#ffffff',
+                      color: mainView === 'logs' ? '#0f172a' : '#475569',
                       fontSize: '0.76rem',
                       fontWeight: 500,
                       cursor: 'pointer',
                       boxShadow: '0 1px 2px rgba(0,0,0,0.03)',
                       transition: 'all 0.15s ease',
                     }}
+                    onMouseEnter={(e) => (e.currentTarget.style.color = '#0f172a')}
+                    onMouseLeave={(e) => (e.currentTarget.style.color = mainView === 'logs' ? '#0f172a' : '#475569')}
                   >
                     <Terminal size={13} color="#2563eb" />
                     <span>LLM Logs</span>
                   </button>
                 )}
+
+                <button
+                  type="button"
+                  onClick={handleOpenInSidePanel}
+                  title="Open in Side Panel"
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 6,
+                    padding: '5px 10px',
+                    borderRadius: 6,
+                    border: '1px solid #e2e8f0',
+                    background: '#ffffff',
+                    color: '#475569',
+                    fontSize: '0.76rem',
+                    fontWeight: 500,
+                    cursor: 'pointer',
+                    boxShadow: '0 1px 2px rgba(0,0,0,0.03)',
+                    transition: 'all 0.15s ease',
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.color = '#0f172a';
+                    e.currentTarget.style.background = '#f8fafc';
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.color = '#475569';
+                    e.currentTarget.style.background = '#ffffff';
+                  }}
+                >
+                  <Minimize2 size={13} color="#2563eb" />
+                  <span>Side Panel</span>
+                </button>
               </div>
             </div>
 

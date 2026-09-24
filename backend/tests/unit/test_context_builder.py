@@ -8,7 +8,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.database import SystemBase
-from app.models.agents import Agent, ChatSession, AgentContextEntry, RagDocument, DocumentStatus, Skill, AgentSkillAttachment
+from app.models.agents import Agent, ChatSession, AgentContextEntry, RagDocument, DocumentStatus, Skill, AgentSkillAttachment, NovaAttachment
 from app.agents.services.agent.context_builder import build_agent_system_prompt, build_system_prompt, PromptResult
 from app.agents.services.agent.system_prompts import PLATFORM_AGENT_OS_PROMPT, SKILLS_STANDING_INSTRUCTION
 
@@ -18,10 +18,21 @@ def db_session():
     engine = create_engine(
         "sqlite:///:memory:",
         connect_args={"check_same_thread": False},
-        execution_options={"schema_translate_map": {"jobs": None, "ai": None, "auth": None, "catalog": None}},
+        execution_options={"schema_translate_map": {"jobs": None, "ai": None, "auth": None, "catalog": None, "compute": None}},
         poolclass=StaticPool,
     )
-    SystemBase.metadata.create_all(bind=engine)
+    SystemBase.metadata.create_all(
+        bind=engine,
+        tables=[
+            Agent.__table__,
+            ChatSession.__table__,
+            AgentContextEntry.__table__,
+            RagDocument.__table__,
+            Skill.__table__,
+            AgentSkillAttachment.__table__,
+            NovaAttachment.__table__,
+        ],
+    )
     Session = sessionmaker(bind=engine)
     session = Session()
 
