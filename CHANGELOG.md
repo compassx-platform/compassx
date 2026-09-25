@@ -5,6 +5,21 @@ All notable changes to the CompassX Platform will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.6] - 2026-09-25
+
+### 🚀 Highlights
+
+CompassX `0.11.6` delivers **Workspace-Wide MCP Configuration & Tool Propagation**, **Multi-Root OpenCode & Antigravity Native Config Injection**, and **Automated IDE Settings Synchronization**.
+
+### ✨ Features & Enhancements
+
+#### Model Context Protocol (MCP) Recursive Workspace Propagation & Settings
+- **Recursive Workspace Syncing (`omnigent_sync.py`)**: Enhanced script generation to recursively scan and propagate `.mcp.json` and `mcp.json` across all workspace trees (`/workspaces/*`, `/workspaces/*/*`, and local workdirs).
+- **IDE Settings Injection**: Automated creation and synchronization of `.gemini/settings.json` within every workspace directory alongside global configs (`/root/.config/opencode`, `/root/.opencode`).
+- **Omnigent Native Path Discovery**: Automatic dynamic injection into `/root/.omnigent/antigravity-native/*/agy-home/.gemini/config/mcp_config.json` for seamless containerized agent workflows.
+
+---
+
 ## [0.11.5] - 2026-09-25
 
 ### 🚀 Highlights
