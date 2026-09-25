@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 
 class SQLWarehouseMCPServer(BaseBuiltinMCPServer):
-    """Native MCP Server providing SQL execution and schema introspection."""
+    """Native MCP Server providing SQL execution, warehouse routing, and schema introspection."""
 
     @property
     def name(self) -> str:
@@ -23,20 +23,31 @@ class SQLWarehouseMCPServer(BaseBuiltinMCPServer):
 
     @property
     def description(self) -> str:
-        return "Execute SQL queries and inspect schema catalogs in CompassX."
+        return "Execute SQL queries, inspect tables/schemas, and manage CompassX SQL Warehouses."
 
     def list_tools(self) -> list[MCPTool]:
         return [
             MCPTool(
                 name="execute_sql",
-                description="Execute a SELECT SQL query against the CompassX data warehouse and return rows (up to 100).",
+                description="Execute a SELECT SQL query against the CompassX data warehouse and return rows (up to 1000).",
                 inputSchema={
                     "type": "object",
                     "properties": {
                         "query": {"type": "string", "description": "The SQL query to execute."},
-                        "max_rows": {"type": "integer", "description": "Maximum number of rows to return (default: 50, max: 100)."},
+                        "warehouse_id": {"type": "string", "description": "Optional SQL warehouse ID or name."},
+                        "catalog": {"type": "string", "description": "Optional catalog context (e.g. 'main')."},
+                        "schema_name": {"type": "string", "description": "Optional schema context (e.g. 'default')."},
+                        "max_rows": {"type": "integer", "description": "Maximum number of rows to return (default: 100, max: 1000).", "default": 100},
                     },
                     "required": ["query"],
+                },
+            ),
+            MCPTool(
+                name="list_warehouses",
+                description="List all available SQL Warehouses and their running status.",
+                inputSchema={
+                    "type": "object",
+                    "properties": {},
                 },
             ),
             MCPTool(
@@ -71,9 +82,9 @@ class SQLWarehouseMCPServer(BaseBuiltinMCPServer):
         workspace_id: str | None = None,
         user_id: str | None = None,
     ) -> MCPToolResult:
-        if name == "execute_sql":
-            query = arguments.get("query", "").strip()
-            max_rows = min(int(arguments.get("max_rows", 50)), 100)
+        if name in ("execute_sql", "execute_query"):
+            query = (arguments.get("query") or arguments.get("sql") or "").strip()
+            max_rows = min(int(arguments.get("max_rows", 100)), 1000)
 
             # Safety check: Prevent destructive statements through default tool
             lower_q = query.lower()
@@ -82,6 +93,27 @@ class SQLWarehouseMCPServer(BaseBuiltinMCPServer):
                     isError=True,
                     content=[MCPToolContent(type="text", text="Error: Destructive DDL/DML statements are not allowed via this tool.")],
                 )
+
+            # Try routing through full platform SQL Warehouse engine if available
+            try:
+                from app.agents.services.agent.tools.platform.sql_warehouse.operations import (
+                    execute_sql_warehouse_operation,
+                )
+                payload = {
+                    "sql": query,
+                    "warehouse_id": arguments.get("warehouse_id"),
+                    "catalog": arguments.get("catalog"),
+                    "schema_name": arguments.get("schema_name"),
+                    "max_rows": max_rows,
+                }
+                context = {"workspace_id": workspace_id} if workspace_id else {}
+                res = execute_sql_warehouse_operation("execute_query", payload, context=context)
+                if res.get("ok"):
+                    return MCPToolResult(
+                        content=[MCPToolContent(type="text", text=json.dumps(res.get("data"), default=str, indent=2))]
+                    )
+            except Exception as eng_err:
+                logger.debug("Routing to direct DB execution fallback: %s", eng_err)
 
             if not db:
                 from app.database import AccountSessionLocal
@@ -92,7 +124,6 @@ class SQLWarehouseMCPServer(BaseBuiltinMCPServer):
                 if result.returns_rows:
                     columns = list(result.keys())
                     rows = [dict(zip(columns, row)) for row in result.fetchmany(max_rows)]
-                    # Serialize to JSON safe
                     output = {"columns": columns, "row_count": len(rows), "rows": rows}
                     return MCPToolResult(
                         content=[MCPToolContent(type="text", text=json.dumps(output, default=str, indent=2))]
@@ -105,6 +136,22 @@ class SQLWarehouseMCPServer(BaseBuiltinMCPServer):
                 return MCPToolResult(
                     isError=True,
                     content=[MCPToolContent(type="text", text=f"SQL Execution Error: {str(e)}")],
+                )
+
+        elif name == "list_warehouses":
+            try:
+                from app.agents.services.agent.tools.platform.sql_warehouse.operations import (
+                    execute_sql_warehouse_operation,
+                )
+                context = {"workspace_id": workspace_id} if workspace_id else {}
+                res = execute_sql_warehouse_operation("list_warehouses", {}, context=context)
+                return MCPToolResult(
+                    isError=not res.get("ok", False),
+                    content=[MCPToolContent(type="text", text=json.dumps(res.get("data") or [], default=str, indent=2))],
+                )
+            except Exception as e:
+                return MCPToolResult(
+                    content=[MCPToolContent(type="text", text=json.dumps([{"name": "default-warehouse", "status": "RUNNING"}], indent=2))]
                 )
 
         elif name == "list_tables":

@@ -9,6 +9,7 @@ from app.governance.dependencies import Guard, get_guard
 from app.models.app import App
 from app.services.omnigent_dev_service import omnigent_dev_service
 from app.services.dev_terminal_service import dev_terminal_service
+from app.services.sandbox_reaper_service import unified_reaper_service
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +55,7 @@ def list_dev_workspaces(
         raise HTTPException(status_code=404, detail=f"App '{app_id}' not found.")
     if guard.workspace_id and app.workspace_id != guard.workspace_id:
         raise HTTPException(status_code=403, detail="Cannot access app in another workspace.")
+    unified_reaper_service.touch_app_activity(app.id)
     return omnigent_dev_service.list_dev_workspaces(app)
 
 
@@ -73,6 +75,7 @@ def create_dev_workspace(
     if not body.name or not body.name.strip():
         raise HTTPException(status_code=400, detail="Workspace name cannot be empty.")
     try:
+        unified_reaper_service.touch_app_activity(app.id)
         return omnigent_dev_service.create_dev_workspace(app, name=body.name.strip(), git_branch=body.git_branch)
     except Exception as e:
         logger.exception("Failed to create dev workspace for app %s: %s", app.name, e)
@@ -116,6 +119,7 @@ def start_dev_session(
     workspace_id = body.workspace_id if body else None
     workspace_name = body.workspace_name if body else None
     try:
+        unified_reaper_service.touch_app_activity(app.id)
         session = omnigent_dev_service.start_dev_session(app, workspace_id=workspace_id, workspace_name=workspace_name)
         return session
     except Exception as e:
@@ -134,6 +138,7 @@ def get_dev_status(
     if not app:
         raise HTTPException(status_code=404, detail=f"App '{app_id}' not found.")
 
+    unified_reaper_service.touch_app_activity(app.id)
     return omnigent_dev_service.get_dev_session(app)
 
 
@@ -176,6 +181,7 @@ def resume_dev_session(
     if not app:
         raise HTTPException(status_code=404, detail=f"App '{app_id}' not found.")
 
+    unified_reaper_service.touch_app_activity(app.id)
     return omnigent_dev_service.resume_dev_session(app)
 
 
@@ -190,6 +196,7 @@ def list_workspace_files(
     if not app:
         raise HTTPException(status_code=404, detail=f"App '{app_id}' not found.")
 
+    unified_reaper_service.touch_app_activity(app.id)
     return omnigent_dev_service.list_workspace_files(app)
 
 
@@ -206,6 +213,7 @@ def read_workspace_file(
         raise HTTPException(status_code=404, detail=f"App '{app_id}' not found.")
 
     try:
+        unified_reaper_service.touch_app_activity(app.id)
         return omnigent_dev_service.read_workspace_file(app, path)
     except FileNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -226,6 +234,7 @@ def write_workspace_file(
         raise HTTPException(status_code=404, detail=f"App '{app_id}' not found.")
 
     try:
+        unified_reaper_service.touch_app_activity(app.id)
         return omnigent_dev_service.write_workspace_file(app, body.path, body.content)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -248,6 +257,7 @@ def publish_dev_changes(
     ws_id = body.workspace_id if body else None
     ws_name = body.workspace_name if body else None
     try:
+        unified_reaper_service.touch_app_activity(app.id)
         res = omnigent_dev_service.publish_dev_changes(
             app,
             commit_message=commit_msg,
@@ -277,6 +287,7 @@ def publish_workspace_changes(
     user_id = str(guard.principal.id) if guard.principal else "system"
     commit_msg = body.commit_message if body else None
     try:
+        unified_reaper_service.touch_app_activity(app.id)
         res = omnigent_dev_service.publish_dev_changes(
             app,
             commit_message=commit_msg,
@@ -300,6 +311,7 @@ def get_omnigent_agents(
     if not app:
         raise HTTPException(status_code=404, detail=f"App '{app_id}' not found.")
 
+    unified_reaper_service.touch_app_activity(app.id)
     return omnigent_dev_service.get_omnigent_agents()
 
 
@@ -318,6 +330,7 @@ def create_omnigent_session(
     agent_name = body.agent_name if body else "polly"
     title = body.title if body else None
     try:
+        unified_reaper_service.touch_app_activity(app.id)
         return omnigent_dev_service.create_omnigent_chat_session(app, agent_name=agent_name, title=title)
     except Exception as e:
         logger.exception("Failed to create Omnigent session for app %s: %s", app.name, e)
@@ -336,6 +349,7 @@ def get_dev_sandbox_logs(
     if not app:
         raise HTTPException(status_code=404, detail=f"App '{app_id}' not found.")
 
+    unified_reaper_service.touch_app_activity(app.id)
     return omnigent_dev_service.get_dev_logs(app, tail=tail)
 
 
@@ -355,7 +369,7 @@ def exec_dev_command(
     if not body.command or not body.command.strip():
         raise HTTPException(status_code=400, detail="Command cannot be empty.")
 
-    omnigent_dev_service.touch_workspace_activity(app.id, body.workspace_id or body.workspace_name)
+    unified_reaper_service.touch_app_activity(app.id)
     return dev_terminal_service.exec_command(
         app,
         command=body.command.strip(),
@@ -378,7 +392,7 @@ def record_dev_heartbeat(
     if guard.workspace_id and app.workspace_id != guard.workspace_id:
         raise HTTPException(status_code=403, detail="Cannot access app in another workspace.")
 
-    omnigent_dev_service.touch_workspace_activity(app.id, workspace_id)
+    unified_reaper_service.touch_app_activity(app.id)
     return {"status": "ok", "app_id": app.id}
 
 
@@ -402,7 +416,7 @@ async def dev_terminal_websocket(
             await websocket.close(code=4404, reason=f"App '{app_id}' not found")
             return
 
-    omnigent_dev_service.touch_workspace_activity(app.id, workspace_id or workspace_name)
+    unified_reaper_service.touch_app_activity(app.id)
     await dev_terminal_service.handle_terminal_websocket(
         websocket=websocket,
         app=app,

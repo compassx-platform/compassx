@@ -23,8 +23,10 @@ async def test_sql_warehouse_mcp_list_tools():
 async def test_catalog_search_mcp_list_tools():
     server = CatalogSearchMCPServer()
     tools = server.list_tools()
-    assert len(tools) == 1
-    assert tools[0].name == "search_catalog"
+    tool_names = [t.name for t in tools]
+    assert "search_catalog" in tool_names
+    assert "list_schemas" in tool_names
+    assert "get_table_schema" in tool_names
 
 
 @pytest.mark.asyncio

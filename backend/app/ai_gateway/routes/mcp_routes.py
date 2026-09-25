@@ -8,8 +8,15 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
+from app.ai_gateway.mcp.builtins import BUILTIN_MCP_SERVERS
 from app.ai_gateway.mcp.manager import MCPManager
+from app.ai_gateway.mcp.omnigent_sync import build_mcp_configs_from_gateway
 from app.ai_gateway.mcp.proxy import MCPExecutionProxy
+from app.ai_gateway.mcp.sse_server import (
+    handle_mcp_sse_stream,
+    mcp_session_manager,
+    process_mcp_jsonrpc_message,
+)
 from app.ai_gateway.models.mcp import MCPServer
 from app.ai_gateway.schemas.mcp import (
     MCPServerCreate,
@@ -47,9 +54,18 @@ def _get_workspace_id(request: Request) -> str | None:
     return None
 
 
-def _to_mcp_response(server: MCPServer) -> MCPServerResponse:
+def _resolve_base_url(request: Request) -> str:
+    proto = request.headers.get("x-forwarded-proto") or request.url.scheme or "https"
+    host = request.headers.get("x-forwarded-host") or request.headers.get("host") or "135.13.180.167.nip.io"
+    return f"{proto}://{host}".rstrip("/")
+
+
+def _to_mcp_response(server: MCPServer, base_url: str = "") -> MCPServerResponse:
     cat = server.catalog_name or "default"
     sch = server.schema_name or "default"
+    endpoint = server.endpoint_url
+    if not endpoint and server.server_type == "native" and base_url:
+        endpoint = f"{base_url}/api/v1/ai-gateway/mcp/servers/{server.name}/sse"
     return MCPServerResponse(
         id=server.id,
         workspace_id=str(server.workspace_id) if server.workspace_id else None,
@@ -59,7 +75,7 @@ def _to_mcp_response(server: MCPServer) -> MCPServerResponse:
         name=server.name,
         description=server.description,
         server_type=server.server_type,
-        endpoint_url=server.endpoint_url,
+        endpoint_url=endpoint,
         has_auth=bool(server.auth_config_enc),
         command=server.command,
         is_enabled=server.is_enabled,
@@ -149,18 +165,142 @@ def _resolve_mcp_server(
     return None, None, None
 
 
+@router.get("/config/omnigent")
+def get_omnigent_mcp_config(
+    request: Request,
+    db: Session = Depends(get_account_db),
+):
+    """Return unified MCP server configurations formatted for Claude Code, OpenCode, Antigravity, and Codex harnesses."""
+    ws_id = _get_workspace_id(request)
+    return build_mcp_configs_from_gateway(db=db, workspace_id=ws_id)
+
+
+@router.get("/sse")
+async def mcp_sse_stream(
+    request: Request,
+):
+    """
+    Standard MCP SSE Stream endpoint for the unified CompassX platform.
+    Clients connect via HTTP GET and receive the 'endpoint' event with the messages URI.
+    """
+    ws_id = _get_workspace_id(request)
+    user_email = getattr(request.state, "user_email", None)
+    return await handle_mcp_sse_stream(
+        request=request,
+        server_filter=None,
+        workspace_id=ws_id,
+        user_email=user_email,
+    )
+
+
+@router.get("/servers/{server_name}/sse")
+async def mcp_server_sse_stream(
+    server_name: str,
+    request: Request,
+):
+    """
+    Standard MCP SSE Stream endpoint for a specific MCP server (built-in native or proxied).
+    """
+    ws_id = _get_workspace_id(request)
+    user_email = getattr(request.state, "user_email", None)
+    return await handle_mcp_sse_stream(
+        request=request,
+        server_filter=server_name,
+        workspace_id=ws_id,
+        user_email=user_email,
+    )
+
+
+@router.post("/messages")
+async def mcp_messages(
+    request: Request,
+    db: Session = Depends(get_account_db),
+):
+    """
+    Standard MCP JSON-RPC 2.0 message handler.
+    Dispatches initialize, notifications/initialized, tools/list, tools/call, and ping requests.
+    """
+    session_id = request.query_params.get("session_id")
+    session = mcp_session_manager.get_session(session_id) if session_id else None
+
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
+
+    ws_id = _get_workspace_id(request)
+    user_email = getattr(request.state, "user_email", None)
+
+    response = await process_mcp_jsonrpc_message(
+        body=body,
+        session=session,
+        db=db,
+        workspace_id=ws_id,
+        user_email=user_email,
+    )
+
+    # If session has an active queue, also put message into queue
+    if session and session.is_active and "result" in response:
+        try:
+            await session.queue.put(json.dumps(response))
+        except Exception:
+            pass
+
+    return response
+
+
 @router.get("/servers", response_model=list[MCPServerResponse])
 def list_mcp_servers(
     request: Request,
     db: Session = Depends(get_account_db),
 ):
-    """List registered MCP servers in the current workspace."""
+    """List registered MCP servers (both built-in native and remote/subprocess) in the current workspace."""
     ws_id = _get_workspace_id(request)
+    base_url = _resolve_base_url(request)
+
+    results: list[MCPServerResponse] = []
+    # 1. Native Built-in servers
+    for b_name, b_inst in BUILTIN_MCP_SERVERS.items():
+        tool_list = [
+            {
+                "name": t.name,
+                "description": t.description or "",
+                "inputSchema": t.inputSchema.model_dump() if hasattr(t.inputSchema, "model_dump") else t.inputSchema,
+            }
+            for t in b_inst.list_tools()
+        ]
+        results.append(
+            MCPServerResponse(
+                id=abs(hash(b_name)) % 100000 + 1,
+                workspace_id=ws_id,
+                catalog_name="system",
+                schema_name="ai",
+                full_name=f"system.ai.{b_name}",
+                name=b_name,
+                description=b_inst.description,
+                server_type="native",
+                endpoint_url=f"{base_url}/api/v1/ai-gateway/mcp/servers/{b_name}/sse",
+                has_auth=False,
+                command=None,
+                is_enabled=True,
+                created_by="system",
+                cached_tools=tool_list,
+                last_synced_at=datetime.now(timezone.utc),
+                created_at=datetime.now(timezone.utc),
+                updated_at=datetime.now(timezone.utc),
+            )
+        )
+
+    # 2. Database registered servers
     query = db.query(MCPServer)
     if ws_id:
         query = query.filter((MCPServer.workspace_id == ws_id) | (MCPServer.workspace_id.is_(None)))
     servers = query.order_by(MCPServer.name).all()
-    return [_to_mcp_response(s) for s in servers]
+    for s in servers:
+        if not any(r.name == s.name for r in results):
+            results.append(_to_mcp_response(s, base_url))
+
+    return results
 
 
 @router.post("/servers", response_model=MCPServerResponse, status_code=status.HTTP_201_CREATED)

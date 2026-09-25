@@ -990,6 +990,12 @@ class KubernetesDevDriver(BaseDevDriver):
 
                 app_type = getattr(app, "app_type", "custom_web") or "custom_web"
 
+                try:
+                    from app.ai_gateway.mcp.omnigent_sync import get_mcp_sync_shell_script
+                    mcp_sync_snippet = get_mcp_sync_shell_script(api_base_url="https://135.13.180.167.nip.io")
+                except Exception:
+                    mcp_sync_snippet = "true"
+
                 dev_cmd = (
                     f"mkdir -p /workspaces/.shared_auth/.gemini/antigravity-cli && "
                     f"if [ ! -f /workspaces/.shared_auth/.gemini/antigravity-cli/antigravity-oauth-token ]; then "
@@ -1022,6 +1028,8 @@ class KubernetesDevDriver(BaseDevDriver):
                     f"(which opencode >/dev/null 2>&1 || npm install -g opencode-ai@1.18.0 || true); "
                     f"mkdir -p {workdir} && cd {workdir} && "
                     f"{clone_snippet}"
+                    # Sync AI Gateway MCP servers to all harness configs (Claude, OpenCode, Antigravity, Codex)
+                    f"({mcp_sync_snippet}) && "
                     # 1. Detect and start Python FastAPI Backend in background (live reload on port 8000)
                     f"BACKEND_DIR=\"\"; "
                     f"if [ -d {workdir}/backend ] && ( [ -f {workdir}/backend/app.py ] || [ -f {workdir}/backend/main.py ] || [ -f {workdir}/backend/requirements.txt ] ); then BACKEND_DIR=\"{workdir}/backend\"; "

@@ -5,6 +5,26 @@ All notable changes to the CompassX Platform will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.5] - 2026-09-25
+
+### 🚀 Highlights
+
+CompassX `0.11.5` delivers **Model Context Protocol (MCP) Server-Sent Events (SSE) Streaming Transport**, **Built-in Dashboard & Notebook MCP Connectors**, and **Omnigent IDE Real-Time Tool Synchronization & Driver Injections**.
+
+### ✨ Features & Enhancements
+
+#### Model Context Protocol (MCP) SSE Transport & Streaming
+- **SSE Transport Server (`sse_server.py`)**: Built-in Server-Sent Events endpoint (`/api/v1/ai-gateway/mcp/sse/{server_name}`) allowing standard MCP clients to stream tools, execute prompts, and exchange bidirectional messages over HTTP SSE.
+- **Built-in Dashboard Manager MCP (`dashboard_manager_mcp.py`)**: Native MCP server providing query execution, dashboard visualization, and metric aggregation tools to autonomous agents.
+- **Built-in Notebook Manager MCP (`notebook_manager_mcp.py`)**: Native MCP server allowing agents to inspect notebooks, execute cell runs, propose edits, and analyze outputs.
+- **Multi-Schema Catalog & SQL Expansion**: Added `list_schemas` and `get_table_schema` to `catalog_search_mcp.py` and enhanced query validation in `sql_warehouse_mcp.py`.
+
+#### Omnigent Agent IDE Tool Sync & Container Runtime Injections
+- **Real-Time MCP Tool Synchronization (`omnigent_sync.py`)**: Automated sync bridge between central MCP server registry and Omnigent Agent IDE sandboxes.
+- **Driver Environment Injection**: Injected live MCP endpoints, authentication headers, and database connection pools into Docker and Kubernetes development containers (`docker_driver.py`, `kubernetes_driver.py`, `omnigent_dev_service.py`).
+
+---
+
 ## [0.11.4] - 2026-09-24
 
 ### 🚀 Highlights

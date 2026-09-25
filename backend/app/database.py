@@ -65,14 +65,16 @@ class AccountBase(DeclarativeBase):
 try:
     if not settings.SKIP_DB_INIT:
         _ensure_database_exists(settings.SYSTEM_DB_NAME)
-    pool_pre_ping = not settings.SKIP_DB_INIT
-    account_engine = create_engine(
-        settings.resolved_system_db_url,
-        pool_pre_ping=pool_pre_ping,
-        pool_size=settings.SYSTEM_DB_POOL_MIN,
-        max_overflow=settings.SYSTEM_DB_POOL_MAX - settings.SYSTEM_DB_POOL_MIN,
-        connect_args={"connect_timeout": 5},
-    )
+    if str(settings.resolved_system_db_url).startswith("sqlite"):
+        account_engine = create_engine(settings.resolved_system_db_url)
+    else:
+        account_engine = create_engine(
+            settings.resolved_system_db_url,
+            pool_pre_ping=True,
+            pool_size=settings.SYSTEM_DB_POOL_MIN,
+            max_overflow=settings.SYSTEM_DB_POOL_MAX - settings.SYSTEM_DB_POOL_MIN,
+            connect_args={"connect_timeout": 5},
+        )
     AccountSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=account_engine)
     SessionLocalAccount = AccountSessionLocal
     if not settings.SKIP_DB_INIT:
@@ -133,14 +135,16 @@ class SystemBase(DeclarativeBase):
 try:
     if not settings.SKIP_DB_INIT:
         _ensure_database_exists(settings.DATA_DB_NAME)
-    pool_pre_ping = not settings.SKIP_DB_INIT
-    system_engine = create_engine(
-        settings.resolved_data_db_url,
-        pool_pre_ping=pool_pre_ping,
-        pool_size=settings.DATA_DB_POOL_MIN,
-        max_overflow=settings.DATA_DB_POOL_MAX - settings.DATA_DB_POOL_MIN,
-        connect_args={"connect_timeout": 5},
-    )
+    if str(settings.resolved_data_db_url).startswith("sqlite"):
+        system_engine = create_engine(settings.resolved_data_db_url)
+    else:
+        system_engine = create_engine(
+            settings.resolved_data_db_url,
+            pool_pre_ping=True,
+            pool_size=settings.DATA_DB_POOL_MIN,
+            max_overflow=settings.DATA_DB_POOL_MAX - settings.DATA_DB_POOL_MIN,
+            connect_args={"connect_timeout": 5},
+        )
     SystemSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=system_engine)
     if not settings.SKIP_DB_INIT:
         with system_engine.connect() as conn:

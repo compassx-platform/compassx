@@ -238,7 +238,8 @@ class OmnigentDevService:
         """Multi-layer check to verify if app dev sandbox is actively being developed.
         Checks:
         1. Omnigent Server host status ('online') and active/recent sessions.
-        2. Filesystem modification timestamps (mtime) in workspace folder.
+        2. Direct probe inside running dev pod / container for recent file edits (mtime).
+        3. Local filesystem modification timestamps (mtime) in workspace folder.
         Returns True if active work is detected and refreshes ws.last_active_at in DB.
         """
         import urllib.request
@@ -266,30 +267,61 @@ class OmnigentDevService:
                 cutoff_epoch = int(cutoff_dt.timestamp())
                 for u in urls:
                     try:
-                        req = urllib.request.Request(f"{u}/v1/sessions?limit=20", headers={"User-Agent": "CompassX/1.0"})
+                        req = urllib.request.Request(f"{u}/v1/sessions?limit=50", headers={"User-Agent": "CompassX/1.0"})
                         with urllib.request.urlopen(req, timeout=2.5) as resp:
                             data = json.loads(resp.read().decode())
                             sessions = data.get("sessions") or (data if isinstance(data, list) else [])
                             for s in sessions:
                                 s_host = s.get("host_id")
                                 s_ws = str(s.get("workspace") or "")
-                                if s_host == host_id or (ws and ws.folder_path and ws.folder_path in s_ws) or getattr(app, "id", "") in s_ws:
+                                is_match = (
+                                    (s_host and s_host == host_id)
+                                    or (s_host and s_host == expected_host_id)
+                                    or (ws and ws.folder_path and ws.folder_path in s_ws)
+                                    or (getattr(app, "id", "") and getattr(app, "id", "") in s_ws)
+                                    or (getattr(app, "slug", "") and getattr(app, "slug", "") in s_ws)
+                                )
+                                if is_match:
                                     status = str(s.get("status", "")).lower()
                                     updated_at = s.get("updated_at") or 0
-                                    if status in ["running", "active", "in_progress"] or updated_at >= cutoff_epoch:
+                                    created_at = s.get("created_at") or 0
+                                    if status in ["running", "active", "in_progress"] or updated_at >= cutoff_epoch or created_at >= cutoff_epoch:
                                         self.touch_workspace_activity(app.id, ws.id if ws else None)
                                         return True
                             break
                     except Exception:
                         pass
-
-                # If sessions were found and were active, we already returned True above.
-                # If the host is merely online with no active sessions or recent activity,
-                # we proceed to check filesystem mtime rather than unconditionally keeping it alive.
         except Exception as e:
             logger.debug("Error checking Omnigent live host/sessions: %s", e)
 
-        # ── 2. Check Filesystem mtime in Workspace ─────────────────────────────
+        # ── 2. Probe Inside Active Dev Pod / Container Workspace ──────────────
+        try:
+            dev_driver = driver_factory.get_dev_driver()
+            ws_folder = ws.folder_path if (ws and ws.folder_path) else ""
+            cutoff_mins = max(30, int((now - cutoff_dt).total_seconds() / 60))
+            probe_cmd = (
+                f"find . -maxdepth 4 "
+                f"-not -path '*/.*' "
+                f"-not -path '*/node_modules*' "
+                f"-not -path '*/dist*' "
+                f"-not -path '*/build*' "
+                f"-not -path '*/.cache*' "
+                f"-mmin -{cutoff_mins} -type f -print -quit"
+            )
+            res = dev_driver.exec_command_in_dev(app, command=probe_cmd, workspace_folder=ws_folder)
+            if res.get("success") and res.get("output", "").strip():
+                logger.info(
+                    "Dev sandbox for app '%s' (%s) has recent file activity in pod (%s); keeping alive.",
+                    app.name,
+                    app.id,
+                    res.get("output", "").strip()[:80],
+                )
+                self.touch_workspace_activity(app.id, ws.id if ws else None)
+                return True
+        except Exception as e:
+            logger.debug("Error probing dev pod workspace directly: %s", e)
+
+        # ── 3. Fallback: Check Local Filesystem mtime ─────────────────────────
         try:
             paths_to_check = []
             repo_dir = os.path.join(app_runner_service.get_app_dir(app.id), "repo")
@@ -394,11 +426,25 @@ class OmnigentDevService:
                 payload_dict["host_id"] = host_id
                 payload_dict["workspace"] = ws_path
 
+                # Proactively ensure directory exists on the live host
+                try:
+                    mkdir_payload = json.dumps({"path": ws_path}).encode("utf-8")
+                    mkdir_req = urllib.request.Request(
+                        f"{url}/v1/hosts/{host_id}/directories",
+                        data=mkdir_payload,
+                        headers={"Content-Type": "application/json", "User-Agent": "CompassX/1.0"},
+                        method="POST",
+                    )
+                    with urllib.request.urlopen(mkdir_req, timeout=2.0) as _:
+                        pass
+                except Exception as mkdir_err:
+                    logger.debug("Proactive host workspace directory ensure: %s", mkdir_err)
+
             payload = json.dumps(payload_dict).encode("utf-8")
             session_id = None
             res_data: Dict[str, Any] = {}
 
-            # Retry if host is still completing handshake
+            # Retry if host is still completing handshake or creating path
             for attempt in range(4):
                 try:
                     req = urllib.request.Request(
@@ -412,6 +458,20 @@ class OmnigentDevService:
                         break
                 except urllib.error.HTTPError as he:
                     err_body = he.read().decode()
+                    if "does not exist" in err_body.lower() and host_id and ws_path and attempt < 2:
+                        try:
+                            mkdir_payload = json.dumps({"path": ws_path}).encode("utf-8")
+                            mkdir_req = urllib.request.Request(
+                                f"{url}/v1/hosts/{host_id}/directories",
+                                data=mkdir_payload,
+                                headers={"Content-Type": "application/json", "User-Agent": "CompassX/1.0"},
+                                method="POST",
+                            )
+                            with urllib.request.urlopen(mkdir_req, timeout=2.0) as _:
+                                pass
+                            continue
+                        except Exception:
+                            pass
                     if "offline" in err_body.lower() and attempt < 2:
                         import time
                         time.sleep(1.0)
@@ -581,6 +641,16 @@ class OmnigentDevService:
 
         resolved_host_id = omnigent_link.get("host_id") or expected_host_id
         resolved_host_name = omnigent_link.get("host_name") or expected_host_name
+
+        # 4. Synchronize AI Gateway MCP configs to local workspace / repo folder
+        try:
+            from app.ai_gateway.mcp.omnigent_sync import sync_workspace_mcp_configs
+            sync_workspace_mcp_configs(repo_dir)
+            ws_dir = os.path.join(app_runner_service.get_app_dir(app.id), "workspaces", ws_name)
+            if os.path.exists(ws_dir):
+                sync_workspace_mcp_configs(ws_dir)
+        except Exception as mcp_err:
+            logger.debug("Non-fatal workspace MCP sync warning: %s", mcp_err)
 
         session_info = {
             "app_id": app.id,
