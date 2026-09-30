@@ -51,6 +51,14 @@ class KubernetesAppDriver(BaseAppDriver):
             "compassx/managed": "true",
         }
 
+        # Resolve Workload Identity
+        workload_identity_id = ""
+        if getattr(app, "workspace_identity", None) and isinstance(app.workspace_identity, dict):
+            workload_identity_id = app.workspace_identity.get("identity_id") or ""
+        elif hasattr(app, "id") and app.id:
+            clean_app_id = re.sub(r"[^a-z0-9]", "", str(app.id).lower())
+            workload_identity_id = f"id_app_{clean_app_id[:12]}"
+
         # 1. Environment variables
         cfg = dict(app.config or {})
         env_vars = [
@@ -58,7 +66,8 @@ class KubernetesAppDriver(BaseAppDriver):
             client.V1EnvVar(name="APP_NAME", value=str(app.name)),
             client.V1EnvVar(name="APP_SLUG", value=str(app.slug)),
             client.V1EnvVar(name="APP_ID", value=str(app.id)),
-            client.V1EnvVar(name="WORKSPACE_ID", value=str(app.workspace_id)),
+            client.V1EnvVar(name="WORKSPACE_ID", value=str(getattr(app, "workspace_id", ""))),
+            client.V1EnvVar(name="COMPASSX_WORKLOAD_IDENTITY", value=str(workload_identity_id)),
         ]
 
         # Support list of dicts [{"key": "...", "value": "..."}, {"name": "...", "value": "..."}] OR dict {"KEY": "VAL"}
@@ -996,6 +1005,13 @@ class KubernetesDevDriver(BaseDevDriver):
                 except Exception:
                     mcp_sync_snippet = "true"
 
+                workload_identity_id = ""
+                if getattr(app, "workspace_identity", None) and isinstance(app.workspace_identity, dict):
+                    workload_identity_id = app.workspace_identity.get("identity_id") or ""
+                elif hasattr(app, "id") and app.id:
+                    clean_app_id = re.sub(r"[^a-z0-9]", "", str(app.id).lower())
+                    workload_identity_id = f"id_app_{clean_app_id[:12]}"
+
                 dev_cmd = (
                     f"mkdir -p /workspaces/.shared_auth/.gemini/antigravity-cli && "
                     f"if [ ! -f /workspaces/.shared_auth/.gemini/antigravity-cli/antigravity-oauth-token ]; then "
@@ -1023,6 +1039,7 @@ class KubernetesDevDriver(BaseDevDriver):
                     f"mkdir -p /root/.omnigent /root/.config/omnigent /root/.config/opencode /root/.opencode && "
                     f"printf 'host:\\n  host_id: {host_id}\\n  name: \"{host_name}\"\\n' | tee /root/.omnigent/config.yaml /root/.config/omnigent/config.yaml /root/.config/opencode/config.yaml /root/.opencode/config.yaml >/dev/null; "
                     f"export OMNIGENT_HOST_ID={host_id} OMNIGENT_HOST_NAME=\"{host_name}\" HOST_ID={host_id} HOST_NAME=\"{host_name}\" OPENCODE_HOST_ID={host_id} OPENCODE_HOST_NAME=\"{host_name}\" "
+                    f"COMPASSX_WORKLOAD_IDENTITY=\"{workload_identity_id}\" WORKSPACE_ID=\"{getattr(app, 'workspace_id', '')}\" APP_ID=\"{app.id}\" APP_NAME=\"{app.name}\" APP_SLUG=\"{app.slug}\" "
                     f"CHOKIDAR_USEPOLLING=1 CHOKIDAR_INTERVAL=2000 WATCHPACK_POLLING=true WATCHPACK_POLLING_INTERVAL=2000 WATCHFILES_FORCE_POLLING=true WATCHFILES_POLL_DELAY_MS=2000 "
                     f"NODE_TLS_REJECT_UNAUTHORIZED=0 NPM_CONFIG_STRICT_SSL=false PYTHONHTTPSVERIFY=0 GIT_SSL_NO_VERIFY=true CURL_INSECURE=1; "
                     f"(which opencode >/dev/null 2>&1 || npm install -g opencode-ai@1.18.0 || true); "
@@ -1094,6 +1111,8 @@ class KubernetesDevDriver(BaseDevDriver):
                         client.V1EnvVar(name="APP_NAME", value=str(app.name)),
                         client.V1EnvVar(name="APP_SLUG", value=str(app.slug)),
                         client.V1EnvVar(name="APP_ID", value=str(app.id)),
+                        client.V1EnvVar(name="WORKSPACE_ID", value=str(getattr(app, "workspace_id", ""))),
+                        client.V1EnvVar(name="COMPASSX_WORKLOAD_IDENTITY", value=str(workload_identity_id)),
                         client.V1EnvVar(name="OMNIGENT_HOST_ID", value=str(host_id)),
                         client.V1EnvVar(name="OMNIGENT_HOST_NAME", value=str(host_name)),
                         client.V1EnvVar(name="OMNIGENT_SERVER_URL", value=str(omnigent_internal_url)),

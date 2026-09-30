@@ -5,6 +5,20 @@ All notable changes to the CompassX Platform will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.7] - 2026-09-30
+
+### 🚀 Highlights
+
+CompassX `0.11.7` delivers **Workload Identity Resolution & Environment Injections**, **App-Scoped Kubernetes Runtime Isolation**, and **Deterministic Sandbox Identity Binding**.
+
+### ✨ Features & Enhancements
+
+#### Kubernetes App & Sandbox Workload Identity Binding
+- **Dynamic Workload Identity Resolution (`kubernetes_driver.py`)**: Automatic resolution and deterministic mapping of application identities (`COMPASSX_WORKLOAD_IDENTITY`) for both deployed container workloads and interactive developer sandboxes.
+- **Enhanced Runtime Context Injections**: Injected `WORKSPACE_ID`, `COMPASSX_WORKLOAD_IDENTITY`, `APP_ID`, `APP_NAME`, and `APP_SLUG` into development container environments alongside host configuration files.
+
+---
+
 ## [0.11.6] - 2026-09-25
 
 ### 🚀 Highlights
