@@ -232,6 +232,7 @@ export default function AgentChatPage({ initialView }: AgentChatPageProps = {}) 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const latestUserMsgRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const streamIdRef = useRef<string | null>(null);
   const isUserScrolledUpRef = useRef(false);
   const initialScrollDoneRef = useRef<number | null>(null);
   const [showScrollBottomBtn, setShowScrollBottomBtn] = useState(false);
@@ -395,6 +396,7 @@ export default function AgentChatPage({ initialView }: AgentChatPageProps = {}) 
 
     const controller = new AbortController();
     abortRef.current = controller;
+    streamIdRef.current = null;
 
     try {
       const token = getToken();
@@ -443,6 +445,10 @@ export default function AgentChatPage({ initialView }: AgentChatPageProps = {}) 
 
           try {
             const ev = JSON.parse(rawJson);
+
+            if (ev.type === 'stream_started' && ev.stream_id) {
+              streamIdRef.current = ev.stream_id;
+            }
 
             // Swarm: update which agent is currently streaming
             if (ev.agent_name !== undefined) {
@@ -621,6 +627,10 @@ export default function AgentChatPage({ initialView }: AgentChatPageProps = {}) 
         appendStreamingText(`\n\n> ⚠️ **Stream Connection Error**: ${errMsg}`);
       }
     } finally {
+      if (abortRef.current === controller) {
+        abortRef.current = null;
+        streamIdRef.current = null;
+      }
       setStreaming(false);
       setActiveTool(null);
       qc.invalidateQueries({ queryKey: ['agents', agentId, 'sessions', targetSessionId, 'messages'] }).then(() => {
@@ -631,6 +641,15 @@ export default function AgentChatPage({ initialView }: AgentChatPageProps = {}) 
       qc.invalidateQueries({ queryKey: ['agents', agentId, 'sessions', targetSessionId, 'plans'] });
       qc.invalidateQueries({ queryKey: ['agents', agentId, 'sessions'] });
     }
+  };
+
+  const stopStreaming = () => {
+    const streamId = streamIdRef.current;
+    // Closing the connection alone leaves the turn running server-side; cancel it explicitly.
+    if (streamId) {
+      api.post(`/streams/${streamId}/cancel`).catch(() => {});
+    }
+    abortRef.current?.abort();
   };
 
   // Compute docked plan element if active
@@ -1024,6 +1043,7 @@ export default function AgentChatPage({ initialView }: AgentChatPageProps = {}) 
                   input={input}
                   onInputChange={setInput}
                   onSend={sendMessage}
+                  onStop={stopStreaming}
                   isStreaming={isCurrentSessionStreaming}
                   attachedFiles={attachedFiles}
                   onUploadFiles={handleUploadFiles}
