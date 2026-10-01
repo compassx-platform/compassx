@@ -38,7 +38,7 @@ def extract_slug_from_path(path: str) -> str | None:
 
 
 def _extract_token(request: Request) -> str | None:
-    auth_header = request.headers.get("Authorization")
+    auth_header = request.headers.get("Authorization") or request.headers.get("authorization")
     if auth_header:
         if auth_header.startswith("Bearer "):
             return auth_header[7:].strip()
@@ -47,6 +47,14 @@ def _extract_token(request: Request) -> str | None:
     token = request.query_params.get("token")
     if token:
         return token.strip()
+    workload_identity = (
+        request.headers.get("x-workload-identity")
+        or request.headers.get("X-Workload-Identity")
+        or request.headers.get("compassx-workload-identity")
+        or request.headers.get("COMPASSX-WORKLOAD-IDENTITY")
+    )
+    if workload_identity:
+        return workload_identity.strip()
     return None
 
 
@@ -112,6 +120,7 @@ def resolve_workspace_context(
             raise WorkspaceAuthError(401, "missing auth token")
 
         user_id = None
+        principal_role = None
         is_account_admin = False
 
         # 1. Try decoding User Manager v1 JWT token
@@ -149,48 +158,76 @@ def resolve_workspace_context(
                 finally:
                     data_db.close()
 
+        # 3. Fallback to App Workload Identity (M2M Service Principal)
+        if user_id is None and token:
+            from app.database import SystemSessionLocal
+            if SystemSessionLocal:
+                data_db = SystemSessionLocal()
+                try:
+                    from app.models.app import App
+                    matching_apps = data_db.query(App).filter(
+                        (App.workspace_id == str(workspace.id)) | (App.workspace_id == str(workspace.slug))
+                    ).all()
+                    for a in matching_apps:
+                        app_wi = getattr(a, "workspace_identity", None)
+                        if isinstance(app_wi, dict) and app_wi.get("identity_id") == token:
+                            user_id = token
+                            principal_role = app_wi.get("role") or "workspace_developer"
+                            break
+                        clean_id = re.sub(r"[^a-z0-9]", "", str(a.id).lower())
+                        if f"id_app_{clean_id[:12]}" == token or a.id == token:
+                            user_id = token
+                            principal_role = "workspace_developer"
+                            break
+                except Exception as err:
+                    logger.warning("Error resolving workload identity %s: %s", token, err)
+                finally:
+                    data_db.close()
+
         if user_id is None:
             raise WorkspaceAuthError(401, "invalid or expired token")
 
         # Check workspace access
-        principal_role = "workspace_admin" if is_account_admin else None
-        if not is_account_admin:
-            # WorkspaceMembership in account_db uses UUID type for workspace_id
-            membership = (
-                db.query(WorkspaceMembership)
-                .filter(
-                    WorkspaceMembership.workspace_id == workspace.id,
-                    WorkspaceMembership.principal_id == user_id,
-                )
-                .first()
-            )
-            if membership:
-                principal_role = membership.role
+        if not principal_role:
+            if is_account_admin:
+                principal_role = "workspace_admin"
             else:
-                # UmWorkspaceRoleAssignment query using workspace.id (valid UUID)
-                from app.database import SystemSessionLocal
-                if SystemSessionLocal:
-                    s_db = SystemSessionLocal()
-                    try:
-                        from app.user_manager.models.system_models import UmWorkspaceRoleAssignment
-                        ass = s_db.query(UmWorkspaceRoleAssignment).filter(
-                            UmWorkspaceRoleAssignment.workspace_id == workspace.id,
-                            UmWorkspaceRoleAssignment.principal_id == user_id,
-                        ).first()
-                        if ass:
-                            principal_role = ass.role_id
-                    finally:
-                        s_db.close()
+                # WorkspaceMembership in account_db uses UUID type for workspace_id
+                membership = (
+                    db.query(WorkspaceMembership)
+                    .filter(
+                        WorkspaceMembership.workspace_id == workspace.id,
+                        WorkspaceMembership.principal_id == user_id,
+                    )
+                    .first()
+                )
+                if membership:
+                    principal_role = membership.role
+                else:
+                    # UmWorkspaceRoleAssignment query using workspace.id (valid UUID)
+                    from app.database import SystemSessionLocal
+                    if SystemSessionLocal:
+                        s_db = SystemSessionLocal()
+                        try:
+                            from app.user_manager.models.system_models import UmWorkspaceRoleAssignment
+                            ass = s_db.query(UmWorkspaceRoleAssignment).filter(
+                                UmWorkspaceRoleAssignment.workspace_id == workspace.id,
+                                UmWorkspaceRoleAssignment.principal_id == user_id,
+                            ).first()
+                            if ass:
+                                principal_role = ass.role_id
+                        finally:
+                            s_db.close()
 
-            if not principal_role:
-                raise WorkspaceAuthError(403, "not a member of this workspace")
+                if not principal_role:
+                    raise WorkspaceAuthError(403, "not a member of this workspace")
 
         return WorkspaceContext(
             workspace_id=workspace.id,
             workspace_slug=workspace.slug,
             workspace_name=workspace.name,
             principal_id=user_id,
-            principal_role=principal_role or "workspace_admin",
+            principal_role=principal_role or "workspace_developer",
             is_account_admin=is_account_admin,
         )
     finally:
@@ -199,6 +236,26 @@ def resolve_workspace_context(
 
 def _get_default_workspace_slug_for_token(token: str) -> str | None:
     """Find the primary active workspace for an authenticated token when no slug is explicitly given."""
+    # 0. Check App Workload Identity
+    if token and (token.startswith("id_app_") or "id_app_" in token):
+        from app.database import SystemSessionLocal
+        if SystemSessionLocal:
+            data_db = SystemSessionLocal()
+            try:
+                from app.models.app import App
+                all_apps = data_db.query(App).all()
+                for a in all_apps:
+                    app_wi = getattr(a, "workspace_identity", None)
+                    if isinstance(app_wi, dict) and app_wi.get("identity_id") == token:
+                        return str(a.workspace_id)
+                    clean_id = re.sub(r"[^a-z0-9]", "", str(a.id).lower())
+                    if f"id_app_{clean_id[:12]}" == token or a.id == token:
+                        return str(a.workspace_id)
+            except Exception:
+                pass
+            finally:
+                data_db.close()
+
     if AccountSessionLocal is None:
         return None
     db = AccountSessionLocal()
@@ -269,7 +326,13 @@ class WorkspaceMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
         slug = extract_slug_from_path(request.url.path)
         if slug is None:
-            slug = request.headers.get("x-workspace-slug")
+            slug = (
+                request.headers.get("x-workspace-slug")
+                or request.headers.get("X-Workspace-Slug")
+                or request.headers.get("x-workspace-id")
+                or request.headers.get("X-Workspace-Id")
+                or request.headers.get("workspace-id")
+            )
         if slug is None:
             slug = request.query_params.get("workspace")
         if slug is None:

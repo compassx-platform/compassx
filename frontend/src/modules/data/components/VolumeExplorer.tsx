@@ -1531,76 +1531,161 @@ export const VolumeExplorer: React.FC<VolumeExplorerProps> = ({
 
       {/* ── 7. Modals: Create Directory Modal ───────────────────────────────── */}
       {showCreateDirModal && (
-        <div className="modal-backdrop" onClick={() => setShowCreateDirModal(false)} style={{ zIndex: 10000 }}>
+        <div
+          className="modal-backdrop"
+          onClick={() => setShowCreateDirModal(false)}
+          style={{
+            zIndex: 10000,
+            backdropFilter: 'blur(4px)',
+            backgroundColor: 'rgba(15, 23, 42, 0.55)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}
+        >
           <div
             className="modal-panel"
             onClick={(e) => e.stopPropagation()}
-            style={{ width: 'min(440px, calc(100vw - 2rem))', borderRadius: '10px' }}
+            style={{
+              width: 'min(520px, calc(100vw - 2rem))',
+              borderRadius: '12px',
+              backgroundColor: 'var(--color-surface, #ffffff)',
+              boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)',
+              border: '1px solid var(--color-border, #e2e8f0)',
+              overflow: 'hidden',
+            }}
           >
-            <div className="flex items-center justify-between p-4 border-b">
-              <div className="flex items-center gap-2">
-                <FolderPlus size={18} className="text-primary" />
-                <h3 className="font-semibold text-sm">Create directory</h3>
+            {/* Header */}
+            <div className="flex items-center justify-between p-5 border-b bg-subtle/40">
+              <div className="flex items-center gap-3">
+                <div
+                  style={{
+                    width: 38,
+                    height: 38,
+                    borderRadius: 8,
+                    backgroundColor: 'rgba(2, 132, 199, 0.12)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    color: '#0284c7',
+                    flexShrink: 0,
+                  }}
+                >
+                  <FolderPlus size={22} />
+                </div>
+                <div>
+                  <h3 className="font-semibold text-base text-default leading-tight">Create Directory</h3>
+                  <p className="text-xs text-subtle mt-0.5">
+                    Add a new folder to organize files in <span className="font-medium text-default font-mono">{volume.name}</span>
+                  </p>
+                </div>
               </div>
               <button
                 type="button"
-                className="uc-icon-btn"
+                className="uc-icon-btn text-subtle hover:text-default"
                 onClick={() => setShowCreateDirModal(false)}
+                aria-label="Close"
               >
-                <X size={16} />
+                <X size={18} />
               </button>
             </div>
 
             <form
               onSubmit={(e) => {
                 e.preventDefault();
-                if (!newDirName.trim()) return;
+                const clean = newDirName.trim().replace(/^\/+|\/+$/g, '');
+                if (!clean) return;
                 createDirectoryMutation.mutate({
-                  dirName: newDirName.trim(),
+                  dirName: clean,
                   subPath: currentPath,
                 });
               }}
-              className="p-4 flex flex-col gap-4"
+              className="p-5 flex flex-col gap-4"
             >
+              {/* Destination Location Box */}
               <div>
-                <label className="text-xs font-semibold text-subtle block mb-1">
-                  Location
+                <label className="text-xs font-semibold text-subtle block mb-1.5 uppercase tracking-wider">
+                  Target Location
                 </label>
-                <div className="text-xs font-mono bg-subtle p-2 rounded border break-all">
-                  {currentDirectoryDisplay}/
+                <div
+                  className="flex items-center gap-2 p-2.5 rounded-lg border bg-surface-secondary text-xs font-mono break-all"
+                  style={{ backgroundColor: 'var(--color-surface-secondary, #f8fafc)' }}
+                >
+                  <Folder size={14} className="text-primary shrink-0" />
+                  <span className="text-subtle font-medium select-all">
+                    {currentDirectoryDisplay}/
+                  </span>
                 </div>
               </div>
 
+              {/* Directory Name Input */}
               <div>
-                <label className="text-xs font-semibold text-subtle block mb-1">
-                  Directory name *
-                </label>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="text-xs font-semibold text-default uppercase tracking-wider">
+                    Directory Name <span className="text-danger">*</span>
+                  </label>
+                  <span className="text-[11px] text-subtle">No slashes (/)</span>
+                </div>
                 <input
                   type="text"
                   autoFocus
-                  placeholder="e.g. raw_data, exports, 2026-09"
-                  className="uc-input w-full"
+                  placeholder="e.g. raw_data, reports, 2026-q1"
+                  className="uc-input w-full text-sm font-medium"
+                  style={{ height: '40px', padding: '0 12px', fontSize: '14px' }}
                   value={newDirName}
-                  onChange={(e) => setNewDirName(e.target.value)}
+                  onChange={(e) => setNewDirName(e.target.value.replace(/[\/\\]/g, ''))}
                   required
                 />
               </div>
 
-              <div className="flex justify-end gap-2 pt-2 border-t">
+              {/* Live Preview Box */}
+              {newDirName.trim() && (
+                <div
+                  className="p-3 rounded-lg border text-xs"
+                  style={{
+                    backgroundColor: 'rgba(2, 132, 199, 0.05)',
+                    borderColor: 'rgba(2, 132, 199, 0.25)',
+                  }}
+                >
+                  <div className="text-[11px] font-semibold text-primary mb-1 uppercase tracking-wider">
+                    Resulting Directory Path:
+                  </div>
+                  <div className="font-mono text-xs break-all text-default flex items-center gap-1.5">
+                    <Check size={13} className="text-primary shrink-0" />
+                    <span>
+                      {currentDirectoryDisplay}/{newDirName.trim().replace(/^\/+|\/+$/g, '')}/
+                    </span>
+                  </div>
+                </div>
+              )}
+
+              {/* Actions Footer */}
+              <div className="flex items-center justify-end gap-2.5 pt-3 border-t mt-1">
                 <button
                   type="button"
                   className="btn-secondary"
+                  style={{ height: '36px', padding: '0 16px', fontSize: '13px' }}
                   onClick={() => setShowCreateDirModal(false)}
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  className="btn-primary flex items-center gap-1.5"
+                  className="btn-primary flex items-center gap-2"
+                  style={{ height: '36px', padding: '0 18px', fontSize: '13px' }}
                   disabled={!newDirName.trim() || createDirectoryMutation.isPending}
                 >
-                  {createDirectoryMutation.isPending && <Loader2 size={14} className="spin" />}
-                  Create
+                  {createDirectoryMutation.isPending ? (
+                    <>
+                      <Loader2 size={15} className="spin" />
+                      <span>Creating...</span>
+                    </>
+                  ) : (
+                    <>
+                      <FolderPlus size={15} />
+                      <span>Create Directory</span>
+                    </>
+                  )}
                 </button>
               </div>
             </form>
@@ -1610,71 +1695,131 @@ export const VolumeExplorer: React.FC<VolumeExplorerProps> = ({
 
       {/* ── 8. Modals: Rename Modal ─────────────────────────────────────────── */}
       {showRenameModal && fileToRename && (
-        <div className="modal-backdrop" onClick={() => setShowRenameModal(false)} style={{ zIndex: 10000 }}>
+        <div
+          className="modal-backdrop"
+          onClick={() => setShowRenameModal(false)}
+          style={{
+            zIndex: 10000,
+            backdropFilter: 'blur(4px)',
+            backgroundColor: 'rgba(15, 23, 42, 0.55)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}
+        >
           <div
             className="modal-panel"
             onClick={(e) => e.stopPropagation()}
-            style={{ width: 'min(440px, calc(100vw - 2rem))', borderRadius: '10px' }}
+            style={{
+              width: 'min(500px, calc(100vw - 2rem))',
+              borderRadius: '12px',
+              backgroundColor: 'var(--color-surface, #ffffff)',
+              boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)',
+              border: '1px solid var(--color-border, #e2e8f0)',
+              overflow: 'hidden',
+            }}
           >
-            <div className="flex items-center justify-between p-4 border-b">
-              <div className="flex items-center gap-2">
-                <Pencil size={18} className="text-primary" />
-                <h3 className="font-semibold text-sm">
-                  Rename {fileToRename.file_path.endsWith('/') ? 'directory' : 'file'}
-                </h3>
+            <div className="flex items-center justify-between p-5 border-b bg-subtle/40">
+              <div className="flex items-center gap-3">
+                <div
+                  style={{
+                    width: 38,
+                    height: 38,
+                    borderRadius: 8,
+                    backgroundColor: 'rgba(37, 99, 235, 0.12)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    color: 'var(--color-primary, #2563eb)',
+                    flexShrink: 0,
+                  }}
+                >
+                  <Pencil size={20} />
+                </div>
+                <div>
+                  <h3 className="font-semibold text-base text-default leading-tight">
+                    Rename {fileToRename.file_path.endsWith('/') ? 'Directory' : 'File'}
+                  </h3>
+                  <p className="text-xs text-subtle mt-0.5">
+                    Update the name of this {fileToRename.file_path.endsWith('/') ? 'directory' : 'file'} in <span className="font-mono text-default">{volume.name}</span>
+                  </p>
+                </div>
               </div>
               <button
                 type="button"
-                className="uc-icon-btn"
+                className="uc-icon-btn text-subtle hover:text-default"
                 onClick={() => setShowRenameModal(false)}
+                aria-label="Close"
               >
-                <X size={16} />
+                <X size={18} />
               </button>
             </div>
 
             <form
               onSubmit={(e) => {
                 e.preventDefault();
-                if (!newName.trim() || newName.trim() === fileToRename.file_name.replace(/\/$/, '')) {
+                const cleanNew = newName.trim().replace(/^\/+|\/+$/g, '');
+                if (!cleanNew || cleanNew === fileToRename.file_name.replace(/\/$/, '')) {
                   setShowRenameModal(false);
                   return;
                 }
                 renameMutation.mutate({
                   oldPath: fileToRename.file_path,
-                  newName: newName.trim(),
+                  newName: cleanNew,
                 });
               }}
-              className="p-4 flex flex-col gap-4"
+              className="p-5 flex flex-col gap-4"
             >
               <div>
-                <label className="text-xs font-semibold text-subtle block mb-1">
-                  New name *
+                <label className="text-xs font-semibold text-subtle block mb-1.5 uppercase tracking-wider">
+                  Current Name
+                </label>
+                <div className="text-xs font-mono bg-subtle p-2.5 rounded-lg border break-all text-subtle">
+                  {fileToRename.file_name}
+                </div>
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-default block mb-1.5 uppercase tracking-wider">
+                  New Name <span className="text-danger">*</span>
                 </label>
                 <input
                   type="text"
                   autoFocus
-                  className="uc-input w-full"
+                  className="uc-input w-full text-sm font-medium"
+                  style={{ height: '40px', padding: '0 12px', fontSize: '14px' }}
                   value={newName}
-                  onChange={(e) => setNewName(e.target.value)}
+                  onChange={(e) => setNewName(e.target.value.replace(/[\/\\]/g, ''))}
                   required
                 />
               </div>
 
-              <div className="flex justify-end gap-2 pt-2 border-t">
+              <div className="flex justify-end gap-2.5 pt-3 border-t mt-1">
                 <button
                   type="button"
                   className="btn-secondary"
+                  style={{ height: '36px', padding: '0 16px', fontSize: '13px' }}
                   onClick={() => setShowRenameModal(false)}
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  className="btn-primary flex items-center gap-1.5"
+                  className="btn-primary flex items-center gap-2"
+                  style={{ height: '36px', padding: '0 18px', fontSize: '13px' }}
                   disabled={!newName.trim() || renameMutation.isPending}
                 >
-                  {renameMutation.isPending && <Loader2 size={14} className="spin" />}
-                  Rename
+                  {renameMutation.isPending ? (
+                    <>
+                      <Loader2 size={15} className="spin" />
+                      <span>Renaming...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Check size={15} />
+                      <span>Rename</span>
+                    </>
+                  )}
                 </button>
               </div>
             </form>

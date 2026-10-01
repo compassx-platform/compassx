@@ -96,7 +96,10 @@ def get_principal(
             token = _extract_token(request)
             slug = (
                 request.headers.get("x-workspace-slug")
+                or request.headers.get("X-Workspace-Slug")
                 or request.headers.get("x-workspace-id")
+                or request.headers.get("X-Workspace-Id")
+                or request.headers.get("workspace-id")
                 or request.query_params.get("workspace")
                 or request.query_params.get("workspace_id")
             )
@@ -119,7 +122,19 @@ def get_principal(
 
     user_id = str(ctx.principal_id)
 
-    # Check for in-session assumed group / role header
+    # 1. Check for Workload Identity (M2M App Service Principal)
+    if user_id.startswith("id_app_"):
+        principal = Principal(
+            id=user_id,
+            type="service",
+            is_account_admin=False,
+            group_ids=(),
+            workspace_roles={str(ctx.workspace_id): ctx.principal_role or "workspace_developer"},
+        )
+        request.state.governance_principal = principal
+        return principal
+
+    # 2. Check for in-session assumed group / role header
     active_role_id = (
         request.headers.get("x-active-role-id")
         or request.headers.get("x-active-group-id")

@@ -123,13 +123,16 @@ class VolumeManager:
             raise ValueError(f"Volume {volume_id} not found")
 
         sub = sub_path.strip('/')
-        dir_relative = f"{sub}/{dir_name}/" if sub else f"{dir_name}/"
+        dir_name_clean = dir_name.strip('/')
+        dir_relative = f"{sub}/{dir_name_clean}/" if sub else f"{dir_name_clean}/"
         base_loc = self._get_base_loc(volume)
-        abs_path = f"{base_loc.rstrip('/')}/{dir_relative}"
+        
+        # Write .keep file inside the directory in storage backend so cloud storage treats it as a true folder
+        keep_rel = f"{dir_relative}.keep"
+        abs_path = f"{base_loc.rstrip('/')}/{keep_rel}"
         backend_rel = self._rel(abs_path)
-        content_type = "application/x-directory"
 
-        await self.storage.write_bytes(backend_rel, b"", content_type)
+        await self.storage.write_bytes(backend_rel, b"", "application/octet-stream")
 
         from app.catalog.db_models import UnifiedCatalogVolumeFile
         existing = (
@@ -144,9 +147,9 @@ class VolumeManager:
             entry = UnifiedCatalogVolumeFile(
                 volume_id=volume_id,
                 file_path=dir_relative,
-                file_name=dir_name + "/",
+                file_name=dir_name_clean + "/",
                 size_bytes=0,
-                content_type=content_type,
+                content_type="application/x-directory",
                 uploaded_by=uploaded_by,
             )
             db.add(entry)
@@ -155,9 +158,9 @@ class VolumeManager:
         logger.info("Created directory %s in volume %s", dir_relative, volume_id)
         return FileInfo(
             file_path=dir_relative,
-            file_name=dir_name + "/",
+            file_name=dir_name_clean + "/",
             size_bytes=0,
-            content_type=content_type,
+            content_type="application/x-directory",
             last_modified=datetime.now(timezone.utc),
         )
 
@@ -207,15 +210,8 @@ class VolumeManager:
                 if not f_path or f_path == ".keep" or f_path.endswith("/.keep"):
                     continue
 
-                if f_path not in files_by_path:
-                    files_by_path[f_path] = FileInfo(
-                        file_path=f_path,
-                        file_name=f.file_name or f_path.split("/")[-1],
-                        size_bytes=f.size_bytes,
-                        content_type=f.content_type,
-                        last_modified=f.last_modified,
-                    )
-                else:
+                # Check if this file/directory is already tracked
+                if f_path in files_by_path:
                     existing = files_by_path[f_path]
                     if f.size_bytes and not existing.size_bytes:
                         existing.size_bytes = f.size_bytes
@@ -223,6 +219,25 @@ class VolumeManager:
                         existing.last_modified = f.last_modified
                     if f.content_type and existing.content_type == "application/octet-stream":
                         existing.content_type = f.content_type
+                elif (f_path + "/") in files_by_path:
+                    # Raw storage has legacy 0-byte blob matching a DB directory, skip duplicate
+                    continue
+                else:
+                    # New unindexed file or directory from raw storage
+                    is_dir = f.content_type == "application/x-directory" or f_path.endswith("/")
+                    norm_path = (f_path + "/") if is_dir and not f_path.endswith("/") else f_path
+                    norm_name = f.file_name or f_path.split("/")[-1]
+                    if is_dir and not norm_name.endswith("/"):
+                        norm_name += "/"
+
+                    if norm_path not in files_by_path:
+                        files_by_path[norm_path] = FileInfo(
+                            file_path=norm_path,
+                            file_name=norm_name,
+                            size_bytes=f.size_bytes or 0,
+                            content_type="application/x-directory" if is_dir else f.content_type,
+                            last_modified=f.last_modified,
+                        )
         except Exception as exc:
             logger.warning("Failed to list files from storage backend for volume %s: %s", volume_id, exc)
 
@@ -253,13 +268,28 @@ class VolumeManager:
         if not volume:
             raise ValueError(f"Volume {volume_id} not found")
         base_loc = self._get_base_loc(volume)
-        abs_path = f"{base_loc.rstrip('/')}/{file_path.strip('/')}".strip("/")
-        await self.storage.delete(self._rel(abs_path))
+        clean_path = file_path.strip("/")
+        abs_path = f"{base_loc.rstrip('/')}/{clean_path}"
 
+        # 1. Delete direct blob
+        try:
+            await self.storage.delete(self._rel(abs_path))
+        except Exception:
+            pass
+
+        # 2. Delete .keep blob if it's a directory
+        try:
+            await self.storage.delete(self._rel(f"{abs_path}/.keep"))
+        except Exception:
+            pass
+
+        # 3. Delete from DB (matching exact path, directory with trailing slash, or children)
         from app.catalog.db_models import UnifiedCatalogVolumeFile
         db.query(UnifiedCatalogVolumeFile).filter(
             UnifiedCatalogVolumeFile.volume_id == volume_id,
-            UnifiedCatalogVolumeFile.file_path == file_path.lstrip("/"),
+            (UnifiedCatalogVolumeFile.file_path == clean_path) |
+            (UnifiedCatalogVolumeFile.file_path == f"{clean_path}/") |
+            (UnifiedCatalogVolumeFile.file_path.like(f"{clean_path}/%"))
         ).delete(synchronize_session=False)
         db.commit()
         logger.info("Deleted %s from volume %s", file_path, volume_id)
@@ -270,56 +300,64 @@ class VolumeManager:
             raise ValueError(f"Volume {volume_id} not found")
         
         base_loc = self._get_base_loc(volume)
-        old_abs = f"{base_loc.rstrip('/')}/{old_path.strip('/')}"
+        clean_old = old_path.strip('/')
+        clean_new_name = new_name.strip('/')
         
         is_dir = old_path.endswith('/')
-        old_parts = old_path.strip('/').split('/')
-        old_parts[-1] = new_name
+        old_parts = clean_old.split('/')
+        old_parts[-1] = clean_new_name
         new_path = "/".join(old_parts)
-        if is_dir:
-            new_path += "/"
-            old_abs += "/"
-            
-        new_abs = f"{base_loc.rstrip('/')}/{new_path.strip('/')}"
-        if is_dir:
-            new_abs += "/"
         
-        # Read/write/delete in blob storage
-        try:
-            data = await self.storage.read_bytes(self._rel(old_abs))
-            content_type = "application/x-directory" if is_dir else mimetypes.guess_type(new_name)[0] or "application/octet-stream"
-            await self.storage.write_bytes(self._rel(new_abs), data, content_type)
-            await self.storage.delete(self._rel(old_abs))
-        except Exception:
-            # If it's a directory, there might not be a direct blob, or we might need to move all nested.
-            # For simplicity in this prototype, we'll try to move the .keep blob if it exists.
-            keep_old = self._rel(old_abs.rstrip('/') + "/.keep")
-            keep_new = self._rel(new_abs.rstrip('/') + "/.keep")
+        if is_dir:
+            old_path_db = clean_old + "/"
+            new_path_db = new_path + "/"
+            
+            keep_old = self._rel(f"{base_loc.rstrip('/')}/{clean_old}/.keep")
+            keep_new = self._rel(f"{base_loc.rstrip('/')}/{new_path}/.keep")
             try:
                 data = await self.storage.read_bytes(keep_old)
-                await self.storage.write_bytes(keep_new, data, "application/x-directory")
+                await self.storage.write_bytes(keep_new, data, "application/octet-stream")
                 await self.storage.delete(keep_old)
             except Exception:
-                pass # ignore
+                await self.storage.write_bytes(keep_new, b"", "application/octet-stream")
+
+            # Remove legacy 0-byte blob if it existed
+            try:
+                legacy_old = self._rel(f"{base_loc.rstrip('/')}/{clean_old}")
+                await self.storage.delete(legacy_old)
+            except Exception:
+                pass
+        else:
+            old_path_db = clean_old
+            new_path_db = new_path
+            old_abs = f"{base_loc.rstrip('/')}/{clean_old}"
+            new_abs = f"{base_loc.rstrip('/')}/{new_path}"
+            content_type = mimetypes.guess_type(clean_new_name)[0] or "application/octet-stream"
+            data = await self.storage.read_bytes(self._rel(old_abs))
+            await self.storage.write_bytes(self._rel(new_abs), data, content_type)
+            await self.storage.delete(self._rel(old_abs))
 
         # Update DB
         from app.catalog.db_models import UnifiedCatalogVolumeFile
         files = db.query(UnifiedCatalogVolumeFile).filter(
             UnifiedCatalogVolumeFile.volume_id == volume_id,
-            UnifiedCatalogVolumeFile.file_path.like(f"{old_path}%")
+            (UnifiedCatalogVolumeFile.file_path == old_path_db) |
+            (UnifiedCatalogVolumeFile.file_path.like(f"{clean_old}/%"))
         ).all()
         
         for f in files:
-            f.file_path = f.file_path.replace(old_path, new_path, 1)
-            if f.file_path == new_path:
-                f.file_name = new_name + ("/" if is_dir else "")
+            if f.file_path == old_path_db:
+                f.file_path = new_path_db
+                f.file_name = clean_new_name + ("/" if is_dir else "")
+            elif f.file_path.startswith(f"{clean_old}/"):
+                f.file_path = f.file_path.replace(f"{clean_old}/", f"{new_path}/", 1)
         db.commit()
 
         logger.info("Renamed %s to %s in volume %s", old_path, new_path, volume_id)
         return FileInfo(
-            file_path=new_path,
-            file_name=new_name + ("/" if is_dir else ""),
-            size_bytes=0,
-            content_type="application/x-directory" if is_dir else None,
+            file_path=new_path_db if is_dir else new_path,
+            file_name=clean_new_name + ("/" if is_dir else ""),
+            size_bytes=0 if is_dir else len(data),
+            content_type="application/x-directory" if is_dir else content_type,
             last_modified=datetime.now(timezone.utc),
         )

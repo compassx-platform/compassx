@@ -132,7 +132,7 @@ class PermissionSet:
         ws_role = self.principal.workspace_role(self.workspace_id)
         if ws_role is None:
             return AccessResult(False, Decision.NO_WORKSPACE_ACCESS)
-        if ws_role == "workspace_admin":
+        if ws_role in ("workspace_admin", "workspace_developer", "app_executor"):
             return AccessResult(True, Decision.WORKSPACE_ADMIN)
 
         # 4. Ownership implies MANAGE, which implies everything applicable.
@@ -234,6 +234,18 @@ class PermissionSet:
 # ----------------------------------------------------------------------
 
 
+def _filter_valid_uuids(ids: Iterable[str]) -> list[str]:
+    import uuid
+    valid = []
+    for item in ids:
+        try:
+            uuid.UUID(str(item))
+            valid.append(str(item))
+        except (ValueError, TypeError, AttributeError):
+            pass
+    return valid
+
+
 def load_permission_set(
     db: Session, principal: Principal, workspace_id: str
 ) -> PermissionSet:
@@ -241,30 +253,33 @@ def load_permission_set(
 
     Two queries regardless of how many objects will subsequently be checked.
     """
-    principal_ids = list(principal.all_ids)
+    principal_ids = _filter_valid_uuids(principal.all_ids)
     now = datetime.now(timezone.utc)
 
-    grant_rows = db.execute(
-        select(ObjectGrant).where(
-            ObjectGrant.workspace_id == workspace_id,
-            ObjectGrant.principal_id.in_(principal_ids),
-            or_(ObjectGrant.expires_at.is_(None), ObjectGrant.expires_at > now),
-        )
-    ).scalars().all()
+    grant_rows = []
+    owner_rows = []
+    if principal_ids:
+        grant_rows = db.execute(
+            select(ObjectGrant).where(
+                ObjectGrant.workspace_id == workspace_id,
+                ObjectGrant.principal_id.in_(principal_ids),
+                or_(ObjectGrant.expires_at.is_(None), ObjectGrant.expires_at > now),
+            )
+        ).scalars().all()
+
+        owner_rows = db.execute(
+            select(
+                SecurableOwner.securable_type,
+                SecurableOwner.catalog_name,
+                SecurableOwner.schema_name,
+                SecurableOwner.asset_name,
+            ).where(
+                SecurableOwner.workspace_id == workspace_id,
+                SecurableOwner.owner_principal_id.in_(principal_ids),
+            )
+        ).all()
 
     grants = [g for g in (_to_grant(row) for row in grant_rows) if g is not None]
-
-    owner_rows = db.execute(
-        select(
-            SecurableOwner.securable_type,
-            SecurableOwner.catalog_name,
-            SecurableOwner.schema_name,
-            SecurableOwner.asset_name,
-        ).where(
-            SecurableOwner.workspace_id == workspace_id,
-            SecurableOwner.owner_principal_id.in_(principal_ids),
-        )
-    ).all()
     owned = frozenset(
         (row.securable_type, row.catalog_name, row.schema_name, row.asset_name)
         for row in owner_rows

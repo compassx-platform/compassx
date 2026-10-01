@@ -5,6 +5,24 @@ All notable changes to the CompassX Platform will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.9] - 2026-10-01
+
+### 🚀 Highlights
+
+CompassX `0.11.9` delivers **Workload Identity Header Resolution & M2M Service Principal Auth**, **Volume Directory Lifecycle & Keep Marker Management**, and **Polished Volume Explorer Modal UI**.
+
+### ✨ Features & Enhancements
+
+#### Workload Identity & M2M Authentication
+- **Workload Identity Header Resolution (`middleware.py`, `dependencies.py`)**: Added automatic resolution for `x-workload-identity`, `compassx-workload-identity`, and case-insensitive headers to resolve App Service Principals directly into active workspace contexts.
+- **Workspace ID & Header Fallbacks**: Supported `x-workspace-id` and `workspace-id` headers in addition to standard path slugs.
+
+#### Volume Directory Lifecycle & Explorer Polish
+- **Volume Manager Directory Operations (`volume_manager.py`)**: Added `.keep` marker file lifecycle management for empty storage directories, deduplication against raw object storage listings, and directory cleanups.
+- **Enhanced Modal UI (`VolumeExplorer.tsx`)**: Upgraded modal dialogs for directory creation and item renaming with backdrop blur, keyboard shortcuts, and strict path validation.
+
+---
+
 ## [0.11.8] - 2026-10-01
 
 ### 🚀 Highlights
