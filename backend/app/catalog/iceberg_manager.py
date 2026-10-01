@@ -67,6 +67,7 @@ class IcebergManager:
         table_name: str,
         columns: list[dict],
         properties: dict | None = None,
+        z_order_by: list[str] | None = None,
     ) -> str:
         """
         Write initial Iceberg v2 metadata JSON to blob storage.
@@ -91,6 +92,26 @@ class IcebergManager:
                 "doc": col.get("description", ""),
             })
 
+        sort_fields = []
+        if z_order_by:
+            for col_name in z_order_by:
+                col_field = next((f for f in fields if f["name"] == col_name), None)
+                if col_field:
+                    sort_fields.append({
+                        "transform": "identity",
+                        "source-id": col_field["id"],
+                        "direction": "asc",
+                        "null-order": "nulls-last",
+                    })
+
+        if sort_fields:
+            sort_orders = [{"order-id": 1, "fields": sort_fields}]
+            default_sort_order_id = 1
+            properties["compassx.z-order-by"] = ",".join(z_order_by)
+        else:
+            sort_orders = [{"order-id": 0, "fields": []}]
+            default_sort_order_id = 0
+
         metadata = {
             "format-version": 2,
             "table-uuid": str(uuid.uuid4()),
@@ -103,8 +124,8 @@ class IcebergManager:
             "default-spec-id": 0,
             "partition-specs": [{"spec-id": 0, "fields": []}],
             "last-partition-id": 999,
-            "default-sort-order-id": 0,
-            "sort-orders": [{"order-id": 0, "fields": []}],
+            "default-sort-order-id": default_sort_order_id,
+            "sort-orders": sort_orders,
             "properties": {
                 "created-by": "compassx",
                 "write.format.default": "parquet",
@@ -238,4 +259,96 @@ class IcebergManager:
         )
         logger.info("Iceberg table updated at %s (v%d snapshot %d)", table_path, next_ver, snapshot_id)
         return next_meta_path
+
+    async def commit_compaction(
+        self,
+        table_path: str,
+        compacted_file_name: str,
+        total_records: int,
+        deleted_files_count: int,
+        z_order_by: list[str] | None = None,
+        properties: dict | None = None,
+    ) -> str:
+        """
+        Commit a compaction/replace snapshot to Iceberg table metadata.
+        Updates sort orders and registers the optimized consolidated data file.
+        """
+        latest_meta_rel = await self.get_metadata_location(table_path)
+        raw_meta = await self.storage.read_bytes(latest_meta_rel)
+        meta = json.loads(raw_meta.decode())
+
+        curr_ver_str = latest_meta_rel.split("/")[-1].split(".")[0].lstrip("v")
+        try:
+            curr_ver = int(curr_ver_str)
+        except ValueError:
+            curr_ver = 1
+        next_ver = curr_ver + 1
+
+        now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+        snapshot_id = int(datetime.now(timezone.utc).timestamp() * 1000)
+
+        # Update sort orders if z_order_by provided
+        if z_order_by:
+            fields = meta.get("schemas", [{}])[0].get("fields", [])
+            sort_fields = []
+            for col_name in z_order_by:
+                col_field = next((f for f in fields if f.get("name") == col_name), None)
+                if col_field:
+                    sort_fields.append({
+                        "transform": "identity",
+                        "source-id": col_field["id"],
+                        "direction": "asc",
+                        "null-order": "nulls-last",
+                    })
+            if sort_fields:
+                meta["sort-orders"] = [{"order-id": 1, "fields": sort_fields}]
+                meta["default-sort-order-id"] = 1
+                meta.setdefault("properties", {})["compassx.z-order-by"] = ",".join(z_order_by)
+
+        data_file_rel = f"{table_path.rstrip('/')}/data/{compacted_file_name}"
+
+        new_snapshot = {
+            "snapshot-id": snapshot_id,
+            "parent-snapshot-id": meta.get("current-snapshot-id", -1) if meta.get("current-snapshot-id", -1) != -1 else None,
+            "timestamp-ms": now_ms,
+            "summary": {
+                "operation": "replace",
+                "added-data-files": "1",
+                "deleted-data-files": str(deleted_files_count),
+                "added-records": str(total_records),
+                "z_ordered": "true" if z_order_by else "false",
+                **(properties or {}),
+            },
+            "manifest-list": data_file_rel,
+            "schema-id": meta.get("current-schema-id", 0),
+        }
+
+        snapshots = meta.get("snapshots", [])
+        snapshots.append(new_snapshot)
+        meta["snapshots"] = snapshots
+        meta["current-snapshot-id"] = snapshot_id
+        meta["last-updated-ms"] = now_ms
+
+        snapshot_log = meta.get("snapshot-log", [])
+        snapshot_log.append({"timestamp-ms": now_ms, "snapshot-id": snapshot_id})
+        meta["snapshot-log"] = snapshot_log
+
+        metadata_log = meta.get("metadata-log", [])
+        metadata_log.append({"timestamp-ms": now_ms, "metadata-file": latest_meta_rel})
+        meta["metadata-log"] = metadata_log
+
+        next_meta_path = f"{table_path.rstrip('/')}/metadata/v{next_ver}.metadata.json"
+        await self.storage.write_bytes(
+            path=next_meta_path,
+            data=json.dumps(meta, indent=2).encode(),
+            content_type="application/json",
+        )
+        await self.storage.write_bytes(
+            path=f"{table_path.rstrip('/')}/metadata/version-hint.text",
+            data=str(next_ver).encode(),
+            content_type="text/plain",
+        )
+        logger.info("Iceberg compaction committed at %s (v%d snapshot %d)", table_path, next_ver, snapshot_id)
+        return next_meta_path
+
 

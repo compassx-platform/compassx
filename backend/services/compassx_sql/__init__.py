@@ -1,4 +1,5 @@
-from .client import sql, write, write_table, CompassXQueryError, CompassXSchemaError
+from .client import sql, write, write_table, optimize, optimize_table, CompassXQueryError, CompassXSchemaError
+from .zorder import z_order_dataframe, normalize_to_uint32, interleave_bits_2d, interleave_bits_nd
 try:
     from .magic import load_ipython_extension
 except ImportError:
@@ -18,6 +19,12 @@ __all__ = [
     "sql",
     "write",
     "write_table",
+    "optimize",
+    "optimize_table",
+    "z_order_dataframe",
+    "normalize_to_uint32",
+    "interleave_bits_2d",
+    "interleave_bits_nd",
     "CompassXQueryError",
     "CompassXSchemaError",
     "load_ipython_extension",
@@ -26,4 +33,5 @@ __all__ = [
     "connections",
     "promote",
 ]
+
 

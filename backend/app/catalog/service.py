@@ -1449,7 +1449,7 @@ async def create_table_from_file(
                 pass  # Keep column as-is if cast fails
 
         parquet_buf = _io.BytesIO()
-        df.to_parquet(parquet_buf, index=False, engine="pyarrow")
+        df.to_parquet(parquet_buf, index=False, engine="pyarrow", row_group_size=50_000)
         parquet_bytes = parquet_buf.getvalue()
         parquet_file_name = f"{table_name}.parquet"
         storage_format = "parquet"

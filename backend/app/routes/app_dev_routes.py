@@ -34,6 +34,16 @@ class CreateSessionRequest(BaseModel):
     agent_name: Optional[str] = "polly"
     title: Optional[str] = None
 
+class BuildPromptRequest(BaseModel):
+    prompt: str
+    session_id: Optional[str] = None
+    agent_name: Optional[str] = "polly"
+    workspace_id: Optional[str] = None
+
+class BuildClearRequest(BaseModel):
+    session_id: Optional[str] = None
+    workspace_id: Optional[str] = None
+
 class StartDevRequest(BaseModel):
     workspace_id: Optional[str] = None  # if provided, resume this workspace; otherwise create new
     workspace_name: Optional[str] = None  # if provided, create or resume workspace with this custom name
@@ -335,6 +345,89 @@ def create_omnigent_session(
     except Exception as e:
         logger.exception("Failed to create Omnigent session for app %s: %s", app.name, e)
         raise HTTPException(status_code=500, detail=f"Failed to create Omnigent session: {str(e)}")
+
+
+@router.get("/build/session")
+def get_build_session(
+    app_id: str,
+    workspace_id: Optional[str] = Query(None),
+    db: Session = Depends(get_system_db),
+    guard: Guard = Depends(get_guard),
+):
+    """Get or initialize the active Build Studio AI session for this app."""
+    app = db.query(App).filter(App.id == app_id).first()
+    if not app:
+        raise HTTPException(status_code=404, detail=f"App '{app_id}' not found.")
+    if guard.workspace_id and app.workspace_id != guard.workspace_id:
+        raise HTTPException(status_code=403, detail="Cannot access app in another workspace.")
+    unified_reaper_service.touch_app_activity(app.id)
+    return omnigent_dev_service.get_build_session(app, workspace_id=workspace_id)
+
+
+@router.get("/build/messages")
+def get_build_session_messages(
+    app_id: str,
+    session_id: str = Query(...),
+    db: Session = Depends(get_system_db),
+    guard: Guard = Depends(get_guard),
+):
+    """Get chat transcript items for the specified Build Studio session."""
+    app = db.query(App).filter(App.id == app_id).first()
+    if not app:
+        raise HTTPException(status_code=404, detail=f"App '{app_id}' not found.")
+    if guard.workspace_id and app.workspace_id != guard.workspace_id:
+        raise HTTPException(status_code=403, detail="Cannot access app in another workspace.")
+    unified_reaper_service.touch_app_activity(app.id)
+    return omnigent_dev_service.get_build_session_messages(app, session_id=session_id)
+
+
+@router.post("/build/prompt")
+def send_build_prompt(
+    app_id: str,
+    body: BuildPromptRequest,
+    db: Session = Depends(get_system_db),
+    guard: Guard = Depends(get_guard),
+):
+    """Send an AI coding instruction / prompt to the Build Studio session."""
+    app = db.query(App).filter(App.id == app_id).first()
+    if not app:
+        raise HTTPException(status_code=404, detail=f"App '{app_id}' not found.")
+    if guard.workspace_id and app.workspace_id != guard.workspace_id:
+        raise HTTPException(status_code=403, detail="Cannot access app in another workspace.")
+    if not body.prompt or not body.prompt.strip():
+        raise HTTPException(status_code=400, detail="Prompt cannot be empty.")
+
+    unified_reaper_service.touch_app_activity(app.id)
+    session_id = body.session_id
+    if not session_id:
+        sess = omnigent_dev_service.get_build_session(app, workspace_id=body.workspace_id)
+        session_id = sess.get("session_id")
+
+    return omnigent_dev_service.send_build_session_prompt(
+        app,
+        session_id=session_id,
+        prompt=body.prompt.strip(),
+        agent_name=body.agent_name,
+        workspace_id=body.workspace_id,
+    )
+
+
+@router.post("/build/clear")
+def clear_build_session(
+    app_id: str,
+    body: Optional[BuildClearRequest] = None,
+    db: Session = Depends(get_system_db),
+    guard: Guard = Depends(get_guard),
+):
+    """Clear Build Studio session history and start fresh conversation."""
+    app = db.query(App).filter(App.id == app_id).first()
+    if not app:
+        raise HTTPException(status_code=404, detail=f"App '{app_id}' not found.")
+    if guard.workspace_id and app.workspace_id != guard.workspace_id:
+        raise HTTPException(status_code=403, detail="Cannot access app in another workspace.")
+    ws_id = body.workspace_id if body else None
+    unified_reaper_service.touch_app_activity(app.id)
+    return omnigent_dev_service.clear_build_session(app, workspace_id=ws_id)
 
 
 @router.get("/logs")

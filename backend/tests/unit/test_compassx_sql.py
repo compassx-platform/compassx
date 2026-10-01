@@ -144,3 +144,48 @@ def test_dataframe_method_binding(monkeypatch):
 
     res = df.write_table("main.default.df_table", mode="overwrite")
     assert res["status"] == "ok"
+
+
+def test_write_table_with_zorder(monkeypatch):
+    monkeypatch.setenv("KERNEL_CATALOG_API_URL", "http://test-server/api/v1/catalog")
+    monkeypatch.setenv("NOTEBOOK_SESSION_TOKEN", "mock-token-123")
+
+    df = pd.DataFrame({"colA": [1, 2], "colB": ["x", "y"]})
+
+    def mock_post(url, headers, json, timeout):
+        assert url == "http://test-server/api/v1/catalog/table/create"
+        assert json["z_order_by"] == ["colA", "colB"]
+        assert len(json["data"]) == 2
+        return httpx.Response(
+            200,
+            json={"status": "ok", "table_ref": "cat.sch.tbl", "rows_written": 2},
+            request=httpx.Request("POST", url),
+        )
+
+    monkeypatch.setattr(httpx, "post", mock_post)
+
+    res = cx.write_table(df, "cat.sch.tbl", mode="overwrite", z_order_by=["colA", "colB"])
+    assert res["status"] == "ok"
+
+
+def test_optimize_table(monkeypatch):
+    monkeypatch.setenv("KERNEL_CATALOG_API_URL", "http://test-server/api/v1/catalog")
+    monkeypatch.setenv("NOTEBOOK_SESSION_TOKEN", "mock-token-123")
+
+    def mock_post(url, headers, json, timeout):
+        assert url == "http://test-server/api/v1/catalog/table/optimize"
+        assert json["table_ref"] == "cat.sch.tbl"
+        assert json["z_order_by"] == ["colA", "colB"]
+        assert json["target_file_size_mb"] == 128
+        return httpx.Response(
+            200,
+            json={"status": "ok", "table_ref": "cat.sch.tbl", "files_compacted": 3, "rows_written": 500},
+            request=httpx.Request("POST", url),
+        )
+
+    monkeypatch.setattr(httpx, "post", mock_post)
+
+    res = cx.optimize_table("cat.sch.tbl", z_order_by=["colA", "colB"])
+    assert res["status"] == "ok"
+    assert res["files_compacted"] == 3
+

@@ -127,11 +127,15 @@ def _serialize_dataframe(df: pd.DataFrame) -> tuple[list[dict[str, Any]], list[d
     return records, schema_list
 
 
+from services.compassx_sql.zorder import z_order_dataframe
+
+
 def write_table(
     df: pd.DataFrame,
     table_ref: str,
     *,
     mode: str = "overwrite",
+    z_order_by: list[str] | None = None,
     schema: dict[str, str] | list[dict[str, Any]] | None = None,
     description: str | None = None,
     timeout: int = 120,
@@ -142,6 +146,7 @@ def write_table(
         df: The pandas DataFrame to write.
         table_ref: 3-level or 2-level namespace (e.g. 'catalog.schema.table').
         mode: 'overwrite' (creates or replaces table) or 'append' (appends to existing table).
+        z_order_by: Optional list of column names to cluster using Morton space-filling curve.
         schema: Optional explicit schema override dict or list of dicts.
         description: Optional table description for catalog registration and semantic search.
         timeout: Request timeout in seconds.
@@ -163,6 +168,9 @@ def write_table(
     mode = mode.lower().strip()
     if mode not in {"overwrite", "replace", "append"}:
         raise ValueError("mode must be 'overwrite' or 'append'")
+
+    if z_order_by:
+        df = z_order_dataframe(df, z_order_by)
 
     token, api_url, headers = _get_auth_and_url()
 
@@ -186,6 +194,7 @@ def write_table(
             "data": records,
             "mode": "overwrite",
             "description": description,
+            "z_order_by": z_order_by,
         }
     else:
         url = f"{api_url}/table/write"
@@ -194,6 +203,7 @@ def write_table(
             "data": records,
             "schema": schema_list,
             "mode": "append",
+            "z_order_by": z_order_by,
         }
 
     try:
@@ -220,6 +230,7 @@ def write_table(
                         data=records,
                         mode="overwrite",
                         description=description,
+                        z_order_by=z_order_by,
                     )
                     try:
                         loop = asyncio.get_event_loop()
@@ -239,6 +250,7 @@ def write_table(
                         data=records,
                         schema=schema_defs,
                         mode="append",
+                        z_order_by=z_order_by,
                     )
                     try:
                         loop = asyncio.get_event_loop()
@@ -269,12 +281,88 @@ def write_table(
         raise CompassXQueryError(str(exc)) from None
 
 
-write = write_table
+def optimize_table(
+    table_ref: str,
+    *,
+    z_order_by: list[str] | None = None,
+    target_file_size_mb: int = 128,
+    timeout: int = 300,
+) -> dict[str, Any]:
+    """Compact and Z-order existing Parquet files for a Catalog Iceberg table.
 
-# Bind helper method directly onto pandas DataFrame
+    Parameters:
+        table_ref: 3-level or 2-level namespace (e.g. 'catalog.schema.table').
+        z_order_by: Optional list of column names to cluster using Morton curve.
+        target_file_size_mb: Target compacted file size in megabytes.
+        timeout: Request timeout in seconds.
+
+    Returns:
+        Result dictionary containing status, table_ref, files_compacted, and rows_written count.
+    """
+    table_ref = table_ref.strip()
+    if not table_ref:
+        raise ValueError("table_ref cannot be empty")
+
+    token, api_url, headers = _get_auth_and_url()
+    url = f"{api_url}/table/optimize"
+    payload = {
+        "table_ref": table_ref,
+        "z_order_by": z_order_by,
+        "target_file_size_mb": target_file_size_mb,
+    }
+
+    try:
+        resp = httpx.post(url, headers=headers, json=payload, timeout=timeout + 5)
+        resp.raise_for_status()
+        return resp.json()
+    except (httpx.ConnectError, httpx.ConnectTimeout):
+        # Local fallback execution
+        try:
+            import asyncio
+            from app.database import AccountSessionLocal
+            from app.catalog.schemas import TableOptimizeRequest
+            from app.catalog.routes import optimize_table_route
+            from unittest.mock import MagicMock
+
+            mock_request = MagicMock()
+            user = {"id": "system", "email": "system@compassx.internal"}
+            with AccountSessionLocal() as db:
+                req = TableOptimizeRequest(
+                    table_ref=table_ref,
+                    z_order_by=z_order_by,
+                    target_file_size_mb=target_file_size_mb,
+                )
+                try:
+                    loop = asyncio.get_event_loop()
+                except RuntimeError:
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                if loop.is_running():
+                    import nest_asyncio
+                    nest_asyncio.apply()
+                    return loop.run_until_complete(optimize_table_route(mock_request, req, db=db, user=user))
+                else:
+                    return loop.run_until_complete(optimize_table_route(mock_request, req, db=db, user=user))
+        except Exception as inner_exc:
+            raise CompassXQueryError(f"Local table optimize failed: {inner_exc}") from None
+    except httpx.HTTPStatusError as exc:
+        try:
+            err_data = exc.response.json()
+            msg = err_data.get("message") or err_data.get("detail") or str(exc)
+        except Exception:
+            msg = exc.response.text or str(exc)
+        raise CompassXQueryError(msg) from None
+    except Exception as exc:
+        raise CompassXQueryError(str(exc)) from None
+
+
+write = write_table
+optimize = optimize_table
+
+# Bind helper methods directly onto pandas DataFrame
 try:
-    pd.DataFrame.write_table = lambda self, table_ref, mode="overwrite", schema=None, description=None, timeout=120: write_table(
-        self, table_ref, mode=mode, schema=schema, description=description, timeout=timeout
+    pd.DataFrame.write_table = lambda self, table_ref, mode="overwrite", z_order_by=None, schema=None, description=None, timeout=120: write_table(
+        self, table_ref, mode=mode, z_order_by=z_order_by, schema=schema, description=description, timeout=timeout
     )
 except Exception:
     pass

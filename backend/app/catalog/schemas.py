@@ -66,6 +66,7 @@ class TableCreate(BaseModel):
     name: str
     description: str | None = None
     table_type: str = "iceberg"
+    z_order_by: list[str] | None = None
 
 
 class NotebookTableColumnDef(BaseModel):
@@ -81,6 +82,7 @@ class NotebookTableCreateRequest(BaseModel):
     data: list[dict[str, Any]] = Field(default_factory=list)
     mode: str = "overwrite"
     description: str | None = None
+    z_order_by: list[str] | None = None
 
     class Config:
         populate_by_name = True
@@ -91,9 +93,16 @@ class NotebookTableWriteRequest(BaseModel):
     data: list[dict[str, Any]] = Field(default_factory=list)
     schema_def: list[NotebookTableColumnDef] | None = Field(default=None, alias="schema")
     mode: str = "append"
+    z_order_by: list[str] | None = None
 
     class Config:
         populate_by_name = True
+
+
+class TableOptimizeRequest(BaseModel):
+    table_ref: str
+    z_order_by: list[str] | None = None
+    target_file_size_mb: int = 128
 
 
 

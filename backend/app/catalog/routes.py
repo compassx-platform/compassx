@@ -43,6 +43,7 @@ from app.catalog.schemas import (
     NotebookTableCreateRequest,
     NotebookTableWriteRequest,
     NotebookTableColumnDef,
+    TableOptimizeRequest,
 )
 from app.catalog.service import (
     _to_table_read,
@@ -2596,11 +2597,16 @@ async def create_table_from_notebook(
         table_path_rel = ctx_upload.rel_path(f"tables/{table_name}")
         mgr = IcebergManager(ctx_upload.backend)
 
+        from app.catalog.zorder import z_order_dataframe
+
+        if req.z_order_by and not df.empty:
+            df = z_order_dataframe(df, req.z_order_by)
+
         # Convert DataFrame to Parquet
         parquet_file_name = f"{table_name}.parquet"
         if not df.empty:
             buf = io.BytesIO()
-            df.to_parquet(buf, index=False, engine="pyarrow")
+            df.to_parquet(buf, index=False, engine="pyarrow", row_group_size=50_000)
             parquet_bytes = buf.getvalue()
         else:
             # Create empty parquet file matching schema
@@ -2620,8 +2626,13 @@ async def create_table_from_notebook(
             table_name=table_name,
             columns=columns,
             properties={"file_format": "parquet", "data_file": parquet_file_name},
+            z_order_by=req.z_order_by,
         )
         metadata_location_abs = f"{ctx_upload.backend_base}{metadata_location_rel}"
+
+        table_properties = {"data_file": parquet_file_name, "file_format": "parquet"}
+        if req.z_order_by:
+            table_properties["z_order_by"] = req.z_order_by
 
         table = UnifiedCatalogTable(
             schema_id=schema.id,
@@ -2633,7 +2644,7 @@ async def create_table_from_notebook(
             description=req.description,
             owner=actor,
             created_by=actor,
-            properties={"data_file": parquet_file_name, "file_format": "parquet"},
+            properties=table_properties,
         )
         db.add(table)
         db.commit()
@@ -2809,13 +2820,19 @@ async def write_table_from_notebook(
         if not ctx_upload:
             raise HTTPException(400, {"status": "error", "error_type": "storage_not_configured", "message": "Storage backend not configured for Iceberg table."})
 
+        from app.catalog.zorder import z_order_dataframe
+
+        active_z_order = req.z_order_by or (table.properties or {}).get("z_order_by")
+        if active_z_order and not df.empty:
+            df = z_order_dataframe(df, active_z_order)
+
         table_path_rel = ctx_upload.rel_path(f"tables/{table_name}")
         mgr = IcebergManager(ctx_upload.backend)
 
         chunk_id = uuid.uuid4().hex[:8]
         chunk_file_name = f"data_{chunk_id}.parquet"
         buf = io.BytesIO()
-        df.to_parquet(buf, index=False, engine="pyarrow")
+        df.to_parquet(buf, index=False, engine="pyarrow", row_group_size=50_000)
         parquet_bytes = buf.getvalue()
 
         await ctx_upload.backend.write_bytes(
@@ -2837,4 +2854,143 @@ async def write_table_from_notebook(
         "rows_written": len(df),
         "execution_ms": duration_ms,
     }
+
+
+@router.post("/table/optimize")
+async def optimize_table_route(
+    request: Request,
+    req: TableOptimizeRequest,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user),
+    guard: Guard = Depends(get_guard),
+):
+    """Compact and Z-order all existing Parquet files of an Iceberg table."""
+    import io
+    import time
+    import uuid
+    import pandas as pd
+    from app.catalog.models import (
+        UnifiedCatalog,
+        UnifiedCatalogSchema,
+        UnifiedCatalogTable,
+        CatalogTableType,
+    )
+    from app.catalog.service import resolve_catalog_storage
+    from app.catalog.iceberg_manager import IcebergManager
+    from app.catalog.zorder import z_order_dataframe
+
+    start_time = time.monotonic()
+    try:
+        catalog_name, schema_name, table_name = _parse_table_ref(req.table_ref)
+    except ValueError as exc:
+        raise HTTPException(400, {"status": "error", "error_type": "invalid_ref", "message": str(exc)})
+
+    guard.require(
+        Privilege.MODIFY, Securable.table(catalog_name, schema_name, table_name)
+    )
+
+    catalog = db.query(UnifiedCatalog).filter(UnifiedCatalog.name == catalog_name).first()
+    if not catalog:
+        raise HTTPException(404, {"status": "error", "error_type": "table_not_found", "message": f"Catalog '{catalog_name}' not found."})
+
+    schema = (
+        db.query(UnifiedCatalogSchema)
+        .filter(UnifiedCatalogSchema.catalog_id == catalog.id, UnifiedCatalogSchema.name == schema_name)
+        .first()
+    )
+    if not schema:
+        raise HTTPException(404, {"status": "error", "error_type": "table_not_found", "message": f"Schema '{schema_name}' not found."})
+
+    table = (
+        db.query(UnifiedCatalogTable)
+        .filter(UnifiedCatalogTable.schema_id == schema.id, UnifiedCatalogTable.name == table_name)
+        .first()
+    )
+    if not table:
+        raise HTTPException(404, {"status": "error", "error_type": "table_not_found", "message": f"Table '{req.table_ref}' not found."})
+
+    if table.table_type != CatalogTableType.ICEBERG:
+        raise HTTPException(400, {"status": "error", "error_type": "invalid_table_type", "message": "Only Iceberg tables can be compacted and Z-ordered."})
+
+    ctx_upload = resolve_catalog_storage(db, catalog.name, schema_name)
+    if not ctx_upload:
+        raise HTTPException(400, {"status": "error", "error_type": "storage_not_configured", "message": "Storage backend not configured for Iceberg table."})
+
+    table_path_rel = ctx_upload.rel_path(f"tables/{table_name}")
+    data_dir_rel = f"{table_path_rel}/data"
+
+    # List all Parquet data files
+    existing_files = await ctx_upload.backend.list_files(data_dir_rel)
+    parquet_files = [f for f in existing_files if f.file_name.endswith(".parquet") and not f.file_name.startswith(".")]
+
+    if not parquet_files:
+        return {
+            "status": "ok",
+            "table_ref": req.table_ref,
+            "message": "No data files to optimize.",
+            "files_compacted": 0,
+            "rows_written": 0,
+            "execution_ms": int((time.monotonic() - start_time) * 1000),
+        }
+
+    # Read all existing Parquet files into a combined DataFrame
+    dfs = []
+    for pf in parquet_files:
+        file_bytes = await ctx_upload.backend.read_bytes(pf.file_path)
+        dfs.append(pd.read_parquet(io.BytesIO(file_bytes)))
+
+    combined_df = pd.concat(dfs, ignore_index=True) if dfs else pd.DataFrame()
+
+    active_z_order = req.z_order_by or (table.properties or {}).get("z_order_by")
+    if active_z_order and not combined_df.empty:
+        combined_df = z_order_dataframe(combined_df, active_z_order)
+
+    # Write single compacted, Z-ordered Parquet file
+    compacted_id = uuid.uuid4().hex[:8]
+    compacted_file_name = f"compacted_{compacted_id}.parquet"
+    buf = io.BytesIO()
+    combined_df.to_parquet(buf, index=False, engine="pyarrow", row_group_size=50_000)
+    compacted_bytes = buf.getvalue()
+
+    await ctx_upload.backend.write_bytes(
+        path=f"{data_dir_rel}/{compacted_file_name}",
+        data=compacted_bytes,
+        content_type="application/octet-stream",
+    )
+
+    mgr = IcebergManager(ctx_upload.backend)
+    await mgr.commit_compaction(
+        table_path=table_path_rel,
+        compacted_file_name=compacted_file_name,
+        total_records=len(combined_df),
+        deleted_files_count=len(parquet_files),
+        z_order_by=active_z_order,
+    )
+
+    # Delete old uncompacted parquet files
+    for pf in parquet_files:
+        if pf.file_name != compacted_file_name:
+            try:
+                await ctx_upload.backend.delete(pf.file_path)
+            except Exception:
+                pass
+
+    # Update table properties in database
+    props = dict(table.properties or {})
+    props["data_file"] = compacted_file_name
+    if active_z_order:
+        props["z_order_by"] = active_z_order
+    table.properties = props
+    db.commit()
+
+    duration_ms = int((time.monotonic() - start_time) * 1000)
+    return {
+        "status": "ok",
+        "table_ref": f"{catalog.name}.{schema.name}.{table.name}",
+        "files_compacted": len(parquet_files),
+        "rows_written": len(combined_df),
+        "z_order_by": active_z_order,
+        "execution_ms": duration_ms,
+    }
+
 

@@ -5,6 +5,23 @@ All notable changes to the CompassX Platform will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.10] - 2026-10-01
+
+### 🚀 Highlights
+
+CompassX `0.11.10` delivers **Morton Space-Filling Curve & Iceberg Z-Ordering Optimization**, **CompassX SQL DataFrame Clustering & Compact API**, and **Interactive AI Build Studio with Omnigent Chat**.
+
+### ✨ Features & Enhancements
+
+#### Iceberg Multi-Dimensional Z-Ordering & Compaction
+- **Morton Curve Clustering (`zorder.py`, `iceberg_manager.py`)**: Implemented bit-interleaved Morton space-filling curves for multi-column clustering across DuckDB and Iceberg tables.
+- **CompassX SQL Client Enhancements (`client.py`)**: Added `optimize_table` API and `z_order_by` argument to `write_table` and `pd.DataFrame.write_table`.
+
+#### Application Build Studio
+- **AI Build Studio Integration (`AppDetailPage.tsx`, `useOmnigentChat.ts`)**: Added dedicated AI Studio tab for interactive side-by-side app development and real-time Omnigent chat streaming.
+
+---
+
 ## [0.11.9] - 2026-10-01
 
 ### 🚀 Highlights

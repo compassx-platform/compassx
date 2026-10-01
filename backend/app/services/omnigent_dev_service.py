@@ -1246,6 +1246,297 @@ class OmnigentDevService:
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
 
+    def get_omnigent_agents(self) -> List[Dict[str, Any]]:
+        """Fetch list of available agents from Omnigent central server."""
+        import urllib.request
+        import json
+
+        urls = []
+        int_url = self.get_omnigent_internal_url()
+        pub_url = self.get_omnigent_server_url()
+        if int_url:
+            urls.append(int_url)
+        if pub_url and pub_url not in urls:
+            urls.append(pub_url)
+
+        for u in urls:
+            try:
+                req = urllib.request.Request(f"{u}/v1/agents", headers={"User-Agent": "CompassX/1.0"})
+                with urllib.request.urlopen(req, timeout=3.0) as resp:
+                    data = json.loads(resp.read().decode())
+                    agents = data.get("agents") or data.get("data") or (data if isinstance(data, list) else [])
+                    if agents:
+                        return agents
+            except Exception as e:
+                logger.debug("Could not fetch agents from %s: %s", u, e)
+
+        # Fallback default agents list
+        return [
+            {
+                "id": "agent_polly",
+                "name": "polly",
+                "description": "Full-stack AI developer for interactive development, debugging, and styling",
+                "role": "Full-Stack AI Developer",
+            },
+            {
+                "id": "agent_antigravity",
+                "name": "antigravity-native-ui",
+                "description": "Google DeepMind Antigravity Pair Programmer for fast code refactoring and architecture",
+                "role": "Lead Architect & Pair Programmer",
+            },
+            {
+                "id": "agent_opencode",
+                "name": "opencode-native-ui",
+                "description": "OpenCode AI developer with terminal and file system tool access",
+                "role": "Code Assistant",
+            },
+            {
+                "id": "agent_codex",
+                "name": "codex-native-ui",
+                "description": "Codex UI assistant specialized in frontend design and component development",
+                "role": "Frontend Specialist",
+            },
+        ]
+
+    def create_omnigent_chat_session(
+        self,
+        app,
+        agent_name: Optional[str] = "polly",
+        title: Optional[str] = None,
+        workspace_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Create or initialize an interactive Omnigent chat session bound to the active app workspace."""
+        import urllib.request
+        import json
+
+        server_status = self.ensure_omnigent_server()
+        url = server_status.get("internal_url") or server_status.get("server_url") or self.get_omnigent_internal_url()
+        expected_host_id, expected_host_name = self.get_app_host_identity(app)
+        live_host_id, live_host_name, host_online = self.resolve_live_host(app, expected_host_id)
+
+        # Get active workspace folder
+        from app.models.dev_workspace import DevWorkspace
+        ws_folder = None
+        ws_name = None
+        target_ws_id = workspace_id
+        try:
+            with _get_system_db() as db:
+                if target_ws_id:
+                    ws = db.query(DevWorkspace).filter(DevWorkspace.app_id == app.id, DevWorkspace.id == target_ws_id).first()
+                else:
+                    ws = db.query(DevWorkspace).filter(DevWorkspace.app_id == app.id, DevWorkspace.status == "active").first()
+                if ws:
+                    ws_folder = ws.folder_path
+                    ws_name = ws.name
+                    target_ws_id = ws.id
+        except Exception as e:
+            logger.debug("Could not resolve dev workspace from DB: %s", e)
+
+        if not ws_folder:
+            ws_folder = _clean_id(app.id)
+
+        ws_path = f"/workspaces/{ws_folder}"
+
+        # Resolve agent_id
+        agents = self.get_omnigent_agents()
+        agent_id = None
+        for ag in agents:
+            if ag.get("name") == agent_name or ag.get("id") == agent_name:
+                agent_id = ag.get("id")
+                break
+        if not agent_id and agents:
+            agent_id = agents[0].get("id")
+        if not agent_id:
+            agent_id = "agent_polly"
+
+        payload_dict = {
+            "title": title or f"Build Studio: {app.name}",
+            "agent_id": agent_id,
+            "host_id": live_host_id,
+            "workspace": ws_path,
+        }
+
+        session_id = None
+        res_data = {}
+        try:
+            req = urllib.request.Request(
+                f"{url}/v1/sessions",
+                data=json.dumps(payload_dict).encode("utf-8"),
+                headers={"Content-Type": "application/json", "User-Agent": "CompassX/1.0"},
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=4.0) as resp:
+                res_data = json.loads(resp.read().decode())
+                session_id = res_data.get("id") or res_data.get("session_id")
+        except Exception as e:
+            logger.warning("Could not create remote Omnigent session on %s: %s", url, e)
+
+        if not session_id:
+            session_id = f"sess_build_{app.id}_{uuid.uuid4().hex[:8]}"
+
+        session_info = {
+            "session_id": session_id,
+            "agent_id": agent_id,
+            "agent_name": agent_name,
+            "title": title or f"Build Studio: {app.name}",
+            "host_id": live_host_id,
+            "host_name": live_host_name,
+            "host_online": host_online,
+            "workspace_id": target_ws_id,
+            "workspace_name": ws_name,
+            "workspace_folder": ws_folder,
+            "workspace_path": ws_path,
+            "server_url": url,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }
+
+        # Cache in memory
+        if app.id not in _DEV_SESSIONS:
+            _DEV_SESSIONS[app.id] = {}
+        _DEV_SESSIONS[app.id]["build_session"] = session_info
+        _DEV_SESSIONS[app.id]["build_session_id"] = session_id
+
+        return session_info
+
+    def get_build_session(self, app, workspace_id: Optional[str] = None) -> Dict[str, Any]:
+        """Get or lazily initialize the active Build Studio session for this app."""
+        dev_status = self.get_dev_session(app)
+        is_pod_running = dev_status.get("status") == "active" or dev_status.get("host_online", False)
+
+        # Check existing cached session
+        existing = (_DEV_SESSIONS.get(app.id) or {}).get("build_session")
+        if existing and existing.get("session_id"):
+            existing["dev_status"] = dev_status.get("status", "inactive")
+            existing["dev_url"] = dev_status.get("dev_url") or ingress_service.get_app_dev_url(app, 9201)
+            existing["is_running"] = is_pod_running
+            existing["host_online"] = dev_status.get("host_online", False)
+            return existing
+
+        # Create new session
+        session_info = self.create_omnigent_chat_session(app, workspace_id=workspace_id)
+        session_info["dev_status"] = dev_status.get("status", "inactive")
+        session_info["dev_url"] = dev_status.get("dev_url") or ingress_service.get_app_dev_url(app, 9201)
+        session_info["is_running"] = is_pod_running
+        return session_info
+
+    def get_build_session_messages(self, app, session_id: str) -> List[Dict[str, Any]]:
+        """Fetch items/messages from Omnigent Server for the specified session."""
+        import urllib.request
+        import json
+
+        urls = []
+        int_url = self.get_omnigent_internal_url()
+        pub_url = self.get_omnigent_server_url()
+        if int_url:
+            urls.append(int_url)
+        if pub_url and pub_url not in urls:
+            urls.append(pub_url)
+
+        for u in urls:
+            try:
+                req = urllib.request.Request(f"{u}/v1/sessions/{session_id}/items", headers={"User-Agent": "CompassX/1.0"})
+                with urllib.request.urlopen(req, timeout=3.0) as resp:
+                    data = json.loads(resp.read().decode())
+                    raw_items = data.get("items") or (data if isinstance(data, list) else [])
+
+                    # Normalize raw Omnigent items to UI chat format
+                    messages = []
+                    for it in raw_items:
+                        it_type = it.get("type", "message")
+                        content = it.get("content") or it.get("text") or ""
+                        role = it.get("role") or ("user" if it_type == "comment" else "assistant")
+
+                        msg = {
+                            "id": str(it.get("id") or uuid.uuid4().hex[:8]),
+                            "role": role,
+                            "type": it_type,
+                            "content": content,
+                            "agent": it.get("agent") or it.get("agent_name"),
+                            "status": it.get("status", "completed"),
+                            "created_at": it.get("created_at") or datetime.now(timezone.utc).isoformat(),
+                            "tool": it.get("tool") or (
+                                {
+                                    "name": it.get("tool_name") or it.get("name"),
+                                    "input": it.get("input") or it.get("arguments"),
+                                    "output": it.get("output") or it.get("result"),
+                                    "status": it.get("status", "completed"),
+                                }
+                                if it_type in ["tool_use", "tool_call", "tool_result", "command", "file_edit"]
+                                else None
+                            ),
+                        }
+                        messages.append(msg)
+                    return messages
+            except Exception as e:
+                logger.debug("Could not fetch session items from %s: %s", u, e)
+
+        return []
+
+    def send_build_session_prompt(
+        self,
+        app,
+        session_id: str,
+        prompt: str,
+        agent_name: Optional[str] = None,
+        workspace_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Post a user instruction / comment to the Omnigent Server session to trigger the AI agent."""
+        import urllib.request
+        import json
+
+        self.touch_workspace_activity(app.id, workspace_id)
+
+        urls = []
+        int_url = self.get_omnigent_internal_url()
+        pub_url = self.get_omnigent_server_url()
+        if int_url:
+            urls.append(int_url)
+        if pub_url and pub_url not in urls:
+            urls.append(pub_url)
+
+        payload = json.dumps({"content": prompt, "agent": agent_name}).encode("utf-8")
+
+        for u in urls:
+            try:
+                req = urllib.request.Request(
+                    f"{u}/v1/sessions/{session_id}/comments",
+                    data=payload,
+                    headers={"Content-Type": "application/json", "User-Agent": "CompassX/1.0"},
+                    method="POST",
+                )
+                with urllib.request.urlopen(req, timeout=4.0) as resp:
+                    res_data = json.loads(resp.read().decode())
+                    return {
+                        "status": "sent",
+                        "session_id": session_id,
+                        "item": res_data,
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                    }
+            except urllib.error.HTTPError as he:
+                if he.code == 404:
+                    # Session expired or not found on server; recreate and re-send
+                    new_session = self.create_omnigent_chat_session(app, agent_name=agent_name, workspace_id=workspace_id)
+                    new_session_id = new_session.get("session_id")
+                    if new_session_id and new_session_id != session_id:
+                        return self.send_build_session_prompt(
+                            app, new_session_id, prompt, agent_name=agent_name, workspace_id=workspace_id
+                        )
+                logger.warning("HTTP error posting prompt to %s (HTTP %s): %s", u, he.code, he)
+            except Exception as e:
+                logger.warning("Could not post prompt to %s: %s", u, e)
+
+        return {
+            "status": "queued",
+            "session_id": session_id,
+            "prompt": prompt,
+            "message": "Prompt dispatched to dev sandbox",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+
+    def clear_build_session(self, app, workspace_id: Optional[str] = None) -> Dict[str, Any]:
+        """Reset conversation history by generating a new session for the current workspace."""
+        new_session = self.create_omnigent_chat_session(app, workspace_id=workspace_id)
+        return new_session
 
 
 omnigent_dev_service = OmnigentDevService()

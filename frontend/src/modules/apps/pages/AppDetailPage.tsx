@@ -68,8 +68,9 @@ import { useAppTasks } from '../hooks/useAppTasks';
 import { APP_TYPES } from '../components/CreateAppModal';
 import { AppTasksKanban } from '../components/tasks/AppTasksKanban';
 import { AppDevelopmentTab } from '../components/AppDevelopmentTab';
+import { AppBuildStudio } from '../components/build/AppBuildStudio';
 
-type DetailTab = 'overview' | 'development' | 'deployments' | 'configuration' | 'environment' | 'logs' | 'tasks';
+type DetailTab = 'overview' | 'build' | 'development' | 'deployments' | 'configuration' | 'environment' | 'logs' | 'tasks';
 
 export default function AppDetailPage() {
   const params = useParams<{ applicationId?: string; appId?: string }>();
@@ -83,6 +84,7 @@ export default function AppDetailPage() {
 
   const tabParam = searchParams.get('tab') as DetailTab | null;
   const activeTab: DetailTab =
+    tabParam === 'build' ||
     tabParam === 'development' ||
     tabParam === 'deployments' ||
     tabParam === 'configuration' ||
@@ -1397,6 +1399,40 @@ export default function AppDetailPage() {
         </button>
 
         <button
+          onClick={() => handleTabChange('build')}
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+            padding: '10px 4px',
+            border: 'none',
+            background: 'none',
+            fontSize: '0.875rem',
+            fontWeight: activeTab === 'build' ? 600 : 500,
+            color: activeTab === 'build' ? 'var(--color-primary)' : 'var(--color-text-muted)',
+            borderBottom: activeTab === 'build' ? '2px solid var(--color-primary)' : '2px solid transparent',
+            cursor: 'pointer',
+            transition: 'all 0.15s ease',
+          }}
+        >
+          <Sparkles size={16} color={activeTab === 'build' ? 'var(--color-primary)' : '#8b5cf6'} />
+          <span>Build</span>
+          <span
+            style={{
+              fontSize: '0.68rem',
+              fontWeight: 700,
+              padding: '1px 6px',
+              borderRadius: 10,
+              background: 'linear-gradient(135deg, rgba(99, 102, 241, 0.15) 0%, rgba(139, 92, 246, 0.15) 100%)',
+              color: '#6366f1',
+              border: '1px solid rgba(99, 102, 241, 0.3)',
+            }}
+          >
+            AI Studio
+          </span>
+        </button>
+
+        <button
           onClick={() => handleTabChange('development')}
           style={{
             display: 'flex',
@@ -2281,6 +2317,11 @@ export default function AppDetailPage() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* TAB: BUILD (Side-by-Side Live App Preview & Omnigent AI Chat) */}
+      {activeTab === 'build' && app && (
+        <AppBuildStudio app={app} resolvedAppId={resolvedAppId!} />
       )}
 
       {/* TAB: DEVELOPMENT (Interactive Sandbox, Workspaces, Preview & Logs) */}
