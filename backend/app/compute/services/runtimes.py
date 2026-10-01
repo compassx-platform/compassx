@@ -13,7 +13,7 @@ import os
 SPARK_IMAGE = "apache/spark:3.5.0"
 FLINK_IMAGE = "flink:1.18-scala_2.12"
 RAY_IMAGE = "rayproject/ray:2.9.0"
-DUCKDB_IMAGE = os.environ.get("COMPASSX_DUCKDB_IMAGE", "ghcr.io/compassx-platform/compute-duckdb:latest")
+DUCKDB_IMAGE = os.environ.get("COMPASSX_DUCKDB_IMAGE", "ghcr.io/compassx-platform/compute-duckdb:v0.11.10")
 
 # Runtimes valid only with certain profiles
 DUCKDB_VALID_PROFILES = {"local", "cloud-xs", "cloud-s"}

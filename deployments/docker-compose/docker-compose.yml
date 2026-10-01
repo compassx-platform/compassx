@@ -52,7 +52,7 @@ services:
       retries: 12
 
   jobs-runner-image:
-    image: ghcr.io/compassx-platform/airflow-notebook-runner:v0.6.0
+    image: ghcr.io/compassx-platform/airflow-notebook-runner:v0.11.10
     command: ["python", "-c", "print('CompassX notebook runner image ready')"]
     restart: "no"
 
