@@ -48,6 +48,7 @@ import NotebookPage from '@/modules/notebooks/pages/NotebookPage';
 import DashboardEditorPage from '@/modules/dashboards/pages/DashboardEditorPage';
 import { useNotebookStore } from '@/modules/notebooks/store/notebookStore';
 import { CatalogQueryEditorTab, CatalogQueryVersion } from '../components/CatalogQueryEditorTab';
+import { VolumeExplorer } from '../components/VolumeExplorer';
 import { useCatalogConnections } from '@/modules/agents/hooks/useCatalogConnections';
 import { OwnerName, PermissionsPanel, useMyPrivileges } from '@/modules/governance';
 import type { SecurableType } from '@/modules/governance';
@@ -2868,318 +2869,33 @@ export default function DataCatalog() {
       );
     }
 
-    //  VOLUME level 
+    // ── VOLUME level ──────────────────────────────────────────────────────────
     if (selection && selection.kind === 'volume') {
       const vol = activeVolume;
-      if (!vol) return <div className="uc-empty-state"><Loader2 className="spin" size={24} /><p>Loading volume...</p></div>;
+      if (!vol) {
+        return (
+          <div className="uc-empty-state">
+            <Loader2 className="spin" size={24} />
+            <p>Loading volume...</p>
+          </div>
+        );
+      }
 
-      const files = volumeFilesQuery.data || [];
-      const isLoadingFiles = volumeFilesQuery.isLoading;
-
-      const formatBytes = (bytes: number) => {
-        if (bytes === 0) return '0 B';
-        const k = 1024;
-        const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
-        const i = Math.floor(Math.log(bytes) / Math.log(k));
-        return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
-      };
-
-      type VolumeFileInfo = {
-        file_path: string;
-        file_name: string;
-        size_bytes: number;
-        content_type: string;
-        last_modified: string;
-      };
-
-      const fileColumns = [
-        {
-          key: 'name',
-          header: 'Name',
-          render: (row: VolumeFileInfo) => {
-            const isDir = row.file_path.endsWith('/') || row.content_type === 'application/x-directory';
-            return (
-              <div 
-                className={`font-medium flex items-center gap-2 ${isDir ? 'cursor-pointer text-blue-600 hover:underline' : ''}`}
-                onClick={() => {
-                  if (isDir) {
-                    setCurrentVolumePath(row.file_path);
-                    setFileSearchQuery('');
-                  }
-                }}
-              >
-                {isDir ? <Folder size={16} className="text-blue-500" style={{ minWidth: 16 }} /> : <FileText size={16} className="text-subtle" style={{ minWidth: 16 }} />}
-                <span>{isDir ? row.file_name.replace(/\/$/, '') : row.file_name}</span>
-              </div>
-            );
-          }
-        },
-        {
-          key: 'size',
-          header: 'Size',
-          render: (row: VolumeFileInfo) => formatBytes(row.size_bytes)
-        },
-        {
-          key: 'last_modified',
-          header: 'Last modified',
-          render: (row: VolumeFileInfo) => new Date(row.last_modified).toLocaleString()
-        }
-      ];
-
-      const fileRowActions = [
-        {
-          label: 'Rename',
-          icon: Pencil,
-          onClick: (row: VolumeFileInfo) => {
-            const isDir = row.file_path.endsWith('/') || row.content_type === 'application/x-directory';
-            const cleanName = isDir ? row.file_name.replace(/\/$/, '') : row.file_name;
-            const newName = prompt(`Enter new name for ${cleanName}:`, cleanName);
-            if (newName && newName !== cleanName) {
-              renameVolumeFileMutation.mutate({ volume_id: vol.id, old_path: row.file_path, new_name: newName });
-            }
-          }
-        },
-        {
-          label: 'Delete file',
-          icon: X,
-          variant: 'danger' as const,
-          onClick: (row: VolumeFileInfo) => {
-            if (confirm(`Delete ${row.file_name}?`)) {
-              deleteVolumeFileMutation.mutate({ volume_id: vol.id, file_path: row.file_path });
-            }
-          }
-        }
-      ];
-
-      const volumeTabs = [
-        { value: 'overview', label: 'Overview' },
-        { value: 'files', label: 'Files' },
-        { value: 'details', label: 'Details' },
-        { value: 'permissions', label: 'Permissions' },
-      ] as const;
+      const fqn = getFqn(selection);
+      const isFav = !!favorites[fqn];
 
       return (
-        <div className="uc-panel">
-          {renderDetailHeader(vol.name, 'volume')}
-
-          <PageTabs tabs={volumeTabs} value={activeTab} onChange={setActiveTab} />
-
-          {activeTab === 'overview' && (
-            <div className="uc-tab-content">
-              {/* Main Card Container */}
-              <div className="uc-detail-card" style={{ padding: '16px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
-                <div className="flex justify-between items-center">
-                  <div className="flex items-center gap-2 font-mono text-sm bg-gray-50 p-2 rounded border flex-wrap" style={{ color: 'var(--color-text-muted)', backgroundColor: 'var(--color-bg-subtle)' }}>
-                    {currentVolumePath && (
-                      <button 
-                        className="uc-icon-btn mr-1"
-                        onClick={() => {
-                          const parts = currentVolumePath.split('/').filter(Boolean);
-                          parts.pop();
-                          setCurrentVolumePath(parts.length ? parts.join('/') + '/' : '');
-                          setFileSearchQuery('');
-                        }}
-                        title="Go up one level"
-                      >
-                        <ChevronLeft size={16} />
-                      </button>
-                    )}
-                    
-                    <div className="flex items-center gap-1 flex-wrap break-all">
-                      <span 
-                        className={`cursor-pointer hover:underline font-medium ${!currentVolumePath ? 'text-gray-900 no-underline' : 'text-blue-600'}`}
-                        onClick={() => {
-                          setCurrentVolumePath('');
-                          setFileSearchQuery('');
-                        }}
-                      >
-                        {vol.name}
-                      </span>
-                      {currentVolumePath.split('/').filter(Boolean).map((part, idx, arr) => {
-                        const pathToHere = arr.slice(0, idx + 1).join('/') + '/';
-                        const isLast = idx === arr.length - 1;
-                        return (
-                          <span key={pathToHere} className="flex items-center gap-1">
-                            <span className="text-subtle mx-1">/</span>
-                            <span 
-                              className={`cursor-pointer hover:underline font-medium ${isLast ? 'text-gray-900 no-underline' : 'text-blue-600'}`}
-                              onClick={() => {
-                                if (!isLast) {
-                                  setCurrentVolumePath(pathToHere);
-                                  setFileSearchQuery('');
-                                }
-                              }}
-                            >
-                              {part}
-                            </span>
-                          </span>
-                        );
-                      })}
-                    </div>
-
-                    <button 
-                      className="uc-icon-btn ml-2" 
-                      onClick={() => {
-                        const fullPath = `/${vol.name}${currentVolumePath ? '/' + currentVolumePath.replace(/\/$/, '') : ''}`;
-                        navigator.clipboard.writeText(fullPath);
-                      }}
-                      title="Copy Volume Path"
-                    >
-                      <Copy size={12} />
-                    </button>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <button className="btn-secondary flex items-center gap-1" onClick={() => volumeFilesQuery.refetch()}>
-                      <RefreshCw size={14} /> Refresh
-                    </button>
-                    <button 
-                      className="btn-secondary"
-                      onClick={() => {
-                        const dir = prompt("Enter directory name:");
-                        if (dir && vol.id) {
-                          createVolumeDirectoryMutation.mutate({ volume_id: vol.id, dir_name: dir, sub_path: currentVolumePath });
-                        }
-                      }}
-                      disabled={createVolumeDirectoryMutation.isPending}
-                    >
-                      {createVolumeDirectoryMutation.isPending ? <Loader2 size={14} className="spin" /> : 'Create directory'}
-                    </button>
-                  </div>
-                </div>
-
-                {/* Filter Search Input */}
-                <div style={{ position: 'relative' }}>
-                  <Search size={16} className="text-subtle" style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)' }} />
-                  <input 
-                    type="text" 
-                    placeholder="Filter files and directories at this level" 
-                    className="uc-search-input w-full"
-                    style={{ paddingLeft: '36px' }}
-                    value={fileSearchQuery}
-                    onChange={(e) => setFileSearchQuery(e.target.value)}
-                  />
-                </div>
-
-                {/* Table containing the files */}
-                <div style={{ marginTop: '12px' }}>
-                  <Table
-                    columns={fileColumns}
-                    rows={filteredFiles}
-                    keyExtractor={(row) => row.file_path}
-                    rowActions={fileRowActions}
-                    emptyState={
-                      <div className="flex flex-col items-center gap-2 py-4">
-                        <div style={{ display: 'flex', gap: '8px' }}>
-                          <span style={{ width: '12px', height: '12px', borderRadius: '50%', backgroundColor: '#cbd5e1', display: 'inline-block' }}></span>
-                          <span style={{ width: '40px', height: '12px', borderRadius: '4px', backgroundColor: '#e2e8f0', display: 'inline-block' }}></span>
-                        </div>
-                        <div style={{ display: 'flex', gap: '8px' }}>
-                          <span style={{ width: '12px', height: '12px', borderRadius: '50%', backgroundColor: '#cbd5e1', display: 'inline-block' }}></span>
-                          <span style={{ width: '60px', height: '12px', borderRadius: '4px', backgroundColor: '#e2e8f0', display: 'inline-block' }}></span>
-                        </div>
-                        <p style={{ margin: '8px 0 0 0', color: 'var(--color-text-subtle)' }}>No content in volume</p>
-                      </div>
-                    }
-                    loading={isLoadingFiles}
-                    actionsColumnWidth={50}
-                  />
-                </div>
-              </div>
-
-              {/* About this volume */}
-              <div className="mt-6 border-t pt-4">
-                <h4 style={{ fontSize: '14px', fontWeight: 600, color: 'var(--color-text-muted)', marginBottom: '8px' }}>About this volume</h4>
-                <div className="flex items-center gap-2 text-sm text-subtle">
-                  <span>Owner:</span>
-                  <strong>
-                    <OwnerName
-                      securableType="volume"
-                      name={getFqn(selection)}
-                      fallback={vol.owner || '—'}
-                    />
-                  </strong>
-                  <button
-                    type="button"
-                    className="gov-link-btn"
-                    onClick={() => setActiveTab('permissions')}
-                  >
-                    Manage
-                  </button>
-                </div>
-              </div>
-
-              {/* Tags Section */}
-              <div className="mt-6 border-t pt-4">
-                <h4 style={{ fontSize: '14px', fontWeight: 600, color: 'var(--color-text-muted)', marginBottom: '8px' }}>Tags</h4>
-                <p className="text-sm text-subtle">No tags applied</p>
-              </div>
-            </div>
-          )}
-
-          {activeTab === 'files' && (
-            <div className="uc-tab-content">
-              {/* Main Card Container simplified for files only */}
-              <div className="uc-detail-card" style={{ padding: '16px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
-                <div style={{ position: 'relative' }}>
-                  <Search size={16} className="text-subtle" style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)' }} />
-                  <input 
-                    type="text" 
-                    placeholder="Filter files and directories at this level" 
-                    className="uc-search-input w-full"
-                    style={{ paddingLeft: '36px' }}
-                    value={fileSearchQuery}
-                    onChange={(e) => setFileSearchQuery(e.target.value)}
-                  />
-                </div>
-                <div>
-                  <Table
-                    columns={fileColumns}
-                    rows={filteredFiles}
-                    keyExtractor={(row) => row.file_path}
-                    rowActions={fileRowActions}
-                    emptyState={<div className="text-center py-8 text-subtle">No content in volume</div>}
-                    loading={isLoadingFiles}
-                    actionsColumnWidth={50}
-                  />
-                </div>
-              </div>
-            </div>
-          )}
-
-          {activeTab === 'details' && (
-            <div className="uc-tab-content">
-              <div className="uc-detail-card">
-                <div className="uc-detail-title">Volume Details</div>
-                <div className="uc-key-values">
-                  <div><span>Name</span><strong>{vol.name}</strong></div>
-                  <div><span>ID</span><strong>{vol.id}</strong></div>
-                  <div>
-                    <span>Storage Location</span>
-                    <strong>{vol.storage_location || `${selection.catalog}/${selection.schema}/volumes/${vol.name}/`}</strong>
-                  </div>
-                  <div><span>Created By</span><strong>{vol.created_by}</strong></div>
-                  <div><span>Created At</span><strong>{new Date(vol.created_at).toLocaleString()}</strong></div>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {activeTab === 'permissions' && renderPermissionsTab(selection)}
-
-          {/* Hidden file input for header row button upload */}
-          <input 
-            type="file" 
-            id="volume-file-upload" 
-            style={{ display: 'none' }} 
-            onChange={(e) => {
-              const file = e.target.files?.[0];
-              if (file && vol.id) {
-                uploadVolumeFileMutation.mutate({ volume_id: vol.id, file, sub_path: currentVolumePath });
-              }
-              e.target.value = '';
-            }} 
-          />
-        </div>
+        <VolumeExplorer
+          volume={vol}
+          catalog={selection.catalog}
+          schema={selection.schema}
+          canModify={canModifySelection}
+          canManage={canManageSelection}
+          onNavigate={selectAndNavigate}
+          renderPermissionsTab={renderPermissionsTab}
+          isFavorite={isFav}
+          onToggleFavorite={() => setFavorites((prev) => ({ ...prev, [fqn]: !prev[fqn] }))}
+        />
       );
     }
 

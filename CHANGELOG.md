@@ -5,6 +5,20 @@ All notable changes to the CompassX Platform will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.8] - 2026-10-01
+
+### 🚀 Highlights
+
+CompassX `0.11.8` delivers **Modular Volume File Explorer Component**, **Refined Data Catalog Volume Management**, and **Interactive Directory Traversal & Filtering**.
+
+### ✨ Features & Enhancements
+
+#### Unified Volume File Explorer & Data Catalog UI
+- **Modular Volume Explorer (`VolumeExplorer.tsx`)**: Extracted volume details, directory navigation, file table views, and upload handling into an encapsulated component.
+- **Enhanced Search & Breadcrumb Traversal**: Improved directory level filtering, favorite toggling, and granular volume permissions management within the Unified Catalog view.
+
+---
+
 ## [0.11.7] - 2026-09-30
 
 ### 🚀 Highlights
