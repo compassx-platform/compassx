@@ -13,9 +13,9 @@ node_modules/
 .pnp.js
 
 # Build output
-dist/
-dist-ssr/
-build/
+/dist/
+/dist-ssr/
+/build/
 build_output.txt
 
 # Environment variables
