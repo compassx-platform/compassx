@@ -16,6 +16,7 @@ import {
   FolderGit2,
   ShieldCheck,
   Loader2,
+  Sparkles,
 } from 'lucide-react';
 import { AppTable, type AppTableColumn } from '@/components/common/AppTable';
 import { useToast } from '@/lib/toast';
@@ -315,6 +316,14 @@ export default function AppsHomePage() {
         const liveUrl = app.config?.runtime?.url || (livePort ? `http://localhost:${livePort}` : app.route);
         return (
           <div style={{ display: 'flex', gap: 4, justifyContent: 'flex-end' }} onClick={(e) => e.stopPropagation()}>
+            <button
+              className="ghost-icon-btn"
+              title="Open in AI Build Studio"
+              aria-label={`Build ${app.name} with AI`}
+              onClick={() => navigate(`/apps/${app.id}/build`)}
+            >
+              <Sparkles size={13} color="#6366f1" />
+            </button>
             <button
               className="ghost-icon-btn"
               title="Open Container in Browser"

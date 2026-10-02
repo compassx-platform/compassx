@@ -59,6 +59,7 @@ import LogoShowcasePage from '@/pages/LogoShowcasePage';
 import DesignSystemShowcasePage from '@/pages/DesignSystemShowcasePage';
 import AppsHomePage from '@/modules/apps/pages/AppsHomePage';
 import AppDetailPage from '@/modules/apps/pages/AppDetailPage';
+import AppBuildPage from '@/modules/apps/pages/AppBuildPage';
 import PortalPage from '@/modules/portal/pages/PortalPage';
 import WorkspaceSettingsPage from '@/pages/workspace/WorkspaceSettingsPage';
 import AIGatewayPage from '@/modules/ai_gateway/pages/AIGatewayPage';
@@ -294,6 +295,7 @@ export default function App() {
                   <Route path="dashboard/:dashboardId" element={<PortalPage />} />
                   <Route path="apps" element={<AppsHomePage />} />
                   <Route path="apps/:applicationId" element={<AppDetailPage />} />
+                  <Route path="apps/:applicationId/build" element={<AppBuildPage />} />
                   <Route path="data-catalog" element={<DataCatalog />} />
                   <Route path="data-catalog/:catalog" element={<DataCatalog />} />
                   <Route path="data-catalog/:catalog/:schema" element={<DataCatalog />} />

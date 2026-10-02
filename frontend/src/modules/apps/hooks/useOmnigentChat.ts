@@ -5,9 +5,14 @@ import api from '@/lib/api';
 export interface OmnigentAgent {
   id: string;
   name: string;
+  display_name?: string;
+  provider?: string;
   description?: string;
   role?: string;
   mode?: string;
+  icon?: string;
+  badge?: string;
+  color?: string;
 }
 
 export interface OmnigentSession {

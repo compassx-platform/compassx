@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import {
   Monitor,
   Tablet,
@@ -9,12 +9,9 @@ import {
   Check,
   Play,
   Loader2,
-  AlertCircle,
-  CheckCircle2,
   Globe,
   Radio,
-  Maximize2,
-  RefreshCw,
+  Sparkles,
 } from 'lucide-react';
 import { AppItem, DevSessionStatus } from '../../hooks/useApps';
 import { useToast } from '@/lib/toast';
@@ -51,39 +48,51 @@ export function AppPreviewPanel({
   const toast = useToast();
   const [viewport, setViewport] = useState<ViewportMode>('desktop');
   const [copiedUrl, setCopiedUrl] = useState(false);
-  const [isIframeLoading, setIsIframeLoading] = useState(true);
-  const [reloadCounter, setReloadCounter] = useState(0);
-  const [iframeError, setIframeError] = useState(false);
+  const [isIframeLoading, setIsIframeLoading] = useState(false);
+  const [refreshNonce, setRefreshNonce] = useState<number>(0);
   const iframeRef = useRef<HTMLIFrameElement>(null);
+  const prevExternalKeyRef = useRef(externalRefreshKey);
 
   const liveDevUrl =
     devStatus?.dev_url || `https://${app.slug}-dev.135.13.180.167.nip.io`;
 
-  // Construct cache-busted URL when user clicks reload or AI triggers auto-refresh
-  const previewUrlWithCacheBust = `${liveDevUrl}${liveDevUrl.includes('?') ? '&' : '?'}_t=${Date.now()}_${reloadCounter}_${externalRefreshKey}`;
+  // Stable URL computation - ONLY updates when liveDevUrl or explicit refreshNonce changes
+  const stableIframeSrc = useMemo(() => {
+    if (!liveDevUrl) return '';
+    if (refreshNonce === 0) return liveDevUrl;
+    const separator = liveDevUrl.includes('?') ? '&' : '?';
+    return `${liveDevUrl}${separator}_t=${refreshNonce}`;
+  }, [liveDevUrl, refreshNonce]);
 
-  // When external refresh key changes (e.g. AI finished editing files), trigger iframe reload
-  useEffect(() => {
-    if (externalRefreshKey > 0) {
-      handleReload();
-    }
-  }, [externalRefreshKey]);
-
-  function handleReload() {
+  // Clean, single reload action without render-cycle loops
+  const handleReload = useCallback(() => {
     setIsIframeLoading(true);
-    setIframeError(false);
-    setReloadCounter((prev) => prev + 1);
-    if (iframeRef.current) {
-      try {
-        iframeRef.current.src = `${liveDevUrl}${liveDevUrl.includes('?') ? '&' : '?'}_t=${Date.now()}`;
-      } catch (e) {
-        // cross-origin reload
-      }
-    }
+    setRefreshNonce(Date.now());
     if (onRefreshTriggered) {
       onRefreshTriggered();
     }
-  }
+  }, [onRefreshTriggered]);
+
+  // Handle external file update notification from AI assistant (debounced)
+  useEffect(() => {
+    if (externalRefreshKey > 0 && externalRefreshKey !== prevExternalKeyRef.current) {
+      prevExternalKeyRef.current = externalRefreshKey;
+      const timer = setTimeout(() => {
+        handleReload();
+      }, 500);
+      return () => clearTimeout(timer);
+    }
+  }, [externalRefreshKey, handleReload]);
+
+  // Safety fallback: ensure loading spinner disappears after max 6 seconds
+  useEffect(() => {
+    if (isIframeLoading) {
+      const timer = setTimeout(() => {
+        setIsIframeLoading(false);
+      }, 6000);
+      return () => clearTimeout(timer);
+    }
+  }, [isIframeLoading]);
 
   function handleCopyUrl() {
     navigator.clipboard.writeText(liveDevUrl);
@@ -103,9 +112,9 @@ export function AppPreviewPanel({
         flexDirection: 'column',
         height: '100%',
         width: '100%',
-        background: '#0f172a',
-        borderRight: '1px solid var(--color-border)',
+        background: '#090d16',
         overflow: 'hidden',
+        position: 'relative',
       }}
     >
       {/* Top Controls Toolbar */}
@@ -115,15 +124,15 @@ export function AppPreviewPanel({
           alignItems: 'center',
           justifyContent: 'space-between',
           padding: '8px 14px',
-          background: '#1e293b',
-          borderBottom: '1px solid #334155',
+          background: '#131c2e',
+          borderBottom: '1px solid #1e293b',
           gap: 12,
           flexWrap: 'wrap',
-          minHeight: 48,
+          minHeight: 46,
         }}
       >
         {/* Left: Viewport Switcher */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 4, background: '#0f172a', padding: '3px', borderRadius: 8 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 3, background: '#090d16', padding: '3px', borderRadius: 8 }}>
           <button
             onClick={() => setViewport('desktop')}
             title="Desktop View (100%)"
@@ -136,13 +145,13 @@ export function AppPreviewPanel({
               border: 'none',
               background: viewport === 'desktop' ? '#3b82f6' : 'transparent',
               color: viewport === 'desktop' ? '#ffffff' : '#94a3b8',
-              fontSize: '0.75rem',
+              fontSize: '0.74rem',
               fontWeight: 600,
               cursor: 'pointer',
               transition: 'all 0.15s ease',
             }}
           >
-            <Monitor size={14} />
+            <Monitor size={13} />
             <span>Desktop</span>
           </button>
 
@@ -158,13 +167,13 @@ export function AppPreviewPanel({
               border: 'none',
               background: viewport === 'tablet' ? '#3b82f6' : 'transparent',
               color: viewport === 'tablet' ? '#ffffff' : '#94a3b8',
-              fontSize: '0.75rem',
+              fontSize: '0.74rem',
               fontWeight: 600,
               cursor: 'pointer',
               transition: 'all 0.15s ease',
             }}
           >
-            <Tablet size={14} />
+            <Tablet size={13} />
             <span>Tablet</span>
           </button>
 
@@ -180,13 +189,13 @@ export function AppPreviewPanel({
               border: 'none',
               background: viewport === 'mobile' ? '#3b82f6' : 'transparent',
               color: viewport === 'mobile' ? '#ffffff' : '#94a3b8',
-              fontSize: '0.75rem',
+              fontSize: '0.74rem',
               fontWeight: 600,
               cursor: 'pointer',
               transition: 'all 0.15s ease',
             }}
           >
-            <Smartphone size={14} />
+            <Smartphone size={13} />
             <span>Mobile</span>
           </button>
         </div>
@@ -196,11 +205,11 @@ export function AppPreviewPanel({
           style={{
             flex: 1,
             maxWidth: 420,
-            minWidth: 200,
+            minWidth: 180,
             display: 'flex',
             alignItems: 'center',
-            background: '#0f172a',
-            border: '1px solid #334155',
+            background: '#090d16',
+            border: '1px solid #1e293b',
             borderRadius: 6,
             padding: '4px 10px',
             gap: 8,
@@ -229,8 +238,8 @@ export function AppPreviewPanel({
           <span
             style={{
               flex: 1,
-              fontSize: '0.76rem',
-              color: '#e2e8f0',
+              fontSize: '0.75rem',
+              color: '#cbd5e1',
               fontFamily: 'monospace',
               overflow: 'hidden',
               textOverflow: 'ellipsis',
@@ -274,30 +283,30 @@ export function AppPreviewPanel({
           </button>
         </div>
 
-        {/* Right: Refresh & Actions */}
+        {/* Right: Reload & Sandbox Actions */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <button
             onClick={handleReload}
-            disabled={!isDevPodRunning}
-            title="Refresh Live Preview"
+            disabled={!isDevPodRunning || isIframeLoading}
+            title="Reload Live Preview"
             style={{
               display: 'inline-flex',
               alignItems: 'center',
               gap: 5,
               padding: '5px 10px',
               borderRadius: 6,
-              background: '#334155',
-              border: 'none',
+              background: '#1e293b',
+              border: '1px solid #334155',
               color: '#f8fafc',
-              fontSize: '0.75rem',
+              fontSize: '0.74rem',
               fontWeight: 500,
-              cursor: isDevPodRunning ? 'pointer' : 'not-allowed',
+              cursor: isDevPodRunning && !isIframeLoading ? 'pointer' : 'not-allowed',
               opacity: isDevPodRunning ? 1 : 0.6,
               transition: 'background 0.15s ease',
             }}
           >
             <RotateCw size={13} className={isIframeLoading ? 'spin' : ''} />
-            <span>Reload</span>
+            <span>{isIframeLoading ? 'Refreshing...' : 'Reload'}</span>
           </button>
 
           {!isDevPodRunning && (
@@ -313,7 +322,7 @@ export function AppPreviewPanel({
                 background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
                 border: 'none',
                 color: '#ffffff',
-                fontSize: '0.75rem',
+                fontSize: '0.74rem',
                 fontWeight: 600,
                 cursor: isDevPodStarting ? 'not-allowed' : 'pointer',
                 boxShadow: '0 2px 6px rgba(16, 185, 129, 0.3)',
@@ -325,6 +334,23 @@ export function AppPreviewPanel({
           )}
         </div>
       </div>
+
+      {/* Top Subtle Loading Bar (Does not block or blink the screen) */}
+      {isIframeLoading && (
+        <div
+          style={{
+            position: 'absolute',
+            top: 46,
+            left: 0,
+            right: 0,
+            height: 2,
+            background: 'linear-gradient(90deg, #38bdf8, #6366f1, #38bdf8)',
+            backgroundSize: '200% 100%',
+            animation: 'previewLoadingPulse 1.2s infinite linear',
+            zIndex: 30,
+          }}
+        />
+      )}
 
       {/* Main Iframe Canvas Area */}
       <div
@@ -359,58 +385,31 @@ export function AppPreviewPanel({
             {viewport !== 'desktop' && (
               <div
                 style={{
-                  height: 28,
-                  background: '#1e293b',
+                  height: 26,
+                  background: '#131c2e',
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
-                  borderBottom: '1px solid #334155',
+                  borderBottom: '1px solid #1e293b',
                   padding: '0 12px',
                   position: 'relative',
                 }}
               >
                 <div style={{ position: 'absolute', left: 10, display: 'flex', gap: 5 }}>
-                  <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#ef4444' }} />
-                  <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#f59e0b' }} />
-                  <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#22c55e' }} />
+                  <span style={{ width: 7, height: 7, borderRadius: '50%', background: '#ef4444' }} />
+                  <span style={{ width: 7, height: 7, borderRadius: '50%', background: '#f59e0b' }} />
+                  <span style={{ width: 7, height: 7, borderRadius: '50%', background: '#22c55e' }} />
                 </div>
-                <span style={{ fontSize: '0.7rem', color: '#94a3b8', fontWeight: 500 }}>
+                <span style={{ fontSize: '0.68rem', color: '#94a3b8', fontWeight: 500 }}>
                   {viewport === 'tablet' ? 'iPad / Tablet (768px)' : 'iPhone / Mobile (375px)'}
                 </span>
               </div>
             )}
 
-            {/* Loading Overlay */}
-            {isIframeLoading && (
-              <div
-                style={{
-                  position: 'absolute',
-                  inset: 0,
-                  background: 'rgba(15, 23, 42, 0.85)',
-                  backdropFilter: 'blur(3px)',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  gap: 12,
-                  zIndex: 10,
-                  color: '#f8fafc',
-                }}
-              >
-                <Loader2 size={32} className="spin" color="#38bdf8" />
-                <div style={{ textAlign: 'center' }}>
-                  <div style={{ fontWeight: 600, fontSize: '0.88rem' }}>Loading live application preview...</div>
-                  <div style={{ fontSize: '0.75rem', color: '#94a3b8', marginTop: 3 }}>
-                    Streaming from sandbox pod ({devStatus?.dev_port || 9201})
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* Interactive Preview Iframe */}
+            {/* Stable Interactive Preview Iframe */}
             <iframe
               ref={iframeRef}
-              src={previewUrlWithCacheBust}
+              src={stableIframeSrc}
               title={`Live Preview - ${app.name}`}
               style={{
                 width: '100%',
@@ -420,16 +419,11 @@ export function AppPreviewPanel({
               }}
               onLoad={() => {
                 setIsIframeLoading(false);
-                setIframeError(false);
-              }}
-              onError={() => {
-                setIsIframeLoading(false);
-                setIframeError(true);
               }}
             />
           </div>
         ) : isDevPodStarting ? (
-          /* Dev Pod Starting Skeleton */
+          /* Dev Pod Starting State */
           <div
             style={{
               display: 'flex',
@@ -460,10 +454,10 @@ export function AppPreviewPanel({
 
             <div>
               <h3 style={{ margin: '0 0 6px', fontSize: '1.1rem', fontWeight: 600, color: '#ffffff' }}>
-                Starting Isolated Dev Pod...
+                Starting Isolated Dev Sandbox...
               </h3>
               <p style={{ margin: 0, fontSize: '0.82rem', color: '#94a3b8', lineHeight: 1.5 }}>
-                Allocating cluster compute, mounting workspace, and establishing Omnigent live pairing tunnel.
+                Allocating cluster compute, mounting workspace, and starting the live application server.
               </p>
             </div>
 
@@ -474,8 +468,8 @@ export function AppPreviewPanel({
                 gap: 8,
                 padding: '6px 14px',
                 borderRadius: 20,
-                background: '#1e293b',
-                border: '1px solid #334155',
+                background: '#131c2e',
+                border: '1px solid #1e293b',
                 fontSize: '0.75rem',
                 color: '#38bdf8',
                 fontWeight: 600,
@@ -486,7 +480,7 @@ export function AppPreviewPanel({
             </div>
           </div>
         ) : (
-          /* Dev Pod Stopped / Launch Prompt */
+          /* Dev Pod Stopped Prompt */
           <div
             style={{
               display: 'flex',
@@ -498,8 +492,8 @@ export function AppPreviewPanel({
               textAlign: 'center',
               color: '#f8fafc',
               maxWidth: 460,
-              background: '#1e293b',
-              border: '1px solid #334155',
+              background: '#131c2e',
+              border: '1px solid #1e293b',
               borderRadius: 16,
               boxShadow: '0 12px 32px rgba(0, 0, 0, 0.4)',
             }}
@@ -553,6 +547,13 @@ export function AppPreviewPanel({
           </div>
         )}
       </div>
+
+      <style>{`
+        @keyframes previewLoadingPulse {
+          0% { background-position: 100% 0; }
+          100% { background-position: -100% 0; }
+        }
+      `}</style>
     </div>
   );
 }

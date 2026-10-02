@@ -5,6 +5,21 @@ All notable changes to the CompassX Platform will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.11] - 2026-10-02
+
+### 🚀 Highlights
+
+CompassX `0.11.11` delivers a **Dedicated Full-Page Application Build Studio**, **Multi-Agent Coding Roster** (supporting Claude Code, Antigravity, Omnigent Polly, OpenCode, Codex UI, Gemini CLI, and DeepSeek Coder), and **Enhanced Studio Navigation & Quick Actions**.
+
+### ✨ Features & Enhancements
+
+#### Application Build Studio & Multi-Agent Roster
+- **Dedicated Full-Page Build Studio (`AppBuildPage.tsx`, `App.tsx`)**: Introduced a full-page IDE and live preview workspace with draggable split panes, real-time iframe preview reload, and session management at `/apps/:applicationId/build`.
+- **Expanded Agent Provider Catalog (`omnigent_dev_service.py`, `useOmnigentChat.ts`)**: Added a rich multi-agent roster supporting Claude Code, DeepMind Antigravity, Omnigent Polly, OpenCode, Codex UI, Gemini CLI, and DeepSeek Coder with provider branding, role tags, and interactive agent selection modal.
+- **Studio Quick Actions & Navigation (`AppDetailPage.tsx`, `AppsHomePage.tsx`)**: Added quick "Open Build Studio" actions directly on the app card list, detail header, and tab bar.
+
+---
+
 ## [0.11.10] - 2026-10-01
 
 ### 🚀 Highlights

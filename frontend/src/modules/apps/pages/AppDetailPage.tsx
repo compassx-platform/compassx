@@ -1138,19 +1138,14 @@ export default function AppDetailPage() {
               alignItems: 'center',
               gap: 6,
               boxShadow: '0 2px 6px rgba(99, 102, 241, 0.3)',
-              cursor: startDevMutation.isPending ? 'not-allowed' : 'pointer',
+              cursor: 'pointer',
               padding: '6px 14px',
             }}
-            onClick={handleLaunchDevStudio}
-            disabled={startDevMutation.isPending}
-            title="Launch Omnigent AI pair programmer in new tab"
+            onClick={() => navigate(`/apps/${resolvedAppId}/build`)}
+            title="Open dedicated full-page Build Studio with live preview & Omnigent AI"
           >
-            {startDevMutation.isPending ? (
-              <Loader2 size={14} className="spin" />
-            ) : (
-              <Sparkles size={14} />
-            )}
-            <span>{startDevMutation.isPending ? 'Launching Omnigent...' : 'Modify with Omnigent'}</span>
+            <Sparkles size={14} />
+            <span>Open Build Studio</span>
           </button>
 
           {isAppStopping ? (
@@ -1399,7 +1394,7 @@ export default function AppDetailPage() {
         </button>
 
         <button
-          onClick={() => handleTabChange('build')}
+          onClick={() => navigate(`/apps/${resolvedAppId}/build`)}
           style={{
             display: 'flex',
             alignItems: 'center',
@@ -1408,15 +1403,16 @@ export default function AppDetailPage() {
             border: 'none',
             background: 'none',
             fontSize: '0.875rem',
-            fontWeight: activeTab === 'build' ? 600 : 500,
-            color: activeTab === 'build' ? 'var(--color-primary)' : 'var(--color-text-muted)',
+            fontWeight: 600,
+            color: '#4f46e5',
             borderBottom: activeTab === 'build' ? '2px solid var(--color-primary)' : '2px solid transparent',
             cursor: 'pointer',
             transition: 'all 0.15s ease',
           }}
+          title="Open full-page App Build Studio with live preview & Omnigent AI"
         >
-          <Sparkles size={16} color={activeTab === 'build' ? 'var(--color-primary)' : '#8b5cf6'} />
-          <span>Build</span>
+          <Sparkles size={16} color="#8b5cf6" />
+          <span>Build Studio</span>
           <span
             style={{
               fontSize: '0.68rem',
@@ -1428,7 +1424,7 @@ export default function AppDetailPage() {
               border: '1px solid rgba(99, 102, 241, 0.3)',
             }}
           >
-            AI Studio
+            Full Page
           </span>
         </button>
 
