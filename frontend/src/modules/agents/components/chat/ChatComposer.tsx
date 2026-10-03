@@ -1,5 +1,5 @@
 import React, { useRef } from 'react';
-import { Paperclip, ArrowRight, Loader2, X as XIcon } from 'lucide-react';
+import { Paperclip, ArrowRight, Loader2, Square, X as XIcon } from 'lucide-react';
 import { ContextUsageBadge } from '../ContextUsageBadge';
 import { SessionChangesDock } from '../SessionChangesDock';
 import { ChangeRecord } from '../DiffSummaryCard';
@@ -14,6 +14,7 @@ interface ChatComposerProps {
   input: string;
   onInputChange: (val: string) => void;
   onSend: (override?: string) => void;
+  onStop?: () => void;
   isStreaming: boolean;
   attachedFiles: File[];
   onUploadFiles: (files: File[]) => void;
@@ -33,6 +34,7 @@ export const ChatComposer: React.FC<ChatComposerProps> = ({
   input,
   onInputChange,
   onSend,
+  onStop,
   isStreaming,
   attachedFiles,
   onUploadFiles,
@@ -314,30 +316,54 @@ export const ChatComposer: React.FC<ChatComposerProps> = ({
                 ))}
               </select>
 
-              <button
-                type="button"
-                onClick={() => handleSend()}
-                disabled={!input.trim() || isStreaming}
-                style={{
-                  width: 28,
-                  height: 28,
-                  borderRadius: '50%',
-                  border: '1px solid #e5e7eb',
-                  background: input.trim() && !isStreaming ? '#f3f4f6' : '#fafafa',
-                  color: input.trim() && !isStreaming ? '#374151' : '#d1d5db',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  cursor: input.trim() && !isStreaming ? 'pointer' : 'not-allowed',
-                  flexShrink: 0,
-                }}
-              >
-                {isStreaming ? (
-                  <Loader2 size={14} className="spin" />
-                ) : (
-                  <ArrowRight size={15} />
-                )}
-              </button>
+              {isStreaming && onStop ? (
+                <button
+                  type="button"
+                  onClick={onStop}
+                  title="Stop generating"
+                  aria-label="Stop generating"
+                  style={{
+                    width: 28,
+                    height: 28,
+                    borderRadius: '50%',
+                    border: '1px solid #374151',
+                    background: '#374151',
+                    color: '#ffffff',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    cursor: 'pointer',
+                    flexShrink: 0,
+                  }}
+                >
+                  <Square size={11} fill="currentColor" />
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => handleSend()}
+                  disabled={!input.trim() || isStreaming}
+                  style={{
+                    width: 28,
+                    height: 28,
+                    borderRadius: '50%',
+                    border: '1px solid #e5e7eb',
+                    background: input.trim() && !isStreaming ? '#f3f4f6' : '#fafafa',
+                    color: input.trim() && !isStreaming ? '#374151' : '#d1d5db',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    cursor: input.trim() && !isStreaming ? 'pointer' : 'not-allowed',
+                    flexShrink: 0,
+                  }}
+                >
+                  {isStreaming ? (
+                    <Loader2 size={14} className="spin" />
+                  ) : (
+                    <ArrowRight size={15} />
+                  )}
+                </button>
+              )}
             </div>
           </div>
         </div>

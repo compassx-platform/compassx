@@ -149,6 +149,8 @@ export default function AgentSidePanel() {
   const agentDropdownRef = useRef<HTMLDivElement>(null);
   const sessionDropdownRef = useRef<HTMLDivElement>(null);
   const moreMenuRef = useRef<HTMLDivElement>(null);
+  const abortRef = useRef<AbortController | null>(null);
+  const streamIdRef = useRef<string | null>(null);
 
   // Close dropdowns on outside click
   useEffect(() => {
@@ -281,6 +283,10 @@ export default function AgentSidePanel() {
     const workspaceSlug = match ? match[1] : null;
     const url = `${baseUrl}/agents/${effectiveAgentId}/sessions/${activeSessionId}/stream${workspaceSlug ? `?workspace=${workspaceSlug}` : ''}`;
 
+    const controller = new AbortController();
+    abortRef.current = controller;
+    streamIdRef.current = null;
+
     try {
       const headers: Record<string, string> = { 'Content-Type': 'application/json' };
       if (token) {
@@ -299,6 +305,7 @@ export default function AgentSidePanel() {
           context: pageContext,
           document_ids: uploadedDocIds.length > 0 ? uploadedDocIds : undefined,
         }),
+        signal: controller.signal,
       });
 
       setUploadedDocIds([]);
@@ -328,6 +335,10 @@ export default function AgentSidePanel() {
 
           try {
             const ev = JSON.parse(raw);
+
+            if (ev.type === 'stream_started' && ev.stream_id) {
+              streamIdRef.current = ev.stream_id;
+            }
 
             // Swarm: update which agent is currently streaming
             if (ev.agent_name !== undefined) {
@@ -485,9 +496,15 @@ export default function AgentSidePanel() {
         }
       }
     } catch (err: any) {
-      toast.error(`Stream error: ${err?.message || 'Connection failed'}`);
-      appendStreamingText(`\n\n> ⚠️ **Stream Error**: ${err?.message || 'Connection failed'}`);
+      if (err?.name !== 'AbortError') {
+        toast.error(`Stream error: ${err?.message || 'Connection failed'}`);
+        appendStreamingText(`\n\n> ⚠️ **Stream Error**: ${err?.message || 'Connection failed'}`);
+      }
     } finally {
+      if (abortRef.current === controller) {
+        abortRef.current = null;
+        streamIdRef.current = null;
+      }
       setStreaming(false);
       setActiveTool(null);
       queryClient.invalidateQueries({
@@ -506,6 +523,15 @@ export default function AgentSidePanel() {
         queryKey: ['agents', effectiveAgentId, 'sessions'],
       });
     }
+  };
+
+  const stopStreaming = () => {
+    const streamId = streamIdRef.current;
+    // Closing the connection alone leaves the turn running server-side; cancel it explicitly.
+    if (streamId) {
+      api.post(`/streams/${streamId}/cancel`).catch(() => {});
+    }
+    abortRef.current?.abort();
   };
 
   const messagesContainerRef = useRef<HTMLDivElement>(null);
@@ -1129,6 +1155,7 @@ export default function AgentSidePanel() {
           input={input}
           onInputChange={setInput}
           onSend={() => handleSendMessage()}
+          onStop={stopStreaming}
           isStreaming={isCurrentSessionStreaming}
           attachedFiles={attachedFiles}
           onUploadFiles={handleUploadFiles}
