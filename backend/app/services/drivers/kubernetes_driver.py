@@ -956,7 +956,11 @@ class KubernetesDevDriver(BaseDevDriver):
 
         # Resolve dev host image based on host_type selection
         host_type = str(host_type or kwargs.get("host_type") or "compassx").lower()
-        dev_host_image = "compassx-host:latest" if host_type == "compassx" else "ghcr.io/omnigent-ai/omnigent-host:latest"
+        custom_img = (getattr(app, "config", None) or {}).get("dev_image") or (getattr(app, "config", None) or {}).get("image")
+        if custom_img and ("/" in str(custom_img)):
+            dev_host_image = str(custom_img)
+        else:
+            dev_host_image = "ghcr.io/omnigent-ai/omnigent-host:latest"
 
         # If k8s client is available, provision Dev Pod, Service, and Ingress
         if k8s:
@@ -1106,7 +1110,7 @@ class KubernetesDevDriver(BaseDevDriver):
                 dev_container = client.V1Container(
                     name="dev-host",
                     image=dev_host_image,
-                    image_pull_policy="IfNotPresent" if host_type == "compassx" else "Always",
+                    image_pull_policy="IfNotPresent",
                     command=["/bin/sh", "-c"],
                     args=[dev_cmd],
                     ports=[client.V1ContainerPort(container_port=8080, name="http")],
@@ -1452,15 +1456,10 @@ class KubernetesDevDriver(BaseDevDriver):
         ns = settings.K8S_NAMESPACE
         clean_id = re.sub(r"[^a-z0-9-]", "-", app.id.lower()).strip("-")
         try:
-            pods = k8s.core().list_namespaced_pod(
-                namespace=ns,
-                label_selector=f"compassx/app-id={clean_id},compassx/dev=true",
-            )
-            if pods.items:
-                pod_name = pods.items[0].metadata.name
+            pod_name = self._find_running_pod_name(clean_id, ns)
+            if pod_name:
                 return k8s.core().read_namespaced_pod_log(name=pod_name, namespace=ns, tail_lines=max_lines)
-            name = f"compassx-app-dev-{clean_id}"
-            return k8s.core().read_namespaced_pod_log(name=name, namespace=ns, tail_lines=max_lines)
+            return ""
         except Exception:
             return ""
 
@@ -1479,21 +1478,12 @@ class KubernetesDevDriver(BaseDevDriver):
             return {"success": False, "error": "Kubernetes client not available"}
 
         clean_id = re.sub(r"[^a-z0-9-]", "-", app.id.lower()).strip("-")
-        dev_name = f"compassx-app-dev-{clean_id}"
         ns = settings.K8S_NAMESPACE
 
         try:
-            pods = k8s.core().list_namespaced_pod(
-                namespace=ns,
-                label_selector=f"compassx/app-id={clean_id},compassx/dev=true",
-            )
-            pod_name = None
-            for p in (pods.items or []):
-                if p.status and p.status.phase == "Running" and not p.metadata.deletion_timestamp:
-                    pod_name = p.metadata.name
-                    break
+            pod_name = self._find_running_pod_name(clean_id, ns)
             if not pod_name:
-                pod_name = dev_name
+                return {"success": False, "error": f"No running dev pod found for app '{app.id}' in namespace '{ns}'"}
 
             workdir = f"/workspaces/{workspace_folder}"
             safe_msg = commit_message.replace('"', '\\"').replace("'", "\\'")
@@ -1551,21 +1541,60 @@ class KubernetesDevDriver(BaseDevDriver):
             return {"success": False, "error": str(exc)}
 
 
-    def _find_running_pod_name(self, clean_id: str, ns: str) -> Optional[str]:
+    def _find_running_pod_name(self, clean_id: str, ns: str, wait_seconds: int = 0) -> Optional[str]:
+        import time
         k8s = self._get_k8s_client()
         if not k8s:
             return None
         dev_name = f"compassx-app-dev-{clean_id}"
-        try:
-            pods = k8s.core().list_namespaced_pod(
-                namespace=ns,
-                label_selector=f"compassx/app-id={clean_id},compassx/dev=true",
-            )
-            for p in (pods.items or []):
-                if p.status and p.status.phase == "Running" and not p.metadata.deletion_timestamp:
-                    return p.metadata.name
-        except Exception:
-            pass
+
+        deadline = time.time() + max(0, wait_seconds)
+        while True:
+            # 1. Try label selectors
+            for selector in [
+                f"compassx/app-id={clean_id},compassx/dev=true",
+                f"app.kubernetes.io/name={dev_name}",
+                f"compassx/app-id={clean_id}",
+            ]:
+                try:
+                    pods = k8s.core().list_namespaced_pod(namespace=ns, label_selector=selector)
+                    running_pods = [
+                        p for p in (pods.items or [])
+                        if p.status and p.status.phase == "Running" and not p.metadata.deletion_timestamp
+                    ]
+                    if running_pods:
+                        running_pods.sort(
+                            key=lambda p: p.metadata.creation_timestamp or datetime.min.replace(tzinfo=timezone.utc),
+                            reverse=True,
+                        )
+                        return running_pods[0].metadata.name
+                except Exception as e:
+                    logger.debug("Error listing pods with selector %s: %s", selector, e)
+
+            # 2. Try matching by pod name prefix
+            try:
+                pods = k8s.core().list_namespaced_pod(namespace=ns)
+                matched = [
+                    p for p in (pods.items or [])
+                    if p.metadata and p.metadata.name and (
+                        p.metadata.name.startswith(f"{dev_name}-") or p.metadata.name == dev_name
+                    ) and p.status and p.status.phase == "Running" and not p.metadata.deletion_timestamp
+                ]
+                if matched:
+                    matched.sort(
+                        key=lambda p: p.metadata.creation_timestamp or datetime.min.replace(tzinfo=timezone.utc),
+                        reverse=True,
+                    )
+                    return matched[0].metadata.name
+            except Exception as e:
+                logger.debug("Error listing pods by name prefix: %s", e)
+
+            if time.time() >= deadline:
+                break
+            time.sleep(1.0)
+
+        return None
+
     def get_live_branch(self, app, workspace_folder: str = "") -> Optional[str]:
         """Fetch active Git branch from inside the running workspace pod."""
         from kubernetes import stream
@@ -1608,9 +1637,11 @@ class KubernetesDevDriver(BaseDevDriver):
 
         clean_id = re.sub(r"[^a-z0-9-]", "-", app.id.lower()).strip("-")
         ns = settings.K8S_NAMESPACE
-        pod_name = self._find_running_pod_name(clean_id, ns) or f"compassx-app-dev-{clean_id}"
-
         workdir = f"/workspaces/{workspace_folder}" if workspace_folder else f"/workspaces/{clean_id}/default"
+        pod_name = self._find_running_pod_name(clean_id, ns)
+        if not pod_name:
+            return {"success": False, "exit_code": 1, "output": f"No running dev pod found for app '{app.id}' in namespace '{ns}'", "workdir": workdir}
+
         exit_marker = "__K8S_CMD_EXIT__"
         full_cmd = (
             f"( (mkdir -p '{workdir}' 2>/dev/null || true); "
@@ -1742,7 +1773,10 @@ class KubernetesDevDriver(BaseDevDriver):
 
         clean_id = re.sub(r"[^a-z0-9-]", "-", app.id.lower()).strip("-")
         ns = settings.K8S_NAMESPACE
-        pod_name = self._find_running_pod_name(clean_id, ns) or f"compassx-app-dev-{clean_id}"
+        pod_name = self._find_running_pod_name(clean_id, ns, wait_seconds=5)
+        if not pod_name:
+            logger.warning("No running dev pod found for %s in namespace %s", clean_id, ns)
+            return None
         workdir = f"/workspaces/{workspace_folder}" if workspace_folder else f"/workspaces/{clean_id}/default"
 
         # Ensure agent configs and models are seeded
@@ -1886,9 +1920,11 @@ class KubernetesDevDriver(BaseDevDriver):
             f"if [ ! -d \"$TARGET\" ]; then TARGET=\"/workspaces/{clean_app}/default\"; fi; "
             f"ln -sfn \"$TARGET\" /current 2>/dev/null || true; "
             f"echo \"[SWITCH] Switched active sandbox to $TARGET\"; "
-            f"for p in $(pgrep -f uvicorn 2>/dev/null); do if [ \"$p\" != \"$$\" ]; then kill \"$p\" 2>/dev/null || true; fi; done; "
-            f"for p in $(pgrep -f vite 2>/dev/null); do if [ \"$p\" != \"$$\" ]; then kill \"$p\" 2>/dev/null || true; fi; done; "
-            f"for p in $(pgrep -f streamlit 2>/dev/null); do if [ \"$p\" != \"$$\" ]; then kill \"$p\" 2>/dev/null || true; fi; done; "
+            f"python3 -c \""
+            f"import os, signal, subprocess; "
+            f"my_pid = os.getpid(); parent_pid = os.getppid(); "
+            f"[os.kill(int(l.split()[0]), signal.SIGTERM) for l in subprocess.check_output(['ps', '-eo', 'pid,args']).decode().splitlines() "
+            f"if len(l.split()) > 1 and l.split()[0].isdigit() and int(l.split()[0]) not in (my_pid, parent_pid) and any(x in l for x in ['uvicorn', 'vite', 'streamlit']) and 'python3 -c' not in l]\" 2>/dev/null || true; "
             f"sleep 0.2; "
             f"BACKEND_DIR=\"\"; "
             f"if [ -d \"$TARGET/backend\" ] && ( [ -f \"$TARGET/backend/app.py\" ] || [ -f \"$TARGET/backend/main.py\" ] ); then BACKEND_DIR=\"$TARGET/backend\"; "

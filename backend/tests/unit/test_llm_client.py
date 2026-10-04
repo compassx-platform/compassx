@@ -229,7 +229,7 @@ def test_gemini_chat_stream_translates_history_and_tools(fake_google_genai):
     assert last_call["config"].tools[0].function_declarations[0].name == "lookup_asset"
 
     translated_contents = last_call["contents"]
-    assert [content.role for content in translated_contents] == ["user", "model", "tool"]
+    assert [content.role for content in translated_contents] == ["user", "model", "user"]
     assert translated_contents[1].parts[0].function_call.name == "lookup_asset"
     assert translated_contents[1].parts[0].function_call.args == {"asset_id": 42}
     assert translated_contents[1].parts[0].thought_signature == "sig-previous"

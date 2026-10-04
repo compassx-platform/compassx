@@ -5,6 +5,21 @@ All notable changes to the CompassX Platform will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.1] - 2026-10-04
+
+### 🚀 Highlights
+
+CompassX `0.12.1` delivers **Resilient Kubernetes Dev Pod Discovery**, **Multi-Selector & Pod Prefix Binding**, and **Safe Python-Native Process Termination** for active workspace switching.
+
+### ✨ Features & Enhancements
+
+#### Kubernetes Driver Resilience
+- **Multi-Selector & Prefix Pod Matching (`kubernetes_driver.py`)**: Added multiple fallback label selectors (`compassx/app-id`, `app.kubernetes.io/name`) and pod name prefix matching with creation timestamp ordering to reliably resolve running dev pod replicas during rollouts and restarts.
+- **Python-Native Process Cleanup (`kubernetes_driver.py`)**: Implemented safe signal-based process termination for uvicorn, vite, and streamlit background servers when switching active workspace sandboxes without relying on host `pgrep`.
+- **Gemini LLM Function Calling Test Fix (`test_llm_client.py`)**: Aligned Gemini test expectations with Google GenAI SDK `role="user"` conventions for function responses.
+
+---
+
 ## [0.12.0] - 2026-10-04
 
 ### 🚀 Highlights
