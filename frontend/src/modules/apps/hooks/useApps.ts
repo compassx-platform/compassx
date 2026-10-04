@@ -140,7 +140,7 @@ export function useDeployApp() {
 
   return useMutation({
     mutationFn: async (appId: string) => {
-      const res = await api.post<DeploymentItem>(`/apps/${appId}/deploy`);
+      const res = await api.post<DeploymentItem>(`/apps/${appId}/deploy`, null, { timeout: 120000 });
       return res.data;
     },
     onSuccess: (_, appId) => {
@@ -334,6 +334,8 @@ export interface DevSessionStatus {
   host_id?: string;
   host_name?: string;
   host_online?: boolean;
+  host_type?: 'compassx' | 'omnigent' | string;
+  host_image?: string;
   workspace?: string;
   started_at?: string;
 }
@@ -360,9 +362,12 @@ export function useDevStatus(appId?: string, enabled = true) {
       return res.data;
     },
     enabled: !!appId && enabled,
+    staleTime: 0,
+    gcTime: 0,
+    refetchOnMount: 'always',
     refetchInterval: (query) => {
       const st = query.state.data?.status;
-      return st === 'active' || st === 'provisioning' ? 4000 : 8000;
+      return st === 'active' || st === 'provisioning' ? 3000 : 6000;
     },
   });
 }
@@ -374,15 +379,22 @@ export function useStartDevSession() {
       appId,
       workspaceId,
       workspaceName,
+      hostType,
     }: {
       appId: string;
       workspaceId?: string;
       workspaceName?: string;
+      hostType?: 'compassx' | 'omnigent' | string;
     }) => {
-      const res = await api.post<DevSessionStatus>(`/apps/${appId}/dev/start`, {
-        workspace_id: workspaceId ?? null,
-        workspace_name: workspaceName ?? null,
-      });
+      const res = await api.post<DevSessionStatus>(
+        `/apps/${appId}/dev/start`,
+        {
+          workspace_id: workspaceId ?? null,
+          workspace_name: workspaceName ?? null,
+          host_type: hostType ?? 'compassx',
+        },
+        { timeout: 120000 }
+      );
       return res.data;
     },
     onSuccess: (data, { appId }) => {
@@ -405,10 +417,14 @@ export function useCreateDevWorkspace() {
       name: string;
       gitBranch?: string;
     }) => {
-      const res = await api.post<DevWorkspace>(`/apps/${appId}/dev/workspaces`, {
-        name,
-        git_branch: gitBranch ?? null,
-      });
+      const res = await api.post<DevWorkspace>(
+        `/apps/${appId}/dev/workspaces`,
+        {
+          name,
+          git_branch: gitBranch ?? null,
+        },
+        { timeout: 60000 }
+      );
       return res.data;
     },
     onSuccess: (_, { appId }) => {
@@ -421,10 +437,15 @@ export function useStopDevSession() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (appId: string) => {
-      const res = await api.post(`/apps/${appId}/dev/stop`);
+      const res = await api.post(`/apps/${appId}/dev/stop`, null, { timeout: 60000 });
       return res.data;
     },
-    onSuccess: (_, appId) => {
+    onSuccess: (data, appId) => {
+      qc.setQueryData(['app-dev-status', appId], {
+        app_id: appId,
+        status: 'stopped',
+        phase: 'Stopped',
+      });
       qc.invalidateQueries({ queryKey: ['app-dev-status', appId] });
       qc.invalidateQueries({ queryKey: ['app-dev-workspaces', appId] });
     },
@@ -487,6 +508,92 @@ export function useDevLogs(appId?: string, enabled = true) {
     },
     enabled: !!appId && enabled,
     refetchInterval: enabled ? 3000 : false,
+  });
+}
+
+export interface VerifyGitResult {
+  success: boolean;
+  branch?: string;
+  output?: string;
+  message?: string;
+}
+
+export function useVerifyGitWorkspace() {
+  return useMutation({
+    mutationFn: async ({
+      appId,
+      workspaceId,
+      workspaceName,
+    }: {
+      appId: string;
+      workspaceId?: string;
+      workspaceName?: string;
+    }): Promise<VerifyGitResult> => {
+      const res = await api.post(`/apps/${appId}/dev/verify-git`, {
+        workspace_id: workspaceId ?? null,
+        workspace_name: workspaceName ?? null,
+      });
+      return res.data;
+    },
+  });
+}
+
+export interface InstallDepsResult {
+  success: boolean;
+  cached?: boolean;
+  manifests?: string[];
+  exit_code?: number;
+  output?: string;
+  message?: string;
+}
+
+export function useInstallDevDependencies() {
+  return useMutation({
+    mutationFn: async ({
+      appId,
+      workspaceId,
+      workspaceName,
+      force = false,
+    }: {
+      appId: string;
+      workspaceId?: string;
+      workspaceName?: string;
+      force?: boolean;
+    }): Promise<InstallDepsResult> => {
+      const res = await api.post(`/apps/${appId}/dev/install-deps`, {
+        workspace_id: workspaceId ?? null,
+        workspace_name: workspaceName ?? null,
+        force,
+      });
+      return res.data;
+    },
+  });
+}
+
+export interface RunAppResult {
+  success: boolean;
+  dev_url?: string;
+  output?: string;
+  message?: string;
+}
+
+export function useRunDevApp() {
+  return useMutation({
+    mutationFn: async ({
+      appId,
+      workspaceId,
+      workspaceName,
+    }: {
+      appId: string;
+      workspaceId?: string;
+      workspaceName?: string;
+    }): Promise<RunAppResult> => {
+      const res = await api.post(`/apps/${appId}/dev/run-app`, {
+        workspace_id: workspaceId ?? null,
+        workspace_name: workspaceName ?? null,
+      });
+      return res.data;
+    },
   });
 }
 

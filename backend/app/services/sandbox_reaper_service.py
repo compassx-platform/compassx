@@ -22,6 +22,7 @@ DEFAULT_APP_IDLE_SUSPEND_SECONDS = 7200    # 2 hours default for deployed apps (
 DEFAULT_COMPUTE_IDLE_SUSPEND_SECONDS = 300 # 5 minutes default for compute runtimes / notebooks
 DEFAULT_STALE_REAP_DAYS = 30               # 30 days offline -> reclaim storage
 SWEEP_INTERVAL_SECONDS = 30                # Sweep check every 30 seconds
+_LAST_TOUCHED_APP: Dict[str, float] = {}
 
 
 def _parse_datetime(dt_val: Any) -> Optional[datetime]:
@@ -423,7 +424,13 @@ class SandboxReaperService:
     # ── Activity Touch Helpers ───────────────────────────────────────────────
 
     def touch_app_activity(self, app_id: str) -> None:
-        """Record traffic / interaction activity for a deployed production app."""
+        """Record traffic / interaction activity for a deployed production app (throttled to at most once per 60s)."""
+        import time
+        now_ts = time.time()
+        if (now_ts - _LAST_TOUCHED_APP.get(app_id, 0)) < 60.0:
+            return
+        _LAST_TOUCHED_APP[app_id] = now_ts
+
         try:
             from app.database import SystemSessionLocal
             from app.models.app import App

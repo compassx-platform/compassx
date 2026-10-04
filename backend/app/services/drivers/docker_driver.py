@@ -14,15 +14,35 @@ logger = logging.getLogger(__name__)
 
 
 def find_free_tcp_port(start_port: int, max_port: int) -> int:
-    """Find an available TCP port on localhost."""
+    """Find an available TCP port on localhost that is not occupied or allocated by Docker."""
+    used_docker_ports = set()
+    try:
+        ps_res = subprocess.run(["docker", "ps", "--format", "{{.Ports}}"], capture_output=True, text=True, check=False)
+        if ps_res.returncode == 0:
+            import re
+            for m in re.finditer(r":(\d+)->", ps_res.stdout):
+                used_docker_ports.add(int(m.group(1)))
+    except Exception:
+        pass
+
     for port in range(start_port, max_port):
+        if port in used_docker_ports:
+            continue
+        # Test 1: check if anything is already listening on this port
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+            probe.settimeout(0.2)
+            if probe.connect_ex(("127.0.0.1", port)) == 0:
+                continue
+
+        # Test 2: check if we can bind on localhost
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.settimeout(0.4)
+            s.settimeout(0.2)
             try:
                 s.bind(("127.0.0.1", port))
                 return port
             except OSError:
                 continue
+
     raise RuntimeError(f"No available free port found in range {start_port}-{max_port}")
 
 
@@ -121,22 +141,30 @@ class DockerAppDriver(BaseAppDriver):
             from app.services.app_runner import app_runner_service
             deploy_res = app_runner_service.deploy_app(app, runner_mode="docker")
             return {
+                "app_id": app.id,
                 "status": "provisioning",
                 "phase": "ContainerCreating",
+                "mode": "docker",
                 "step": 2,
                 "step_description": "Creating and provisioning Docker container...",
                 "container_name": container_name,
                 "message": "Provisioning Docker container...",
+                "url": self.get_live_url(app),
+                "last_updated": datetime.now(timezone.utc).isoformat(),
             }
 
         subprocess.run(["docker", "start", container_name], capture_output=True, text=True, check=False)
         return {
+            "app_id": app.id,
             "status": "starting",
             "phase": "Starting",
+            "mode": "docker",
             "step": 3,
             "step_description": "Starting Docker container process...",
             "container_name": container_name,
             "message": "Starting Docker container...",
+            "url": self.get_live_url(app),
+            "last_updated": datetime.now(timezone.utc).isoformat(),
         }
 
     def get_status(self, app) -> Dict[str, Any]:
@@ -253,14 +281,14 @@ class DockerDevDriver(BaseDevDriver):
         res = subprocess.run(["docker", "image", "inspect", tag], capture_output=True, text=True, check=False)
         return res.returncode == 0
 
-    def start_dev(self, app, repo_dir: str, omnigent_internal_url: str, workspace_folder: str = "", workspace_branch: str = "") -> Dict[str, Any]:
+    def start_dev(self, app, repo_dir: str, omnigent_internal_url: str, workspace_folder: str = "", workspace_branch: str = "", host_type: str = "compassx", **kwargs) -> Dict[str, Any]:
         import uuid
         dev_container_name = f"compassx-app-dev-{app.id}"
+        # Stop existing dev container for this app first so its port is released
+        subprocess.run(["docker", "rm", "-f", dev_container_name], capture_output=True, text=True, check=False)
+
         dev_port = find_free_tcp_port(9201, 9400)
         network = get_docker_network()
-
-        # Stop existing dev container
-        subprocess.run(["docker", "rm", "-f", dev_container_name], capture_output=True, text=True, check=False)
 
         # Host identity
         host_id = uuid.uuid5(uuid.NAMESPACE_DNS, f"compassx-app-{app.id}").hex
@@ -397,10 +425,21 @@ class DockerDevDriver(BaseDevDriver):
             f"  if [ ! -f /app/index.html ]; then echo '<!DOCTYPE html><html><head><title>Dev Sandbox for {app.name}</title></head><body style=\"font-family:sans-serif;padding:2rem;\"><h1>Dev Sandbox for {app.name}</h1><p style=\"color:green;font-weight:bold;\">Connected to Omnigent Dev Studio</p></body></html>' > /app/index.html; fi; "
             f"  npx --yes serve -l 8080 /app & "
             f"fi; "
-            f"omnigent host --server {omnigent_internal_url} --name \"{host_name}\" --non-interactive"
+            f"exec omnigent host --server {omnigent_internal_url} --non-interactive"
         )
 
-        dev_host_image = "compassx-dev-host:latest" if self._image_exists("compassx-dev-host:latest") else "ghcr.io/omnigent-ai/omnigent-host:latest"
+        # Resolve dev host image based on host_type selection
+        host_type = str(host_type or kwargs.get("host_type") or "compassx").lower()
+        if host_type == "omnigent":
+            dev_host_image = "ghcr.io/omnigent-ai/omnigent-host:latest"
+        else:
+            host_type = "compassx"
+            if self._image_exists("compassx-host:latest"):
+                dev_host_image = "compassx-host:latest"
+            elif self._image_exists("compassx-dev-host:latest"):
+                dev_host_image = "compassx-dev-host:latest"
+            else:
+                dev_host_image = "ghcr.io/omnigent-ai/omnigent-host:latest"
 
         run_cmd = [
             "docker", "run", "-d",
@@ -438,6 +477,8 @@ class DockerDevDriver(BaseDevDriver):
             "dev_url": dev_url,
             "host_id": host_id,
             "host_name": host_name,
+            "host_type": host_type,
+            "host_image": dev_host_image,
             "status": "active",
         }
 
@@ -448,15 +489,33 @@ class DockerDevDriver(BaseDevDriver):
 
     def get_dev_status(self, app) -> Dict[str, Any]:
         dev_container_name = f"compassx-app-dev-{app.id}"
-        res = subprocess.run(["docker", "inspect", "-f", "{{.State.Status}}", dev_container_name], capture_output=True, text=True, check=False)
-        state_status = (res.stdout or "").strip().lower()
+        res = subprocess.run(["docker", "inspect", "-f", "{{.State.Status}}|{{.Config.Image}}", dev_container_name], capture_output=True, text=True, check=False)
+        output = (res.stdout or "").strip()
+        state_status = ""
+        image_name = ""
+        if "|" in output:
+            state_status, image_name = output.split("|", 1)
+            state_status = state_status.strip().lower()
+            image_name = image_name.strip()
+        else:
+            state_status = output.lower()
+
         if state_status == "running":
             status = "active"
         elif state_status in ["removing", "restarting", "dead"]:
             status = "stopping"
         else:
             status = "stopped"
-        return {"status": status, "container_name": dev_container_name}
+
+        host_type = "omnigent" if "omnigent-host" in image_name and "compassx" not in image_name else "compassx"
+
+        return {
+            "status": status,
+            "mode": "docker",
+            "container_name": dev_container_name,
+            "host_type": host_type if status != "stopped" else None,
+            "host_image": image_name if status != "stopped" else None,
+        }
 
     def get_dev_url(self, app) -> str:
         return ingress_service.get_app_dev_url(app)
@@ -510,11 +569,54 @@ class DockerDevDriver(BaseDevDriver):
         command: str,
         workspace_folder: str = "",
     ) -> Dict[str, Any]:
-        """Execute a single shell command inside the docker dev container."""
         dev_container_name = f"compassx-app-dev-{app.id}"
-        workdir = f"/workspaces/{workspace_folder}" if workspace_folder else "/app"
-        cmd = f"cd {workdir} 2>/dev/null || cd /app; {command}"
-        res = subprocess.run(["docker", "exec", "-w", workdir, dev_container_name, "bash", "-c", cmd], capture_output=True, text=True, check=False)
+        # Verify if workspace folder exists in container, otherwise default to /app
+        target_ws = f"/workspaces/{workspace_folder}" if workspace_folder else ""
+        workdir = "/app"
+        if target_ws:
+            chk = subprocess.run(
+                ["docker", "exec", dev_container_name, "bash", "-c", f"test -d '{target_ws}' && echo 'EXISTS'"],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                check=False,
+            )
+            if "EXISTS" in (chk.stdout or ""):
+                workdir = target_ws
+            elif "/" in workspace_folder:
+                sub = workspace_folder.split("/", 1)[1]
+                chk_sub = subprocess.run(
+                    ["docker", "exec", dev_container_name, "bash", "-c", f"test -d '/workspaces/{sub}' && echo 'EXISTS'"],
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    check=False,
+                )
+                if "EXISTS" in (chk_sub.stdout or ""):
+                    workdir = f"/workspaces/{sub}"
+                else:
+                    subprocess.run(
+                        ["docker", "exec", dev_container_name, "bash", "-c", f"mkdir -p '{target_ws}' 2>/dev/null || true"],
+                        check=False,
+                    )
+                    workdir = target_ws
+            else:
+                subprocess.run(
+                    ["docker", "exec", dev_container_name, "bash", "-c", f"mkdir -p '{target_ws}' 2>/dev/null || true"],
+                    check=False,
+                )
+                workdir = target_ws
+
+        res = subprocess.run(
+            ["docker", "exec", "-w", workdir, dev_container_name, "bash", "-c", command],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+        )
         return {
             "success": res.returncode == 0,
             "exit_code": res.returncode,
@@ -531,6 +633,8 @@ class DockerDevDriver(BaseDevDriver):
                 ["docker", "exec", "-w", workdir, dev_container_name, "bash", "-c", "git rev-parse --abbrev-ref HEAD 2>/dev/null || echo ''"],
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 check=False,
             )
             branch = (res.stdout or "").strip()

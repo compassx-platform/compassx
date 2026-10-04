@@ -41,6 +41,7 @@ import {
   History,
   Square,
   ListTodo,
+  Hammer,
 } from 'lucide-react';
 import { useScopedNavigate } from '@/lib/appNavigation';
 import { useToast } from '@/lib/toast';
@@ -1144,8 +1145,8 @@ export default function AppDetailPage() {
             onClick={() => navigate(`/apps/${resolvedAppId}/build`)}
             title="Open dedicated full-page Build Studio with live preview & Omnigent AI"
           >
-            <Sparkles size={14} />
-            <span>Open Build Studio</span>
+            <Hammer size={14} />
+            <span>Build</span>
           </button>
 
           {isAppStopping ? (

@@ -56,18 +56,24 @@ class AppRunnerService:
                 logger.warning("Failed to decrypt app PAT: %s", e)
 
         auth_url = git_url
-        if git_token and "github.com" in git_url and not ("@" in git_url.split("//")[-1]):
-            auth_url = git_url.replace("https://", f"https://x-access-token:{git_token}@")
+        if git_token and git_url and not ("@" in git_url.split("//")[-1]):
+            if "github.com" in git_url:
+                auth_url = git_url.replace("https://", f"https://x-access-token:{git_token}@")
+            elif "gitlab.com" in git_url:
+                auth_url = git_url.replace("https://", f"https://oauth2:{git_token}@")
+            else:
+                auth_url = git_url.replace("https://", f"https://oauth2:{git_token}@")
 
         git_ref = app.git_ref or app.git_branch or "main"
 
+        git_env = dict(os.environ, GIT_TERMINAL_PROMPT="0", GCM_INTERACTIVE="never")
         try:
             if os.path.exists(os.path.join(repo_dir, ".git")):
                 logger.info("Updating existing repo clone for app %s in %s", app.name, repo_dir)
                 try:
-                    subprocess.run(["git", "fetch", "--all"], cwd=repo_dir, capture_output=True, text=True, check=True)
-                    subprocess.run(["git", "checkout", git_ref], cwd=repo_dir, capture_output=True, text=True, check=True)
-                    subprocess.run(["git", "pull"], cwd=repo_dir, capture_output=True, text=True, check=False)
+                    subprocess.run(["git", "-c", "core.longpaths=true", "fetch", "--all"], cwd=repo_dir, env=git_env, capture_output=True, text=True, check=True)
+                    subprocess.run(["git", "-c", "core.longpaths=true", "checkout", git_ref], cwd=repo_dir, env=git_env, capture_output=True, text=True, check=True)
+                    subprocess.run(["git", "-c", "core.longpaths=true", "pull"], cwd=repo_dir, env=git_env, capture_output=True, text=True, check=False)
                 except Exception as e:
                     logger.warning("Git pull failed for app %s, proceeding with current clone: %s", app.name, e)
             else:
@@ -75,14 +81,16 @@ class AppRunnerService:
                 if os.path.exists(repo_dir):
                     shutil.rmtree(repo_dir, ignore_errors=True)
                 res = subprocess.run(
-                    ["git", "clone", "--branch", git_ref, auth_url, repo_dir],
+                    ["git", "-c", "core.longpaths=true", "-c", "credential.helper=", "clone", "--branch", git_ref, auth_url, repo_dir],
+                    env=git_env,
                     capture_output=True,
                     text=True,
                     check=False,
                 )
                 if res.returncode != 0:
                     res2 = subprocess.run(
-                        ["git", "clone", auth_url, repo_dir],
+                        ["git", "-c", "core.longpaths=true", "-c", "credential.helper=", "clone", auth_url, repo_dir],
+                        env=git_env,
                         capture_output=True,
                         text=True,
                         check=False,
@@ -115,9 +123,9 @@ class AppRunnerService:
                 pass
 
         # 1. Try GitHub REST API
-        m = re.search(r"github\.com[:/]([^/]+)/([^/.]+)(?:\.git)?", git_url)
-        if m:
-            owner, repo = m.group(1), m.group(2)
+        m_gh = re.search(r"github\.com[:/]([^/]+)/([^/.]+)(?:\.git)?", git_url)
+        if m_gh:
+            owner, repo = m_gh.group(1), m_gh.group(2)
             api_url = f"https://api.github.com/repos/{owner}/{repo}/commits/{git_ref}"
             headers = {
                 "Accept": "application/vnd.github.v3+json",
@@ -142,16 +150,53 @@ class AppRunnerService:
             except Exception as e:
                 logger.debug("GitHub API commit fetch failed for %s: %s", git_url, e)
 
-        # 2. Fallback to git ls-remote
+        # 2. Try GitLab REST API
+        m_gl = re.search(r"gitlab\.com[:/]([^/]+)/([^/.]+)(?:\.git)?", git_url)
+        if m_gl:
+            import urllib.parse
+            project_path = f"{m_gl.group(1)}/{m_gl.group(2)}"
+            encoded_path = urllib.parse.quote(project_path, safe="")
+            api_url = f"https://gitlab.com/api/v4/projects/{encoded_path}/repository/commits/{git_ref}"
+            headers = {
+                "User-Agent": "CompassX-Platform",
+            }
+            if git_token:
+                headers["PRIVATE-TOKEN"] = git_token
+            try:
+                req = urllib.request.Request(api_url, headers=headers)
+                with urllib.request.urlopen(req, timeout=5) as resp:
+                    data = json.loads(resp.read().decode())
+                    sha = data.get("id", "")
+                    commit_msg = (data.get("title") or data.get("message", "")).splitlines()[0]
+                    author = data.get("author_name", "")
+                    return {
+                        "sha": sha[:7] if sha else "latest",
+                        "full_sha": sha,
+                        "message": commit_msg,
+                        "author": author,
+                        "branch": git_ref,
+                    }
+            except Exception as e:
+                logger.debug("GitLab API commit fetch failed for %s: %s", git_url, e)
+
+        # 3. Fallback to git ls-remote
         auth_url = git_url
-        if git_token and "github.com" in git_url and "@" not in git_url.split("//")[-1]:
-            auth_url = git_url.replace("https://", f"https://x-access-token:{git_token}@")
+        if git_token and git_url and not ("@" in git_url.split("//")[-1]):
+            if "github.com" in git_url:
+                auth_url = git_url.replace("https://", f"https://x-access-token:{git_token}@")
+            elif "gitlab.com" in git_url:
+                auth_url = git_url.replace("https://", f"https://oauth2:{git_token}@")
+            else:
+                auth_url = git_url.replace("https://", f"https://oauth2:{git_token}@")
+
+        git_env = dict(os.environ, GIT_TERMINAL_PROMPT="0", GCM_INTERACTIVE="never")
         try:
             res = subprocess.run(
-                ["git", "ls-remote", auth_url, git_ref],
+                ["git", "-c", "credential.helper=", "-c", "core.longpaths=true", "ls-remote", auth_url, git_ref],
+                env=git_env,
                 capture_output=True,
                 text=True,
-                timeout=5,
+                timeout=8,
             )
             if res.returncode == 0 and res.stdout.strip():
                 full_sha = res.stdout.strip().split()[0]
@@ -349,7 +394,11 @@ CMD ["python", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080
         cfg = app.config or {}
         mode = (cfg.get("runtime") or {}).get("mode")
         driver = driver_factory.get_app_driver(mode)
-        return driver.start(app)
+        res = driver.start(app)
+        if isinstance(res, dict):
+            res.setdefault("app_id", app.id)
+            res.setdefault("status", "starting")
+        return res
 
     def get_runtime_status(self, app, db=None) -> Dict[str, Any]:
         """Fetch real-time runtime status for the app container/pod and reconcile with database status if needed."""
@@ -357,6 +406,11 @@ CMD ["python", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080
         mode = (cfg.get("runtime") or {}).get("mode")
         driver = driver_factory.get_app_driver(mode)
         status_info = driver.get_status(app)
+        if not isinstance(status_info, dict):
+            status_info = {"status": "stopped"}
+
+        status_info.setdefault("app_id", app.id)
+        status_info.setdefault("status", "stopped")
 
         cur_runtime_status = status_info.get("status")
         if db and cur_runtime_status:

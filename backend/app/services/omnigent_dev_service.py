@@ -13,6 +13,7 @@ from typing import Dict, List, Optional, Any, Tuple
 from app.services.app_runner import app_runner_service, BASE_APPS_STORAGE
 from app.services.drivers.factory import driver_factory
 from app.services.ingress_service import ingress_service
+from app.services.app_manifest_service import app_manifest_service
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +38,11 @@ def _sanitize_workspace_name(raw_name: str) -> str:
 
 
 
+_OMNIGENT_SERVER_CACHE: Dict[str, Any] = {"data": None, "ts": 0}
+_LIVE_HOST_CACHE: Dict[str, Any] = {}
+_LAST_TOUCHED_WS: Dict[str, float] = {}
+
+
 class OmnigentDevService:
     """Orchestrates interactive dev sessions and pair programming with Omnigent AI."""
 
@@ -57,13 +63,19 @@ class OmnigentDevService:
         return ingress_service.get_omnigent_internal_url()
 
     def check_omnigent_server(self) -> Dict[str, Any]:
-        """Check connectivity to Databricks Omnigent server."""
+        """Check connectivity to Databricks Omnigent server (cached with 10s TTL)."""
+        import time
+        now = time.time()
+        cached = _OMNIGENT_SERVER_CACHE.get("data")
+        if cached and (now - _OMNIGENT_SERVER_CACHE.get("ts", 0)) < 10.0:
+            return cached
+
         try:
             from services.omnigent.manager import get_omnigent_manager
             status = get_omnigent_manager().get_status()
             details = status.details or {}
             is_running = str(status.phase).lower() == "running" or details.get("ready", False)
-            return {
+            res = {
                 "available": is_running,
                 "server_url": details.get("endpoint") or self.get_omnigent_server_url(),
                 "version": details.get("version") or "Databricks Omnigent Server",
@@ -71,7 +83,11 @@ class OmnigentDevService:
         except Exception as exc:
             logger.debug("Error checking omnigent manager status: %s", exc)
             url = self.get_omnigent_server_url()
-            return {"available": False, "server_url": url, "version": "Databricks Omnigent Server"}
+            res = {"available": False, "server_url": url, "version": "Databricks Omnigent Server"}
+
+        _OMNIGENT_SERVER_CACHE["data"] = res
+        _OMNIGENT_SERVER_CACHE["ts"] = now
+        return res
 
     def get_llm_env_vars(self, workspace_id: Optional[str] = None) -> Dict[str, str]:
         """Extract active LLM credentials from CompassX catalog and system environment."""
@@ -178,10 +194,17 @@ class OmnigentDevService:
         return host_id, host_name
 
     def resolve_live_host(self, app, expected_host_id: Optional[str] = None) -> Tuple[str, str, bool]:
-        """Query Omnigent Server /v1/hosts and dynamically match the live host for this app.
+        """Query Omnigent Server /v1/hosts and dynamically match the live host for this app (cached with 10s TTL).
         Returns (host_id, host_name, is_online)."""
+        import time
         import urllib.request
         import json
+
+        app_id = getattr(app, "id", str(app))
+        now = time.time()
+        cached = _LIVE_HOST_CACHE.get(app_id)
+        if cached and (now - cached.get("ts", 0)) < 10.0:
+            return cached.get("result")
 
         default_host_id, default_host_name = self.get_app_host_identity(app)
         target_id = expected_host_id or default_host_id
@@ -202,10 +225,11 @@ class OmnigentDevService:
         if pub_url and pub_url not in urls:
             urls.append(pub_url)
 
+        res = (target_id, default_host_name, False)
         for u in urls:
             try:
                 hosts_req = urllib.request.Request(f"{u}/v1/hosts", headers={"User-Agent": "CompassX/1.0"})
-                with urllib.request.urlopen(hosts_req, timeout=2.0) as resp:
+                with urllib.request.urlopen(hosts_req, timeout=1.0) as resp:
                     hosts_data = json.loads(resp.read().decode())
                     hosts_list = hosts_data.get("hosts") or []
 
@@ -213,26 +237,32 @@ class OmnigentDevService:
                     for h in hosts_list:
                         h_id = h.get("host_id")
                         if h_id == target_id:
-                            return h_id, h.get("name") or default_host_name, h.get("status") == "online"
+                            res = (h_id, h.get("name") or default_host_name, h.get("status") == "online")
+                            break
 
                     # 2. Name / Slug match (online first)
-                    for h in hosts_list:
-                        h_name = str(h.get("name") or "").strip().lower()
-                        if h_name in match_targets or (app_slug and app_slug in h_name) or (app_name and app_name in h_name):
-                            if h.get("status") == "online":
-                                return h.get("host_id"), h.get("name") or default_host_name, True
+                    if not res[2]:
+                        for h in hosts_list:
+                            h_name = str(h.get("name") or "").strip().lower()
+                            if h_name in match_targets or (app_slug and app_slug in h_name) or (app_name and app_name in h_name):
+                                if h.get("status") == "online":
+                                    res = (h.get("host_id"), h.get("name") or default_host_name, True)
+                                    break
 
                     # 3. Offline match by name / slug
-                    for h in hosts_list:
-                        h_name = str(h.get("name") or "").strip().lower()
-                        if h_name in match_targets or (app_slug and app_slug in h_name) or (app_name and app_name in h_name):
-                            return h.get("host_id"), h.get("name") or default_host_name, h.get("status") == "online"
+                    if not res[2]:
+                        for h in hosts_list:
+                            h_name = str(h.get("name") or "").strip().lower()
+                            if h_name in match_targets or (app_slug and app_slug in h_name) or (app_name and app_name in h_name):
+                                res = (h.get("host_id"), h.get("name") or default_host_name, h.get("status") == "online")
+                                break
 
                     break
             except Exception as e:
                 logger.debug("Could not fetch hosts from %s: %s", u, e)
 
-        return target_id, default_host_name, False
+        _LIVE_HOST_CACHE[app_id] = {"result": res, "ts": now}
+        return res
 
     def check_app_has_active_work(self, app, ws=None, cutoff_dt: Optional[datetime] = None) -> bool:
         """Multi-layer check to verify if app dev sandbox is actively being developed.
@@ -534,6 +564,7 @@ class OmnigentDevService:
         app,
         workspace_id: Optional[str] = None,
         workspace_name: Optional[str] = None,
+        host_type: str = "compassx",
     ) -> Dict[str, Any]:
         """Start or retrieve the development sandbox using active runtime driver."""
         repo_dir = self.get_repo_dir(app)
@@ -625,10 +656,10 @@ class OmnigentDevService:
         self.ensure_omnigent_server()
         omnigent_internal_url = self.get_omnigent_internal_url()
 
-        # 2. Start dev sandbox via driver (pass workspace folder & branch)
+        # 2. Start dev sandbox via driver (pass workspace folder, branch & host_type)
         dev_driver = driver_factory.get_dev_driver()
         raw_driver_res = dev_driver.start_dev(
-            app, repo_dir, omnigent_internal_url, workspace_folder=folder_path, workspace_branch=ws_branch
+            app, repo_dir, omnigent_internal_url, workspace_folder=folder_path, workspace_branch=ws_branch, host_type=host_type
         )
 
         dev_port = raw_driver_res.get("dev_port") or 9201
@@ -657,6 +688,8 @@ class OmnigentDevService:
             "app_identifier": f"compassx-app-{app.id}",
             "status": "active",
             "mode": raw_driver_res.get("mode", "docker"),
+            "host_type": raw_driver_res.get("host_type") or host_type,
+            "host_image": raw_driver_res.get("host_image"),
             "container_id": raw_driver_res.get("container_id"),
             "container_name": raw_driver_res.get("container_name"),
             "dev_port": dev_port,
@@ -687,19 +720,39 @@ class OmnigentDevService:
     def get_dev_session(self, app) -> Dict[str, Any]:
         """Get current status of dev session and Omnigent server."""
         repo_dir = self.get_repo_dir(app)
-        expected_host_id, expected_host_name = self.get_app_host_identity(app)
-        server_status = self.check_omnigent_server()
         dev_driver = driver_factory.get_dev_driver()
         dev_status = dev_driver.get_dev_status(app)
-
-        # Dynamically resolve live host identity from Omnigent registry
-        live_host_id, live_host_name, host_online = self.resolve_live_host(app, expected_host_id)
+        is_active = dev_status.get("status") == "active"
 
         dev_url = ingress_service.get_app_dev_url(app, 9201)
         sess_id = f"sess_omnigent_{app.id}"
         session_url = ingress_service.get_omnigent_session_url(sess_id)
 
-        is_active = dev_status.get("status") == "active"
+        # Fast path if container is not active and not in sessions: return immediately without remote HTTP calls (<0.02s)
+        if not is_active and app.id not in _DEV_SESSIONS:
+            return {
+                "app_id": app.id,
+                "status": dev_status.get("status", "stopped"),
+                "dev_url": dev_url,
+                "repo_dir": repo_dir,
+                "omnigent_attached": False,
+                "omnigent_server_available": False,
+                "omnigent_session_url": session_url,
+                "host_id": None,
+                "host_name": str(app.name or app.slug or app.id),
+                "host_online": False,
+                "host_type": dev_status.get("host_type"),
+                "host_image": dev_status.get("host_image"),
+                "pod_name": dev_status.get("pod_name"),
+                "phase": dev_status.get("phase", "Stopped"),
+                "mode": dev_status.get("mode", "docker"),
+            }
+
+        # Container is active or in memory: resolve Omnigent details (using 10s TTL cache)
+        expected_host_id, expected_host_name = self.get_app_host_identity(app)
+        server_status = self.check_omnigent_server()
+        live_host_id, live_host_name, host_online = self.resolve_live_host(app, expected_host_id)
+
         if is_active or host_online:
             self.touch_workspace_activity(app.id)
 
@@ -714,6 +767,10 @@ class OmnigentDevService:
             sess["host_online"] = host_online or is_active
             sess["phase"] = dev_status.get("phase")
             sess["pod_name"] = dev_status.get("pod_name")
+            if dev_status.get("host_type"):
+                sess["host_type"] = dev_status.get("host_type")
+            if dev_status.get("host_image"):
+                sess["host_image"] = dev_status.get("host_image")
             return sess
 
         return {
@@ -728,6 +785,8 @@ class OmnigentDevService:
             "host_id": live_host_id,
             "host_name": live_host_name,
             "host_online": host_online or is_active,
+            "host_type": dev_status.get("host_type"),
+            "host_image": dev_status.get("host_image"),
             "pod_name": dev_status.get("pod_name"),
             "phase": dev_status.get("phase"),
             "mode": dev_status.get("mode", "docker"),
@@ -812,7 +871,14 @@ class OmnigentDevService:
         return {"status": "active" if resumed else "failed", "app_id": app.id}
 
     def touch_workspace_activity(self, app_id: str, workspace_id: Optional[str] = None) -> None:
-        """Update last_active_at timestamp for workspace."""
+        """Update last_active_at timestamp for workspace (throttled to at most once per 60s)."""
+        import time
+        now_ts = time.time()
+        key = f"{app_id}:{workspace_id or ''}"
+        if (now_ts - _LAST_TOUCHED_WS.get(key, 0)) < 60.0:
+            return
+        _LAST_TOUCHED_WS[key] = now_ts
+
         try:
             from app.models.dev_workspace import DevWorkspace
             with _get_system_db() as db:
@@ -979,6 +1045,438 @@ class OmnigentDevService:
             "logs": logs or "Sandbox running. No output logged yet.",
             "status": "active" if sess else "inactive",
         }
+
+    def _resolve_app_manifest(
+        self,
+        app,
+        dev_driver,
+        folder_path: str,
+        target_dir: str,
+        repo_dir: str,
+    ) -> Optional[Dict[str, Any]]:
+        """Resolve app manifest (app.yaml / app.yml) from host filesystem, falling back to inside dev sandbox."""
+        # 1. Try host filesystem first (local-dev driver or shared volume mount)
+        manifest_data = app_manifest_service.load_manifest(target_dir) or app_manifest_service.load_manifest(repo_dir)
+        if manifest_data:
+            return manifest_data
+
+        # 2. If not found on host, probe dev sandbox via dev_driver (Docker container or K8s pod)
+        try:
+            probe_cmd = (
+                "for f in app.yaml app.yml .compass/app.yaml .compass/app.yml; do "
+                "  if [ -f \"$f\" ]; then "
+                "    echo \"---MANIFEST_FILE:$f---\"; "
+                "    cat \"$f\"; "
+                "    break; "
+                "  fi; "
+                "done"
+            )
+            res = dev_driver.exec_command_in_dev(app, command=probe_cmd, workspace_folder=folder_path)
+            output = (res.get("output") or "").strip()
+            if "---MANIFEST_FILE:" in output:
+                parts = output.split("---MANIFEST_FILE:", 1)[1].split("---", 1)
+                manifest_filename = parts[0].strip()
+                yaml_content = parts[1].strip() if len(parts) > 1 else ""
+                parsed = app_manifest_service.parse_manifest_text(yaml_content, manifest_filename)
+                if parsed:
+                    logger.info("Resolved app manifest '%s' directly from dev sandbox (%s)", manifest_filename, getattr(dev_driver, '__class__', {}).__name__)
+                    return parsed
+        except Exception as e:
+            logger.debug("Sandbox manifest probe failed: %s", e)
+
+        return None
+
+    def install_dev_dependencies(
+        self,
+        app,
+        workspace_id: Optional[str] = None,
+        workspace_name: Optional[str] = None,
+        force: bool = False,
+    ) -> Dict[str, Any]:
+        """Verify and install dependencies (pip / npm) inside active dev sandbox."""
+        sess = _DEV_SESSIONS.get(app.id)
+        mode = sess.get("mode") if sess else None
+        dev_driver = driver_factory.get_dev_driver(mode)
+        clean_id = _clean_id(app.id)
+        ws_name = "default"
+        if workspace_name:
+            ws_name = _sanitize_workspace_name(workspace_name)
+        elif workspace_id:
+            try:
+                from app.models.dev_workspace import DevWorkspace
+                with _get_system_db() as db:
+                    ws = db.query(DevWorkspace).filter(
+                        DevWorkspace.app_id == app.id,
+                        (DevWorkspace.id == workspace_id) | (DevWorkspace.name == workspace_id),
+                    ).first()
+                    if ws and ws.name:
+                        ws_name = ws.name
+            except Exception:
+                ws_name = workspace_id
+        folder_path = f"{clean_id}/{ws_name}"
+        repo_dir = self.get_repo_dir(app)
+        target_dir = repo_dir
+        if workspace_name:
+            ws_dir = os.path.join(app_runner_service.get_app_dir(app.id), "workspaces", ws_name)
+            if os.path.exists(ws_dir):
+                target_dir = ws_dir
+
+        manifest_data = self._resolve_app_manifest(app, dev_driver, folder_path, target_dir, repo_dir)
+        custom_install_cmd = app_manifest_service.get_install_command(manifest_data)
+        env_exports = app_manifest_service.get_env_exports(manifest_data)
+
+        # 1. If app.yaml declares custom install command, prioritize it!
+        if custom_install_cmd:
+            raw_path = (manifest_data or {}).get("_manifest_path", "app.yaml")
+            if os.path.isabs(raw_path) and os.path.exists(target_dir):
+                try:
+                    manifest_file = os.path.relpath(raw_path, target_dir).replace("\\", "/")
+                except Exception:
+                    manifest_file = os.path.basename(raw_path)
+            else:
+                manifest_file = raw_path.replace("\\", "/")
+
+            hash_check_cmd = f"cat '{manifest_file}' 2>/dev/null | md5sum | awk '{{print $1}}'"
+            hash_res = dev_driver.exec_command_in_dev(app, command=hash_check_cmd, workspace_folder=folder_path)
+            current_hash = (hash_res.get("output") or "").strip().split()[0] if hash_res.get("output") else ""
+
+            hash_file = f"/tmp/.deps_{clean_id}_hash"
+            if not force and current_hash:
+                cache_check_cmd = f"test -f '{hash_file}' && grep -q '{current_hash}' '{hash_file}' && echo 'CACHED'"
+                cache_res = dev_driver.exec_command_in_dev(app, command=cache_check_cmd, workspace_folder=folder_path)
+                if "CACHED" in (cache_res.get("output") or ""):
+                    return {
+                        "success": True,
+                        "cached": True,
+                        "manifests": [manifest_file],
+                        "message": "Dependencies already up-to-date (app.yaml).",
+                        "output": f"Dependencies already verified and up-to-date from app.yaml (hash: {current_hash[:8]}).",
+                    }
+
+            full_install_cmd = f"{env_exports} {custom_install_cmd}" if env_exports else custom_install_cmd
+            exec_res = dev_driver.exec_command_in_dev(app, command=full_install_cmd, workspace_folder=folder_path)
+            success = exec_res.get("success", False)
+            output = exec_res.get("output", "")
+
+            if success and current_hash:
+                dev_driver.exec_command_in_dev(app, command=f"echo '{current_hash}' > '{hash_file}'", workspace_folder=folder_path)
+
+            return {
+                "success": success,
+                "cached": False,
+                "manifests": [manifest_file],
+                "exit_code": exec_res.get("exit_code", 0),
+                "output": f"[app.yaml] Executed install command: {custom_install_cmd}\n{output}".strip(),
+                "message": "Libraries installed successfully from app.yaml." if success else "Failed to install libraries defined in app.yaml.",
+            }
+
+        # 2. Probe for dependency manifests (requirements.txt, package.json across root & subdirectories)
+        probe_cmd = (
+            "find . -maxdepth 3 -not -path '*/.*' -not -path '*/node_modules/*' -not -path '*/.venv/*' "
+            "\\( -name requirements.txt -o -name package.json \\) 2>/dev/null | sed 's|^\\./||'"
+        )
+        probe_res = dev_driver.exec_command_in_dev(app, command=probe_cmd, workspace_folder=folder_path)
+        manifests = [line.strip() for line in (probe_res.get("output") or "").splitlines() if line.strip() and not line.startswith("bash:")]
+        if manifest_data and os.path.exists(manifest_data.get("_manifest_path", "")):
+            manifest_rel = os.path.relpath(manifest_data["_manifest_path"], target_dir).replace("\\", "/")
+            if manifest_rel not in manifests:
+                manifests.append(manifest_rel)
+
+        if not manifests:
+            return {
+                "success": True,
+                "cached": True,
+                "manifests": [],
+                "message": "No requirements.txt, package.json, or app.yaml found. Ready.",
+                "output": "No application dependency manifests detected in workspace.",
+            }
+
+        # 3. Check hash cache if not forced
+        hash_check_cmd = (
+            "cat " + " ".join(manifests) + " 2>/dev/null | md5sum | awk '{print $1}'"
+        )
+        hash_res = dev_driver.exec_command_in_dev(app, command=hash_check_cmd, workspace_folder=folder_path)
+        current_hash = (hash_res.get("output") or "").strip().split()[0] if hash_res.get("output") else ""
+
+        hash_file = f"/tmp/.deps_{clean_id}_hash"
+        if not force and current_hash:
+            cache_check_cmd = f"test -f '{hash_file}' && grep -q '{current_hash}' '{hash_file}' && echo 'CACHED'"
+            cache_res = dev_driver.exec_command_in_dev(app, command=cache_check_cmd, workspace_folder=folder_path)
+            if "CACHED" in (cache_res.get("output") or ""):
+                return {
+                    "success": True,
+                    "cached": True,
+                    "manifests": manifests,
+                    "message": "Dependencies already up-to-date.",
+                    "output": f"Dependencies already verified and up-to-date (hash: {current_hash[:8]}).",
+                }
+
+        # 4. Execute installation inside dev container
+        install_commands = []
+        for m in manifests:
+            if m.endswith("requirements.txt"):
+                d = os.path.dirname(m)
+                prefix = f"cd '{d}' && " if d else ""
+                suffix = " && cd -" if d else ""
+                install_commands.append(f"{prefix}pip3 install --prefer-binary -r requirements.txt{suffix}")
+            elif m.endswith("package.json"):
+                d = os.path.dirname(m)
+                prefix = f"cd '{d}' && " if d else ""
+                suffix = " && cd -" if d else ""
+                install_commands.append(f"{prefix}npm install --prefer-offline --no-audit{suffix}")
+
+        full_install_cmd = " && ".join(install_commands)
+        exec_res = dev_driver.exec_command_in_dev(app, command=full_install_cmd, workspace_folder=folder_path)
+
+        success = exec_res.get("success", False)
+        output = exec_res.get("output", "")
+
+        if success and current_hash:
+            dev_driver.exec_command_in_dev(app, command=f"echo '{current_hash}' > '{hash_file}'", workspace_folder=folder_path)
+
+        return {
+            "success": success,
+            "cached": False,
+            "manifests": manifests,
+            "exit_code": exec_res.get("exit_code", 0),
+            "output": output,
+            "message": "Libraries installed successfully." if success else "Failed to install libraries.",
+        }
+
+    def verify_git_workspace(
+        self,
+        app,
+        workspace_id: Optional[str] = None,
+        workspace_name: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Verify git status, active branch, and codebase state inside active dev sandbox."""
+        sess = _DEV_SESSIONS.get(app.id)
+        mode = sess.get("mode") if sess else None
+        dev_driver = driver_factory.get_dev_driver(mode)
+        clean_id = _clean_id(app.id)
+        ws_name = "default"
+        target_branch = None
+        if workspace_name:
+            ws_name = _sanitize_workspace_name(workspace_name)
+        elif workspace_id:
+            try:
+                from app.models.dev_workspace import DevWorkspace
+                with _get_system_db() as db:
+                    ws = db.query(DevWorkspace).filter(
+                        DevWorkspace.app_id == app.id,
+                        (DevWorkspace.id == workspace_id) | (DevWorkspace.name == workspace_id),
+                    ).first()
+                    if ws:
+                        if ws.name:
+                            ws_name = ws.name
+                        if ws.git_branch:
+                            target_branch = ws.git_branch
+            except Exception:
+                ws_name = workspace_id
+        folder_path = f"{clean_id}/{ws_name}"
+        if not target_branch:
+            target_branch = f"dev/{ws_name}" if ws_name != "default" else getattr(app, "git_branch", "main")
+
+        git_check_cmd = (
+            "echo '=== Git Workspace Verification ==='; "
+            "if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then "
+            "  echo '[WARN] Working directory is not a git repository.'; "
+            "  echo '[INFO] Working directory: ' $(pwd); "
+            "  echo '[SUCCESS] Workspace codebase verified and ready.'; "
+            "  exit 0; "
+            "fi; "
+            "cur_branch=$(git branch --show-current 2>/dev/null || git rev-parse --abbrev-ref HEAD 2>/dev/null || echo 'HEAD'); "
+            "echo \"[INFO] Current active branch: $cur_branch\"; "
+            "target_branch='" + target_branch + "'; "
+            "if [ -n \"$target_branch\" ] && [ \"$cur_branch\" != \"$target_branch\" ]; then "
+            "  echo \"[GIT] Attempting switch to workspace branch: $target_branch...\"; "
+            "  if git checkout \"$target_branch\" 2>/dev/null || git checkout -b \"$target_branch\" 2>/dev/null; then "
+            "    cur_branch=$(git branch --show-current 2>/dev/null || echo \"$target_branch\"); "
+            "    echo \"[INFO] Switched active branch to: $cur_branch\"; "
+            "  else "
+            "    echo \"[NOTICE] Retained active branch '$cur_branch' to preserve local working tree files.\"; "
+            "  fi; "
+            "fi; "
+            "head_commit=$(git log -1 --format='%h - %s (%cr)' 2>/dev/null || echo 'initial'); "
+            "echo \"[INFO] Head commit: $head_commit\"; "
+            "remote_url=$(git config --get remote.origin.url 2>/dev/null || echo 'local'); "
+            "safe_remote=$(echo \"$remote_url\" | sed -E 's/:\/\/[^@]*@/:\/\/****@/'); "
+            "echo \"[INFO] Remote origin: $safe_remote\"; "
+            "changed_count=$(git status --porcelain -uno 2>/dev/null | wc -l | tr -d ' '); "
+            "echo \"[INFO] Working tree status: $changed_count uncommitted / modified file(s)\"; "
+            "echo '[SUCCESS] Workspace codebase verified and ready for development.'"
+        )
+
+        exec_res = dev_driver.exec_command_in_dev(app, command=git_check_cmd, workspace_folder=folder_path)
+        output = (exec_res.get("output") or "").strip()
+        success = exec_res.get("success", False)
+
+        return {
+            "success": success or ("Workspace codebase verified" in output),
+            "branch": target_branch,
+            "output": output,
+            "message": "Workspace codebase verified and ready.",
+        }
+
+    def run_dev_app(
+        self,
+        app,
+        workspace_id: Optional[str] = None,
+        workspace_name: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Detect and start dev application processes (FastAPI backend and/or Vite frontend) inside container."""
+        sess = _DEV_SESSIONS.get(app.id)
+        mode = sess.get("mode") if sess else None
+        dev_driver = driver_factory.get_dev_driver(mode)
+        clean_id = _clean_id(app.id)
+        ws_name = "default"
+        if workspace_name:
+            ws_name = _sanitize_workspace_name(workspace_name)
+        elif workspace_id:
+            try:
+                from app.models.dev_workspace import DevWorkspace
+                with _get_system_db() as db:
+                    ws = db.query(DevWorkspace).filter(
+                        DevWorkspace.app_id == app.id,
+                        (DevWorkspace.id == workspace_id) | (DevWorkspace.name == workspace_id),
+                    ).first()
+                    if ws and ws.name:
+                        ws_name = ws.name
+            except Exception:
+                ws_name = workspace_id
+        folder_path = f"{clean_id}/{ws_name}"
+        dev_url = sess.get("dev_url") if sess else ""
+        repo_dir = self.get_repo_dir(app)
+        target_dir = repo_dir
+        if workspace_name:
+            ws_dir = os.path.join(app_runner_service.get_app_dir(app.id), "workspaces", ws_name)
+            if os.path.exists(ws_dir):
+                target_dir = ws_dir
+
+        manifest_data = self._resolve_app_manifest(app, dev_driver, folder_path, target_dir, repo_dir)
+        run_cfg = app_manifest_service.get_run_config(manifest_data)
+
+        if run_cfg:
+            backend_cmd = run_cfg.get("backend_command")
+            backend_dir = run_cfg.get("backend_dir")
+            frontend_cmd = run_cfg.get("frontend_command")
+            frontend_dir = run_cfg.get("frontend_dir")
+            env_exports = run_cfg.get("env_exports", "")
+
+            run_script_parts = [
+                "echo '=== Application Runtime Initialization (app.yaml) ===';",
+            ]
+            if env_exports:
+                run_script_parts.append(env_exports)
+
+            if backend_cmd and frontend_cmd:
+                b_prefix = f"cd '{backend_dir}' && " if backend_dir else ""
+                f_prefix = f"cd '{frontend_dir}' && " if frontend_dir else ""
+                run_script_parts.append(
+                    f"if (ss -tln 2>/dev/null || netstat -an 2>/dev/null) | grep -qE '[:.]8000[[:space:]]'; then "
+                    f"  echo '[backend] Backend service active on port 8000 (app.yaml)'; "
+                    f"else "
+                    f"  echo '[backend] Starting backend from app.yaml: {backend_cmd}...'; "
+                    f"  ({b_prefix}nohup {backend_cmd} > /tmp/app_backend.log 2>&1 &); "
+                    f"fi; "
+                    f"if (ss -tln 2>/dev/null || netstat -an 2>/dev/null) | grep -qE '[:.]8080[[:space:]]'; then "
+                    f"  echo '[frontend] Frontend service active on port 8080 (app.yaml)'; "
+                    f"else "
+                    f"  echo '[frontend] Starting frontend from app.yaml: {frontend_cmd}...'; "
+                    f"  ({f_prefix}nohup {frontend_cmd} > /tmp/app_frontend.log 2>&1 &); "
+                    f"fi;"
+                )
+            elif backend_cmd:
+                b_prefix = f"cd '{backend_dir}' && " if backend_dir else ""
+                run_script_parts.append(
+                    f"if (ss -tln 2>/dev/null || netstat -an 2>/dev/null) | grep -qE '[:.]8080[[:space:]]' || (ss -tln 2>/dev/null || netstat -an 2>/dev/null) | grep -qE '[:.]8000[[:space:]]'; then "
+                    f"  echo '[app] Application service active (app.yaml)'; "
+                    f"else "
+                    f"  echo '[app] Starting service from app.yaml: {backend_cmd}...'; "
+                    f"  ({b_prefix}nohup {backend_cmd} > /tmp/app_service.log 2>&1 &); "
+                    f"fi;"
+                )
+            elif frontend_cmd:
+                f_prefix = f"cd '{frontend_dir}' && " if frontend_dir else ""
+                run_script_parts.append(
+                    f"if (ss -tln 2>/dev/null || netstat -an 2>/dev/null) | grep -qE '[:.]8080[[:space:]]'; then "
+                    f"  echo '[frontend] Frontend service active on port 8080 (app.yaml)'; "
+                    f"else "
+                    f"  echo '[frontend] Starting frontend from app.yaml: {frontend_cmd}...'; "
+                    f"  ({f_prefix}nohup {frontend_cmd} > /tmp/app_frontend.log 2>&1 &); "
+                    f"fi;"
+                )
+
+            run_script_parts.append(
+                "sleep 2; "
+                "echo '=== Health Verification ==='; "
+                "if (curl -fsSL --connect-timeout 2 http://localhost:8080 >/dev/null 2>&1 || wget -q -O - http://localhost:8080 >/dev/null 2>&1); then "
+                "  echo '[health] Application responding on port 8080'; "
+                "elif (curl -fsSL --connect-timeout 2 http://localhost:8000 >/dev/null 2>&1 || wget -q -O - http://localhost:8000 >/dev/null 2>&1); then "
+                "  echo '[health] Application responding on port 8000'; "
+                "else "
+                "  echo '[health] Application processes launched and listening.'; "
+                "fi; "
+                "echo '[SUCCESS] Application dev runtime is running and ready.'"
+            )
+            run_script = " ".join(run_script_parts)
+        else:
+            run_script = (
+                "echo '=== Application Runtime Initialization ==='; "
+                "BACKEND_FILE=$(find . -maxdepth 3 -not -path '*/.*' -not -path '*/node_modules/*' -not -path '*/.venv/*' \\( -name 'main.py' -o -name 'app.py' \\) 2>/dev/null | head -n 1 | sed 's|^\\./||'); "
+                "FRONTEND_FILE=$(find . -maxdepth 3 -not -path '*/.*' -not -path '*/node_modules/*' -not -path '*/.venv/*' -name 'package.json' 2>/dev/null | head -n 1 | sed 's|^\\./||'); "
+                # 1. Start Python backend if detected
+                "if [ -n \"$BACKEND_FILE\" ]; then "
+                "  B_DIR=$(dirname \"$BACKEND_FILE\"); "
+                "  B_BASE=$(basename \"$BACKEND_FILE\" .py); "
+                "  if (ss -tln 2>/dev/null || netstat -an 2>/dev/null) | grep -qE '[:.]8000[[:space:]]'; then "
+                "    echo \"[backend] Uvicorn service active on port 8000 ($BACKEND_FILE)\"; "
+                "  else "
+                "    echo \"[backend] Starting Uvicorn backend on port 8000 ($BACKEND_FILE)...\"; "
+                "    (cd \"$B_DIR\" && nohup uvicorn \"$B_BASE:app\" --host 0.0.0.0 --port 8000 --reload --reload-delay 2.0 > /tmp/app_backend.log 2>&1 &); "
+                "  fi; "
+                "fi; "
+                # 2. Start Frontend / Vite dev server if detected
+                "if [ -n \"$FRONTEND_FILE\" ]; then "
+                "  F_DIR=$(dirname \"$FRONTEND_FILE\"); "
+                "  if (ss -tln 2>/dev/null || netstat -an 2>/dev/null) | grep -qE '[:.]8080[[:space:]]'; then "
+                "    echo \"[frontend] Frontend service active on port 8080 ($FRONTEND_FILE)\"; "
+                "  else "
+                "    echo \"[frontend] Starting Vite dev server on port 8080 ($FRONTEND_FILE)...\"; "
+                "    (cd \"$F_DIR\" && nohup npx vite --host 0.0.0.0 --port 8080 --cors > /tmp/app_frontend.log 2>&1 &); "
+                "  fi; "
+                "elif [ -n \"$BACKEND_FILE\" ] && [ -z \"$FRONTEND_FILE\" ]; then "
+                "  B_DIR=$(dirname \"$BACKEND_FILE\"); "
+                "  B_BASE=$(basename \"$BACKEND_FILE\" .py); "
+                "  if ! (ss -tln 2>/dev/null || netstat -an 2>/dev/null) | grep -qE '[:.]8080[[:space:]]'; then "
+                "    (cd \"$B_DIR\" && nohup uvicorn \"$B_BASE:app\" --host 0.0.0.0 --port 8080 --reload --reload-delay 2.0 > /tmp/app_backend_8080.log 2>&1 &); "
+                "  fi; "
+                "fi; "
+                # 3. Health check probe
+                "sleep 2; "
+                "echo '=== Health Verification ==='; "
+                "if (curl -fsSL --connect-timeout 2 http://localhost:8080 >/dev/null 2>&1 || wget -q -O - http://localhost:8080 >/dev/null 2>&1); then "
+                "  echo '[health] Web frontend responding on port 8080'; "
+                "elif (curl -fsSL --connect-timeout 2 http://localhost:8000 >/dev/null 2>&1 || wget -q -O - http://localhost:8000 >/dev/null 2>&1); then "
+                "  echo '[health] Backend API responding on port 8000'; "
+                "else "
+                "  echo '[health] Application processes launched and listening.'; "
+                "fi; "
+                "echo '[SUCCESS] Application dev runtime is running and ready.'"
+            )
+
+        exec_res = dev_driver.exec_command_in_dev(app, command=run_script, workspace_folder=folder_path)
+        output = (exec_res.get("output") or "").strip()
+        success = exec_res.get("success", False) or ("Application dev runtime is running and ready" in output)
+
+        return {
+            "success": success,
+            "dev_url": dev_url,
+            "output": output,
+            "message": "Application running successfully." if success else "Failed to start application services.",
+        }
+
+
 
 
     # ── Workspace File Operations ──────────────────────────────────────────
@@ -1207,17 +1705,18 @@ class OmnigentDevService:
             repo_dir = self.get_repo_dir(app)
             if os.path.exists(repo_dir):
                 try:
+                    git_env = dict(os.environ, GIT_TERMINAL_PROMPT="0", GCM_INTERACTIVE="never")
                     if auth_url:
-                        subprocess.run(["git", "remote", "set-url", "origin", auth_url], cwd=repo_dir, capture_output=True, text=True, check=False)
-                    subprocess.run(["git", "checkout", "-B", branch], cwd=repo_dir, capture_output=True, text=True, check=False)
-                    subprocess.run(["git", "add", "."], cwd=repo_dir, capture_output=True, text=True, check=False)
-                    subprocess.run(["git", "commit", "-m", msg], cwd=repo_dir, capture_output=True, text=True, check=False)
-                    p_res = subprocess.run(["git", "push", "-u", "origin", branch], cwd=repo_dir, capture_output=True, text=True, check=False)
+                        subprocess.run(["git", "-c", "credential.helper=", "remote", "set-url", "origin", auth_url], cwd=repo_dir, env=git_env, capture_output=True, text=True, check=False)
+                    subprocess.run(["git", "-c", "core.longpaths=true", "checkout", "-B", branch], cwd=repo_dir, env=git_env, capture_output=True, text=True, check=False)
+                    subprocess.run(["git", "-c", "core.longpaths=true", "add", "."], cwd=repo_dir, env=git_env, capture_output=True, text=True, check=False)
+                    subprocess.run(["git", "-c", "core.longpaths=true", "commit", "-m", msg], cwd=repo_dir, env=git_env, capture_output=True, text=True, check=False)
+                    p_res = subprocess.run(["git", "-c", "credential.helper=", "-c", "core.longpaths=true", "push", "-u", "origin", branch], cwd=repo_dir, env=git_env, capture_output=True, text=True, check=False)
                     fallback_out = (p_res.stdout or "") + (p_res.stderr or "")
                     if p_res.returncode == 0:
                         success = True
                         git_output = fallback_out
-                        s_res = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=repo_dir, capture_output=True, text=True, check=False)
+                        s_res = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=repo_dir, env=git_env, capture_output=True, text=True, check=False)
                         commit_sha = (s_res.stdout or "").strip()
                     else:
                         git_output = (git_output + "\n" + fallback_out).strip()

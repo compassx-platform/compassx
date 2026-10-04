@@ -932,7 +932,7 @@ class KubernetesDevDriver(BaseDevDriver):
             except Exception:
                 return None
 
-    def start_dev(self, app, repo_dir: str, omnigent_internal_url: str, workspace_folder: str = "", workspace_branch: str = "") -> Dict[str, Any]:
+    def start_dev(self, app, repo_dir: str, omnigent_internal_url: str, workspace_folder: str = "", workspace_branch: str = "", host_type: str = "compassx", **kwargs) -> Dict[str, Any]:
         from kubernetes import client
         from kubernetes.client.exceptions import ApiException
 
@@ -953,6 +953,10 @@ class KubernetesDevDriver(BaseDevDriver):
             "compassx/role": "dev",
             "compassx/managed": "true",
         }
+
+        # Resolve dev host image based on host_type selection
+        host_type = str(host_type or kwargs.get("host_type") or "compassx").lower()
+        dev_host_image = "compassx-host:latest" if host_type == "compassx" else "ghcr.io/omnigent-ai/omnigent-host:latest"
 
         # If k8s client is available, provision Dev Pod, Service, and Ingress
         if k8s:
@@ -1101,8 +1105,8 @@ class KubernetesDevDriver(BaseDevDriver):
                 # 1b. Dev Deployment Spec (resilient self-healing; /workspaces backed by shared PVC)
                 dev_container = client.V1Container(
                     name="dev-host",
-                    image="ghcr.io/omnigent-ai/omnigent-host:latest",
-                    image_pull_policy="Always",
+                    image=dev_host_image,
+                    image_pull_policy="IfNotPresent" if host_type == "compassx" else "Always",
                     command=["/bin/sh", "-c"],
                     args=[dev_cmd],
                     ports=[client.V1ContainerPort(container_port=8080, name="http")],
@@ -1119,8 +1123,8 @@ class KubernetesDevDriver(BaseDevDriver):
                         client.V1EnvVar(name="DEV_WORKSPACE_DIR", value=workdir),
                     ],
                     resources=client.V1ResourceRequirements(
-                        requests={"cpu": "200m", "memory": "512Mi"},
-                        limits={"cpu": "4", "memory": "5000Mi"},
+                        requests={"cpu": "500m", "memory": "1Gi"},
+                        limits={"cpu": "4", "memory": "8Gi"},
                     ),
                     volume_mounts=[
                         client.V1VolumeMount(
@@ -1132,6 +1136,22 @@ class KubernetesDevDriver(BaseDevDriver):
                 )
 
                 dev_affinity = client.V1Affinity(
+                    node_affinity=client.V1NodeAffinity(
+                        preferred_during_scheduling_ignored_during_execution=[
+                            client.V1PreferredSchedulingTerm(
+                                weight=100,
+                                preference=client.V1NodeSelectorTerm(
+                                    match_expressions=[
+                                        client.V1NodeSelectorRequirement(
+                                            key="kubernetes.azure.com/agentpool",
+                                            operator="In",
+                                            values=["computepool"],
+                                        )
+                                    ]
+                                ),
+                            )
+                        ]
+                    ),
                     pod_anti_affinity=client.V1PodAntiAffinity(
                         preferred_during_scheduling_ignored_during_execution=[
                             client.V1WeightedPodAffinityTerm(
@@ -1150,7 +1170,7 @@ class KubernetesDevDriver(BaseDevDriver):
                                 ),
                             )
                         ]
-                    )
+                    ),
                 )
 
                 try:
@@ -1300,6 +1320,8 @@ class KubernetesDevDriver(BaseDevDriver):
             "dev_url": dev_url,
             "host_id": host_id,
             "host_name": host_name,
+            "host_type": host_type,
+            "host_image": dev_host_image,
             "namespace": ns,
             "status": "active",
         }
@@ -1561,7 +1583,7 @@ class KubernetesDevDriver(BaseDevDriver):
                 k8s.core().connect_get_namespaced_pod_exec,
                 pod_name,
                 ns,
-                command=["/bin/sh", "-c", f"cd {workdir} 2>/dev/null && git rev-parse --abbrev-ref HEAD 2>/dev/null || echo ''"],
+                command=["/bin/sh", "-c", f"(cd '{workdir}' 2>/dev/null || cd /workspaces 2>/dev/null || cd /app 2>/dev/null) && git rev-parse --abbrev-ref HEAD 2>/dev/null || echo ''"],
                 stderr=False,
                 stdin=False,
                 stdout=True,
@@ -1589,7 +1611,13 @@ class KubernetesDevDriver(BaseDevDriver):
         pod_name = self._find_running_pod_name(clean_id, ns) or f"compassx-app-dev-{clean_id}"
 
         workdir = f"/workspaces/{workspace_folder}" if workspace_folder else f"/workspaces/{clean_id}/default"
-        full_cmd = f"cd {workdir} && {command}"
+        exit_marker = "__K8S_CMD_EXIT__"
+        full_cmd = (
+            f"( (mkdir -p '{workdir}' 2>/dev/null || true); "
+            f"cd '{workdir}' 2>/dev/null || cd /workspaces 2>/dev/null || cd /app 2>/dev/null || true; "
+            f"{command} ); "
+            f"echo \"{exit_marker}:$?\""
+        )
 
         try:
             resp = stream.stream(
@@ -1601,12 +1629,22 @@ class KubernetesDevDriver(BaseDevDriver):
                 stdin=False,
                 stdout=True,
                 tty=False,
-                _request_timeout=60,
+                _request_timeout=120,
             )
+            raw_output = str(resp or "")
+            exit_code = 0
+            clean_output = raw_output
+            match = re.search(r"__K8S_CMD_EXIT__:(\d+)", raw_output)
+            if match:
+                exit_code = int(match.group(1))
+                clean_output = re.sub(r"\n?__K8S_CMD_EXIT__:\d+\r?\n?", "", raw_output).strip()
+            else:
+                clean_output = raw_output.strip()
+
             return {
-                "success": True,
-                "exit_code": 0,
-                "output": resp or "",
+                "success": exit_code == 0,
+                "exit_code": exit_code,
+                "output": clean_output,
                 "workdir": workdir,
             }
         except Exception as exc:

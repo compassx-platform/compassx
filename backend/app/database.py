@@ -71,6 +71,8 @@ try:
         account_engine = create_engine(
             settings.resolved_system_db_url,
             pool_pre_ping=True,
+            pool_recycle=1800,
+            pool_timeout=15,
             pool_size=settings.SYSTEM_DB_POOL_MIN,
             max_overflow=settings.SYSTEM_DB_POOL_MAX - settings.SYSTEM_DB_POOL_MIN,
             connect_args={"connect_timeout": 5},
@@ -141,6 +143,8 @@ try:
         system_engine = create_engine(
             settings.resolved_data_db_url,
             pool_pre_ping=True,
+            pool_recycle=1800,
+            pool_timeout=15,
             pool_size=settings.DATA_DB_POOL_MIN,
             max_overflow=settings.DATA_DB_POOL_MAX - settings.DATA_DB_POOL_MIN,
             connect_args={"connect_timeout": 5},

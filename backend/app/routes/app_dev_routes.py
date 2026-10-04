@@ -47,10 +47,26 @@ class BuildClearRequest(BaseModel):
 class StartDevRequest(BaseModel):
     workspace_id: Optional[str] = None  # if provided, resume this workspace; otherwise create new
     workspace_name: Optional[str] = None  # if provided, create or resume workspace with this custom name
+    host_type: Optional[str] = "compassx"  # "compassx" | "omnigent"
 
 class CreateWorkspaceRequest(BaseModel):
     name: str
     git_branch: Optional[str] = None
+
+class InstallDepsRequest(BaseModel):
+    workspace_id: Optional[str] = None
+    workspace_name: Optional[str] = None
+    force: Optional[bool] = False
+
+class VerifyGitRequest(BaseModel):
+    workspace_id: Optional[str] = None
+    workspace_name: Optional[str] = None
+
+class RunAppRequest(BaseModel):
+    workspace_id: Optional[str] = None
+    workspace_name: Optional[str] = None
+
+
 
 
 @router.get("/workspaces")
@@ -128,9 +144,16 @@ def start_dev_session(
 
     workspace_id = body.workspace_id if body else None
     workspace_name = body.workspace_name if body else None
+    host_type = (body.host_type if body and body.host_type else "compassx").lower()
+    app_id_val = app.id
+    db.expunge(app)
+    db.close()
+
     try:
-        unified_reaper_service.touch_app_activity(app.id)
-        session = omnigent_dev_service.start_dev_session(app, workspace_id=workspace_id, workspace_name=workspace_name)
+        unified_reaper_service.touch_app_activity(app_id_val)
+        session = omnigent_dev_service.start_dev_session(
+            app, workspace_id=workspace_id, workspace_name=workspace_name, host_type=host_type
+        )
         return session
     except Exception as e:
         logger.exception("Failed to start dev session for app %s: %s", app.name, e)
@@ -148,7 +171,11 @@ def get_dev_status(
     if not app:
         raise HTTPException(status_code=404, detail=f"App '{app_id}' not found.")
 
-    unified_reaper_service.touch_app_activity(app.id)
+    app_id_val = app.id
+    db.expunge(app)
+    db.close()
+
+    unified_reaper_service.touch_app_activity(app_id_val)
     return omnigent_dev_service.get_dev_session(app)
 
 
@@ -162,6 +189,9 @@ def stop_dev_session(
     app = db.query(App).filter(App.id == app_id).first()
     if not app:
         raise HTTPException(status_code=404, detail=f"App '{app_id}' not found.")
+
+    db.expunge(app)
+    db.close()
 
     return omnigent_dev_service.stop_dev_session(app)
 
@@ -177,6 +207,9 @@ def suspend_dev_session(
     if not app:
         raise HTTPException(status_code=404, detail=f"App '{app_id}' not found.")
 
+    db.expunge(app)
+    db.close()
+
     return omnigent_dev_service.suspend_dev_session(app)
 
 
@@ -191,7 +224,11 @@ def resume_dev_session(
     if not app:
         raise HTTPException(status_code=404, detail=f"App '{app_id}' not found.")
 
-    unified_reaper_service.touch_app_activity(app.id)
+    app_id_val = app.id
+    db.expunge(app)
+    db.close()
+
+    unified_reaper_service.touch_app_activity(app_id_val)
     return omnigent_dev_service.resume_dev_session(app)
 
 
@@ -206,8 +243,13 @@ def list_workspace_files(
     if not app:
         raise HTTPException(status_code=404, detail=f"App '{app_id}' not found.")
 
-    unified_reaper_service.touch_app_activity(app.id)
+    app_id_val = app.id
+    db.expunge(app)
+    db.close()
+
+    unified_reaper_service.touch_app_activity(app_id_val)
     return omnigent_dev_service.list_workspace_files(app)
+
 
 
 @router.get("/file")
@@ -444,6 +486,89 @@ def get_dev_sandbox_logs(
 
     unified_reaper_service.touch_app_activity(app.id)
     return omnigent_dev_service.get_dev_logs(app, tail=tail)
+
+
+@router.post("/verify-git")
+def verify_git_workspace(
+    app_id: str,
+    body: Optional[VerifyGitRequest] = None,
+    db: Session = Depends(get_system_db),
+    guard: Guard = Depends(get_guard),
+):
+    """Verify git status, branch, and working tree for dev workspace."""
+    app = db.query(App).filter(App.id == app_id).first()
+    if not app:
+        raise HTTPException(status_code=404, detail=f"App '{app_id}' not found.")
+    if guard.workspace_id and app.workspace_id != guard.workspace_id:
+        raise HTTPException(status_code=403, detail="Cannot access app in another workspace.")
+
+    workspace_id = body.workspace_id if body else None
+    workspace_name = body.workspace_name if body else None
+
+    app_id_val = app.id
+    db.expunge(app)
+    db.close()
+
+    unified_reaper_service.touch_app_activity(app_id_val)
+    return omnigent_dev_service.verify_git_workspace(
+        app, workspace_id=workspace_id, workspace_name=workspace_name
+    )
+
+
+@router.post("/install-deps")
+def install_dev_dependencies(
+    app_id: str,
+    body: Optional[InstallDepsRequest] = None,
+    db: Session = Depends(get_system_db),
+    guard: Guard = Depends(get_guard),
+):
+    """Verify and install dependencies (pip / npm) inside active dev sandbox."""
+    app = db.query(App).filter(App.id == app_id).first()
+    if not app:
+        raise HTTPException(status_code=404, detail=f"App '{app_id}' not found.")
+    if guard.workspace_id and app.workspace_id != guard.workspace_id:
+        raise HTTPException(status_code=403, detail="Cannot access app in another workspace.")
+
+    workspace_id = body.workspace_id if body else None
+    workspace_name = body.workspace_name if body else None
+    force = body.force if body else False
+
+    app_id_val = app.id
+    db.expunge(app)
+    db.close()
+
+    unified_reaper_service.touch_app_activity(app_id_val)
+    return omnigent_dev_service.install_dev_dependencies(
+        app, workspace_id=workspace_id, workspace_name=workspace_name, force=force
+    )
+
+
+@router.post("/run-app")
+def run_dev_application(
+    app_id: str,
+    body: Optional[RunAppRequest] = None,
+    db: Session = Depends(get_system_db),
+    guard: Guard = Depends(get_guard),
+):
+    """Start application dev processes (FastAPI / Vite) and verify local runtime."""
+    app = db.query(App).filter(App.id == app_id).first()
+    if not app:
+        raise HTTPException(status_code=404, detail=f"App '{app_id}' not found.")
+    if guard.workspace_id and app.workspace_id != guard.workspace_id:
+        raise HTTPException(status_code=403, detail="Cannot access app in another workspace.")
+
+    workspace_id = body.workspace_id if body else None
+    workspace_name = body.workspace_name if body else None
+
+    app_id_val = app.id
+    db.expunge(app)
+    db.close()
+
+    unified_reaper_service.touch_app_activity(app_id_val)
+    return omnigent_dev_service.run_dev_app(
+        app, workspace_id=workspace_id, workspace_name=workspace_name
+    )
+
 
 
 @router.post("/exec")

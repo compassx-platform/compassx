@@ -76,16 +76,16 @@ class Settings(BaseSettings):
     #   postgresql://{PG_USER}:{PG_PASSWORD}@{PG_HOST}:{PG_PORT}/compassx_account
     SYSTEM_DB_NAME: str = "compassx_account"   # override to use different DB name
     SYSTEM_DB_URL: str = ""                   # set this to override entirely
-    SYSTEM_DB_POOL_MIN: int = 5
-    SYSTEM_DB_POOL_MAX: int = 20
+    SYSTEM_DB_POOL_MIN: int = 10
+    SYSTEM_DB_POOL_MAX: int = 50
 
     # Workspace data plane (data DB).
     # If left empty, derived from PG_* settings as:
     #   postgresql://{PG_USER}:{PG_PASSWORD}@{PG_HOST}:{PG_PORT}/compassx_system
     DATA_DB_NAME: str = "compassx_system"       # override to use different DB name
     DATA_DB_URL: str = ""                     # set this to override entirely
-    DATA_DB_POOL_MIN: int = 5
-    DATA_DB_POOL_MAX: int = 20
+    DATA_DB_POOL_MIN: int = 10
+    DATA_DB_POOL_MAX: int = 50
 
     # Redis for workspace slug cache and session cache
     REDIS_URL: str = ""

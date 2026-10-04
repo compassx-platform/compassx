@@ -18,7 +18,7 @@ class BaseAppDriver(ABC):
 
     def start(self, app) -> Dict[str, Any]:
         """Start or scale up instance of the application."""
-        return {"status": "starting", "message": "Starting application..."}
+        return {"app_id": getattr(app, "id", ""), "status": "starting", "message": "Starting application..."}
 
     @abstractmethod
     def get_status(self, app) -> Dict[str, Any]:
@@ -40,7 +40,7 @@ class BaseDevDriver(ABC):
     """Abstract interface for managing interactive dev sandboxes with Omnigent AI integration."""
 
     @abstractmethod
-    def start_dev(self, app, repo_dir: str, omnigent_internal_url: str, workspace_folder: str = "", workspace_branch: str = "") -> Dict[str, Any]:
+    def start_dev(self, app, repo_dir: str, omnigent_internal_url: str, workspace_folder: str = "", workspace_branch: str = "", host_type: str = "compassx", **kwargs) -> Dict[str, Any]:
         """Start or attach to an interactive dev sandbox container or pod."""
         pass
 

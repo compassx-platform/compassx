@@ -141,7 +141,7 @@ async def lifespan(app: FastAPI):
             if service != "backend"
         ]
         if required:
-            timeout = float(os.environ.get("COMPASSX_STARTUP_TIMEOUT", "60"))
+            timeout = float(os.environ.get("COMPASSX_STARTUP_TIMEOUT", "5"))
             await container.health_checker.wait_until_healthy(
                 required, timeout=timeout
             )
