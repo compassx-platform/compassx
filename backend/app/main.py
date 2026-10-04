@@ -453,6 +453,8 @@ async def lifespan(app: FastAPI):
     jobs_reconciliation_task = asyncio.create_task(_jobs_reconciliation_loop())
     try:
         yield
+    except (asyncio.CancelledError, KeyboardInterrupt):
+        pass
     finally:
         try:
             await sandbox_reaper_service.shutdown()
@@ -461,7 +463,7 @@ async def lifespan(app: FastAPI):
         jobs_reconciliation_task.cancel()
         try:
             await jobs_reconciliation_task
-        except asyncio.CancelledError:
+        except (asyncio.CancelledError, Exception):
             pass
 
 
@@ -469,7 +471,7 @@ app = FastAPI(
     lifespan=lifespan,
     title="CompassX API",
     description="CompassX Platform API",
-    version="0.11.11",
+    version="0.12.0",
     docs_url="/api/swagger/docs",
     openapi_url="/api/swagger.json",
 )

@@ -465,6 +465,21 @@ export function useDeleteDevWorkspace() {
   });
 }
 
+export function useActivateDevWorkspace() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ appId, workspaceId }: { appId: string; workspaceId: string }) => {
+      const res = await api.post(`/apps/${appId}/dev/workspaces/${workspaceId}/activate`);
+      return res.data;
+    },
+    onSuccess: (_, { appId }) => {
+      qc.invalidateQueries({ queryKey: ['app-dev-workspaces', appId] });
+      qc.invalidateQueries({ queryKey: ['app-dev-status', appId] });
+      qc.invalidateQueries({ queryKey: ['app-dev-sessions', appId] });
+    },
+  });
+}
+
 export function usePublishDevChanges() {
   const qc = useQueryClient();
   return useMutation({
@@ -706,6 +721,185 @@ export function useUpdateAppLifecycle() {
   });
 }
 
+export interface WorkspaceFile {
+  path: string;
+  name: string;
+  size?: number;
+  bytes?: number | null;
+  ext?: string;
+  modified_at?: number | null;
+  type?: 'file' | 'directory';
+}
 
+export interface WorkspaceFileContent {
+  path: string;
+  content: string;
+  size: number;
+  ext: string;
+}
 
+export function useDevFiles(appId?: string, enabled = true) {
+  return useQuery({
+    queryKey: ['app-dev-files', appId],
+    queryFn: async () => {
+      if (!appId) throw new Error('App ID required');
+      const res = await api.get<WorkspaceFile[]>(`/apps/${appId}/dev/files`);
+      return res.data;
+    },
+    enabled: !!appId && enabled,
+    refetchInterval: enabled ? 5000 : false,
+  });
+}
+
+export function useDevFileContent(appId?: string, filePath?: string | null, enabled = true) {
+  return useQuery({
+    queryKey: ['app-dev-file-content', appId, filePath],
+    queryFn: async () => {
+      if (!appId || !filePath) throw new Error('App ID and File path required');
+      const res = await api.get<WorkspaceFileContent>(`/apps/${appId}/dev/file`, {
+        params: { path: filePath },
+      });
+      return res.data;
+    },
+    enabled: !!appId && !!filePath && enabled,
+    staleTime: 5000,
+  });
+}
+
+export function useWriteDevFile() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      appId,
+      path,
+      content,
+    }: {
+      appId: string;
+      path: string;
+      content: string;
+    }) => {
+      const res = await api.put<WorkspaceFileContent>(`/apps/${appId}/dev/file`, {
+        path,
+        content,
+      });
+      return res.data;
+    },
+    onSuccess: (_, { appId, path }) => {
+      qc.invalidateQueries({ queryKey: ['app-dev-files', appId] });
+      qc.invalidateQueries({ queryKey: ['app-dev-file-content', appId, path] });
+    },
+  });
+}
+
+export interface DevSession {
+  id: string;
+  app_id: string;
+  workspace_id?: string | null;
+  title: string;
+  agent: 'pi' | 'opencode' | 'antigravity';
+  model?: string | null;
+  external_session_id?: string | null;
+  tmux_session_name?: string | null;
+  status: string;
+  created_by?: string | null;
+  created_at: string;
+  updated_at: string;
+  last_active_at?: string | null;
+}
+
+export interface CreateDevSessionPayload {
+  title: string;
+  agent: 'pi' | 'opencode' | 'antigravity';
+  workspace_id?: string;
+  model?: string;
+}
+
+export interface AppDevModel {
+  id: string;
+  name: string;
+  is_default?: boolean;
+  provider?: string;
+}
+
+export function useAppDevModels(appId?: string) {
+  return useQuery({
+    queryKey: ['app-dev-models', appId],
+    queryFn: async () => {
+      if (!appId) throw new Error('App ID required');
+      const res = await api.get<AppDevModel[]>(`/apps/${appId}/dev/models`);
+      return res.data;
+    },
+    enabled: !!appId,
+    staleTime: 60_000,
+  });
+}
+
+export interface UpdateDevSessionPayload {
+  title?: string;
+  status?: string;
+}
+
+export function useDevSessions(appId?: string, enabled = true) {
+  return useQuery({
+    queryKey: ['app-dev-sessions', appId],
+    queryFn: async () => {
+      if (!appId) throw new Error('App ID required');
+      const res = await api.get<DevSession[]>(`/apps/${appId}/dev/sessions`);
+      return res.data;
+    },
+    enabled: !!appId && enabled,
+    refetchInterval: enabled ? 10000 : false,
+    staleTime: 5000,
+  });
+}
+
+export function useCreateDevSession(appId?: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (payload: CreateDevSessionPayload) => {
+      if (!appId) throw new Error('App ID required');
+      const res = await api.post<DevSession>(`/apps/${appId}/dev/sessions`, payload);
+      return res.data;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['app-dev-sessions', appId] });
+    },
+  });
+}
+
+export function useUpdateDevSession(appId?: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      sessionId,
+      payload,
+    }: {
+      sessionId: string;
+      payload: UpdateDevSessionPayload;
+    }) => {
+      if (!appId) throw new Error('App ID required');
+      const res = await api.patch<DevSession>(`/apps/${appId}/dev/sessions/${sessionId}`, payload);
+      return res.data;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['app-dev-sessions', appId] });
+    },
+  });
+}
+
+export function useDeleteDevSession(appId?: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (sessionId: string) => {
+      if (!appId) throw new Error('App ID required');
+      const res = await api.delete<{ status: string; session_id: string }>(
+        `/apps/${appId}/dev/sessions/${sessionId}`,
+      );
+      return res.data;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['app-dev-sessions', appId] });
+    },
+  });
+}
 

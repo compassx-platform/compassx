@@ -1651,14 +1651,89 @@ class KubernetesDevDriver(BaseDevDriver):
             logger.warning("Failed executing command in dev pod: %s", exc)
             return {"success": False, "exit_code": 1, "output": str(exc), "workdir": workdir}
 
+    def ensure_agent_configs(self, app: Any, active_model: Optional[str] = None) -> None:
+        """Seed or update agent configuration files (OpenCode, Pi) and tmux configs inside the dev pod."""
+        import json
+        models = ["gpt-5.4-mini", "gpt-5.6-sol"]
+        try:
+            from app.database import AccountSessionLocal
+            from app.ai_gateway.models.provider import AIModelEndpoint
+            with AccountSessionLocal() as acc_db:
+                ws_id = str(app.workspace_id) if getattr(app, "workspace_id", None) else None
+                q = acc_db.query(AIModelEndpoint).filter(AIModelEndpoint.is_active == True)
+                if ws_id:
+                    q = q.filter((AIModelEndpoint.workspace_id == ws_id) | (AIModelEndpoint.workspace_id.is_(None)))
+                db_models = [ep.name for ep in q.all() if ep.name]
+                if db_models:
+                    models = db_models
+        except Exception as e:
+            logger.debug("Failed to query models for pod seeding: %s", e)
+
+        if active_model and active_model not in models:
+            models.append(active_model)
+
+        api_key = f"cx_gw_app_{app.id}"
+        ns = settings.K8S_NAMESPACE
+        base_url = f"http://compassx-backend.{ns}.svc.cluster.local:8000/api/v1/ai-gateway/v1"
+        oc_models = {m: {"name": m} for m in models}
+        pi_models = [{"id": m, "name": m, "contextWindow": 128000, "maxTokens": 8192} for m in models]
+
+        py_script = (
+            "import json, os\n"
+            f"api_key = {json.dumps(api_key)}\n"
+            f"base_url = {json.dumps(base_url)}\n"
+            f"oc_models = {json.dumps(oc_models)}\n"
+            f"pi_models = {json.dumps(pi_models)}\n"
+            "for p in ['/root/.config/opencode/opencode.json', '/root/.opencode/opencode.json']:\n"
+            "    try:\n"
+            "        os.makedirs(os.path.dirname(p), exist_ok=True)\n"
+            "        doc = {'$schema': 'https://opencode.ai/config.json'}\n"
+            "        if os.path.exists(p):\n"
+            "            try:\n"
+            "                with open(p, 'r') as f: doc = json.load(f)\n"
+            "            except Exception: pass\n"
+            "        doc.setdefault('provider', {})\n"
+            "        doc['provider']['compassx'] = {'name': 'CompassX AI Gateway', 'type': 'openai', 'options': {'baseURL': base_url, 'apiKey': api_key}, 'models': oc_models}\n"
+            "        with open(p, 'w') as f: json.dump(doc, f, indent=2)\n"
+            "    except Exception:\n"
+            "        pass\n"
+            "try:\n"
+            "    with open('/root/.tmux.conf', 'w') as f:\n"
+            "        f.write('set-option -g window-size latest\\nset-option -g aggressive-resize on\\nset-option -g default-terminal \"xterm-256color\"\\n')\n"
+            "except Exception:\n"
+            "    pass\n"
+            "try:\n"
+            "    pi_p = '/root/.pi/agent/models.json'\n"
+            "    os.makedirs(os.path.dirname(pi_p), exist_ok=True)\n"
+            "    pi_doc = {'providers': {}}\n"
+            "    if os.path.exists(pi_p):\n"
+            "        try:\n"
+            "            with open(pi_p, 'r') as f: pi_doc = json.load(f)\n"
+            "        except Exception: pass\n"
+            "    pi_doc.setdefault('providers', {})\n"
+            "    pi_doc['providers']['compassx'] = {'baseUrl': base_url, 'apiKey': api_key, 'api': 'openai-completions', 'models': pi_models}\n"
+            "    with open(pi_p, 'w') as f: json.dump(pi_doc, f, indent=2)\n"
+            "except Exception:\n"
+            "    pass\n"
+        )
+        try:
+            self.exec_command_in_dev(app, f"python3 -c {json.dumps(py_script)}")
+        except Exception as e:
+            logger.debug("Failed seeding agent configs in pod: %s", e)
+
     def open_terminal_ws_client(
         self,
         app,
         workspace_folder: str = "",
         cols: int = 80,
         rows: int = 24,
+        agent: Optional[str] = None,
+        session_name: Optional[str] = None,
+        cli_cmd: Optional[str] = None,
+        model: Optional[str] = None,
+        **kwargs: Any,
     ) -> Any:
-        """Open a live bidirectional interactive PTY stream to the dev pod."""
+        """Open a live bidirectional interactive PTY stream to the dev pod with persistent tmux support."""
         from kubernetes import stream
         import json
         k8s = self._get_k8s_client()
@@ -1670,7 +1745,43 @@ class KubernetesDevDriver(BaseDevDriver):
         pod_name = self._find_running_pod_name(clean_id, ns) or f"compassx-app-dev-{clean_id}"
         workdir = f"/workspaces/{workspace_folder}" if workspace_folder else f"/workspaces/{clean_id}/default"
 
-        shell_cmd = ["/bin/sh", "-c", f"cd {workdir} 2>/dev/null; if [ -x /bin/bash ]; then exec /bin/bash -l; else exec /bin/sh -l; fi"]
+        # Ensure agent configs and models are seeded
+        self.ensure_agent_configs(app, active_model=model)
+
+        if not cli_cmd:
+            if agent == "pi":
+                cli_cmd = "pi --approve"
+            elif agent == "opencode":
+                cli_cmd = "opencode"
+            elif agent in ("antigravity", "agy"):
+                cli_cmd = "agy"
+
+        ai_gw_url = f"http://compassx-backend.{ns}.svc.cluster.local:8000/api/v1/ai-gateway/v1"
+
+        if session_name and cli_cmd:
+            tmux_target = session_name.replace("'", "")
+            clean_cmd = f"export OPENAI_BASE_URL={ai_gw_url} OPENAI_API_KEY=cx_gw_app_{app.id}; {cli_cmd}".replace("'", "'\\''")
+            shell_cmd = [
+                "/bin/sh", "-c",
+                f"cd {workdir} 2>/dev/null; "
+                f"export TERM=xterm-256color; "
+                f"tmux new-session -A -D -s '{tmux_target}' -c '{workdir}' '{clean_cmd} || exec /bin/bash -l' || exec /bin/bash -l"
+            ]
+        elif cli_cmd:
+            clean_cmd = f"export OPENAI_BASE_URL={ai_gw_url} OPENAI_API_KEY=cx_gw_app_{app.id}; {cli_cmd}".replace("'", "'\\''")
+            shell_cmd = [
+                "/bin/sh", "-c",
+                f"cd {workdir} 2>/dev/null; "
+                f"export TERM=xterm-256color; "
+                f"{clean_cmd} || exec /bin/bash -l"
+            ]
+        else:
+            shell_cmd = [
+                "/bin/sh", "-c",
+                f"cd {workdir} 2>/dev/null; "
+                f"export TERM=xterm-256color; "
+                f"if [ -x /bin/bash ]; then exec /bin/bash -l; else exec /bin/sh -l; fi"
+            ]
 
         try:
             ws_client = stream.stream(
@@ -1693,4 +1804,127 @@ class KubernetesDevDriver(BaseDevDriver):
         except Exception as exc:
             logger.warning("Failed to open terminal stream in dev pod %s: %s", pod_name, exc)
             return None
+
+    def resize_terminal(
+        self,
+        app: Any,
+        cols: int,
+        rows: int,
+        session_name: Optional[str] = None,
+        **kwargs: Any,
+    ) -> None:
+        """Dynamically resize tmux window and pane inside dev pod."""
+        target = (session_name or "").replace("'", "")
+        if target:
+            cmd = f"tmux resize-window -t '{target}' -x {int(cols)} -y {int(rows)} 2>/dev/null || true; tmux resize-pane -t '{target}' -x {int(cols)} -y {int(rows)} 2>/dev/null || true"
+        else:
+            cmd = f"tmux resize-window -a -x {int(cols)} -y {int(rows)} 2>/dev/null || true"
+        try:
+            self.exec_command_in_dev(app, cmd)
+        except Exception:
+            pass
+
+    def create_git_worktree(
+        self,
+        app: Any,
+        folder_path: str,
+        branch: str,
+        base_branch: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Create a new Git worktree sandbox inside the dev pod on the shared PVC."""
+        clean_folder = folder_path.strip("/")
+        target_dir = f"/workspaces/{clean_folder}"
+        clean_app = re.sub(r'[^a-z0-9-]', '-', app.id.lower()).strip('-')
+        base = base_branch or "HEAD"
+        cmd = (
+            f"mkdir -p /workspaces && "
+            f"if [ -d '{target_dir}' ]; then echo '__WORKTREE_EXISTS__'; else "
+            f"BASE_REPO=\"\"; "
+            f"for d in /workspaces/{clean_app}/default /workspaces/{clean_app}/* /workspaces/* /app; do "
+            f"  if [ -d \"$d/.git\" ]; then BASE_REPO=\"$d\"; break; fi; "
+            f"done; "
+            f"if [ -z \"$BASE_REPO\" ]; then BASE_REPO=\"/workspaces\"; fi; "
+            f"cd \"$BASE_REPO\" && git worktree add -B '{branch}' '{target_dir}' '{base}' 2>&1 && echo '__WORKTREE_CREATED__'; "
+            f"fi"
+        )
+        res = self.exec_command_in_dev(app, cmd)
+        output = res.get("output", "")
+        success = ("__WORKTREE_CREATED__" in output) or ("__WORKTREE_EXISTS__" in output) or (res.get("exit_code") == 0)
+        return {
+            "success": success,
+            "folder_path": target_dir,
+            "branch": branch,
+            "output": output,
+            "error": None if success else output,
+        }
+
+    def remove_git_worktree(self, app: Any, folder_path: str) -> bool:
+        """Remove a Git worktree sandbox from the dev pod."""
+        clean_folder = folder_path.strip("/")
+        target_dir = f"/workspaces/{clean_folder}"
+        clean_app = re.sub(r'[^a-z0-9-]', '-', app.id.lower()).strip('-')
+        cmd = (
+            f"BASE_REPO=\"\"; "
+            f"for d in /workspaces/{clean_app}/default /workspaces/{clean_app}/* /workspaces/* /app; do "
+            f"  if [ -d \"$d/.git\" ]; then BASE_REPO=\"$d\"; break; fi; "
+            f"done; "
+            f"if [ -n \"$BASE_REPO\" ]; then cd \"$BASE_REPO\" && git worktree remove --force '{target_dir}' 2>/dev/null || true; cd \"$BASE_REPO\" && git worktree prune 2>/dev/null || true; fi; "
+            f"rm -rf '{target_dir}'"
+        )
+        res = self.exec_command_in_dev(app, cmd)
+        return res.get("exit_code") == 0
+
+    def switch_active_sandbox(self, app: Any, folder_path: str) -> Dict[str, Any]:
+        """Instantly switch active sandbox in kubernetes dev pod and reload dev servers."""
+        clean_folder = folder_path.strip("/")
+        clean_app = re.sub(r'[^a-z0-9-]', '-', app.id.lower()).strip('-')
+        target_dir = f"/workspaces/{clean_folder}" if clean_folder else f"/workspaces/{clean_app}/default"
+        app_type = getattr(app, "app_type", "custom_web") or "custom_web"
+
+        cmd = (
+            f"TARGET=\"{target_dir}\"; "
+            f"if [ ! -d \"$TARGET\" ]; then TARGET=\"/workspaces/{clean_app}/default\"; fi; "
+            f"ln -sfn \"$TARGET\" /current 2>/dev/null || true; "
+            f"echo \"[SWITCH] Switched active sandbox to $TARGET\"; "
+            f"for p in $(pgrep -f uvicorn 2>/dev/null); do if [ \"$p\" != \"$$\" ]; then kill \"$p\" 2>/dev/null || true; fi; done; "
+            f"for p in $(pgrep -f vite 2>/dev/null); do if [ \"$p\" != \"$$\" ]; then kill \"$p\" 2>/dev/null || true; fi; done; "
+            f"for p in $(pgrep -f streamlit 2>/dev/null); do if [ \"$p\" != \"$$\" ]; then kill \"$p\" 2>/dev/null || true; fi; done; "
+            f"sleep 0.2; "
+            f"BACKEND_DIR=\"\"; "
+            f"if [ -d \"$TARGET/backend\" ] && ( [ -f \"$TARGET/backend/app.py\" ] || [ -f \"$TARGET/backend/main.py\" ] ); then BACKEND_DIR=\"$TARGET/backend\"; "
+            f"elif [ -d \"$TARGET/api\" ] && ( [ -f \"$TARGET/api/app.py\" ] || [ -f \"$TARGET/api/main.py\" ] ); then BACKEND_DIR=\"$TARGET/api\"; "
+            f"elif [ -d \"$TARGET/server\" ] && ( [ -f \"$TARGET/server/app.py\" ] || [ -f \"$TARGET/server/main.py\" ] ); then BACKEND_DIR=\"$TARGET/server\"; "
+            f"elif [ -f \"$TARGET/app.py\" ] || [ -f \"$TARGET/main.py\" ]; then BACKEND_DIR=\"$TARGET\"; "
+            f"fi; "
+            f"if [ -n \"$BACKEND_DIR\" ]; then "
+            f"  if [ -f \"$BACKEND_DIR/app.py\" ]; then "
+            f"    (cd \"$BACKEND_DIR\" && export PYTHONPATH=\"$TARGET:$TARGET/backend:$TARGET/api:$TARGET/server:$PYTHONPATH\" && (uvicorn app:app --host 0.0.0.0 --port 8000 --reload --reload-delay 2.0 --reload-exclude '**/node_modules/**' --reload-exclude '**/.git/**' >/tmp/backend.log 2>&1 || python app.py >/tmp/backend.log 2>&1) &); "
+            f"  elif [ -f \"$BACKEND_DIR/main.py\" ]; then "
+            f"    (cd \"$BACKEND_DIR\" && export PYTHONPATH=\"$TARGET:$TARGET/backend:$TARGET/api:$TARGET/server:$PYTHONPATH\" && (uvicorn main:app --host 0.0.0.0 --port 8000 --reload --reload-delay 2.0 --reload-exclude '**/node_modules/**' --reload-exclude '**/.git/**' >/tmp/backend.log 2>&1 || python main.py >/tmp/backend.log 2>&1) &); "
+            f"  fi; "
+            f"fi; "
+            f"FRONTEND_DIR=\"\"; "
+            f"if [ -d \"$TARGET/frontend\" ] && [ -f \"$TARGET/frontend/package.json\" ]; then FRONTEND_DIR=\"$TARGET/frontend\"; "
+            f"elif [ -d \"$TARGET/client\" ] && [ -f \"$TARGET/client/package.json\" ]; then FRONTEND_DIR=\"$TARGET/client\"; "
+            f"elif [ -d \"$TARGET/web\" ] && [ -f \"$TARGET/web/package.json\" ]; then FRONTEND_DIR=\"$TARGET/web\"; "
+            f"elif [ -f \"$TARGET/package.json\" ]; then FRONTEND_DIR=\"$TARGET\"; "
+            f"fi; "
+            f"if [ -n \"$FRONTEND_DIR\" ]; then "
+            f"  (cd \"$FRONTEND_DIR\" && (npx --yes vite --host 0.0.0.0 --port 8080 --cors >/tmp/frontend.log 2>&1 || npm run dev -- --host 0.0.0.0 --port 8080 >/tmp/frontend.log 2>&1 || npx --yes serve -l 8080 . >/tmp/frontend.log 2>&1) &); "
+            f"elif [ -n \"$BACKEND_DIR\" ]; then "
+            f"  (cd \"$BACKEND_DIR\" && "
+            f"   if grep -q 'streamlit' app.py 2>/dev/null || [ '{app_type}' = 'streamlit' ]; then "
+            f"     (streamlit run app.py --server.port 8080 --server.address 0.0.0.0 --server.headless true --server.enableCORS false >/tmp/backend.log 2>&1 || true) & "
+            f"   fi); "
+            f"fi; "
+            f"echo '__SWITCH_SUCCESS__'"
+        )
+        res = self.exec_command_in_dev(app, cmd)
+        output = res.get("output", "")
+        success = ("__SWITCH_SUCCESS__" in output) or (res.get("exit_code") == 0)
+        return {
+            "success": success,
+            "active_workdir": target_dir,
+            "output": output,
+        }
 

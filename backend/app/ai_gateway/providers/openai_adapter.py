@@ -106,8 +106,13 @@ class OpenAIAdapter(BaseProviderAdapter):
             payload["temperature"] = request.temperature
         if request.top_p is not None:
             payload["top_p"] = request.top_p
-        if request.max_tokens is not None:
-            payload["max_tokens"] = request.max_tokens
+        effective_tokens = request.max_completion_tokens or request.max_tokens
+        if effective_tokens is not None:
+            up_lower = upstream_model.lower()
+            if any(k in up_lower for k in ["gpt-5", "o1", "o3", "deepseek"]):
+                payload["max_completion_tokens"] = effective_tokens
+            else:
+                payload["max_tokens"] = effective_tokens
         if request.stop is not None:
             payload["stop"] = request.stop
         if request.presence_penalty is not None:
@@ -115,7 +120,10 @@ class OpenAIAdapter(BaseProviderAdapter):
         if request.frequency_penalty is not None:
             payload["frequency_penalty"] = request.frequency_penalty
         if request.tools:
-            payload["tools"] = [tool.model_dump(exclude_none=True) for tool in request.tools]
+            payload["tools"] = [
+                tool.model_dump(exclude_none=True) if hasattr(tool, "model_dump") else tool
+                for tool in request.tools
+            ]
         if request.tool_choice:
             payload["tool_choice"] = request.tool_choice
         return payload

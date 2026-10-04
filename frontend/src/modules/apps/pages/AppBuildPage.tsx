@@ -19,6 +19,8 @@ import {
   Check,
   Cpu,
   Sparkles,
+  FolderTree,
+  Layers,
 } from 'lucide-react';
 import { useScopedNavigate } from '@/lib/appNavigation';
 import { useToast } from '@/lib/toast';
@@ -31,7 +33,23 @@ import {
   useInstallDevDependencies,
   useRunDevApp,
   useDevLogs,
+  useDevFiles,
+  useDevSessions,
+  useCreateDevSession,
+  useDeleteDevSession,
+  useDevWorkspaces,
+  useActivateDevWorkspace,
+  type DevSession,
+  type DevWorkspace,
 } from '../hooks/useApps';
+import { DevTerminal } from '../components/DevTerminal';
+import { SessionsSidebar } from '../components/SessionsSidebar';
+import { NewSessionModal } from '../components/NewSessionModal';
+import { SandboxSelector } from '../components/SandboxSelector';
+import { NewSandboxModal } from '../components/NewSandboxModal';
+import { FileExplorerSidepanel } from '../components/files/FileExplorerSidepanel';
+import { FilesPanel } from '../components/files/FilesPanel';
+import { FileViewer } from '../components/files/FileViewer';
 
 interface BuildStep {
   id: string;
@@ -64,6 +82,56 @@ const BUILD_STEPS: BuildStep[] = [
 
 type SandboxStage = 'running' | 'starting' | 'stopping' | 'stopped';
 
+export type SupportedAgent = 'pi' | 'opencode' | 'antigravity';
+
+export interface AgentOption {
+  id: SupportedAgent;
+  name: string;
+  binary: string;
+  tagline: string;
+  badge: string;
+  description: string;
+  color: string;
+  accentBg: string;
+  borderColor: string;
+}
+
+export const AGENT_OPTIONS: AgentOption[] = [
+  {
+    id: 'pi',
+    name: 'Pi CLI',
+    binary: 'pi',
+    tagline: 'Lightweight & Minimal',
+    badge: 'FAST',
+    description: 'Minimalist terminal coding agent with interactive tools and native sub-process orchestration.',
+    color: '#c084fc',
+    accentBg: 'rgba(192, 132, 252, 0.12)',
+    borderColor: 'rgba(192, 132, 252, 0.35)',
+  },
+  {
+    id: 'opencode',
+    name: 'OpenCode',
+    binary: 'opencode',
+    tagline: 'Full-featured TUI',
+    badge: 'POPULAR',
+    description: 'Autonomous open-source AI software engineer with native multi-file editing and ACP/MCP protocols.',
+    color: '#38bdf8',
+    accentBg: 'rgba(56, 189, 248, 0.12)',
+    borderColor: 'rgba(56, 189, 248, 0.35)',
+  },
+  {
+    id: 'antigravity',
+    name: 'Antigravity',
+    binary: 'agy',
+    tagline: 'Deep Reasoning',
+    badge: 'ADVANCED',
+    description: 'Advanced agentic assistant with planning workflows, recursive subagents, and deep tool use.',
+    color: '#4ade80',
+    accentBg: 'rgba(74, 222, 128, 0.12)',
+    borderColor: 'rgba(74, 222, 128, 0.35)',
+  },
+];
+
 export default function AppBuildPage() {
   const params = useParams<{ applicationId?: string; appId?: string }>();
   const resolvedAppId =
@@ -80,6 +148,34 @@ export default function AppBuildPage() {
   const verifyGitMutation = useVerifyGitWorkspace();
   const installDepsMutation = useInstallDevDependencies();
   const runAppMutation = useRunDevApp();
+  const { data: devWorkspaces = [], refetch: refetchDevWorkspaces } = useDevWorkspaces(resolvedAppId);
+  const activateWorkspaceMutation = useActivateDevWorkspace();
+  const [isNewSandboxModalOpen, setIsNewSandboxModalOpen] = useState<boolean>(false);
+  const [isSwitchingSandbox, setIsSwitchingSandbox] = useState<boolean>(false);
+
+  // Current active sandbox/workspace
+  const activeWorkspace =
+    devWorkspaces.find((w) => w.id === devStatus?.workspace_id || w.name === devStatus?.workspace_name) ||
+    devWorkspaces.find((w) => w.status === 'active') ||
+    devWorkspaces[0];
+
+  const handleSelectWorkspace = async (workspaceId: string) => {
+    if (!resolvedAppId || workspaceId === activeWorkspace?.id) return;
+    try {
+      setIsSwitchingSandbox(true);
+      await activateWorkspaceMutation.mutateAsync({
+        appId: resolvedAppId,
+        workspaceId,
+      });
+      toast.success('Switched active sandbox.');
+      refetchDevStatus();
+      refetchDevWorkspaces();
+    } catch (err: any) {
+      toast.error(err?.response?.data?.detail || err?.message || 'Failed to switch sandbox');
+    } finally {
+      setIsSwitchingSandbox(false);
+    }
+  };
 
   const [startError, setStartError] = useState<string | null>(null);
   const [isMenuOpen, setIsMenuOpen] = useState<boolean>(false);
@@ -96,6 +192,21 @@ export default function AppBuildPage() {
     setSelectedHost(host);
     try {
       localStorage.setItem('compassx_preferred_dev_host', host);
+    } catch (_) {}
+  };
+
+  const [selectedAgent, setSelectedAgent] = useState<SupportedAgent>(() => {
+    try {
+      const saved = localStorage.getItem('compassx_preferred_dev_agent');
+      if (saved === 'pi' || saved === 'opencode' || saved === 'antigravity') return saved as SupportedAgent;
+    } catch (_) {}
+    return 'pi';
+  });
+
+  const handleSelectAgent = (agent: SupportedAgent) => {
+    setSelectedAgent(agent);
+    try {
+      localStorage.setItem('compassx_preferred_dev_agent', agent);
     } catch (_) {}
   };
 
@@ -140,6 +251,306 @@ export default function AppBuildPage() {
 
   // Live container logs query (active when log viewer is open)
   const { data: devLogsData } = useDevLogs(resolvedAppId, isLogViewerOpen && stage === 'starting');
+
+  // ── Multi-Session State (App-Scoped) ──────────────────────────────────────────
+  const { data: devSessions = [] } = useDevSessions(resolvedAppId, isContainerRunning);
+  const createDevSessionMutation = useCreateDevSession(resolvedAppId);
+  const deleteDevSessionMutation = useDeleteDevSession(resolvedAppId);
+
+  const [activeSessionId, setActiveSessionId] = useState<string | null>(() => {
+    try {
+      return localStorage.getItem(`compassx_active_session_${resolvedAppId}`) || null;
+    } catch (_) {
+      return null;
+    }
+  });
+  const [isNewSessionModalOpen, setIsNewSessionModalOpen] = useState(false);
+  const [isSwitchingSession, setIsSwitchingSession] = useState(false);
+
+  // Auto-select first session if none selected or selected was deleted
+  useEffect(() => {
+    if (devSessions.length > 0) {
+      const exists = devSessions.some((s) => s.id === activeSessionId);
+      if (!activeSessionId || !exists) {
+        const firstId = devSessions[0].id;
+        setActiveSessionId(firstId);
+        try {
+          localStorage.setItem(`compassx_active_session_${resolvedAppId}`, firstId);
+        } catch (_) {}
+      }
+    }
+  }, [devSessions, activeSessionId, resolvedAppId]);
+
+  const activeSession = devSessions.find((s) => s.id === activeSessionId) || devSessions[0];
+  const currentAgent = (activeSession?.agent as SupportedAgent) || selectedAgent;
+
+  const handleSelectSession = (sessionId: string) => {
+    if (sessionId !== activeSessionId) {
+      setIsSwitchingSession(true);
+    }
+    setActiveSessionId(sessionId);
+    try {
+      localStorage.setItem(`compassx_active_session_${resolvedAppId}`, sessionId);
+    } catch (_) {}
+  };
+
+  const handleCreateSession = async (title: string, agent: SupportedAgent, model?: string) => {
+    try {
+      setIsSwitchingSession(true);
+      const created = await createDevSessionMutation.mutateAsync({
+        title,
+        agent,
+        workspace_id: activeWorkspace?.id || devStatus?.workspace_id,
+        model,
+      });
+      setActiveSessionId(created.id);
+      try {
+        localStorage.setItem(`compassx_active_session_${resolvedAppId}`, created.id);
+      } catch (_) {}
+      setIsNewSessionModalOpen(false);
+      const modelSuffix = created.model ? ` (${created.model})` : '';
+      toast.success(`Session "${created.title}" started with ${created.agent}${modelSuffix}.`);
+    } catch (err: any) {
+      setIsSwitchingSession(false);
+      toast.error(err?.response?.data?.detail || err?.message || 'Failed to create session');
+    }
+  };
+
+  const handleDeleteSession = async (sessionId: string) => {
+    try {
+      await deleteDevSessionMutation.mutateAsync(sessionId);
+      toast.success('Session deleted.');
+      if (activeSessionId === sessionId) {
+        const remaining = devSessions.filter((s) => s.id !== sessionId);
+        if (remaining.length > 0) {
+          handleSelectSession(remaining[0].id);
+        }
+      }
+    } catch (err: any) {
+      toast.error(err?.response?.data?.detail || err?.message || 'Failed to delete session');
+    }
+  };
+
+  // ── Sessions Secondary Sidebar State ──────────────────────────────────────────
+  const [showSessionsSidebar, setShowSessionsSidebar] = useState<boolean>(() => {
+    try {
+      const saved = localStorage.getItem('compassx_show_sessions_sidebar');
+      if (saved !== null) return saved === 'true';
+    } catch (_) {}
+    return true;
+  });
+
+  const [sessionsSidebarWidth, setSessionsSidebarWidth] = useState<number>(() => {
+    try {
+      const saved = localStorage.getItem('compassx_sessions_sidebar_width');
+      if (saved) {
+        const parsed = parseInt(saved, 10);
+        if (Number.isFinite(parsed) && parsed >= 200 && parsed <= 450) return parsed;
+      }
+    } catch (_) {}
+    return 260;
+  });
+
+  const [isSessionsResizing, setIsSessionsResizing] = useState<boolean>(false);
+  const isSessionsResizingRef = useRef<boolean>(false);
+  const startSessionsXRef = useRef<number>(0);
+  const startSessionsWidthRef = useRef<number>(260);
+  const sessionsSidebarWidthRef = useRef<number>(sessionsSidebarWidth);
+
+  useEffect(() => {
+    sessionsSidebarWidthRef.current = sessionsSidebarWidth;
+  }, [sessionsSidebarWidth]);
+
+  // ── File Explorer State ────────────────────────────────────────────────────────
+  const [showFileExplorer, setShowFileExplorer] = useState<boolean>(() => {
+    try {
+      const saved = localStorage.getItem('compassx_show_file_explorer');
+      if (saved !== null) return saved === 'true';
+    } catch (_) {}
+    return true;
+  });
+  const [selectedFilePath, setSelectedFilePath] = useState<string | null>(null);
+  const [isExplorerMaximized, setIsExplorerMaximized] = useState<boolean>(false);
+
+  // User-adjustable widths for Tree view vs Viewer mode (persisted to localStorage)
+  const [treeWidth, setTreeWidth] = useState<number>(() => {
+    try {
+      const saved = localStorage.getItem('compassx_file_tree_width') || localStorage.getItem('compassx_file_explorer_width');
+      if (saved) {
+        const parsed = parseInt(saved, 10);
+        if (Number.isFinite(parsed) && parsed >= 260 && parsed <= 1600) return parsed;
+      }
+    } catch (_) {}
+    return 360;
+  });
+
+  const [viewerWidth, setViewerWidth] = useState<number>(() => {
+    try {
+      const saved = localStorage.getItem('compassx_file_viewer_width');
+      if (saved) {
+        const parsed = parseInt(saved, 10);
+        if (Number.isFinite(parsed) && parsed >= 280 && parsed <= 1600) return parsed;
+      }
+    } catch (_) {}
+    return 540;
+  });
+
+  const [isExplorerResizing, setIsExplorerResizing] = useState<boolean>(false);
+
+  // Refs to ensure mousemove/mouseup handlers have direct access without stale closures
+  const isResizingRef = useRef<boolean>(false);
+  const startXRef = useRef<number>(0);
+  const startWidthRef = useRef<number>(360);
+  const treeWidthRef = useRef<number>(treeWidth);
+  const viewerWidthRef = useRef<number>(viewerWidth);
+  const selectedFilePathRef = useRef<string | null>(selectedFilePath);
+  const asideRef = useRef<HTMLElement | null>(null);
+
+  useEffect(() => {
+    treeWidthRef.current = treeWidth;
+  }, [treeWidth]);
+
+  useEffect(() => {
+    viewerWidthRef.current = viewerWidth;
+  }, [viewerWidth]);
+
+  useEffect(() => {
+    selectedFilePathRef.current = selectedFilePath;
+  }, [selectedFilePath]);
+
+  useEffect(() => {
+    const handleMouseMove = (e: MouseEvent) => {
+      // Left-side sessions panel: moving cursor right increases width
+      if (isSessionsResizingRef.current) {
+        e.preventDefault();
+        const deltaX = e.clientX - startSessionsXRef.current;
+        const rawWidth = startSessionsWidthRef.current + deltaX;
+        const clampedWidth = Math.min(Math.max(200, rawWidth), 450);
+        setSessionsSidebarWidth(clampedWidth);
+        sessionsSidebarWidthRef.current = clampedWidth;
+        return;
+      }
+
+      if (!isResizingRef.current) return;
+      e.preventDefault();
+
+      // Right-side panel: moving cursor left (e.clientX decreases) increases width
+      const deltaX = startXRef.current - e.clientX;
+      const rawWidth = startWidthRef.current + deltaX;
+
+      const minWidth = 280;
+      const maxWidth = Math.max(minWidth, Math.floor(window.innerWidth * 0.75));
+      const clampedWidth = Math.min(Math.max(minWidth, rawWidth), maxWidth);
+
+      if (selectedFilePathRef.current) {
+        setViewerWidth(clampedWidth);
+        viewerWidthRef.current = clampedWidth;
+      } else {
+        setTreeWidth(clampedWidth);
+        treeWidthRef.current = clampedWidth;
+      }
+    };
+
+    const handleMouseUp = () => {
+      if (isSessionsResizingRef.current) {
+        isSessionsResizingRef.current = false;
+        setIsSessionsResizing(false);
+        try {
+          localStorage.setItem('compassx_sessions_sidebar_width', String(sessionsSidebarWidthRef.current));
+        } catch (_) {}
+      }
+
+      if (!isResizingRef.current) return;
+      isResizingRef.current = false;
+      setIsExplorerResizing(false);
+
+      try {
+        if (selectedFilePathRef.current) {
+          localStorage.setItem('compassx_file_viewer_width', String(viewerWidthRef.current));
+        } else {
+          localStorage.setItem('compassx_file_tree_width', String(treeWidthRef.current));
+          localStorage.setItem('compassx_file_explorer_width', String(treeWidthRef.current));
+        }
+      } catch (_) {}
+    };
+
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, []);
+
+  const handleSessionsResizeMouseDown = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    isSessionsResizingRef.current = true;
+    setIsSessionsResizing(true);
+    startSessionsXRef.current = e.clientX;
+    startSessionsWidthRef.current = sessionsSidebarWidthRef.current;
+  };
+
+  const handleResetSessionsWidth = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setSessionsSidebarWidth(260);
+    sessionsSidebarWidthRef.current = 260;
+    try {
+      localStorage.setItem('compassx_sessions_sidebar_width', '260');
+    } catch (_) {}
+  };
+
+  const handleResizeMouseDown = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+
+    isResizingRef.current = true;
+    setIsExplorerResizing(true);
+    startXRef.current = e.clientX;
+
+    if (isExplorerMaximized) {
+      setIsExplorerMaximized(false);
+      startWidthRef.current = asideRef.current?.getBoundingClientRect().width ?? (selectedFilePath ? viewerWidth : treeWidth);
+    } else {
+      startWidthRef.current = selectedFilePath ? viewerWidthRef.current : treeWidthRef.current;
+    }
+  };
+
+  const handleResetWidth = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (selectedFilePath) {
+      setViewerWidth(540);
+      viewerWidthRef.current = 540;
+      try {
+        localStorage.removeItem('compassx_file_viewer_width');
+      } catch (_) {}
+    } else {
+      setTreeWidth(360);
+      treeWidthRef.current = 360;
+      try {
+        localStorage.removeItem('compassx_file_tree_width');
+        localStorage.removeItem('compassx_file_explorer_width');
+      } catch (_) {}
+    }
+  };
+
+  const toggleFileExplorer = () => {
+    setShowFileExplorer((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem('compassx_show_file_explorer', String(next));
+      } catch (_) {}
+      return next;
+    });
+  };
+
+  const {
+    data: devFiles = [],
+    isLoading: isDevFilesLoading,
+    refetch: refetchDevFiles,
+  } = useDevFiles(resolvedAppId, stage === 'running');
 
   // Auto-scroll logs to bottom as lines arrive
   useEffect(() => {
@@ -679,11 +1090,106 @@ export default function AppBuildPage() {
                 </span>
               </span>
             )}
+
+            {/* Sandbox (Git Worktree) Selector Dropdown */}
+            {(stage === 'running' || stage === 'starting') && (
+              <SandboxSelector
+                appId={resolvedAppId!}
+                workspaces={devWorkspaces}
+                activeWorkspaceId={activeWorkspace?.id}
+                onSelectWorkspace={handleSelectWorkspace}
+                onOpenNewSandboxModal={() => setIsNewSandboxModalOpen(true)}
+                isSwitching={isSwitchingSandbox}
+                disabled={!isContainerRunning}
+              />
+            )}
+
+            {/* Toggle Sessions Secondary Sidebar Button */}
+            {stage === 'running' && (
+              <button
+                type="button"
+                onClick={() =>
+                  setShowSessionsSidebar((prev) => {
+                    const next = !prev;
+                    try {
+                      localStorage.setItem('compassx_show_sessions_sidebar', String(next));
+                    } catch (_) {}
+                    return next;
+                  })
+                }
+                title={showSessionsSidebar ? 'Hide Sessions Sidebar' : 'Show Sessions Sidebar'}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 5,
+                  padding: '4px 10px',
+                  borderRadius: 8,
+                  fontSize: '0.74rem',
+                  fontWeight: showSessionsSidebar ? 650 : 500,
+                  border: showSessionsSidebar
+                    ? '1px solid rgba(99, 102, 241, 0.45)'
+                    : '1px solid var(--color-border, #334155)',
+                  background: showSessionsSidebar
+                    ? 'rgba(99, 102, 241, 0.16)'
+                    : 'rgba(15, 23, 42, 0.6)',
+                  color: showSessionsSidebar ? '#a5b4fc' : 'var(--color-text-muted, #94a3b8)',
+                  cursor: 'pointer',
+                  transition: 'all 0.15s ease',
+                  marginLeft: 6,
+                }}
+              >
+                <Layers size={12} color={showSessionsSidebar ? '#818cf8' : 'currentColor'} />
+                <span>Sessions</span>
+              </button>
+            )}
           </div>
         </div>
 
-        {/* Right: Three Dots Action Menu (Icon Only) */}
-        <div ref={menuRef} style={{ position: 'relative' }}>
+        {/* Right: Files Toggle Button & Three Dots Action Menu */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          {stage === 'running' && (
+            <button
+              type="button"
+              onClick={toggleFileExplorer}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 5,
+                padding: '4px 10px',
+                borderRadius: 8,
+                fontSize: '0.74rem',
+                fontWeight: showFileExplorer ? 650 : 500,
+                border: showFileExplorer
+                  ? '1px solid rgba(99, 102, 241, 0.45)'
+                  : '1px solid var(--color-border, #334155)',
+                background: showFileExplorer
+                  ? 'rgba(99, 102, 241, 0.16)'
+                  : 'rgba(15, 23, 42, 0.6)',
+                color: showFileExplorer ? '#a5b4fc' : 'var(--color-text-muted, #94a3b8)',
+                cursor: 'pointer',
+                transition: 'all 0.15s ease',
+              }}
+              title={showFileExplorer ? 'Hide File Explorer' : 'Show File Explorer'}
+            >
+              <FolderTree size={12} color={showFileExplorer ? '#818cf8' : 'currentColor'} />
+              <span>Files</span>
+              {devFiles.length > 0 && (
+                <span
+                  style={{
+                    background: showFileExplorer ? 'rgba(99, 102, 241, 0.3)' : 'rgba(255, 255, 255, 0.08)',
+                    padding: '1px 5px',
+                    borderRadius: 10,
+                    fontSize: '0.65rem',
+                    fontFamily: 'ui-monospace, SFMono-Regular, monospace',
+                  }}
+                >
+                  {devFiles.length}
+                </span>
+              )}
+            </button>
+          )}
+
+          <div ref={menuRef} style={{ position: 'relative' }}>
           <button
             onClick={() => setIsMenuOpen((prev) => !prev)}
             title="More options"
@@ -766,6 +1272,7 @@ export default function AppBuildPage() {
             </div>
           )}
         </div>
+      </div>
       </header>
 
       {/* Main Page Area */}
@@ -776,40 +1283,195 @@ export default function AppBuildPage() {
           minHeight: 0,
           background: 'var(--color-bg, #0f172a)',
           position: 'relative',
-          overflow: 'auto',
-          padding: '24px 32px',
+          overflow: stage === 'running' ? 'hidden' : 'auto',
+          padding: stage === 'running' ? '10px 14px' : '24px 32px',
           display: 'flex',
           flexDirection: 'column',
         }}
       >
         {stage === 'running' ? (
-          /* Stage: Running -> Main Blank Workspace Canvas Area */
+          /* Stage: Running -> Split Layout (Sessions Sidebar on Left, DevTerminal in Middle, File Explorer on Right) */
           <div
             style={{
               flex: 1,
-              minHeight: 280,
-              border: '2px dashed var(--color-border, #334155)',
-              borderRadius: 10,
+              height: '100%',
+              minHeight: 0,
               display: 'flex',
-              flexDirection: 'column',
-              alignItems: 'center',
-              justifyContent: 'center',
-              color: 'var(--color-text, #f8fafc)',
-              gap: 12,
-              padding: 32,
-              textAlign: 'center',
+              gap: 0,
+              borderRadius: 8,
+              overflow: 'hidden',
               animation: 'fadeIn 0.3s ease-in-out',
             }}
           >
-            <Hammer size={32} color="#818cf8" style={{ opacity: 0.8 }} />
-            <div>
-              <h4 style={{ margin: 0, fontSize: '1rem', fontWeight: 650, color: 'var(--color-text, #f8fafc)' }}>
-                Build Studio Canvas Ready
-              </h4>
-              <p style={{ margin: '4px 0 0', fontSize: '0.84rem', color: 'var(--color-text-muted, #94a3b8)', maxWidth: 460 }}>
-                Dev sandbox is running. Ready for the next UI components and live editor tools.
-              </p>
+            {/* Left Column: Sessions Secondary Sidebar */}
+            {showSessionsSidebar && (
+              <aside
+                style={{
+                  width: `${sessionsSidebarWidth}px`,
+                  minWidth: 200,
+                  maxWidth: 450,
+                  height: '100%',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  flexShrink: 0,
+                  borderRadius: '8px 0 0 8px',
+                  overflow: 'hidden',
+                  border: '1px solid #e2e8f0',
+                  background: '#ffffff',
+                  transition: isSessionsResizing ? 'none' : 'width 0.15s ease',
+                  boxShadow: '0 4px 20px -2px rgba(0, 0, 0, 0.08)',
+                }}
+              >
+                <SessionsSidebar
+                  sessions={devSessions}
+                  activeSessionId={activeSessionId}
+                  onSelectSession={handleSelectSession}
+                  onOpenNewSession={() => setIsNewSessionModalOpen(true)}
+                  onDeleteSession={handleDeleteSession}
+                  disabled={!isContainerRunning}
+                  isSwitching={isSwitchingSession}
+                  onClose={() =>
+                    setShowSessionsSidebar(() => {
+                      try {
+                        localStorage.setItem('compassx_show_sessions_sidebar', 'false');
+                      } catch (_) {}
+                      return false;
+                    })
+                  }
+                />
+              </aside>
+            )}
+
+            {/* Draggable Divider Handle between Sessions Sidebar & Terminal */}
+            {showSessionsSidebar && (
+              <div
+                role="separator"
+                aria-orientation="vertical"
+                title="Drag to resize sessions sidebar • Double-click to reset"
+                onMouseDown={handleSessionsResizeMouseDown}
+                onDoubleClick={handleResetSessionsWidth}
+                style={{
+                  width: 10,
+                  flexShrink: 0,
+                  cursor: 'col-resize',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  position: 'relative',
+                  zIndex: 20,
+                  userSelect: 'none',
+                }}
+                className="group"
+              >
+                <div
+                  style={{
+                    width: 3,
+                    height: 36,
+                    borderRadius: 9999,
+                    backgroundColor: isSessionsResizing ? '#4f46e5' : '#cbd5e1',
+                    transition: 'background-color 0.15s ease, height 0.15s ease',
+                  }}
+                  className="group-hover:bg-indigo-600 group-hover:h-12"
+                />
+              </div>
+            )}
+
+            {/* Middle/Main Column: DevTerminal */}
+            <div
+              style={{
+                flex: 1,
+                minWidth: 0,
+                height: '100%',
+                display: 'flex',
+                flexDirection: 'column',
+                borderRadius: showSessionsSidebar ? 0 : 8,
+                overflow: 'hidden',
+              }}
+            >
+              <DevTerminal
+                appId={resolvedAppId!}
+                appName={app?.name || 'app'}
+                workspaceId={activeWorkspace?.id || devStatus?.workspace_id}
+                workspaceName={activeWorkspace?.name || devStatus?.workspace_name}
+                isDevPodRunning={isContainerRunning}
+                agent={currentAgent}
+                sessionId={activeSession?.id}
+                sessionTitle={activeSession?.title}
+                isSwitchingSession={isSwitchingSession || isSwitchingSandbox}
+                onSessionReady={() => setIsSwitchingSession(false)}
+                fullHeight={true}
+              />
             </div>
+
+            {/* Draggable Divider Handle between Terminal & Explorer */}
+            {showFileExplorer && (
+              <div
+                role="separator"
+                aria-orientation="vertical"
+                title="Drag to resize sidebar • Double-click to reset"
+                onMouseDown={handleResizeMouseDown}
+                onDoubleClick={handleResetWidth}
+                style={{
+                  width: 10,
+                  flexShrink: 0,
+                  cursor: 'col-resize',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  position: 'relative',
+                  zIndex: 20,
+                  userSelect: 'none',
+                }}
+                className="group"
+              >
+                {/* Visual grab pill */}
+                <div
+                  style={{
+                    width: 3,
+                    height: 36,
+                    borderRadius: 9999,
+                    backgroundColor: isExplorerResizing ? '#3b82f6' : '#cbd5e1',
+                    transition: 'background-color 0.15s ease, height 0.15s ease',
+                  }}
+                  className="group-hover:bg-blue-500 group-hover:h-12"
+                />
+              </div>
+            )}
+
+            {/* Right Column: File Explorer Sidepanel */}
+            {showFileExplorer && (
+              <aside
+                ref={asideRef}
+                style={{
+                  width: isExplorerMaximized ? '62vw' : (selectedFilePath ? `${viewerWidth}px` : `${treeWidth}px`),
+                  maxWidth: isExplorerMaximized ? '85vw' : '75vw',
+                  height: '100%',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  borderRadius: 8,
+                  overflow: 'hidden',
+                  border: '1px solid #e2e8f0',
+                  background: '#ffffff',
+                  boxShadow: '0 4px 20px -2px rgba(0, 0, 0, 0.08)',
+                  transition: isExplorerResizing ? 'none' : 'width 0.15s ease',
+                  flexShrink: 0,
+                }}
+              >
+                <FileExplorerSidepanel
+                  appId={resolvedAppId!}
+                  appName={app?.slug || app?.name || 'app'}
+                  workspaceId={devStatus?.workspace_id}
+                  files={devFiles}
+                  isLoading={isDevFilesLoading}
+                  onRefresh={() => refetchDevFiles()}
+                  selectedFilePath={selectedFilePath}
+                  onSelectFilePath={setSelectedFilePath}
+                  onClose={toggleFileExplorer}
+                  isMaximized={isExplorerMaximized}
+                  onToggleMaximized={() => setIsExplorerMaximized((prev) => !prev)}
+                />
+              </aside>
+            )}
           </div>
         ) : stage === 'stopping' ? (
           /* Stage: Stopping View */
@@ -860,7 +1522,7 @@ export default function AppBuildPage() {
               alignItems: 'center',
               justifyContent: 'center',
               padding: '40px 20px',
-              maxWidth: 620,
+              maxWidth: 680,
               margin: '0 auto',
               width: '100%',
               textAlign: 'center',
@@ -1078,8 +1740,116 @@ export default function AppBuildPage() {
             </div>
 
             {/* Subtext info */}
-            <div style={{ fontSize: '0.76rem', color: 'var(--color-text-muted, #64748b)', marginBottom: 24, maxWidth: 520 }}>
-              CompassX Host is cloned from the Omnigent Host base image and serves as the starting foundation for platform customizations.
+            <div style={{ fontSize: '0.76rem', color: 'var(--color-text-muted, #64748b)', marginBottom: 20, maxWidth: 540 }}>
+              CompassX Host is cloned from the Omnigent Host base image and provides the base runtime for sandbox containers.
+            </div>
+
+            {/* Coding Agent Selection Section */}
+            <div style={{ width: '100%', marginBottom: 24, textAlign: 'left' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+                <Cpu size={15} color="#818cf8" />
+                <span style={{ fontSize: '0.96rem', fontWeight: 650, color: 'var(--color-text, #f8fafc)' }}>
+                  Select Coding Agent
+                </span>
+                <span style={{ fontSize: '0.72rem', color: 'var(--color-text-muted, #94a3b8)', marginLeft: 4 }}>
+                  (Executes in container sandbox PTY)
+                </span>
+              </div>
+              <p style={{ margin: '0 0 12px', fontSize: '0.79rem', color: 'var(--color-text-muted, #94a3b8)' }}>
+                Choose which autonomous agent to provision and run natively in your dev sandbox canvas:
+              </p>
+
+              <div
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))',
+                  gap: 12,
+                  width: '100%',
+                }}
+              >
+                {AGENT_OPTIONS.map((agentOpt) => {
+                  const isSelected = selectedAgent === agentOpt.id;
+                  return (
+                    <div
+                      key={agentOpt.id}
+                      onClick={() => handleSelectAgent(agentOpt.id)}
+                      style={{
+                        border: isSelected ? `2px solid ${agentOpt.color}` : '1px solid var(--color-border, #334155)',
+                        background: isSelected ? agentOpt.accentBg : 'var(--color-surface, #1e293b)',
+                        borderRadius: 10,
+                        padding: '14px 14px',
+                        cursor: 'pointer',
+                        transition: 'all 0.15s ease',
+                        boxShadow: isSelected ? `0 0 16px ${agentOpt.accentBg}` : 'none',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        justifyContent: 'space-between',
+                      }}
+                    >
+                      <div>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+                          <div
+                            style={{
+                              width: 18,
+                              height: 18,
+                              borderRadius: '50%',
+                              border: isSelected ? 'none' : '2px solid #64748b',
+                              background: isSelected ? agentOpt.color : 'transparent',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                            }}
+                          >
+                            {isSelected && <Check size={11} color="#ffffff" strokeWidth={3} />}
+                          </div>
+
+                          <span
+                            style={{
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              background: isSelected ? agentOpt.accentBg : 'rgba(255, 255, 255, 0.06)',
+                              color: isSelected ? agentOpt.color : '#94a3b8',
+                              fontSize: '0.62rem',
+                              fontWeight: 700,
+                              padding: '1px 6px',
+                              borderRadius: 8,
+                              letterSpacing: '0.3px',
+                            }}
+                          >
+                            {agentOpt.badge}
+                          </span>
+                        </div>
+
+                        <div style={{ fontSize: '0.94rem', fontWeight: 650, color: 'var(--color-text, #f8fafc)' }}>
+                          {agentOpt.name}
+                        </div>
+                        <div
+                          style={{
+                            fontSize: '0.7rem',
+                            fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
+                            color: agentOpt.color,
+                            marginTop: 2,
+                          }}
+                        >
+                          {agentOpt.binary}
+                        </div>
+                      </div>
+
+                      <p
+                        style={{
+                          fontSize: '0.74rem',
+                          color: 'var(--color-text-muted, #94a3b8)',
+                          lineHeight: 1.4,
+                          marginTop: 10,
+                          marginBottom: 0,
+                        }}
+                      >
+                        {agentOpt.description}
+                      </p>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
 
             {/* Start Button */}
@@ -1119,7 +1889,7 @@ export default function AppBuildPage() {
                 <Play size={16} fill="currentColor" />
               )}
               <span>
-                Start Dev Sandbox with {selectedHost === 'compassx' ? 'CompassX Host' : 'Omnigent Host'}
+                Start Dev Sandbox with {selectedHost === 'compassx' ? 'CompassX Host' : 'Omnigent Host'} & {AGENT_OPTIONS.find((a) => a.id === selectedAgent)?.name || 'Pi CLI'}
               </span>
             </button>
           </div>
@@ -1556,7 +2326,42 @@ export default function AppBuildPage() {
             )}
           </div>
         )}
+
+        {/* Transparent overlay during sidebar resize to lock cursor and prevent iframe/xterm event loss */}
+        {isExplorerResizing && (
+          <div
+            style={{
+              position: 'fixed',
+              inset: 0,
+              zIndex: 99999,
+              cursor: 'col-resize',
+              userSelect: 'none',
+              backgroundColor: 'transparent',
+            }}
+          />
+        )}
       </main>
+
+      {/* New Session Modal */}
+      <NewSessionModal
+        isOpen={isNewSessionModalOpen}
+        onClose={() => setIsNewSessionModalOpen(false)}
+        onSubmit={handleCreateSession}
+        appId={resolvedAppId}
+        isCreating={createDevSessionMutation.isPending}
+      />
+
+      {/* New Sandbox (Git Worktree) Modal */}
+      <NewSandboxModal
+        isOpen={isNewSandboxModalOpen}
+        onClose={() => setIsNewSandboxModalOpen(false)}
+        appId={resolvedAppId!}
+        appName={app?.name}
+        onCreated={() => {
+          refetchDevWorkspaces();
+          refetchDevStatus();
+        }}
+      />
     </div>
   );
 }

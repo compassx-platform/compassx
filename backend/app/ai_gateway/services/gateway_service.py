@@ -57,7 +57,36 @@ class GatewayService:
 
         # Fallback to default endpoint if requested model is "default" or not found
         if model_name_or_id in ("default", "default-chat", None):
-            return query.filter(AIModelEndpoint.is_default == True).first() or query.first()  # noqa: E712
+            def_ep = query.filter(AIModelEndpoint.is_default == True).first() or query.first()  # noqa: E712
+            if def_ep:
+                return def_ep
+
+        # Dynamic fallback: check if an active AIProvider exists for this workspace
+        prov_query = db.query(AIProvider).filter(AIProvider.is_active == True)
+        if workspace_id:
+            prov_query = prov_query.filter((AIProvider.workspace_id == workspace_id) | (AIProvider.workspace_id.is_(None)))
+        provider = prov_query.first()
+        if provider:
+            clean_name = str(model_name_or_id or "gpt-5.4-mini")
+            if clean_name in ("default", "default-chat", "None"):
+                clean_name = "gpt-5.4-mini"
+            synth_ep = AIModelEndpoint(
+                workspace_id=workspace_id,
+                name=clean_name,
+                provider_id=provider.id,
+                upstream_model_name=clean_name,
+                is_active=True,
+                is_default=True,
+            )
+            try:
+                db.add(synth_ep)
+                db.commit()
+                db.refresh(synth_ep)
+                return synth_ep
+            except Exception:
+                db.rollback()
+                synth_ep.provider = provider
+                return synth_ep
 
         return None
 

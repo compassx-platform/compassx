@@ -3,7 +3,7 @@ import asyncio
 import json
 import logging
 import re
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Tuple
 
 from fastapi import WebSocket, WebSocketDisconnect
 from starlette.websockets import WebSocketState
@@ -57,6 +57,8 @@ class DevTerminalService:
         workspace_name: Optional[str] = None,
         cols: int = 100,
         rows: int = 30,
+        agent: Optional[str] = None,
+        session_id: Optional[str] = None,
     ) -> None:
         """Bridge browser WebSocket with the live interactive PTY terminal inside the dev pod/container."""
         await websocket.accept()
@@ -65,20 +67,58 @@ class DevTerminalService:
         ws_folder = self._resolve_workspace_folder(app, workspace_id=workspace_id, workspace_name=workspace_name)
         leaf_ws = ws_folder.split("/")[-1]
 
-        # Send greeting banner
-        welcome_banner = (
-            f"\r\n\x1b[1;35m╭──────────────────────────────────────────────────────────╮\x1b[0m\r\n"
-            f"\x1b[1;35m│\x1b[0m \x1b[1;32m● Connected to Dev Sandbox Terminal\x1b[0m                      \x1b[1;35m│\x1b[0m\r\n"
-            f"\x1b[1;35m│\x1b[0m App: \x1b[1;36m{app.name[:25]:<25}\x1b[0m Workspace: \x1b[1;33m{leaf_ws[:15]:<15}\x1b[0m \x1b[1;35m│\x1b[0m\r\n"
-            f"\x1b[1;35m│\x1b[0m Path: \x1b[90m/workspaces/{ws_folder[:38]:<38}\x1b[0m \x1b[1;35m│\x1b[0m\r\n"
-            f"\x1b[1;35m╰──────────────────────────────────────────────────────────╯\x1b[0m\r\n\r\n"
-        )
-        try:
-            await websocket.send_text(welcome_banner)
-        except Exception:
-            return
+        # Resolve DevSession if session_id is provided or resolve active session for app
+        session_name = None
+        cli_cmd = None
+        resolved_agent = agent
 
-        client_stream = driver.open_terminal_ws_client(app, workspace_folder=ws_folder, cols=cols, rows=rows)
+        from app.services.dev_session_service import dev_session_service
+        session_obj = None
+        if session_id:
+            session_obj = dev_session_service.get_session(app, session_id)
+        elif agent:
+            # Match existing session for this app or create default
+            sessions = dev_session_service.list_sessions(app)
+            matching = next((s for s in sessions if s.get("agent") == agent), None)
+            if matching:
+                session_obj = dev_session_service.get_session(app, matching["id"])
+
+        if not session_obj:
+            # Fallback to default session for app
+            sessions = dev_session_service.list_sessions(app)
+            if sessions:
+                session_obj = dev_session_service.get_session(app, sessions[0]["id"])
+
+        if session_obj:
+            resolved_agent = session_obj.agent
+            session_name = session_obj.tmux_session_name
+            cli_cmd = dev_session_service.get_session_cli_command(session_obj)
+            dev_session_service.touch_session(app.id, session_obj.id)
+
+        # Send greeting banner (suppress for native agent CLIs to preserve their clean startup banners)
+        if resolved_agent not in ("pi", "opencode", "antigravity", "agy"):
+            welcome_banner = (
+                f"\r\n\x1b[1;35m╭──────────────────────────────────────────────────────────╮\x1b[0m\r\n"
+                f"\x1b[1;35m│\x1b[0m \x1b[1;32m● Connected to Dev Sandbox Terminal\x1b[0m                      \x1b[1;35m│\x1b[0m\r\n"
+                f"\x1b[1;35m│\x1b[0m App: \x1b[1;36m{app.name[:25]:<25}\x1b[0m Workspace: \x1b[1;33m{leaf_ws[:15]:<15}\x1b[0m \x1b[1;35m│\x1b[0m\r\n"
+                f"\x1b[1;35m│\x1b[0m Path: \x1b[90m/workspaces/{ws_folder[:38]:<38}\x1b[0m \x1b[1;35m│\x1b[0m\r\n"
+                f"\x1b[1;35m╰──────────────────────────────────────────────────────────╯\x1b[0m\r\n\r\n"
+            )
+            try:
+                await websocket.send_text(welcome_banner)
+            except Exception:
+                return
+
+        client_stream = driver.open_terminal_ws_client(
+            app,
+            workspace_folder=ws_folder,
+            cols=cols,
+            rows=rows,
+            agent=resolved_agent,
+            session_name=session_name,
+            cli_cmd=cli_cmd,
+            model=getattr(session_obj, "model", None) if session_obj else None,
+        )
         if not client_stream:
             err_msg = "\r\n\x1b[1;31m[ERROR] Failed to attach interactive terminal. Is the Dev Pod running?\x1b[0m\r\n"
             try:
@@ -95,7 +135,13 @@ class DevTerminalService:
             await self._pump_k8s_terminal(websocket, client_stream)
         else:
             # Subprocess (Docker / Local)
-            await self._pump_subprocess_terminal(websocket, client_stream)
+            await self._pump_subprocess_terminal(
+                websocket,
+                client_stream,
+                app=app,
+                session_name=session_name,
+                driver=driver,
+            )
 
     async def _pump_k8s_terminal(self, websocket: WebSocket, k8s_client: Any) -> None:
         """Handle bidirectional pump for Kubernetes WSClient."""
@@ -129,31 +175,38 @@ class DevTerminalService:
 
         async def browser_to_pod():
             try:
-                while not stop_event.is_set():
-                    if websocket.client_state != WebSocketState.CONNECTED or not k8s_client.is_open():
+                while not stop_event.is_set() and k8s_client.is_open():
+                    if websocket.client_state != WebSocketState.CONNECTED:
                         break
-                    raw = await websocket.receive_text()
-                    if not raw:
-                        continue
+                    message = await websocket.receive()
+                    if message.get("type") == "websocket.disconnect":
+                        break
 
-                    # Handle control JSON (resize / ping)
-                    if raw.startswith('{"type":') or raw.startswith('{"cols":'):
-                        try:
-                            data = json.loads(raw)
-                            msg_type = data.get("type")
-                            if msg_type == "resize" or ("cols" in data and "rows" in data):
-                                c = int(data.get("cols", 80))
-                                r = int(data.get("rows", 24))
-                                k8s_client.write_channel(RESIZE_CHANNEL, json.dumps({"Width": c, "Height": r}))
-                                continue
-                            elif msg_type == "ping":
-                                await websocket.send_text(json.dumps({"type": "pong"}))
-                                continue
-                        except Exception:
-                            pass
-
-                    # Normal stdin keystroke / text
-                    k8s_client.write_stdin(raw)
+                    raw = message.get("text")
+                    if raw is not None:
+                        if not raw:
+                            continue
+                        # Handle control JSON (resize / ping)
+                        if raw.startswith('{"type":') or raw.startswith('{"cols":'):
+                            try:
+                                data = json.loads(raw)
+                                msg_type = data.get("type")
+                                if msg_type == "resize" or ("cols" in data and "rows" in data):
+                                    c = int(data.get("cols", 80))
+                                    r = int(data.get("rows", 24))
+                                    k8s_client.write_channel(RESIZE_CHANNEL, json.dumps({"Width": c, "Height": r}))
+                                    continue
+                                elif msg_type == "ping":
+                                    await websocket.send_text(json.dumps({"type": "pong"}))
+                                    continue
+                            except Exception:
+                                pass
+                        # Normal stdin keystroke / text
+                        k8s_client.write_stdin(raw)
+                    elif "bytes" in message:
+                        raw_bytes = message["bytes"]
+                        if raw_bytes:
+                            k8s_client.write_stdin(raw_bytes.decode("utf-8", errors="replace"))
             except WebSocketDisconnect:
                 pass
             except Exception as e:
@@ -174,22 +227,57 @@ class DevTerminalService:
                 except Exception:
                     pass
 
-    async def _pump_subprocess_terminal(self, websocket: WebSocket, proc: Any) -> None:
-        """Handle bidirectional pump for Docker / local subprocess."""
+    async def _pump_subprocess_terminal(
+        self,
+        websocket: WebSocket,
+        proc: Any,
+        app: Optional[App] = None,
+        session_name: Optional[str] = None,
+        driver: Optional[Any] = None,
+    ) -> None:
+        """Handle bidirectional pump for Docker / local subprocess with dynamic resizing."""
         stop_event = asyncio.Event()
+        loop = asyncio.get_running_loop()
+
+        pending_resize_task: Optional[asyncio.Task] = None
+        last_dims: Optional[Tuple[int, int]] = None
+
+        async def _do_resize(c: int, r: int):
+            try:
+                await asyncio.sleep(0.06)
+                if driver and app and hasattr(driver, "resize_terminal"):
+                    await loop.run_in_executor(None, driver.resize_terminal, app, c, r, session_name)
+            except Exception as e:
+                logger.debug("Error during terminal resize: %s", e)
+
+        def _schedule_resize(c: int, r: int):
+            nonlocal pending_resize_task, last_dims
+            if last_dims == (c, r):
+                return
+            last_dims = (c, r)
+            if pending_resize_task and not pending_resize_task.done():
+                pending_resize_task.cancel()
+            pending_resize_task = asyncio.create_task(_do_resize(c, r))
 
         async def proc_to_browser():
-            loop = asyncio.get_running_loop()
+            def _read_chunk():
+                try:
+                    read_fn = getattr(proc.stdout, "read1", proc.stdout.read)
+                    return read_fn(1024)
+                except Exception as ex:
+                    logger.debug("Stdout read exception: %s", ex)
+                    return b""
+
             try:
                 while not stop_event.is_set() and proc.poll() is None:
                     if websocket.client_state != WebSocketState.CONNECTED:
                         break
-                    # Read bytes
-                    data = await loop.run_in_executor(None, proc.stdout.read1, 1024)
+                    data = await loop.run_in_executor(None, _read_chunk)
                     if data:
-                        text = data.decode("utf-8", errors="replace")
-                        await websocket.send_text(text)
+                        await websocket.send_bytes(data)
                     else:
+                        if proc.poll() is not None:
+                            break
                         await asyncio.sleep(0.02)
             except WebSocketDisconnect:
                 pass
@@ -203,24 +291,38 @@ class DevTerminalService:
                 while not stop_event.is_set() and proc.poll() is None:
                     if websocket.client_state != WebSocketState.CONNECTED:
                         break
-                    raw = await websocket.receive_text()
-                    if not raw:
-                        continue
+                    message = await websocket.receive()
+                    if message.get("type") == "websocket.disconnect":
+                        break
 
-                    # Check control messages
-                    if raw.startswith('{"type":') or raw.startswith('{"cols":'):
-                        try:
-                            data = json.loads(raw)
-                            if data.get("type") == "ping":
-                                await websocket.send_text(json.dumps({"type": "pong"}))
-                                continue
-                        except Exception:
-                            pass
+                    raw = message.get("text")
+                    if raw is not None:
+                        if not raw:
+                            continue
+                        # Check control messages
+                        if raw.startswith('{"type":') or raw.startswith('{"cols":'):
+                            try:
+                                data = json.loads(raw)
+                                if data.get("type") == "ping":
+                                    await websocket.send_text(json.dumps({"type": "pong"}))
+                                    continue
+                                if data.get("type") == "resize" or ("cols" in data and "rows" in data):
+                                    c = int(data.get("cols", 100))
+                                    r = int(data.get("rows", 30))
+                                    _schedule_resize(c, r)
+                                    continue
+                            except Exception:
+                                pass
 
-                    # Write to stdin
-                    if proc.stdin and not proc.stdin.closed:
-                        proc.stdin.write(raw.encode("utf-8"))
-                        proc.stdin.flush()
+                        # Write to stdin
+                        if proc.stdin and not proc.stdin.closed:
+                            proc.stdin.write(raw.encode("utf-8"))
+                            proc.stdin.flush()
+                    elif "bytes" in message:
+                        raw_bytes = message["bytes"]
+                        if raw_bytes and proc.stdin and not proc.stdin.closed:
+                            proc.stdin.write(raw_bytes)
+                            proc.stdin.flush()
             except WebSocketDisconnect:
                 pass
             except Exception as e:

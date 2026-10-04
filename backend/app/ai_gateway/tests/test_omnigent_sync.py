@@ -68,6 +68,8 @@ def test_build_mcp_configs_with_external_servers():
     # OpenCode
     assert configs["opencode"]["mcp"]["EAM_MCP"]["type"] == "remote"
     assert configs["opencode"]["mcp"]["EAM_MCP"]["url"] == "https://eam-dev.135.13.180.167.nip.io/mcp/sse"
+    assert configs["opencode"]["mcp"]["CLI_TOOL"]["type"] == "local"
+    assert configs["opencode"]["mcp"]["CLI_TOOL"]["command"] == ["python", "-m", "my_mcp_module"]
 
     # Claude
     assert "EAM_MCP" in configs["claude"]["mcpServers"]

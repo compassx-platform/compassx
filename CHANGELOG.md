@@ -5,6 +5,28 @@ All notable changes to the CompassX Platform will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.0] - 2026-10-04
+
+### 🚀 Highlights
+
+CompassX `0.12.0` is a **Major Milestone Release** delivering **Multi-Session Sandbox Architecture**, **Complete Dev Terminal & PTY Streaming Overhaul**, **Cross-Profile Dev Drivers with `app.yaml` Manifest Support**, **AI Gateway Streaming & Proxy Enhancements**, and **Interactive Build Studio File Explorer**.
+
+### ✨ Features & Enhancements
+
+#### Multi-Session Sandbox & Dev Sessions Architecture
+- **Persistent Dev Sessions Lifecycle (`dev_session.py`, `dev_session_service.py`)**: Implemented persistent database models, active/archived state tracking, and multi-sandbox routing for application development sessions.
+- **Session Switcher & Multi-Sandbox UI (`SessionSwitcher.tsx`, `SessionsSidebar.tsx`, `NewSessionModal.tsx`, `SandboxSelector.tsx`)**: Added interactive session management sidebar, quick session switcher, and sandbox creation modal in the App Build Studio.
+
+#### Dev Terminal & PTY Streaming Overhaul
+- **Interactive xterm.js Overhaul (`DevTerminal.tsx`, `TerminalSession.ts`, `dev_terminal_service.py`)**: Re-architected interactive terminal integration with direct PTY stream handling, reconnect resilience, automatic resize calculation, and touch scroll support.
+- **Cross-Profile Dev Driver Support (`docker_driver.py`, `kubernetes_driver.py`, `base.py`)**: Added unified POSIX execution, container image resolution, and dynamic `app.yaml` manifest discovery across local, Docker, and Kubernetes profiles.
+
+#### AI Gateway & Studio File Explorer
+- **AI Gateway Streaming Proxy (`proxy_routes.py`, `gateway_service.py`, `openai_adapter.py`)**: Enhanced OpenAI proxy endpoints, tool calling synchronization with Omnigent agents, and completions streaming.
+- **Build Studio File Explorer (`WorkspaceFileIcon.tsx`, `AppBuildPage.tsx`)**: Added in-studio directory tree navigation, code inspection, and file metadata visual cues.
+
+---
+
 ## [0.11.11] - 2026-10-02
 
 ### 🚀 Highlights

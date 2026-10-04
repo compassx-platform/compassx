@@ -30,6 +30,16 @@ class PublishRequest(BaseModel):
     workspace_id: Optional[str] = None
     workspace_name: Optional[str] = None
 
+class CreateAppSessionRequest(BaseModel):
+    agent: str = "opencode"  # 'opencode' | 'pi' | 'antigravity'
+    title: Optional[str] = None
+    workspace_id: Optional[str] = None
+    model: Optional[str] = None
+
+class UpdateAppSessionRequest(BaseModel):
+    title: Optional[str] = None
+    status: Optional[str] = None
+
 class CreateSessionRequest(BaseModel):
     agent_name: Optional[str] = "polly"
     title: Optional[str] = None
@@ -125,6 +135,177 @@ def delete_dev_workspace(
     if not result.get("deleted") and result.get("reason") == "not_found":
         raise HTTPException(status_code=404, detail=f"Workspace '{workspace_id}' not found.")
     return result
+
+
+@router.post("/workspaces/{workspace_id}/activate")
+def activate_dev_workspace(
+    app_id: str,
+    workspace_id: str,
+    db: Session = Depends(get_system_db),
+    guard: Guard = Depends(get_guard),
+):
+    """Instantly switch the active sandbox (git worktree) without restarting container."""
+    app = db.query(App).filter(App.id == app_id).first()
+    if not app:
+        raise HTTPException(status_code=404, detail=f"App '{app_id}' not found.")
+    if guard.workspace_id and app.workspace_id != guard.workspace_id:
+        raise HTTPException(status_code=403, detail="Cannot access app in another workspace.")
+    try:
+        unified_reaper_service.touch_app_activity(app.id)
+        return omnigent_dev_service.activate_dev_workspace(app, workspace_id)
+    except ValueError as ve:
+        raise HTTPException(status_code=404, detail=str(ve))
+    except Exception as e:
+        logger.exception("Failed to activate dev workspace %s for app %s: %s", workspace_id, app.name, e)
+        raise HTTPException(status_code=500, detail=f"Failed to activate dev workspace: {str(e)}")
+
+
+@router.get("/sessions")
+def list_app_sessions(
+    app_id: str,
+    include_archived: bool = Query(False),
+    db: Session = Depends(get_system_db),
+    guard: Guard = Depends(get_guard),
+):
+    """List all AI agent development sessions for this app."""
+    app = db.query(App).filter(App.id == app_id).first()
+    if not app:
+        raise HTTPException(status_code=404, detail=f"App '{app_id}' not found.")
+    if guard.workspace_id and app.workspace_id != guard.workspace_id:
+        raise HTTPException(status_code=403, detail="Cannot access app in another workspace.")
+    unified_reaper_service.touch_app_activity(app.id)
+    from app.services.dev_session_service import dev_session_service
+    return dev_session_service.list_sessions(app, include_archived=include_archived)
+
+
+@router.get("/models")
+def list_app_dev_models(
+    app_id: str,
+    db: Session = Depends(get_system_db),
+    guard: Guard = Depends(get_guard),
+):
+    """List available AI models for the app's workspace."""
+    app = db.query(App).filter(App.id == app_id).first()
+    if not app:
+        raise HTTPException(status_code=404, detail=f"App '{app_id}' not found.")
+    if guard.workspace_id and app.workspace_id != guard.workspace_id:
+        raise HTTPException(status_code=403, detail="Cannot access app in another workspace.")
+
+    from app.database import AccountSessionLocal
+    from app.ai_gateway.models.provider import AIModelEndpoint, AIProvider
+
+    with AccountSessionLocal() as acc_db:
+        ws_id = str(app.workspace_id) if app.workspace_id else None
+        query = acc_db.query(AIModelEndpoint).filter(AIModelEndpoint.is_active == True)
+        if ws_id:
+            query = query.filter((AIModelEndpoint.workspace_id == ws_id) | (AIModelEndpoint.workspace_id.is_(None)))
+        endpoints = query.all()
+
+        if not endpoints:
+            prov_query = acc_db.query(AIProvider).filter(AIProvider.is_active == True)
+            if ws_id:
+                prov_query = prov_query.filter((AIProvider.workspace_id == ws_id) | (AIProvider.workspace_id.is_(None)))
+            provider = prov_query.first()
+            if provider:
+                default_models = ["gpt-5.4-mini", "gpt-5.6-sol"]
+                seeded = []
+                for idx, m_name in enumerate(default_models):
+                    ep = AIModelEndpoint(
+                        workspace_id=ws_id,
+                        name=m_name,
+                        provider_id=provider.id,
+                        upstream_model_name=m_name,
+                        is_active=True,
+                        is_default=(idx == 0),
+                    )
+                    acc_db.add(ep)
+                    seeded.append(ep)
+                try:
+                    acc_db.commit()
+                    endpoints = seeded
+                except Exception:
+                    acc_db.rollback()
+
+        return [
+            {
+                "id": ep.name,
+                "name": ep.name,
+                "is_default": ep.is_default,
+                "provider": ep.provider.name if ep.provider else "azure",
+            }
+            for ep in endpoints
+        ]
+
+
+@router.post("/sessions")
+def create_app_session(
+    app_id: str,
+    body: CreateAppSessionRequest,
+    db: Session = Depends(get_system_db),
+    guard: Guard = Depends(get_guard),
+):
+    """Create a new development session with a permanently bound agent."""
+    app = db.query(App).filter(App.id == app_id).first()
+    if not app:
+        raise HTTPException(status_code=404, detail=f"App '{app_id}' not found.")
+    if guard.workspace_id and app.workspace_id != guard.workspace_id:
+        raise HTTPException(status_code=403, detail="Cannot access app in another workspace.")
+    unified_reaper_service.touch_app_activity(app.id)
+    user_id = str(guard.principal.id) if hasattr(guard, "principal") and getattr(guard.principal, "id", None) else None
+    from app.services.dev_session_service import dev_session_service
+    return dev_session_service.create_session(
+        app=app,
+        agent=body.agent,
+        title=body.title,
+        workspace_id=body.workspace_id,
+        user_id=user_id,
+        model=body.model,
+    )
+
+
+@router.patch("/sessions/{session_id}")
+def update_app_session(
+    app_id: str,
+    session_id: str,
+    body: UpdateAppSessionRequest,
+    db: Session = Depends(get_system_db),
+    guard: Guard = Depends(get_guard),
+):
+    """Update an app session's title or status (bound agent is strictly immutable)."""
+    app = db.query(App).filter(App.id == app_id).first()
+    if not app:
+        raise HTTPException(status_code=404, detail=f"App '{app_id}' not found.")
+    if guard.workspace_id and app.workspace_id != guard.workspace_id:
+        raise HTTPException(status_code=403, detail="Cannot access app in another workspace.")
+    unified_reaper_service.touch_app_activity(app.id)
+    from app.services.dev_session_service import dev_session_service
+    try:
+        return dev_session_service.update_session(
+            app=app,
+            session_id=session_id,
+            title=body.title,
+            status=body.status,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@router.delete("/sessions/{session_id}")
+def delete_app_session(
+    app_id: str,
+    session_id: str,
+    db: Session = Depends(get_system_db),
+    guard: Guard = Depends(get_guard),
+):
+    """Archive an app session and stop its background tmux process."""
+    app = db.query(App).filter(App.id == app_id).first()
+    if not app:
+        raise HTTPException(status_code=404, detail=f"App '{app_id}' not found.")
+    if guard.workspace_id and app.workspace_id != guard.workspace_id:
+        raise HTTPException(status_code=403, detail="Cannot access app in another workspace.")
+    unified_reaper_service.touch_app_activity(app.id)
+    from app.services.dev_session_service import dev_session_service
+    return dev_session_service.delete_session(app=app, session_id=session_id)
 
 
 @router.post("/start")
@@ -623,6 +804,8 @@ async def dev_terminal_websocket(
     workspace_name: Optional[str] = Query(None),
     cols: int = Query(100),
     rows: int = Query(30),
+    agent: Optional[str] = Query(None),
+    session_id: Optional[str] = Query(None),
 ):
     """Interactive real-time WebSocket terminal inside the dev pod/container."""
     from app.database import SystemSessionLocal
@@ -642,6 +825,8 @@ async def dev_terminal_websocket(
         workspace_name=workspace_name,
         cols=cols,
         rows=rows,
+        agent=agent,
+        session_id=session_id,
     )
 
 

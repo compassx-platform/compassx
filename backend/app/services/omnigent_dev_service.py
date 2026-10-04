@@ -993,6 +993,15 @@ class OmnigentDevService:
                 db.add(ws_record)
                 db.commit()
                 db.refresh(ws_record)
+
+                # Proactively create Git worktree inside running container
+                try:
+                    dev_driver = driver_factory.get_dev_driver()
+                    if hasattr(dev_driver, "create_git_worktree"):
+                        dev_driver.create_git_worktree(app, folder_path=folder_path, branch=branch)
+                except Exception as wt_err:
+                    logger.debug("Non-fatal create_git_worktree on workspace creation: %s", wt_err)
+
                 return {
                     "id": ws_record.id,
                     "name": ws_record.name,
@@ -1006,8 +1015,67 @@ class OmnigentDevService:
             logger.warning("Could not create DevWorkspace: %s", e)
             raise e
 
+    def activate_dev_workspace(self, app, workspace_id: str) -> Dict[str, Any]:
+        """Instantly switch the active sandbox without stopping or restarting the container."""
+        from app.models.dev_workspace import DevWorkspace
+        try:
+            with _get_system_db() as db:
+                ws = db.query(DevWorkspace).filter(
+                    DevWorkspace.app_id == app.id,
+                    (DevWorkspace.id == workspace_id) | (DevWorkspace.name == workspace_id),
+                ).first()
+                if not ws:
+                    raise ValueError(f"Workspace '{workspace_id}' not found")
+
+                # Set all other workspaces for this app to inactive, target to active
+                db.query(DevWorkspace).filter(DevWorkspace.app_id == app.id).update({"status": "inactive"})
+                ws.status = "active"
+                ws.last_active_at = datetime.now(timezone.utc)
+                db.commit()
+                db.refresh(ws)
+
+                ws_id = ws.id
+                folder_path = ws.folder_path
+                ws_name = ws.name
+                ws_branch = ws.git_branch or f"dev/{ws_name}"
+
+            dev_driver = driver_factory.get_dev_driver()
+            # Ensure worktree exists first
+            if hasattr(dev_driver, "create_git_worktree"):
+                try:
+                    dev_driver.create_git_worktree(app, folder_path=folder_path, branch=ws_branch)
+                except Exception as e:
+                    logger.debug("Non-fatal create_git_worktree on switch: %s", e)
+
+            switch_res = {}
+            if hasattr(dev_driver, "switch_active_sandbox"):
+                switch_res = dev_driver.switch_active_sandbox(app, folder_path)
+
+            # Update in-memory session mapping
+            if app.id in _DEV_SESSIONS:
+                _DEV_SESSIONS[app.id]["workspace_id"] = ws_id
+                _DEV_SESSIONS[app.id]["workspace_name"] = ws_name
+                _DEV_SESSIONS[app.id]["workspace_folder"] = folder_path
+
+            session_key = f"{app.id}:{ws_id}"
+            if session_key not in _DEV_SESSIONS and app.id in _DEV_SESSIONS:
+                _DEV_SESSIONS[session_key] = dict(_DEV_SESSIONS[app.id])
+
+            return {
+                "success": True,
+                "workspace_id": ws_id,
+                "name": ws_name,
+                "folder_path": folder_path,
+                "git_branch": ws_branch,
+                "status": "active",
+                "driver_result": switch_res,
+            }
+        except Exception as e:
+            logger.exception("Failed to activate dev workspace %s for app %s: %s", workspace_id, app.name, e)
+            raise e
+
     def delete_dev_workspace(self, app, workspace_id: str) -> Dict[str, Any]:
-        """Delete a dev workspace: remove DB record (folder on PVC is cleaned up by background job or on-demand)."""
+        """Delete a dev workspace: remove DB record and worktree folder."""
         from app.models.dev_workspace import DevWorkspace
         try:
             with _get_system_db() as db:
@@ -1020,13 +1088,17 @@ class OmnigentDevService:
                 folder_path = ws.folder_path
                 db.delete(ws)
                 db.commit()
-            # Best-effort: delete folder from shared PVC via driver
+
+            # Remove worktree via driver
             try:
                 dev_driver = driver_factory.get_dev_driver()
-                if hasattr(dev_driver, "delete_workspace_folder"):
+                if hasattr(dev_driver, "remove_git_worktree"):
+                    dev_driver.remove_git_worktree(app, folder_path)
+                elif hasattr(dev_driver, "delete_workspace_folder"):
                     dev_driver.delete_workspace_folder(folder_path)
             except Exception:
                 pass
+
             # Clean in-memory session
             _DEV_SESSIONS.pop(f"{app.id}:{workspace_id}", None)
             return {"deleted": True, "workspace_id": workspace_id, "folder_path": folder_path}
@@ -1495,14 +1567,19 @@ class OmnigentDevService:
                 full_path = os.path.join(root, file)
                 rel_path = os.path.relpath(full_path, repo_dir).replace("\\", "/")
                 try:
-                    size = os.path.getsize(full_path)
+                    stat = os.stat(full_path)
+                    size = stat.st_size
+                    mtime = int(stat.st_mtime * 1000)
                 except Exception:
                     size = 0
+                    mtime = 0
                 file_tree.append({
                     "path": rel_path,
                     "name": file,
                     "size": size,
+                    "bytes": size,
                     "ext": os.path.splitext(file)[1].lstrip("."),
+                    "modified_at": mtime,
                 })
 
         return sorted(file_tree, key=lambda x: x["path"])

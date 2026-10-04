@@ -102,7 +102,53 @@ class BaseDevDriver(ABC):
         workspace_folder: str = "",
         cols: int = 80,
         rows: int = 24,
+        agent: Optional[str] = None,
+        session_name: Optional[str] = None,
+        cli_cmd: Optional[str] = None,
+        model: Optional[str] = None,
+        **kwargs: Any,
     ) -> Any:
         """Create a bidirectional streaming connection / PTY client to the dev pod / container."""
         return None
+
+    def resize_terminal(
+        self,
+        app,
+        cols: int,
+        rows: int,
+        session_name: Optional[str] = None,
+        **kwargs: Any,
+    ) -> None:
+        """Dynamically resize interactive terminal / tmux window inside the container."""
+        pass
+
+    def create_git_worktree(
+        self,
+        app,
+        folder_path: str,
+        branch: str,
+        base_branch: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Create a new Git worktree sandbox inside the dev container without restarting."""
+        return {"success": False, "error": "Not implemented for this driver"}
+
+    def remove_git_worktree(
+        self,
+        app,
+        folder_path: str,
+    ) -> bool:
+        """Remove a Git worktree sandbox from inside the dev container."""
+        return False
+
+    def switch_active_sandbox(
+        self,
+        app,
+        folder_path: str,
+    ) -> Dict[str, Any]:
+        """Switch the active sandbox workdir and dev server processes without restarting container."""
+        return {"success": False, "error": "Not implemented for this driver"}
+
+    def ensure_agent_configs(self, app, active_model: Optional[str] = None) -> None:
+        """Seed or update agent configuration files and credentials inside the dev environment."""
+        pass
 

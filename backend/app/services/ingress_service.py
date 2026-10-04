@@ -14,16 +14,25 @@ class IngressService:
 
     def __init__(self):
         self._mode_override: Optional[str] = None
+        self._cached_mode: Optional[str] = None
 
     def set_mode_override(self, mode: Optional[str]) -> None:
         """Testing hook to explicitly override mode."""
         self._mode_override = mode
+        self._cached_mode = None
 
     def get_active_mode(self) -> str:
         """Determine active deployment/runtime mode: 'kubernetes' | 'docker' | 'local'."""
         if self._mode_override:
             return self._mode_override.lower()
+        if self._cached_mode:
+            return self._cached_mode
 
+        mode = self._resolve_active_mode()
+        self._cached_mode = mode
+        return mode
+
+    def _resolve_active_mode(self) -> str:
         explicit = (settings.APP_RUNNER_MODE or os.getenv("APP_RUNNER_MODE", "")).strip().lower()
         if explicit in ("kubernetes", "k8s"):
             return "kubernetes"
@@ -43,7 +52,7 @@ class IngressService:
 
         # Check Docker availability
         try:
-            res = subprocess.run(["docker", "info"], capture_output=True, text=True, timeout=2, check=False)
+            res = subprocess.run(["docker", "version"], capture_output=True, text=True, timeout=5, check=False)
             if res.returncode == 0:
                 return "docker"
         except Exception:

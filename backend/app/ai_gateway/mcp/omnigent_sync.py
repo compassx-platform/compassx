@@ -132,16 +132,15 @@ def build_mcp_configs_from_gateway(
             mcp_universal[s_name] = mcp_entry
             mcp_claude[s_name] = mcp_entry
             mcp_opencode_remote[s_name] = {
-                "command": exec_cmd,
-                "args": exec_args,
+                "type": "local",
+                "command": [exec_cmd] + exec_args,
             }
             if env_vars:
-                mcp_opencode_remote[s_name]["env"] = env_vars
+                mcp_opencode_remote[s_name]["environment"] = env_vars
 
     opencode_config = {
         "$schema": "https://opencode.ai/config.json",
         "mcp": mcp_opencode_remote,
-        "mcpServers": mcp_universal,
     }
 
     return {
@@ -264,12 +263,12 @@ def get_mcp_sync_shell_script(api_base_url: str = "") -> str:
         f"    elif cmd:\n"
         f"      p = cmd.split()\n"
         f"      mcp_uni[name] = {{\"command\": p[0], \"args\": p[1:] if len(p) > 1 else []}}\n"
-        f"      mcp_oc[name] = {{\"command\": p[0], \"args\": p[1:] if len(p) > 1 else []}}\n"
+        f"      mcp_oc[name] = {{\"type\": \"local\", \"command\": p}}\n"
         f"      mcp_cl[name] = {{\"command\": p[0], \"args\": p[1:] if len(p) > 1 else []}}\n"
         f"except Exception:\n"
         f"  pass\n"
         f"uni_doc = {{\"mcpServers\": mcp_uni}}\n"
-        f"oc_doc = {{\"mcp\": mcp_oc, \"mcpServers\": mcp_uni}}\n"
+        f"oc_doc = {{\"mcp\": mcp_oc}}\n"
         f"import glob\n"
         f"for ws_dir in glob.glob(\"/workspaces/*\") + glob.glob(\"/workspaces/*/*\") + [os.getcwd()]:\n"
         f"  if os.path.isdir(ws_dir) and not os.path.basename(ws_dir).startswith(\".\"):\n"

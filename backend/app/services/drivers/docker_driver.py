@@ -1,6 +1,7 @@
 """Docker runtime drivers for Production Apps and Dev Sandboxes (SOLID / SRP)."""
 import os
 import re
+import json
 import socket
 import logging
 import subprocess
@@ -357,16 +358,48 @@ class DockerDevDriver(BaseDevDriver):
             f"  elif cmd:\n"
             f"    p = cmd.split()\n"
             f"    mcp_uni[name] = {{\"command\": p[0], \"args\": p[1:] if len(p) > 1 else []}}\n"
-            f"    mcp_oc[name] = {{\"command\": p[0], \"args\": p[1:] if len(p) > 1 else []}}\n"
+            f"    mcp_oc[name] = {{\"type\": \"local\", \"command\": p}}\n"
             f"    mcp_cl[name] = {{\"command\": p[0], \"args\": p[1:] if len(p) > 1 else []}}\n"
             f"uni_doc = {{\"mcpServers\": mcp_uni}}\n"
-            f"oc_doc = {{\"mcp\": mcp_oc, \"mcpServers\": mcp_uni}}\n"
+            f"oc_doc = {{\n"
+            f"  \"$schema\": \"https://opencode.ai/config.json\",\n"
+            f"  \"provider\": {{\n"
+            f"    \"compassx\": {{\n"
+            f"      \"name\": \"CompassX AI Gateway\",\n"
+            f"      \"type\": \"openai\",\n"
+            f"      \"options\": {{\n"
+            f"        \"baseURL\": \"http://host.docker.internal:8000/api/v1/ai-gateway/v1\",\n"
+            f"        \"apiKey\": \"cx_gw_app_{app.id}\"\n"
+            f"      }},\n"
+            f"      \"models\": {{\n"
+            f"        \"gpt-5.4-mini\": {{\"name\": \"gpt-5.4-mini\"}},\n"
+            f"        \"gpt-5.6-sol\": {{\"name\": \"gpt-5.6-sol\"}}\n"
+            f"      }}\n"
+            f"    }}\n"
+            f"  }},\n"
+            f"  \"mcp\": mcp_oc\n"
+            f"}}\n"
             f"for p in [\".mcp.json\", \"mcp.json\"]:\n"
             f"  with open(p, \"w\") as f: json.dump(uni_doc, f, indent=2)\n"
             f"with open(\"opencode.json\", \"w\") as f: json.dump(oc_doc, f, indent=2)\n"
             f"os.makedirs(\"/root/.config/opencode\", exist_ok=True); os.makedirs(\"/root/.opencode\", exist_ok=True)\n"
             f"with open(\"/root/.config/opencode/opencode.json\", \"w\") as f: json.dump(oc_doc, f, indent=2)\n"
             f"with open(\"/root/.opencode/opencode.json\", \"w\") as f: json.dump(oc_doc, f, indent=2)\n"
+            f"pi_doc = {{\n"
+            f"  \"providers\": {{\n"
+            f"    \"compassx\": {{\n"
+            f"      \"baseUrl\": \"http://host.docker.internal:8000/api/v1/ai-gateway/v1\",\n"
+            f"      \"apiKey\": \"cx_gw_app_{app.id}\",\n"
+            f"      \"api\": \"openai-completions\",\n"
+            f"      \"models\": [\n"
+            f"        {{\"id\": \"gpt-5.4-mini\", \"name\": \"gpt-5.4-mini\", \"contextWindow\": 128000, \"maxTokens\": 8192}},\n"
+            f"        {{\"id\": \"gpt-5.6-sol\", \"name\": \"gpt-5.6-sol\", \"contextWindow\": 128000, \"maxTokens\": 8192}}\n"
+            f"      ]\n"
+            f"    }}\n"
+            f"  }}\n"
+            f"}}\n"
+            f"os.makedirs(\"/root/.pi/agent\", exist_ok=True)\n"
+            f"with open(\"/root/.pi/agent/models.json\", \"w\") as f: json.dump(pi_doc, f, indent=2)\n"
             f"os.makedirs(\"/root/.gemini/antigravity-cli\", exist_ok=True)\n"
             f"with open(\"/root/.gemini/antigravity-cli/mcp.json\", \"w\") as f: json.dump(uni_doc, f, indent=2)\n"
             f"os.makedirs(\".gemini\", exist_ok=True)\n"
@@ -446,6 +479,7 @@ class DockerDevDriver(BaseDevDriver):
             "--name", dev_container_name,
             "--hostname", f"compassx-app-{app.id}",
             "--network", network,
+            "--add-host=host.docker.internal:host-gateway",
             "-p", f"{dev_port}:8080",
             "-v", f"{repo_dir}:/app",
             "-w", "/app",
@@ -453,6 +487,8 @@ class DockerDevDriver(BaseDevDriver):
             "-e", "DEV_MODE=true",
             "-e", f"APP_NAME={app.name}",
             "-e", f"APP_ID={app.id}",
+            "-e", "OPENAI_BASE_URL=http://host.docker.internal:8000/api/v1/ai-gateway/v1",
+            "-e", f"OPENAI_API_KEY=cx_gw_app_{app.id}",
             "-e", f"OMNIGENT_HOST_ID={host_id}",
             "-e", f"OMNIGENT_HOST_NAME={host_name}",
             "-e", f"HOST_ID={host_id}",
@@ -642,18 +678,221 @@ class DockerDevDriver(BaseDevDriver):
         except Exception:
             return None
 
+    def ensure_agent_configs(self, app, active_model: Optional[str] = None) -> None:
+        """Seed or update agent configuration files (OpenCode, Pi) and root CA certificates inside the dev container."""
+        dev_container_name = f"compassx-app-dev-{app.id}"
+
+        # 0. Ensure corporate / host root CA certificates are installed so Go (agy) and TLS work behind corporate proxies
+        try:
+            backend_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+            ca_cert_file = os.path.join(backend_dir, "certs", "corporate_ca.crt")
+            if os.path.isfile(ca_cert_file):
+                subprocess.run(
+                    ["docker", "cp", ca_cert_file, f"{dev_container_name}:/usr/local/share/ca-certificates/corporate_ca.crt"],
+                    capture_output=True,
+                    check=False,
+                    timeout=5.0,
+                )
+                subprocess.run(
+                    ["docker", "exec", dev_container_name, "update-ca-certificates"],
+                    capture_output=True,
+                    check=False,
+                    timeout=5.0,
+                )
+
+            # Ensure Antigravity OAuth token persistence across containers and restarts
+            token_storage_dir = os.path.join(backend_dir, "storage", "credentials", "antigravity")
+            host_token_file = os.path.join(token_storage_dir, "antigravity-oauth-token")
+            os.makedirs(token_storage_dir, exist_ok=True)
+            chk = subprocess.run(
+                ["docker", "exec", dev_container_name, "bash", "-c", "test -f /root/.gemini/antigravity-cli/antigravity-oauth-token && cat /root/.gemini/antigravity-cli/antigravity-oauth-token"],
+                capture_output=True, text=True, check=False, timeout=3.0,
+            )
+            if chk.returncode == 0 and "refresh_token" in chk.stdout and "auto-authenticated" not in chk.stdout:
+                with open(host_token_file, "w") as f:
+                    f.write(chk.stdout)
+            elif os.path.isfile(host_token_file):
+                subprocess.run(
+                    ["docker", "cp", host_token_file, f"{dev_container_name}:/root/.gemini/antigravity-cli/antigravity-oauth-token"],
+                    capture_output=True, check=False, timeout=3.0,
+                )
+        except Exception:
+            pass
+
+        models = ["gpt-5.4-mini", "gpt-5.6-sol"]
+        try:
+            from app.database import AccountSessionLocal
+            from app.ai_gateway.models.provider import AIModelEndpoint
+            with AccountSessionLocal() as acc_db:
+                ws_id = str(app.workspace_id) if getattr(app, "workspace_id", None) else None
+                q = acc_db.query(AIModelEndpoint).filter(AIModelEndpoint.is_active == True)
+                if ws_id:
+                    q = q.filter((AIModelEndpoint.workspace_id == ws_id) | (AIModelEndpoint.workspace_id.is_(None)))
+                db_models = [ep.name for ep in q.all() if ep.name]
+                if db_models:
+                    models = db_models
+        except Exception as e:
+            logger.debug("Failed to query models for container seeding: %s", e)
+
+        if active_model and active_model not in models:
+            models.append(active_model)
+
+        api_key = f"cx_gw_app_{app.id}"
+        base_url = "http://host.docker.internal:8000/api/v1/ai-gateway/v1"
+        oc_models = {m: {"name": m} for m in models}
+        pi_models = [{"id": m, "name": m, "contextWindow": 128000, "maxTokens": 8192} for m in models]
+
+        py_script = (
+            "import json, os\n"
+            f"api_key = {json.dumps(api_key)}\n"
+            f"base_url = {json.dumps(base_url)}\n"
+            f"oc_models = {json.dumps(oc_models)}\n"
+            f"pi_models = {json.dumps(pi_models)}\n"
+            "for p in ['/root/.config/opencode/opencode.json', '/root/.opencode/opencode.json', '/app/opencode.json']:\n"
+            "    try:\n"
+            "        os.makedirs(os.path.dirname(p), exist_ok=True)\n"
+            "        doc = {'$schema': 'https://opencode.ai/config.json'}\n"
+            "        if os.path.exists(p):\n"
+            "            try:\n"
+            "                with open(p, 'r') as f: doc = json.load(f)\n"
+            "            except Exception: pass\n"
+            "        doc.setdefault('provider', {})\n"
+            "        doc['provider']['compassx'] = {'name': 'CompassX AI Gateway', 'type': 'openai', 'options': {'baseURL': base_url, 'apiKey': api_key}, 'models': oc_models}\n"
+            "        with open(p, 'w') as f: json.dump(doc, f, indent=2)\n"
+            "    except Exception:\n"
+            "        pass\n"
+            "try:\n"
+            "    with open('/root/.tmux.conf', 'w') as f:\n"
+            "        f.write('set-option -g window-size latest\\nset-option -g aggressive-resize on\\nset-option -g default-terminal \"xterm-256color\"\\n')\n"
+            "except Exception:\n"
+            "    pass\n"
+            "try:\n"
+            "    pi_p = '/root/.pi/agent/models.json'\n"
+            "    os.makedirs(os.path.dirname(pi_p), exist_ok=True)\n"
+            "    pi_doc = {'providers': {}}\n"
+            "    if os.path.exists(pi_p):\n"
+            "        try:\n"
+            "            with open(pi_p, 'r') as f: pi_doc = json.load(f)\n"
+            "        except Exception: pass\n"
+            "    pi_doc.setdefault('providers', {})\n"
+            "    pi_doc['providers']['compassx'] = {'baseUrl': base_url, 'apiKey': api_key, 'api': 'openai-completions', 'models': pi_models}\n"
+            "    with open(pi_p, 'w') as f: json.dump(pi_doc, f, indent=2)\n"
+            "except Exception:\n"
+            "    pass\n"
+        )
+        try:
+            subprocess.run(
+                ["docker", "exec", dev_container_name, "python3", "-c", py_script],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=5.0,
+            )
+        except Exception as e:
+            logger.debug("Failed to seed agent configs in container %s: %s", dev_container_name, e)
+
     def open_terminal_ws_client(
         self,
         app,
         workspace_folder: str = "",
         cols: int = 80,
         rows: int = 24,
+        agent: Optional[str] = None,
+        session_name: Optional[str] = None,
+        cli_cmd: Optional[str] = None,
+        model: Optional[str] = None,
+        **kwargs: Any,
     ) -> Any:
         """Start a subprocess for Docker interactive exec."""
         dev_container_name = f"compassx-app-dev-{app.id}"
-        workdir = f"/workspaces/{workspace_folder}" if workspace_folder else "/app"
+        # Ensure agent configuration files (opencode.json, models.json) are seeded with gateway auth and models
+        self.ensure_agent_configs(app, active_model=model)
+
+        target_ws = f"/workspaces/{workspace_folder}" if workspace_folder else "/app"
+        workdir = "/app"
         try:
-            cmd = ["docker", "exec", "-i", "-w", workdir, "-e", f"COLUMNS={cols}", "-e", f"LINES={rows}", "-e", "TERM=xterm-256color", dev_container_name, "bash", "-l"]
+            chk = subprocess.run(
+                ["docker", "exec", dev_container_name, "bash", "-c", f"test -d '{target_ws}' && ls -A '{target_ws}' | grep -v '^\\.' | head -n 1"],
+                capture_output=True, text=True, check=False, timeout=3.0,
+            )
+            if chk.returncode == 0 and chk.stdout.strip():
+                workdir = target_ws
+        except Exception:
+            workdir = "/app"
+
+        if not cli_cmd:
+            if agent == "pi":
+                cli_cmd = "pi --approve"
+            elif agent == "opencode":
+                cli_cmd = "opencode"
+            elif agent in ("antigravity", "agy"):
+                cli_cmd = "agy"
+
+        try:
+            if session_name and cli_cmd:
+                # Persistent tmux session inside container: attaches if existing (-A -D detaches stale clients), creates if not
+                clean_cmd = f"export OPENAI_BASE_URL=http://host.docker.internal:8000/api/v1/ai-gateway/v1 OPENAI_API_KEY=cx_gw_app_{app.id}; {cli_cmd}".replace("'", "'\\''")
+                tmux_target = session_name.replace("'", "")
+                py_pty_script = (
+                    "import pty, os, sys, fcntl, termios, struct; "
+                    f"cols = int(os.environ.get('COLUMNS', {cols})); "
+                    f"rows = int(os.environ.get('LINES', {rows})); "
+                    "pid, m = pty.fork(); "
+                    "("
+                    f"    os.execlp('tmux', 'tmux', 'new-session', '-A', '-D', '-s', '{tmux_target}', '-c', '{workdir}', '{clean_cmd} || bash') if pid == 0 else ("
+                    "        fcntl.ioctl(m, termios.TIOCSWINSZ, struct.pack('HHHH', rows, cols, 0, 0)), "
+                    "        pty._copy(m, pty._read, pty._read), "
+                    "        os.close(m), "
+                    "        os.waitpid(pid, 0)"
+                    "    )"
+                    ")"
+                )
+                cmd = [
+                    "docker", "exec", "-i", "-w", workdir,
+                    "-e", f"COLUMNS={cols}", "-e", f"LINES={rows}",
+                    "-e", "TERM=xterm-256color",
+                    "-e", "OPENAI_BASE_URL=http://host.docker.internal:8000/api/v1/ai-gateway/v1",
+                    "-e", f"OPENAI_API_KEY=cx_gw_app_{app.id}",
+                    dev_container_name,
+                    "python3", "-c", py_pty_script,
+                ]
+            elif cli_cmd:
+                # Launch interactive agent CLI in a genuine POSIX pseudo-terminal (PTY) inside Linux container
+                clean_cmd = f"export OPENAI_BASE_URL=http://host.docker.internal:8000/api/v1/ai-gateway/v1 OPENAI_API_KEY=cx_gw_app_{app.id}; {cli_cmd}".replace("'", "'\\''")
+                py_pty_script = (
+                    "import pty, os, sys, fcntl, termios, struct; "
+                    "cols = int(os.environ.get('COLUMNS', 100)); "
+                    "rows = int(os.environ.get('LINES', 30)); "
+                    "pid, m = pty.fork(); "
+                    "("
+                    f"    os.execlp('bash', 'bash', '-c', '{clean_cmd} || bash') if pid == 0 else ("
+                    "        fcntl.ioctl(m, termios.TIOCSWINSZ, struct.pack('HHHH', rows, cols, 0, 0)), "
+                    "        pty._copy(m, pty._read, pty._read), "
+                    "        os.close(m), "
+                    "        os.waitpid(pid, 0)"
+                    "    )"
+                    ")"
+                )
+                cmd = [
+                    "docker", "exec", "-i", "-w", workdir,
+                    "-e", f"COLUMNS={cols}", "-e", f"LINES={rows}",
+                    "-e", "TERM=xterm-256color",
+                    "-e", "OPENAI_BASE_URL=http://host.docker.internal:8000/api/v1/ai-gateway/v1",
+                    "-e", f"OPENAI_API_KEY=cx_gw_app_{app.id}",
+                    dev_container_name,
+                    "python3", "-c", py_pty_script,
+                ]
+            else:
+                cmd = [
+                    "docker", "exec", "-i", "-w", workdir,
+                    "-e", f"COLUMNS={cols}", "-e", f"LINES={rows}",
+                    "-e", "TERM=xterm-256color",
+                    "-e", "OPENAI_BASE_URL=http://host.docker.internal:8000/api/v1/ai-gateway/v1",
+                    "-e", f"OPENAI_API_KEY=cx_gw_app_{app.id}",
+                    dev_container_name,
+                    "bash", "-l",
+                ]
+
             proc = subprocess.Popen(
                 cmd,
                 stdin=subprocess.PIPE,
@@ -665,4 +904,200 @@ class DockerDevDriver(BaseDevDriver):
         except Exception as exc:
             logger.warning("Failed to start docker interactive terminal: %s", exc)
             return None
+
+    def resize_terminal(
+        self,
+        app: Any,
+        cols: int,
+        rows: int,
+        session_name: Optional[str] = None,
+        **kwargs: Any,
+    ) -> None:
+        """Dynamically resize tmux window and attached client PTYs inside container."""
+        dev_container_name = f"compassx-app-dev-{app.id}"
+        target = (session_name or "").replace("'", "")
+        py_resize_script = (
+            "import subprocess, fcntl, termios, struct, os\n"
+            f"target = '{target}'\n"
+            f"cols, rows = {int(cols)}, {int(rows)}\n"
+            "try:\n"
+            "    if target:\n"
+            "        subprocess.run(['tmux', 'resize-window', '-t', target, '-x', str(cols), '-y', str(rows)], check=False, capture_output=True)\n"
+            "        subprocess.run(['tmux', 'resize-pane', '-t', target, '-x', str(cols), '-y', str(rows)], check=False, capture_output=True)\n"
+            "        p = subprocess.run(['tmux', 'list-clients', '-t', target, '-F', '#{client_tty}'], capture_output=True, text=True, check=False)\n"
+            "    else:\n"
+            "        subprocess.run(['tmux', 'resize-window', '-a', '-x', str(cols), '-y', str(rows)], check=False, capture_output=True)\n"
+            "        p = subprocess.run(['tmux', 'list-clients', '-F', '#{client_tty}'], capture_output=True, text=True, check=False)\n"
+            "    for tty in p.stdout.strip().splitlines():\n"
+            "        t = tty.strip()\n"
+            "        if t and os.path.exists(t):\n"
+            "            try:\n"
+            "                fd = os.open(t, os.O_RDWR)\n"
+            "                fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack('HHHH', rows, cols, 0, 0))\n"
+            "                os.close(fd)\n"
+            "            except Exception:\n"
+            "                pass\n"
+            "except Exception:\n"
+            "    pass\n"
+        )
+        try:
+            subprocess.run(
+                ["docker", "exec", dev_container_name, "python3", "-c", py_resize_script],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=2.0,
+            )
+        except Exception as e:
+            logger.debug("Failed to resize terminal in container %s: %s", dev_container_name, e)
+
+    def create_git_worktree(
+        self,
+        app: Any,
+        folder_path: str,
+        branch: str,
+        base_branch: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Create a new Git worktree sandbox inside the running dev container."""
+        dev_container_name = f"compassx-app-dev-{app.id}"
+        clean_folder = folder_path.strip("/")
+        target_dir = f"/workspaces/{clean_folder}"
+        base = base_branch or "HEAD"
+
+        chk = subprocess.run(
+            ["docker", "inspect", "-f", "{{.State.Running}}", dev_container_name],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if chk.returncode != 0 or chk.stdout.strip() != "true":
+            return {"success": False, "error": f"Dev container {dev_container_name} is not running"}
+
+        script = (
+            f"mkdir -p /workspaces && "
+            f"if [ -d '{target_dir}' ]; then "
+            f"  echo '__WORKTREE_EXISTS__'; "
+            f"else "
+            f"  cd /app && git worktree add -B '{branch}' '{target_dir}' '{base}' 2>&1 && "
+            f"  echo '__WORKTREE_CREATED__'; "
+            f"fi"
+        )
+        res = subprocess.run(
+            ["docker", "exec", dev_container_name, "bash", "-c", script],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=30.0,
+        )
+        output = ((res.stdout or "") + (res.stderr or "")).strip()
+        success = ("__WORKTREE_CREATED__" in output) or ("__WORKTREE_EXISTS__" in output)
+        return {
+            "success": success,
+            "folder_path": target_dir,
+            "branch": branch,
+            "output": output,
+            "error": None if success else (output or "Failed to create git worktree"),
+        }
+
+    def remove_git_worktree(
+        self,
+        app: Any,
+        folder_path: str,
+    ) -> bool:
+        """Remove a Git worktree sandbox from the dev container."""
+        dev_container_name = f"compassx-app-dev-{app.id}"
+        clean_folder = folder_path.strip("/")
+        target_dir = f"/workspaces/{clean_folder}"
+        script = (
+            f"cd /app && git worktree remove --force '{target_dir}' 2>/dev/null || rm -rf '{target_dir}'; "
+            f"cd /app && git worktree prune 2>/dev/null || true"
+        )
+        try:
+            res = subprocess.run(
+                ["docker", "exec", dev_container_name, "bash", "-c", script],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=15.0,
+            )
+            return res.returncode == 0
+        except Exception as e:
+            logger.warning("Failed to remove git worktree %s: %s", target_dir, e)
+            return False
+
+    def switch_active_sandbox(
+        self,
+        app: Any,
+        folder_path: str,
+    ) -> Dict[str, Any]:
+        """Instantly switch active sandbox: repoint /current symlink and restart dev servers in target sandbox."""
+        dev_container_name = f"compassx-app-dev-{app.id}"
+        clean_folder = folder_path.strip("/")
+        target_dir = f"/workspaces/{clean_folder}" if clean_folder else "/app"
+
+        chk = subprocess.run(
+            ["docker", "inspect", "-f", "{{.State.Running}}", dev_container_name],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if chk.returncode != 0 or chk.stdout.strip() != "true":
+            return {"success": False, "error": f"Dev container {dev_container_name} is not running"}
+
+        app_type = getattr(app, "app_type", "custom_web") or "custom_web"
+
+        switch_script = (
+            f"TARGET=\"{target_dir}\"; "
+            f"if [ ! -d \"$TARGET\" ]; then TARGET=\"/app\"; fi; "
+            f"ln -sfn \"$TARGET\" /current 2>/dev/null || true; "
+            f"echo \"[SWITCH] Switched active sandbox to $TARGET\"; "
+            f"for p in $(pgrep -f uvicorn 2>/dev/null); do if [ \"$p\" != \"$$\" ]; then kill \"$p\" 2>/dev/null || true; fi; done; "
+            f"for p in $(pgrep -f vite 2>/dev/null); do if [ \"$p\" != \"$$\" ]; then kill \"$p\" 2>/dev/null || true; fi; done; "
+            f"for p in $(pgrep -f streamlit 2>/dev/null); do if [ \"$p\" != \"$$\" ]; then kill \"$p\" 2>/dev/null || true; fi; done; "
+            f"sleep 0.2; "
+            f"BACKEND_DIR=\"\"; "
+            f"if [ -d \"$TARGET/backend\" ] && ( [ -f \"$TARGET/backend/app.py\" ] || [ -f \"$TARGET/backend/main.py\" ] ); then BACKEND_DIR=\"$TARGET/backend\"; "
+            f"elif [ -d \"$TARGET/api\" ] && ( [ -f \"$TARGET/api/app.py\" ] || [ -f \"$TARGET/api/main.py\" ] ); then BACKEND_DIR=\"$TARGET/api\"; "
+            f"elif [ -d \"$TARGET/server\" ] && ( [ -f \"$TARGET/server/app.py\" ] || [ -f \"$TARGET/server/main.py\" ] ); then BACKEND_DIR=\"$TARGET/server\"; "
+            f"elif [ -f \"$TARGET/app.py\" ] || [ -f \"$TARGET/main.py\" ]; then BACKEND_DIR=\"$TARGET\"; "
+            f"fi; "
+            f"if [ -n \"$BACKEND_DIR\" ]; then "
+            f"  if [ -f \"$BACKEND_DIR/app.py\" ]; then "
+            f"    (cd \"$BACKEND_DIR\" && (uvicorn app:app --host 0.0.0.0 --port 8000 --reload --reload-delay 2.0 --reload-exclude '**/node_modules/**' --reload-exclude '**/.git/**' >/tmp/backend.log 2>&1 || python app.py >/tmp/backend.log 2>&1) &); "
+            f"  elif [ -f \"$BACKEND_DIR/main.py\" ]; then "
+            f"    (cd \"$BACKEND_DIR\" && (uvicorn main:app --host 0.0.0.0 --port 8000 --reload --reload-delay 2.0 --reload-exclude '**/node_modules/**' --reload-exclude '**/.git/**' >/tmp/backend.log 2>&1 || python main.py >/tmp/backend.log 2>&1) &); "
+            f"  fi; "
+            f"fi; "
+            f"FRONTEND_DIR=\"\"; "
+            f"if [ -d \"$TARGET/frontend\" ] && [ -f \"$TARGET/frontend/package.json\" ]; then FRONTEND_DIR=\"$TARGET/frontend\"; "
+            f"elif [ -d \"$TARGET/client\" ] && [ -f \"$TARGET/client/package.json\" ]; then FRONTEND_DIR=\"$TARGET/client\"; "
+            f"elif [ -d \"$TARGET/web\" ] && [ -f \"$TARGET/web/package.json\" ]; then FRONTEND_DIR=\"$TARGET/web\"; "
+            f"elif [ -f \"$TARGET/package.json\" ]; then FRONTEND_DIR=\"$TARGET\"; "
+            f"fi; "
+            f"if [ -n \"$FRONTEND_DIR\" ]; then "
+            f"  (cd \"$FRONTEND_DIR\" && (npx --yes vite --host 0.0.0.0 --port 8080 --cors >/tmp/frontend.log 2>&1 || npm run dev -- --host 0.0.0.0 --port 8080 >/tmp/frontend.log 2>&1 || npx --yes serve -l 8080 . >/tmp/frontend.log 2>&1) &); "
+            f"elif [ -n \"$BACKEND_DIR\" ]; then "
+            f"  (cd \"$BACKEND_DIR\" && "
+            f"   if grep -q 'streamlit' app.py 2>/dev/null || [ '{app_type}' = 'streamlit' ]; then "
+            f"     (streamlit run app.py --server.port 8080 --server.address 0.0.0.0 --server.headless true --server.enableCORS false >/tmp/backend.log 2>&1 || true) & "
+            f"   fi); "
+            f"fi; "
+            f"echo '__SWITCH_SUCCESS__'"
+        )
+        res = subprocess.run(
+            ["docker", "exec", dev_container_name, "bash", "-c", switch_script],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=30.0,
+        )
+        output = ((res.stdout or "") + (res.stderr or "")).strip()
+        success = "__SWITCH_SUCCESS__" in output
+        return {
+            "success": success,
+            "active_workdir": target_dir,
+            "output": output,
+            "error": None if success else (output or "Failed to switch active sandbox"),
+        }
+
 

@@ -4,50 +4,58 @@ from __future__ import annotations
 
 import time
 from typing import Any, Literal
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 # --- Chat Completion Request & Message Types ---
 
 class FunctionCall(BaseModel):
+    model_config = ConfigDict(extra="ignore")
     name: str
     arguments: str
 
 
 class ToolCall(BaseModel):
+    model_config = ConfigDict(extra="ignore")
     id: str
     type: Literal["function"] = "function"
     function: FunctionCall
 
 
 class ChatMessage(BaseModel):
-    role: Literal["system", "user", "assistant", "tool"]
-    content: str | None = None
+    model_config = ConfigDict(extra="ignore")
+    role: str
+    content: str | list[Any] | None = None
     name: str | None = None
     tool_calls: list[ToolCall] | None = None
     tool_call_id: str | None = None
 
 
 class ToolDefinitionFunction(BaseModel):
+    model_config = ConfigDict(extra="ignore")
     name: str
     description: str | None = None
     parameters: dict[str, Any] = Field(default_factory=dict)
 
 
 class ToolDefinition(BaseModel):
+    model_config = ConfigDict(extra="ignore")
     type: Literal["function"] = "function"
     function: ToolDefinitionFunction
 
 
 class ChatCompletionRequest(BaseModel):
+    model_config = ConfigDict(extra="ignore")
     model: str = Field(..., description="Target model endpoint name or alias")
     messages: list[ChatMessage]
-    tools: list[ToolDefinition] | None = None
+    tools: list[Any] | None = None
     tool_choice: str | dict[str, Any] | None = None
     temperature: float | None = None
     top_p: float | None = None
     max_tokens: int | None = None
+    max_completion_tokens: int | None = None
     stream: bool = False
+    stream_options: dict[str, Any] | None = None
     stop: str | list[str] | None = None
     presence_penalty: float | None = None
     frequency_penalty: float | None = None
