@@ -812,11 +812,16 @@ class DockerDevDriver(BaseDevDriver):
         workdir = "/app"
         try:
             chk = subprocess.run(
-                ["docker", "exec", dev_container_name, "bash", "-c", f"test -d '{target_ws}' && ls -A '{target_ws}' | grep -v '^\\.' | head -n 1"],
+                ["docker", "exec", dev_container_name, "bash", "-c", f"if [ -d '{target_ws}' ]; then echo 'EXISTS'; elif [ -d '/current' ]; then echo 'CURRENT'; else echo 'APP'; fi"],
                 capture_output=True, text=True, check=False, timeout=3.0,
             )
-            if chk.returncode == 0 and chk.stdout.strip():
+            out = (chk.stdout or "").strip()
+            if out == "EXISTS":
                 workdir = target_ws
+            elif out == "CURRENT":
+                workdir = "/current"
+            else:
+                workdir = "/app"
         except Exception:
             workdir = "/app"
 

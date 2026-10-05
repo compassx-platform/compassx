@@ -24,6 +24,7 @@ import { formatBytes } from './fileStatusUtils';
 export interface FileViewerProps {
   appId: string;
   path: string;
+  workspaceId?: string;
   onClose: () => void;
 }
 
@@ -64,8 +65,8 @@ const editorTheme = EditorView.theme(
   { dark: false }
 );
 
-export function FileViewer({ appId, path, onClose }: FileViewerProps) {
-  const { data: fileData, isLoading, isError, error, refetch } = useDevFileContent(appId, path);
+export function FileViewer({ appId, path, workspaceId, onClose }: FileViewerProps) {
+  const { data: fileData, isLoading, isError, error, refetch } = useDevFileContent(appId, path, workspaceId);
   const writeMutation = useWriteDevFile();
 
   const [content, setContent] = useState<string>('');
@@ -131,7 +132,7 @@ export function FileViewer({ appId, path, onClose }: FileViewerProps) {
   const handleSave = () => {
     if (!isModified || writeMutation.isPending) return;
     writeMutation.mutate(
-      { appId, path, content },
+      { appId, path, content, workspaceId },
       {
         onSuccess: () => {
           setIsModified(false);

@@ -1,7 +1,6 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import {
-  ArrowLeft,
   Boxes,
   Hammer,
   Loader2,
@@ -21,6 +20,8 @@ import {
   Sparkles,
   FolderTree,
   Layers,
+  PanelLeftOpen,
+  PanelLeftClose,
 } from 'lucide-react';
 import { useScopedNavigate } from '@/lib/appNavigation';
 import { useToast } from '@/lib/toast';
@@ -257,6 +258,23 @@ export default function AppBuildPage() {
   const createDevSessionMutation = useCreateDevSession(resolvedAppId);
   const deleteDevSessionMutation = useDeleteDevSession(resolvedAppId);
 
+  const [justCreatedSession, setJustCreatedSession] = useState<DevSession | null>(null);
+
+  // Merge newly created session into list until backend query refetches and includes it
+  const allSessions: DevSession[] = useMemo(() => {
+    const list: DevSession[] = devSessions || [];
+    if (!justCreatedSession) return list;
+    if (list.some((s: DevSession) => s.id === justCreatedSession.id)) return list;
+    return [justCreatedSession, ...list];
+  }, [devSessions, justCreatedSession]);
+
+  // Once backend devSessions includes the created session, clear justCreatedSession
+  useEffect(() => {
+    if (justCreatedSession && devSessions.some((s: DevSession) => s.id === justCreatedSession.id)) {
+      setJustCreatedSession(null);
+    }
+  }, [devSessions, justCreatedSession]);
+
   const [activeSessionId, setActiveSessionId] = useState<string | null>(() => {
     try {
       return localStorage.getItem(`compassx_active_session_${resolvedAppId}`) || null;
@@ -264,24 +282,36 @@ export default function AppBuildPage() {
       return null;
     }
   });
+
+  // Synchronize activeSessionId when switching apps
+  useEffect(() => {
+    if (!resolvedAppId) return;
+    try {
+      const saved = localStorage.getItem(`compassx_active_session_${resolvedAppId}`);
+      if (saved) {
+        setActiveSessionId(saved);
+      }
+    } catch (_) {}
+  }, [resolvedAppId]);
+
   const [isNewSessionModalOpen, setIsNewSessionModalOpen] = useState(false);
   const [isSwitchingSession, setIsSwitchingSession] = useState(false);
 
   // Auto-select first session if none selected or selected was deleted
   useEffect(() => {
-    if (devSessions.length > 0) {
-      const exists = devSessions.some((s) => s.id === activeSessionId);
+    if (allSessions.length > 0) {
+      const exists = allSessions.some((s: DevSession) => s.id === activeSessionId);
       if (!activeSessionId || !exists) {
-        const firstId = devSessions[0].id;
+        const firstId = allSessions[0].id;
         setActiveSessionId(firstId);
         try {
           localStorage.setItem(`compassx_active_session_${resolvedAppId}`, firstId);
         } catch (_) {}
       }
     }
-  }, [devSessions, activeSessionId, resolvedAppId]);
+  }, [allSessions, activeSessionId, resolvedAppId]);
 
-  const activeSession = devSessions.find((s) => s.id === activeSessionId) || devSessions[0];
+  const activeSession = allSessions.find((s: DevSession) => s.id === activeSessionId) || allSessions[0];
   const currentAgent = (activeSession?.agent as SupportedAgent) || selectedAgent;
 
   const handleSelectSession = (sessionId: string) => {
@@ -303,6 +333,7 @@ export default function AppBuildPage() {
         workspace_id: activeWorkspace?.id || devStatus?.workspace_id,
         model,
       });
+      setJustCreatedSession(created);
       setActiveSessionId(created.id);
       try {
         localStorage.setItem(`compassx_active_session_${resolvedAppId}`, created.id);
@@ -319,11 +350,19 @@ export default function AppBuildPage() {
   const handleDeleteSession = async (sessionId: string) => {
     try {
       await deleteDevSessionMutation.mutateAsync(sessionId);
+      if (justCreatedSession?.id === sessionId) {
+        setJustCreatedSession(null);
+      }
       toast.success('Session deleted.');
       if (activeSessionId === sessionId) {
-        const remaining = devSessions.filter((s) => s.id !== sessionId);
+        const remaining = allSessions.filter((s: DevSession) => s.id !== sessionId);
         if (remaining.length > 0) {
           handleSelectSession(remaining[0].id);
+        } else {
+          setActiveSessionId(null);
+          try {
+            localStorage.removeItem(`compassx_active_session_${resolvedAppId}`);
+          } catch (_) {}
         }
       }
     } catch (err: any) {
@@ -361,6 +400,20 @@ export default function AppBuildPage() {
     sessionsSidebarWidthRef.current = sessionsSidebarWidth;
   }, [sessionsSidebarWidth]);
 
+  const [isSessionsMaximized, setIsSessionsMaximized] = useState<boolean>(false);
+  const toggleSessionsMaximized = () => {
+    setIsSessionsMaximized((prev) => {
+      const next = !prev;
+      const targetWidth = next ? 420 : 260;
+      setSessionsSidebarWidth(targetWidth);
+      sessionsSidebarWidthRef.current = targetWidth;
+      try {
+        localStorage.setItem('compassx_sessions_sidebar_width', String(targetWidth));
+      } catch (_) {}
+      return next;
+    });
+  };
+
   // ── File Explorer State ────────────────────────────────────────────────────────
   const [showFileExplorer, setShowFileExplorer] = useState<boolean>(() => {
     try {
@@ -371,6 +424,11 @@ export default function AppBuildPage() {
   });
   const [selectedFilePath, setSelectedFilePath] = useState<string | null>(null);
   const [isExplorerMaximized, setIsExplorerMaximized] = useState<boolean>(false);
+
+  // Clear selected file when switching active sandbox/workspace
+  useEffect(() => {
+    setSelectedFilePath(null);
+  }, [activeWorkspace?.id]);
 
   // User-adjustable widths for Tree view vs Viewer mode (persisted to localStorage)
   const [treeWidth, setTreeWidth] = useState<number>(() => {
@@ -550,7 +608,7 @@ export default function AppBuildPage() {
     data: devFiles = [],
     isLoading: isDevFilesLoading,
     refetch: refetchDevFiles,
-  } = useDevFiles(resolvedAppId, stage === 'running');
+  } = useDevFiles(resolvedAppId, activeWorkspace?.id || devStatus?.workspace_id, stage === 'running');
 
   // Auto-scroll logs to bottom as lines arrive
   useEffect(() => {
@@ -900,194 +958,80 @@ export default function AppBuildPage() {
           zIndex: 10,
         }}
       >
-        {/* Left: Back button & Breadcrumbs */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-          <button
-            onClick={() => navigate(`/apps/${resolvedAppId}`)}
-            title="Back to App Details"
-            style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: 6,
-              background: 'var(--color-surface-hover, rgba(255,255,255,0.06))',
-              border: '1px solid var(--color-border, #334155)',
-              borderRadius: 6,
-              color: 'var(--color-text, #cbd5e1)',
-              padding: '6px 12px',
-              fontSize: '0.8rem',
-              fontWeight: 500,
-              cursor: 'pointer',
-              transition: 'all 0.15s ease',
-            }}
-          >
-            <ArrowLeft size={14} />
-            <span>App Details</span>
-          </button>
-
-          <div style={{ width: 1, height: 20, background: 'var(--color-border, #334155)' }} />
-
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <div
+        {/* Left: Breadcrumbs & Header Controls */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <nav aria-label="Breadcrumb" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <button
+              type="button"
+              onClick={() => navigate('/apps')}
+              title="Back to Apps"
               style={{
-                width: 28,
-                height: 28,
-                borderRadius: 6,
-                background: 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                color: '#ffffff',
+                background: 'none',
+                border: 'none',
+                padding: '2px 4px',
+                borderRadius: 4,
+                cursor: 'pointer',
+                color: 'var(--color-text-muted, #94a3b8)',
+                fontSize: '0.84rem',
+                fontWeight: 500,
+                transition: 'all 0.15s ease',
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.color = '#f8fafc';
+                e.currentTarget.style.background = 'rgba(255, 255, 255, 0.06)';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.color = 'var(--color-text-muted, #94a3b8)';
+                e.currentTarget.style.background = 'transparent';
               }}
             >
-              <Boxes size={16} />
-            </div>
+              Apps
+            </button>
 
-            <span style={{ fontSize: '0.92rem', fontWeight: 600, color: 'var(--color-text, #f8fafc)' }}>
+            <span style={{ color: 'var(--color-text-muted, #64748b)', fontSize: '0.8rem', userSelect: 'none' }}>/</span>
+
+            <button
+              type="button"
+              onClick={() => navigate(`/apps/${resolvedAppId}`)}
+              title="Back to App Details"
+              style={{
+                background: 'none',
+                border: 'none',
+                padding: '2px 4px',
+                borderRadius: 4,
+                cursor: 'pointer',
+                color: 'var(--color-text, #f8fafc)',
+                fontSize: '0.92rem',
+                fontWeight: 600,
+                transition: 'all 0.15s ease',
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.color = '#1B6EF3';
+                e.currentTarget.style.background = 'rgba(255, 255, 255, 0.06)';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.color = 'var(--color-text, #f8fafc)';
+                e.currentTarget.style.background = 'transparent';
+              }}
+            >
               {app?.name || 'App'}
-            </span>
+            </button>
+          </nav>
 
-            <span style={{ color: 'var(--color-text-muted, #64748b)', fontSize: '0.85rem' }}>/</span>
-
-            <span
-              style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: 4,
-                fontSize: '0.82rem',
-                fontWeight: 600,
-                color: '#818cf8',
-              }}
-            >
-              <Hammer size={13} />
-              Build
-            </span>
-
-            {/* Dev Sandbox Status Pill in Header (Always matches stage) */}
-            <span
-              style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: 5,
-                padding: '2px 8px',
-                borderRadius: 12,
-                fontSize: '0.72rem',
-                fontWeight: 600,
-                marginLeft: 6,
-                color:
-                  stage === 'stopping' || (stage === 'starting' && startError)
-                    ? '#fca5a5'
-                    : stage === 'starting'
-                    ? step4Completed
-                      ? '#86efac'
-                      : '#93c5fd'
-                    : stage === 'running'
-                    ? '#86efac'
-                    : '#94a3b8',
-                background:
-                  stage === 'stopping' || (stage === 'starting' && startError)
-                    ? 'rgba(239, 68, 68, 0.15)'
-                    : stage === 'starting'
-                    ? step4Completed
-                      ? 'rgba(34, 197, 94, 0.15)'
-                      : 'rgba(59, 130, 246, 0.15)'
-                    : stage === 'running'
-                    ? 'rgba(34, 197, 94, 0.15)'
-                    : 'rgba(255, 255, 255, 0.05)',
-                border:
-                  stage === 'stopping' || (stage === 'starting' && startError)
-                    ? '1px solid rgba(239, 68, 68, 0.3)'
-                    : stage === 'starting'
-                    ? step4Completed
-                      ? '1px solid rgba(34, 197, 94, 0.3)'
-                      : '1px solid rgba(59, 130, 246, 0.3)'
-                    : stage === 'running'
-                    ? '1px solid rgba(34, 197, 94, 0.3)'
-                    : '1px solid rgba(255, 255, 255, 0.1)',
-              }}
-            >
-              {stage === 'stopping' ? (
-                <>
-                  <Loader2 size={11} className="spin" />
-                  <span>STOPPING SANDBOX</span>
-                </>
-              ) : stage === 'starting' ? (
-                startError ? (
-                  <>
-                    <AlertCircle size={11} />
-                    <span>
-                      {initStep === 3
-                        ? 'APP START FAILED'
-                        : initStep === 2
-                        ? 'INSTALLATION FAILED'
-                        : initStep === 1
-                        ? 'CODEBASE PREP FAILED'
-                        : 'STARTUP FAILED'}
-                    </span>
-                  </>
-                ) : (
-                  <>
-                    {step4Completed ? (
-                      <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#22c55e' }} />
-                    ) : (
-                      <Loader2 size={11} className="spin" />
-                    )}
-                    <span>
-                      {initStep === 3
-                        ? step4Completed
-                          ? 'APPLICATION READY'
-                          : 'STARTING APPLICATION'
-                        : initStep === 2
-                        ? step3Completed
-                          ? 'LIBRARIES READY'
-                          : 'INSTALLING LIBRARIES'
-                        : initStep === 1
-                        ? step2Completed
-                          ? 'WORKSPACE READY'
-                          : 'PREPARING CODEBASE'
-                        : 'STARTING SANDBOX'}
-                    </span>
-                  </>
-                )
-              ) : stage === 'running' ? (
-                <>
-                  <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#22c55e' }} />
-                  <span>
-                    SANDBOX ACTIVE {devStatus?.dev_port ? `• :${devStatus.dev_port}` : ''}
-                  </span>
-                </>
-              ) : (
-                <>
-                  <Clock size={11} />
-                  <span>SANDBOX STOPPED</span>
-                </>
-              )}
-            </span>
-
-            {/* Dev Host Pill in Header */}
+            {/* Host name in muted font */}
             {(stage === 'running' || stage === 'starting') && (
               <span
                 style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: 5,
-                  padding: '2px 8px',
-                  borderRadius: 12,
-                  fontSize: '0.72rem',
-                  fontWeight: 600,
-                  marginLeft: 4,
-                  color: '#c7d2fe',
-                  background: 'rgba(99, 102, 241, 0.14)',
-                  border: '1px solid rgba(99, 102, 241, 0.28)',
+                  fontSize: '0.78rem',
+                  color: 'var(--color-text-muted, #94a3b8)',
+                  marginLeft: 2,
                 }}
                 title={
                   devStatus?.host_image ||
                   (selectedHost === 'compassx' ? 'compassx-host:latest' : 'ghcr.io/omnigent-ai/omnigent-host:latest')
                 }
               >
-                <Cpu size={11} />
-                <span>
-                  Host: {devStatus?.host_type === 'omnigent' || (!devStatus?.host_type && selectedHost === 'omnigent') ? 'Omnigent' : 'CompassX'}
-                </span>
+                {devStatus?.host_type === 'omnigent' || (!devStatus?.host_type && selectedHost === 'omnigent') ? 'Omnigent' : 'CompassX'}
               </span>
             )}
 
@@ -1103,47 +1047,7 @@ export default function AppBuildPage() {
                 disabled={!isContainerRunning}
               />
             )}
-
-            {/* Toggle Sessions Secondary Sidebar Button */}
-            {stage === 'running' && (
-              <button
-                type="button"
-                onClick={() =>
-                  setShowSessionsSidebar((prev) => {
-                    const next = !prev;
-                    try {
-                      localStorage.setItem('compassx_show_sessions_sidebar', String(next));
-                    } catch (_) {}
-                    return next;
-                  })
-                }
-                title={showSessionsSidebar ? 'Hide Sessions Sidebar' : 'Show Sessions Sidebar'}
-                style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: 5,
-                  padding: '4px 10px',
-                  borderRadius: 8,
-                  fontSize: '0.74rem',
-                  fontWeight: showSessionsSidebar ? 650 : 500,
-                  border: showSessionsSidebar
-                    ? '1px solid rgba(99, 102, 241, 0.45)'
-                    : '1px solid var(--color-border, #334155)',
-                  background: showSessionsSidebar
-                    ? 'rgba(99, 102, 241, 0.16)'
-                    : 'rgba(15, 23, 42, 0.6)',
-                  color: showSessionsSidebar ? '#a5b4fc' : 'var(--color-text-muted, #94a3b8)',
-                  cursor: 'pointer',
-                  transition: 'all 0.15s ease',
-                  marginLeft: 6,
-                }}
-              >
-                <Layers size={12} color={showSessionsSidebar ? '#818cf8' : 'currentColor'} />
-                <span>Sessions</span>
-              </button>
-            )}
           </div>
-        </div>
 
         {/* Right: Files Toggle Button & Three Dots Action Menu */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
@@ -1151,41 +1055,34 @@ export default function AppBuildPage() {
             <button
               type="button"
               onClick={toggleFileExplorer}
+              title={showFileExplorer ? 'Hide File Explorer' : 'Show File Explorer'}
+              aria-label="Toggle Files Explorer"
               style={{
                 display: 'inline-flex',
                 alignItems: 'center',
-                gap: 5,
-                padding: '4px 10px',
-                borderRadius: 8,
-                fontSize: '0.74rem',
-                fontWeight: showFileExplorer ? 650 : 500,
-                border: showFileExplorer
-                  ? '1px solid rgba(99, 102, 241, 0.45)'
-                  : '1px solid var(--color-border, #334155)',
-                background: showFileExplorer
-                  ? 'rgba(99, 102, 241, 0.16)'
-                  : 'rgba(15, 23, 42, 0.6)',
-                color: showFileExplorer ? '#a5b4fc' : 'var(--color-text-muted, #94a3b8)',
+                justifyContent: 'center',
+                background: showFileExplorer ? '#f1f5f9' : 'transparent',
+                border: showFileExplorer ? '1px solid #e2e8f0' : '1px solid transparent',
+                borderRadius: 6,
+                padding: 5,
+                color: showFileExplorer ? '#0f172a' : '#64748b',
                 cursor: 'pointer',
                 transition: 'all 0.15s ease',
               }}
-              title={showFileExplorer ? 'Hide File Explorer' : 'Show File Explorer'}
+              onMouseEnter={(e) => {
+                if (!showFileExplorer) {
+                  e.currentTarget.style.background = '#f8fafc';
+                  e.currentTarget.style.color = '#0f172a';
+                }
+              }}
+              onMouseLeave={(e) => {
+                if (!showFileExplorer) {
+                  e.currentTarget.style.background = 'transparent';
+                  e.currentTarget.style.color = '#64748b';
+                }
+              }}
             >
-              <FolderTree size={12} color={showFileExplorer ? '#818cf8' : 'currentColor'} />
-              <span>Files</span>
-              {devFiles.length > 0 && (
-                <span
-                  style={{
-                    background: showFileExplorer ? 'rgba(99, 102, 241, 0.3)' : 'rgba(255, 255, 255, 0.08)',
-                    padding: '1px 5px',
-                    borderRadius: 10,
-                    fontSize: '0.65rem',
-                    fontFamily: 'ui-monospace, SFMono-Regular, monospace',
-                  }}
-                >
-                  {devFiles.length}
-                </span>
-              )}
+              <FolderTree size={15} />
             </button>
           )}
 
@@ -1198,15 +1095,28 @@ export default function AppBuildPage() {
               display: 'inline-flex',
               alignItems: 'center',
               justifyContent: 'center',
-              background: 'transparent',
-              border: 'none',
-              padding: 6,
-              color: isMenuOpen ? 'var(--color-text, #f8fafc)' : 'var(--color-text-muted, #94a3b8)',
+              background: isMenuOpen ? '#f1f5f9' : 'transparent',
+              border: isMenuOpen ? '1px solid #e2e8f0' : '1px solid transparent',
+              borderRadius: 6,
+              padding: 5,
+              color: isMenuOpen ? '#0f172a' : '#64748b',
               cursor: 'pointer',
-              transition: 'color 0.15s ease',
+              transition: 'all 0.15s ease',
+            }}
+            onMouseEnter={(e) => {
+              if (!isMenuOpen) {
+                e.currentTarget.style.background = '#f8fafc';
+                e.currentTarget.style.color = '#0f172a';
+              }
+            }}
+            onMouseLeave={(e) => {
+              if (!isMenuOpen) {
+                e.currentTarget.style.background = 'transparent';
+                e.currentTarget.style.color = '#64748b';
+              }
             }}
           >
-            <MoreVertical size={18} />
+            <MoreVertical size={17} />
           </button>
 
           {isMenuOpen && (
@@ -1215,16 +1125,17 @@ export default function AppBuildPage() {
                 position: 'absolute',
                 top: 'calc(100% + 6px)',
                 right: 0,
-                width: 190,
-                background: 'var(--color-surface, #1e293b)',
-                border: '1px solid var(--color-border, #334155)',
+                width: 200,
+                background: '#ffffff',
+                border: '1px solid #e5e7eb',
                 borderRadius: 8,
-                boxShadow: '0 10px 25px -5px rgba(0, 0, 0, 0.5), 0 8px 10px -6px rgba(0, 0, 0, 0.4)',
+                boxShadow: '0 4px 16px -2px rgba(0, 0, 0, 0.08), 0 2px 6px -1px rgba(0, 0, 0, 0.04)',
                 padding: 4,
                 zIndex: 50,
                 display: 'flex',
                 flexDirection: 'column',
                 gap: 2,
+                animation: 'fadeIn 0.12s ease-out',
               }}
             >
               <button
@@ -1235,14 +1146,14 @@ export default function AppBuildPage() {
                   alignItems: 'center',
                   gap: 8,
                   width: '100%',
-                  padding: '8px 12px',
+                  padding: '7px 10px',
                   background: 'transparent',
                   border: 'none',
                   borderRadius: 6,
                   color: isStoppingOperation || (stage === 'stopped' && !isContainerRunning)
-                    ? 'var(--color-text-muted, #64748b)'
-                    : '#f87171',
-                  fontSize: '0.8rem',
+                    ? '#9ca3af'
+                    : '#dc2626',
+                  fontSize: '0.78rem',
                   fontWeight: 500,
                   cursor: isStoppingOperation || (stage === 'stopped' && !isContainerRunning)
                     ? 'not-allowed'
@@ -1251,11 +1162,11 @@ export default function AppBuildPage() {
                     ? 0.5
                     : 1,
                   textAlign: 'left',
-                  transition: 'background 0.15s ease',
+                  transition: 'background 0.12s ease',
                 }}
                 onMouseEnter={(e) => {
                   if (!isStoppingOperation && !(stage === 'stopped' && !isContainerRunning)) {
-                    e.currentTarget.style.background = 'rgba(239, 68, 68, 0.12)';
+                    e.currentTarget.style.background = '#fef2f2';
                   }
                 }}
                 onMouseLeave={(e) => {
@@ -1263,9 +1174,9 @@ export default function AppBuildPage() {
                 }}
               >
                 {isStoppingOperation ? (
-                  <Loader2 size={14} className="spin" />
+                  <Loader2 size={13} className="spin" />
                 ) : (
-                  <Square size={14} />
+                  <Square size={13} />
                 )}
                 <span>{isStoppingOperation ? 'Stopping Sandbox...' : 'Stop Dev Sandbox'}</span>
               </button>
@@ -1304,75 +1215,170 @@ export default function AppBuildPage() {
             }}
           >
             {/* Left Column: Sessions Secondary Sidebar */}
-            {showSessionsSidebar && (
-              <aside
+            {showSessionsSidebar ? (
+              <>
+                <aside
+                  style={{
+                    width: `${sessionsSidebarWidth}px`,
+                    minWidth: 200,
+                    maxWidth: 450,
+                    height: '100%',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    flexShrink: 0,
+                    borderRadius: '8px 0 0 8px',
+                    overflow: 'hidden',
+                    border: '1px solid #e2e8f0',
+                    background: '#ffffff',
+                    transition: isSessionsResizing ? 'none' : 'width 0.15s ease',
+                    boxShadow: '0 4px 20px -2px rgba(0, 0, 0, 0.08)',
+                  }}
+                >
+                  <SessionsSidebar
+                    sessions={allSessions}
+                    activeSessionId={activeSession?.id || activeSessionId}
+                    onSelectSession={handleSelectSession}
+                    onOpenNewSession={() => setIsNewSessionModalOpen(true)}
+                    onDeleteSession={handleDeleteSession}
+                    disabled={!isContainerRunning}
+                    isSwitching={isSwitchingSession}
+                    isMaximized={isSessionsMaximized}
+                    onToggleMaximized={toggleSessionsMaximized}
+                    onClose={() =>
+                      setShowSessionsSidebar(() => {
+                        try {
+                          localStorage.setItem('compassx_show_sessions_sidebar', 'false');
+                        } catch (_) {}
+                        return false;
+                      })
+                    }
+                  />
+                </aside>
+
+                {/* Draggable Divider Handle between Sessions Sidebar & Terminal */}
+                <div
+                  role="separator"
+                  aria-orientation="vertical"
+                  title="Drag to resize sessions sidebar • Double-click to reset"
+                  onMouseDown={handleSessionsResizeMouseDown}
+                  onDoubleClick={handleResetSessionsWidth}
+                  style={{
+                    width: 10,
+                    flexShrink: 0,
+                    cursor: 'col-resize',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    position: 'relative',
+                    zIndex: 20,
+                    userSelect: 'none',
+                  }}
+                  className="group"
+                >
+                  <div
+                    style={{
+                      width: 3,
+                      height: 36,
+                      borderRadius: 9999,
+                      backgroundColor: isSessionsResizing ? '#1B6EF3' : '#cbd5e1',
+                      transition: 'background-color 0.15s ease, height 0.15s ease',
+                    }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.backgroundColor = '#1B6EF3';
+                      e.currentTarget.style.height = '48px';
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.backgroundColor = isSessionsResizing ? '#1B6EF3' : '#cbd5e1';
+                      e.currentTarget.style.height = '36px';
+                    }}
+                  />
+                </div>
+              </>
+            ) : (
+              /* Collapsed Secondary Sidebar: slim rail with small expand button */
+              <div
                 style={{
-                  width: `${sessionsSidebarWidth}px`,
-                  minWidth: 200,
-                  maxWidth: 450,
+                  width: 34,
                   height: '100%',
                   display: 'flex',
                   flexDirection: 'column',
+                  alignItems: 'center',
+                  paddingTop: 8,
+                  gap: 8,
                   flexShrink: 0,
                   borderRadius: '8px 0 0 8px',
-                  overflow: 'hidden',
                   border: '1px solid #e2e8f0',
                   background: '#ffffff',
-                  transition: isSessionsResizing ? 'none' : 'width 0.15s ease',
-                  boxShadow: '0 4px 20px -2px rgba(0, 0, 0, 0.08)',
+                  zIndex: 10,
                 }}
               >
-                <SessionsSidebar
-                  sessions={devSessions}
-                  activeSessionId={activeSessionId}
-                  onSelectSession={handleSelectSession}
-                  onOpenNewSession={() => setIsNewSessionModalOpen(true)}
-                  onDeleteSession={handleDeleteSession}
-                  disabled={!isContainerRunning}
-                  isSwitching={isSwitchingSession}
-                  onClose={() =>
+                <button
+                  type="button"
+                  onClick={() =>
                     setShowSessionsSidebar(() => {
                       try {
-                        localStorage.setItem('compassx_show_sessions_sidebar', 'false');
+                        localStorage.setItem('compassx_show_sessions_sidebar', 'true');
                       } catch (_) {}
-                      return false;
+                      return true;
                     })
                   }
-                />
-              </aside>
-            )}
-
-            {/* Draggable Divider Handle between Sessions Sidebar & Terminal */}
-            {showSessionsSidebar && (
-              <div
-                role="separator"
-                aria-orientation="vertical"
-                title="Drag to resize sessions sidebar • Double-click to reset"
-                onMouseDown={handleSessionsResizeMouseDown}
-                onDoubleClick={handleResetSessionsWidth}
-                style={{
-                  width: 10,
-                  flexShrink: 0,
-                  cursor: 'col-resize',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  position: 'relative',
-                  zIndex: 20,
-                  userSelect: 'none',
-                }}
-                className="group"
-              >
-                <div
+                  title="Expand Sessions Sidebar"
                   style={{
-                    width: 3,
-                    height: 36,
-                    borderRadius: 9999,
-                    backgroundColor: isSessionsResizing ? '#4f46e5' : '#cbd5e1',
-                    transition: 'background-color 0.15s ease, height 0.15s ease',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    width: 24,
+                    height: 24,
+                    borderRadius: 5,
+                    border: '1px solid #e2e8f0',
+                    background: '#f8fafc',
+                    color: '#64748b',
+                    cursor: 'pointer',
+                    transition: 'all 0.15s ease',
                   }}
-                  className="group-hover:bg-indigo-600 group-hover:h-12"
-                />
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.color = '#0f172a';
+                    e.currentTarget.style.background = '#f1f5f9';
+                    e.currentTarget.style.borderColor = '#cbd5e1';
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.color = '#64748b';
+                    e.currentTarget.style.background = '#f8fafc';
+                    e.currentTarget.style.borderColor = '#e2e8f0';
+                  }}
+                >
+                  <PanelLeftOpen size={13} />
+                </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setShowSessionsSidebar(() => {
+                      try {
+                        localStorage.setItem('compassx_show_sessions_sidebar', 'true');
+                      } catch (_) {}
+                      return true;
+                    })
+                  }
+                  title={`${allSessions.length} active sessions (Click to expand)`}
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    background: 'transparent',
+                    border: 'none',
+                    color: '#94a3b8',
+                    cursor: 'pointer',
+                    padding: 4,
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.color = '#1B6EF3';
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.color = '#94a3b8';
+                  }}
+                >
+                  <Layers size={13} />
+                </button>
               </div>
             )}
 
@@ -1460,7 +1466,8 @@ export default function AppBuildPage() {
                 <FileExplorerSidepanel
                   appId={resolvedAppId!}
                   appName={app?.slug || app?.name || 'app'}
-                  workspaceId={devStatus?.workspace_id}
+                  workspaceId={activeWorkspace?.id || devStatus?.workspace_id}
+                  workspaceName={activeWorkspace?.name || devStatus?.workspace_name}
                   files={devFiles}
                   isLoading={isDevFilesLoading}
                   onRefresh={() => refetchDevFiles()}
@@ -1546,22 +1553,22 @@ export default function AppBuildPage() {
               <Server size={30} />
             </div>
 
-            <h2 style={{ margin: '0 0 8px', fontSize: '1.35rem', fontWeight: 700, color: 'var(--color-text, #f8fafc)' }}>
+            <h2 style={{ margin: '0 0 8px', fontSize: '1.35rem', fontWeight: 700, color: '#0f172a' }}>
               Select Host Environment
             </h2>
-            <p style={{ margin: '0 0 28px', fontSize: '0.86rem', color: 'var(--color-text-muted, #94a3b8)', lineHeight: 1.5, maxWidth: 480 }}>
+            <p style={{ margin: '0 0 28px', fontSize: '0.86rem', color: '#64748b', lineHeight: 1.5, maxWidth: 480 }}>
               Choose the runtime host image for your dev sandbox before opening the Build Studio canvas.
             </p>
 
             {startError && (
               <div
                 style={{
-                  background: 'rgba(239, 68, 68, 0.12)',
-                  border: '1px solid rgba(239, 68, 68, 0.25)',
+                  background: '#fef2f2',
+                  border: '1px solid #fecaca',
                   borderRadius: 8,
                   padding: '10px 14px',
                   fontSize: '0.8rem',
-                  color: '#fca5a5',
+                  color: '#b91c1c',
                   marginBottom: 20,
                   width: '100%',
                   textAlign: 'left',
@@ -1586,13 +1593,13 @@ export default function AppBuildPage() {
               <div
                 onClick={() => handleSelectHost('compassx')}
                 style={{
-                  border: selectedHost === 'compassx' ? '2px solid #6366f1' : '1px solid var(--color-border, #334155)',
-                  background: selectedHost === 'compassx' ? 'rgba(99, 102, 241, 0.09)' : 'var(--color-surface, #1e293b)',
+                  border: selectedHost === 'compassx' ? '2px solid #4f46e5' : '1px solid #e2e8f0',
+                  background: selectedHost === 'compassx' ? '#eef2ff' : '#ffffff',
                   borderRadius: 12,
                   padding: '18px 18px',
                   cursor: 'pointer',
                   transition: 'all 0.15s ease',
-                  boxShadow: selectedHost === 'compassx' ? '0 0 18px rgba(99, 102, 241, 0.22)' : 'none',
+                  boxShadow: selectedHost === 'compassx' ? '0 4px 12px rgba(79, 70, 229, 0.12)' : '0 1px 3px rgba(0, 0, 0, 0.05)',
                   display: 'flex',
                   flexDirection: 'column',
                   justifyContent: 'space-between',
@@ -1605,8 +1612,8 @@ export default function AppBuildPage() {
                         width: 20,
                         height: 20,
                         borderRadius: '50%',
-                        border: selectedHost === 'compassx' ? 'none' : '2px solid #64748b',
-                        background: selectedHost === 'compassx' ? '#6366f1' : 'transparent',
+                        border: selectedHost === 'compassx' ? 'none' : '2px solid #cbd5e1',
+                        background: selectedHost === 'compassx' ? '#4f46e5' : 'transparent',
                         display: 'flex',
                         alignItems: 'center',
                         justifyContent: 'center',
@@ -1620,7 +1627,7 @@ export default function AppBuildPage() {
                         display: 'inline-flex',
                         alignItems: 'center',
                         gap: 4,
-                        background: 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)',
+                        background: 'linear-gradient(135deg, #4f46e5 0%, #4338ca 100%)',
                         color: '#ffffff',
                         fontSize: '0.66rem',
                         fontWeight: 700,
@@ -1633,14 +1640,14 @@ export default function AppBuildPage() {
                     </span>
                   </div>
 
-                  <div style={{ fontSize: '1.02rem', fontWeight: 650, color: 'var(--color-text, #f8fafc)' }}>
+                  <div style={{ fontSize: '1.02rem', fontWeight: 650, color: '#0f172a' }}>
                     CompassX Host
                   </div>
                   <div
                     style={{
                       fontSize: '0.72rem',
                       fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
-                      color: '#818cf8',
+                      color: '#4f46e5',
                       marginTop: 4,
                     }}
                   >
@@ -1651,7 +1658,7 @@ export default function AppBuildPage() {
                 <p
                   style={{
                     fontSize: '0.8rem',
-                    color: 'var(--color-text-muted, #94a3b8)',
+                    color: '#64748b',
                     lineHeight: 1.45,
                     marginTop: 12,
                     marginBottom: 0,
@@ -1665,13 +1672,13 @@ export default function AppBuildPage() {
               <div
                 onClick={() => handleSelectHost('omnigent')}
                 style={{
-                  border: selectedHost === 'omnigent' ? '2px solid #6366f1' : '1px solid var(--color-border, #334155)',
-                  background: selectedHost === 'omnigent' ? 'rgba(99, 102, 241, 0.09)' : 'var(--color-surface, #1e293b)',
+                  border: selectedHost === 'omnigent' ? '2px solid #4f46e5' : '1px solid #e2e8f0',
+                  background: selectedHost === 'omnigent' ? '#eef2ff' : '#ffffff',
                   borderRadius: 12,
                   padding: '18px 18px',
                   cursor: 'pointer',
                   transition: 'all 0.15s ease',
-                  boxShadow: selectedHost === 'omnigent' ? '0 0 18px rgba(99, 102, 241, 0.22)' : 'none',
+                  boxShadow: selectedHost === 'omnigent' ? '0 4px 12px rgba(79, 70, 229, 0.12)' : '0 1px 3px rgba(0, 0, 0, 0.05)',
                   display: 'flex',
                   flexDirection: 'column',
                   justifyContent: 'space-between',
@@ -1684,8 +1691,8 @@ export default function AppBuildPage() {
                         width: 20,
                         height: 20,
                         borderRadius: '50%',
-                        border: selectedHost === 'omnigent' ? 'none' : '2px solid #64748b',
-                        background: selectedHost === 'omnigent' ? '#6366f1' : 'transparent',
+                        border: selectedHost === 'omnigent' ? 'none' : '2px solid #cbd5e1',
+                        background: selectedHost === 'omnigent' ? '#4f46e5' : 'transparent',
                         display: 'flex',
                         alignItems: 'center',
                         justifyContent: 'center',
@@ -1698,8 +1705,8 @@ export default function AppBuildPage() {
                       style={{
                         display: 'inline-flex',
                         alignItems: 'center',
-                        background: 'rgba(255, 255, 255, 0.08)',
-                        color: '#94a3b8',
+                        background: '#f1f5f9',
+                        color: '#475569',
                         fontSize: '0.66rem',
                         fontWeight: 600,
                         padding: '2px 8px',
@@ -1710,14 +1717,14 @@ export default function AppBuildPage() {
                     </span>
                   </div>
 
-                  <div style={{ fontSize: '1.02rem', fontWeight: 650, color: 'var(--color-text, #f8fafc)' }}>
+                  <div style={{ fontSize: '1.02rem', fontWeight: 650, color: '#0f172a' }}>
                     Omnigent Host
                   </div>
                   <div
                     style={{
                       fontSize: '0.72rem',
                       fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
-                      color: '#94a3b8',
+                      color: '#64748b',
                       marginTop: 4,
                     }}
                   >
@@ -1728,7 +1735,7 @@ export default function AppBuildPage() {
                 <p
                   style={{
                     fontSize: '0.8rem',
-                    color: 'var(--color-text-muted, #94a3b8)',
+                    color: '#64748b',
                     lineHeight: 1.45,
                     marginTop: 12,
                     marginBottom: 0,
@@ -1740,22 +1747,22 @@ export default function AppBuildPage() {
             </div>
 
             {/* Subtext info */}
-            <div style={{ fontSize: '0.76rem', color: 'var(--color-text-muted, #64748b)', marginBottom: 20, maxWidth: 540 }}>
+            <div style={{ fontSize: '0.76rem', color: '#64748b', marginBottom: 20, maxWidth: 540 }}>
               CompassX Host is cloned from the Omnigent Host base image and provides the base runtime for sandbox containers.
             </div>
 
             {/* Coding Agent Selection Section */}
             <div style={{ width: '100%', marginBottom: 24, textAlign: 'left' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
-                <Cpu size={15} color="#818cf8" />
-                <span style={{ fontSize: '0.96rem', fontWeight: 650, color: 'var(--color-text, #f8fafc)' }}>
+                <Cpu size={15} color="#4f46e5" />
+                <span style={{ fontSize: '0.96rem', fontWeight: 650, color: '#0f172a' }}>
                   Select Coding Agent
                 </span>
-                <span style={{ fontSize: '0.72rem', color: 'var(--color-text-muted, #94a3b8)', marginLeft: 4 }}>
+                <span style={{ fontSize: '0.72rem', color: '#64748b', marginLeft: 4 }}>
                   (Executes in container sandbox PTY)
                 </span>
               </div>
-              <p style={{ margin: '0 0 12px', fontSize: '0.79rem', color: 'var(--color-text-muted, #94a3b8)' }}>
+              <p style={{ margin: '0 0 12px', fontSize: '0.79rem', color: '#64748b' }}>
                 Choose which autonomous agent to provision and run natively in your dev sandbox canvas:
               </p>
 
@@ -1774,13 +1781,13 @@ export default function AppBuildPage() {
                       key={agentOpt.id}
                       onClick={() => handleSelectAgent(agentOpt.id)}
                       style={{
-                        border: isSelected ? `2px solid ${agentOpt.color}` : '1px solid var(--color-border, #334155)',
-                        background: isSelected ? agentOpt.accentBg : 'var(--color-surface, #1e293b)',
+                        border: isSelected ? '2px solid #4f46e5' : '1px solid #e2e8f0',
+                        background: isSelected ? '#eef2ff' : '#ffffff',
                         borderRadius: 10,
                         padding: '14px 14px',
                         cursor: 'pointer',
                         transition: 'all 0.15s ease',
-                        boxShadow: isSelected ? `0 0 16px ${agentOpt.accentBg}` : 'none',
+                        boxShadow: isSelected ? '0 4px 12px rgba(79, 70, 229, 0.12)' : '0 1px 3px rgba(0, 0, 0, 0.05)',
                         display: 'flex',
                         flexDirection: 'column',
                         justifyContent: 'space-between',
@@ -1793,8 +1800,8 @@ export default function AppBuildPage() {
                               width: 18,
                               height: 18,
                               borderRadius: '50%',
-                              border: isSelected ? 'none' : '2px solid #64748b',
-                              background: isSelected ? agentOpt.color : 'transparent',
+                              border: isSelected ? 'none' : '2px solid #cbd5e1',
+                              background: isSelected ? '#4f46e5' : 'transparent',
                               display: 'flex',
                               alignItems: 'center',
                               justifyContent: 'center',
@@ -1807,8 +1814,8 @@ export default function AppBuildPage() {
                             style={{
                               display: 'inline-flex',
                               alignItems: 'center',
-                              background: isSelected ? agentOpt.accentBg : 'rgba(255, 255, 255, 0.06)',
-                              color: isSelected ? agentOpt.color : '#94a3b8',
+                              background: isSelected ? '#4f46e5' : '#f1f5f9',
+                              color: isSelected ? '#ffffff' : '#475569',
                               fontSize: '0.62rem',
                               fontWeight: 700,
                               padding: '1px 6px',
@@ -1820,14 +1827,14 @@ export default function AppBuildPage() {
                           </span>
                         </div>
 
-                        <div style={{ fontSize: '0.94rem', fontWeight: 650, color: 'var(--color-text, #f8fafc)' }}>
+                        <div style={{ fontSize: '0.94rem', fontWeight: 650, color: isSelected ? '#4338ca' : '#0f172a' }}>
                           {agentOpt.name}
                         </div>
                         <div
                           style={{
                             fontSize: '0.7rem',
                             fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
-                            color: agentOpt.color,
+                            color: isSelected ? '#4f46e5' : '#64748b',
                             marginTop: 2,
                           }}
                         >
@@ -1838,7 +1845,7 @@ export default function AppBuildPage() {
                       <p
                         style={{
                           fontSize: '0.74rem',
-                          color: 'var(--color-text-muted, #94a3b8)',
+                          color: '#64748b',
                           lineHeight: 1.4,
                           marginTop: 10,
                           marginBottom: 0,

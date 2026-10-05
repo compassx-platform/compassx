@@ -1,5 +1,5 @@
 import React, { useRef, useState, useCallback, useMemo, useEffect } from 'react';
-import { Terminal as TerminalIcon, Play, Send, Loader2, Lock, Cpu, Sparkles } from 'lucide-react';
+import { Terminal as TerminalIcon, Play, Send, Loader2 } from 'lucide-react';
 import { getAccessToken } from '@/lib/auth';
 import { useToast } from '@/lib/toast';
 import {
@@ -8,32 +8,6 @@ import {
 } from '@/components/terminal/TerminalView';
 import type { ConnectionState } from '@/components/terminal/TerminalSession';
 
-const AGENT_META: Record<string, { name: string; color: string; accentBg: string; borderColor: string }> = {
-  opencode: {
-    name: 'OpenCode',
-    color: '#38bdf8',
-    accentBg: 'rgba(56, 189, 248, 0.15)',
-    borderColor: 'rgba(56, 189, 248, 0.4)',
-  },
-  pi: {
-    name: 'Pi CLI',
-    color: '#c084fc',
-    accentBg: 'rgba(192, 132, 252, 0.15)',
-    borderColor: 'rgba(192, 132, 252, 0.4)',
-  },
-  antigravity: {
-    name: 'Antigravity',
-    color: '#4ade80',
-    accentBg: 'rgba(74, 222, 128, 0.15)',
-    borderColor: 'rgba(74, 222, 128, 0.4)',
-  },
-  agy: {
-    name: 'Antigravity',
-    color: '#4ade80',
-    accentBg: 'rgba(74, 222, 128, 0.15)',
-    borderColor: 'rgba(74, 222, 128, 0.4)',
-  },
-};
 
 interface DevTerminalProps {
   appId: string;
@@ -177,8 +151,6 @@ export function DevTerminal({
 
   const isConnected = connState?.kind === 'connected';
   const showLoader = isSessionLoading || isSwitchingSession || connState?.kind === 'connecting';
-  const agentKey = (agent || 'opencode').toLowerCase();
-  const activeMeta = AGENT_META[agentKey] || AGENT_META.opencode;
 
   return (
     <div
@@ -209,7 +181,7 @@ export function DevTerminal({
           position: 'relative',
         }}
       >
-        {/* Session Transition Loader Overlay */}
+        {/* Simple Session Loader Overlay */}
         {showLoader && (
           <div
             style={{
@@ -220,166 +192,21 @@ export function DevTerminal({
               flexDirection: 'column',
               alignItems: 'center',
               justifyContent: 'center',
-              background: 'rgba(9, 13, 22, 0.88)',
-              backdropFilter: 'blur(6px)',
-              padding: '24px',
-              animation: 'fadeIn 0.2s ease-out',
+              background: 'rgba(10, 14, 23, 0.75)',
+              backdropFilter: 'blur(3px)',
+              gap: 10,
             }}
           >
-            <div
+            <Loader2 size={24} className="spin" style={{ color: '#1B6EF3' }} />
+            <span
               style={{
-                display: 'flex',
-                flexDirection: 'column',
-                alignItems: 'center',
-                gap: 16,
-                maxWidth: 440,
-                textAlign: 'center',
+                fontSize: '0.82rem',
+                color: '#94a3b8',
+                fontWeight: 500,
               }}
             >
-              {/* Glowing Agent Icon with Spinning Ring */}
-              <div
-                style={{
-                  position: 'relative',
-                  width: 58,
-                  height: 58,
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                }}
-              >
-                <div
-                  style={{
-                    position: 'absolute',
-                    inset: 0,
-                    borderRadius: '50%',
-                    border: `2.5px solid ${activeMeta.accentBg}`,
-                    borderTopColor: activeMeta.color,
-                    animation: 'spin 0.9s linear infinite',
-                  }}
-                />
-                <div
-                  style={{
-                    width: 44,
-                    height: 44,
-                    borderRadius: '50%',
-                    background: activeMeta.accentBg,
-                    border: `1px solid ${activeMeta.borderColor}`,
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    color: activeMeta.color,
-                    boxShadow: `0 0 24px ${activeMeta.accentBg}`,
-                  }}
-                >
-                  <Cpu size={22} />
-                </div>
-              </div>
-
-              {/* Status Header */}
-              <div>
-                <div
-                  style={{
-                    fontSize: '1rem',
-                    fontWeight: 650,
-                    color: '#f8fafc',
-                    letterSpacing: '-0.2px',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    gap: 8,
-                  }}
-                >
-                  <span>{sessionTitle ? `Loading "${sessionTitle}"` : 'Loading Dev Session...'}</span>
-                </div>
-                <div
-                  style={{
-                    fontSize: '0.78rem',
-                    color: '#94a3b8',
-                    marginTop: 4,
-                    lineHeight: 1.4,
-                  }}
-                >
-                  Connecting to container tmux session & initializing {activeMeta.name}...
-                </div>
-              </div>
-
-              {/* Status Badges */}
-              <div
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 8,
-                  flexWrap: 'wrap',
-                  justifyContent: 'center',
-                }}
-              >
-                <span
-                  style={{
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: 5,
-                    padding: '3px 8px',
-                    borderRadius: 6,
-                    fontSize: '0.7rem',
-                    fontWeight: 600,
-                    background: activeMeta.accentBg,
-                    color: activeMeta.color,
-                    border: `1px solid ${activeMeta.borderColor}`,
-                  }}
-                >
-                  <Lock size={10} />
-                  <span>Locked: {activeMeta.name}</span>
-                </span>
-                <span
-                  style={{
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: 5,
-                    padding: '3px 8px',
-                    borderRadius: 6,
-                    fontSize: '0.7rem',
-                    fontWeight: 600,
-                    background: 'rgba(255, 255, 255, 0.06)',
-                    color: '#cbd5e1',
-                    border: '1px solid rgba(255, 255, 255, 0.1)',
-                  }}
-                >
-                  <Loader2 size={10} className="spin" color="#38bdf8" />
-                  <span>Attaching tmux PTY...</span>
-                </span>
-              </div>
-
-              {/* Slim Indeterminate Progress Bar */}
-              <div
-                style={{
-                  width: 220,
-                  height: 3,
-                  background: 'rgba(255, 255, 255, 0.08)',
-                  borderRadius: 2,
-                  overflow: 'hidden',
-                  position: 'relative',
-                }}
-              >
-                <div
-                  style={{
-                    position: 'absolute',
-                    top: 0,
-                    left: 0,
-                    bottom: 0,
-                    width: '50%',
-                    background: `linear-gradient(90deg, transparent, ${activeMeta.color}, transparent)`,
-                    animation: 'indeterminateProgress 1.4s ease-in-out infinite',
-                  }}
-                />
-              </div>
-            </div>
-            <style>{`
-              @keyframes indeterminateProgress {
-                0% { left: -45%; width: 40%; }
-                50% { left: 25%; width: 55%; }
-                100% { left: 100%; width: 40%; }
-              }
-            `}</style>
+              Loading session...
+            </span>
           </div>
         )}
 

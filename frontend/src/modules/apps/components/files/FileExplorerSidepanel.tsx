@@ -15,6 +15,7 @@ export interface FileExplorerSidepanelProps {
   appId: string;
   appName?: string;
   workspaceId?: string;
+  workspaceName?: string;
   files: WorkspaceFile[];
   isLoading?: boolean;
   onRefresh?: () => void;
@@ -29,6 +30,7 @@ export function FileExplorerSidepanel({
   appId,
   appName = 'app',
   workspaceId,
+  workspaceName,
   files = [],
   isLoading = false,
   onRefresh,
@@ -62,11 +64,10 @@ export function FileExplorerSidepanel({
     }
   };
 
-  // Construct working folder path like: /workspaces/app-512a55f7eb854d7c/workflow_redesign
-  const cleanAppName = appName.toLowerCase().replace(/\s+/g, '_');
-  const workingFolderPath = workspaceId
-    ? `/workspaces/${workspaceId}/${cleanAppName}`
-    : `/workspaces/${appId}/${cleanAppName}`;
+  // Construct working folder path like: /workspaces/app-512a55f7eb854d7c/gnmi
+  const cleanAppId = appId.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/^-+|-+$/g, '');
+  const activeSandboxName = (workspaceName || workspaceId || 'default').toLowerCase().replace(/[^a-zA-Z0-9_-]/g, '-').replace(/^-+|-+$/g, '');
+  const workingFolderPath = `/workspaces/${cleanAppId}/${activeSandboxName}`;
 
   return (
     <div className="flex h-full w-full min-h-0 flex-col overflow-hidden bg-white text-neutral-800 font-mono">
@@ -151,6 +152,7 @@ export function FileExplorerSidepanel({
           <FileViewer
             appId={appId}
             path={selectedFilePath}
+            workspaceId={workspaceId}
             onClose={() => onSelectFilePath(null)}
           />
         ) : (
@@ -161,7 +163,7 @@ export function FileExplorerSidepanel({
             onFileSelect={(path) => onSelectFilePath(path)}
             selectedPath={selectedFilePath}
             onClose={onClose}
-            workspaceName={cleanAppName}
+            workspaceName={activeSandboxName}
             workspacePath={workingFolderPath}
           />
         )}

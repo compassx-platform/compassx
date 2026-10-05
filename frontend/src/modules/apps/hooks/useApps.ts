@@ -738,12 +738,14 @@ export interface WorkspaceFileContent {
   ext: string;
 }
 
-export function useDevFiles(appId?: string, enabled = true) {
+export function useDevFiles(appId?: string, workspaceId?: string, enabled = true) {
   return useQuery({
-    queryKey: ['app-dev-files', appId],
+    queryKey: ['app-dev-files', appId, workspaceId],
     queryFn: async () => {
       if (!appId) throw new Error('App ID required');
-      const res = await api.get<WorkspaceFile[]>(`/apps/${appId}/dev/files`);
+      const params: Record<string, string> = {};
+      if (workspaceId) params.workspace_id = workspaceId;
+      const res = await api.get<WorkspaceFile[]>(`/apps/${appId}/dev/files`, { params });
       return res.data;
     },
     enabled: !!appId && enabled,
@@ -751,13 +753,15 @@ export function useDevFiles(appId?: string, enabled = true) {
   });
 }
 
-export function useDevFileContent(appId?: string, filePath?: string | null, enabled = true) {
+export function useDevFileContent(appId?: string, filePath?: string | null, workspaceId?: string, enabled = true) {
   return useQuery({
-    queryKey: ['app-dev-file-content', appId, filePath],
+    queryKey: ['app-dev-file-content', appId, filePath, workspaceId],
     queryFn: async () => {
       if (!appId || !filePath) throw new Error('App ID and File path required');
+      const params: Record<string, string> = { path: filePath };
+      if (workspaceId) params.workspace_id = workspaceId;
       const res = await api.get<WorkspaceFileContent>(`/apps/${appId}/dev/file`, {
-        params: { path: filePath },
+        params,
       });
       return res.data;
     },
@@ -773,19 +777,26 @@ export function useWriteDevFile() {
       appId,
       path,
       content,
+      workspaceId,
     }: {
       appId: string;
       path: string;
       content: string;
+      workspaceId?: string;
     }) => {
+      const params: Record<string, string> = {};
+      if (workspaceId) params.workspace_id = workspaceId;
       const res = await api.put<WorkspaceFileContent>(`/apps/${appId}/dev/file`, {
         path,
         content,
-      });
+        workspace_id: workspaceId,
+      }, { params });
       return res.data;
     },
-    onSuccess: (_, { appId, path }) => {
+    onSuccess: (_, { appId, path, workspaceId }) => {
+      qc.invalidateQueries({ queryKey: ['app-dev-files', appId, workspaceId] });
       qc.invalidateQueries({ queryKey: ['app-dev-files', appId] });
+      qc.invalidateQueries({ queryKey: ['app-dev-file-content', appId, path, workspaceId] });
       qc.invalidateQueries({ queryKey: ['app-dev-file-content', appId, path] });
     },
   });
@@ -840,7 +851,7 @@ export interface UpdateDevSessionPayload {
 }
 
 export function useDevSessions(appId?: string, enabled = true) {
-  return useQuery({
+  return useQuery<DevSession[]>({
     queryKey: ['app-dev-sessions', appId],
     queryFn: async () => {
       if (!appId) throw new Error('App ID required');
@@ -861,7 +872,14 @@ export function useCreateDevSession(appId?: string) {
       const res = await api.post<DevSession>(`/apps/${appId}/dev/sessions`, payload);
       return res.data;
     },
-    onSuccess: () => {
+    onSuccess: (newSession) => {
+      qc.setQueryData<DevSession[]>(['app-dev-sessions', appId], (old = []) => {
+        const exists = old.some((s) => s.id === newSession.id);
+        if (exists) {
+          return old.map((s) => (s.id === newSession.id ? newSession : s));
+        }
+        return [newSession, ...old];
+      });
       qc.invalidateQueries({ queryKey: ['app-dev-sessions', appId] });
     },
   });
@@ -881,7 +899,10 @@ export function useUpdateDevSession(appId?: string) {
       const res = await api.patch<DevSession>(`/apps/${appId}/dev/sessions/${sessionId}`, payload);
       return res.data;
     },
-    onSuccess: () => {
+    onSuccess: (updated) => {
+      qc.setQueryData<DevSession[]>(['app-dev-sessions', appId], (old = []) =>
+        old.map((s) => (s.id === updated.id ? updated : s))
+      );
       qc.invalidateQueries({ queryKey: ['app-dev-sessions', appId] });
     },
   });
@@ -897,7 +918,10 @@ export function useDeleteDevSession(appId?: string) {
       );
       return res.data;
     },
-    onSuccess: () => {
+    onSuccess: (_, sessionId) => {
+      qc.setQueryData<DevSession[]>(['app-dev-sessions', appId], (old = []) =>
+        old.filter((s) => s.id !== sessionId)
+      );
       qc.invalidateQueries({ queryKey: ['app-dev-sessions', appId] });
     },
   });

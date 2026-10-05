@@ -35,6 +35,19 @@ class DevTerminalService:
                         ws_name = ws.name
             except Exception:
                 ws_name = workspace_id
+        else:
+            try:
+                from app.database import SystemSessionLocal
+                from app.models.dev_workspace import DevWorkspace
+                with SystemSessionLocal() as db:
+                    ws = db.query(DevWorkspace).filter(
+                        DevWorkspace.app_id == app.id,
+                        DevWorkspace.status == "active",
+                    ).first()
+                    if ws and ws.name:
+                        ws_name = ws.name
+            except Exception:
+                pass
         return f"{clean_id}/{ws_name}"
 
     def exec_command(
@@ -67,6 +80,13 @@ class DevTerminalService:
         ws_folder = self._resolve_workspace_folder(app, workspace_id=workspace_id, workspace_name=workspace_name)
         leaf_ws = ws_folder.split("/")[-1]
 
+        # Ensure sandbox worktree exists inside container before attaching terminal
+        try:
+            from app.services.omnigent_dev_service import omnigent_dev_service
+            omnigent_dev_service.ensure_workspace_worktree(app, workspace_id=leaf_ws)
+        except Exception as wt_err:
+            logger.debug("Failed ensuring workspace worktree on terminal connect: %s", wt_err)
+
         # Resolve DevSession if session_id is provided or resolve active session for app
         session_name = None
         cli_cmd = None
@@ -91,7 +111,10 @@ class DevTerminalService:
 
         if session_obj:
             resolved_agent = session_obj.agent
-            session_name = session_obj.tmux_session_name
+            base_tmux_name = session_obj.tmux_session_name
+            # Scope tmux target to include active workspace folder so agent works in that worktree
+            clean_ws = re.sub(r"[^a-zA-Z0-9_-]", "_", leaf_ws).strip("_") or "default"
+            session_name = f"{base_tmux_name}_{clean_ws}"[:60]
             cli_cmd = dev_session_service.get_session_cli_command(session_obj)
             dev_session_service.touch_session(app.id, session_obj.id)
 

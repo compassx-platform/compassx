@@ -2,12 +2,7 @@ import React, { useState, useEffect } from 'react';
 import {
   X,
   Terminal,
-  Lock,
-  Sparkles,
-  Zap,
-  Bot,
   Loader2,
-  Check,
   Cpu,
 } from 'lucide-react';
 import { AGENT_OPTIONS, type SupportedAgent } from '../pages/AppBuildPage';
@@ -30,9 +25,15 @@ export function NewSessionModal({
 }: NewSessionModalProps) {
   const [selectedAgent, setSelectedAgent] = useState<SupportedAgent>('opencode');
   const [title, setTitle] = useState('');
+  const [isCustomTitle, setIsCustomTitle] = useState(false);
   const [selectedModel, setSelectedModel] = useState<string>('');
 
   const { data: models = [], isLoading: isLoadingModels } = useAppDevModels(appId);
+
+  const getDefaultTitleForAgent = (agentId: SupportedAgent) => {
+    const agentObj = AGENT_OPTIONS.find((a) => a.id === agentId);
+    return `Session with ${agentObj?.name || 'Agent'}`;
+  };
 
   // Set default model when models load
   useEffect(() => {
@@ -44,22 +45,26 @@ export function NewSessionModal({
     }
   }, [models, selectedModel]);
 
-  // Reset or set default title when opened or agent changes
+  // Reset to default title for current agent when modal opens
   useEffect(() => {
     if (isOpen) {
-      const agentObj = AGENT_OPTIONS.find((a) => a.id === selectedAgent);
-      const defaultName = `Session with ${agentObj?.name || 'Agent'} (${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })})`;
-      if (!title.trim()) {
-        setTitle(defaultName);
-      }
+      setIsCustomTitle(false);
+      setTitle(getDefaultTitleForAgent(selectedAgent));
     }
-  }, [isOpen, selectedAgent]);
+  }, [isOpen]);
+
+  const handleAgentChange = (newAgent: SupportedAgent) => {
+    setSelectedAgent(newAgent);
+    if (!isCustomTitle) {
+      setTitle(getDefaultTitleForAgent(newAgent));
+    }
+  };
 
   if (!isOpen) return null;
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    const cleanTitle = title.trim() || `Session (${selectedAgent})`;
+    const cleanTitle = title.trim() || getDefaultTitleForAgent(selectedAgent);
     onSubmit(cleanTitle, selectedAgent, selectedModel || undefined);
   };
 
@@ -74,7 +79,7 @@ export function NewSessionModal({
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        background: 'rgba(0, 0, 0, 0.72)',
+        background: 'rgba(15, 23, 42, 0.45)',
         backdropFilter: 'blur(4px)',
         padding: '16px',
       }}
@@ -87,11 +92,11 @@ export function NewSessionModal({
       <div
         style={{
           width: '100%',
-          maxWidth: '540px',
-          background: 'var(--color-surface, #1e293b)',
-          border: '1px solid var(--color-border, #334155)',
+          maxWidth: '480px',
+          background: '#ffffff',
+          border: '1px solid #e5e7eb',
           borderRadius: '12px',
-          boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.65)',
+          boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)',
           overflow: 'hidden',
           display: 'flex',
           flexDirection: 'column',
@@ -102,11 +107,11 @@ export function NewSessionModal({
         <div
           style={{
             padding: '16px 20px',
-            borderBottom: '1px solid var(--color-border, #334155)',
+            borderBottom: '1px solid #f1f5f9',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'space-between',
-            background: 'rgba(15, 23, 42, 0.5)',
+            background: '#ffffff',
           }}
         >
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -115,12 +120,12 @@ export function NewSessionModal({
                 width: 32,
                 height: 32,
                 borderRadius: 8,
-                background: 'rgba(99, 102, 241, 0.15)',
-                border: '1px solid rgba(99, 102, 241, 0.3)',
+                background: '#EBF2FF',
+                border: '1px solid #dbeafe',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
-                color: '#818cf8',
+                color: '#1B6EF3',
               }}
             >
               <Terminal size={17} />
@@ -130,7 +135,7 @@ export function NewSessionModal({
                 style={{
                   fontSize: '0.98rem',
                   fontWeight: 650,
-                  color: 'var(--color-text, #f8fafc)',
+                  color: '#0f172a',
                   margin: 0,
                 }}
               >
@@ -139,7 +144,7 @@ export function NewSessionModal({
               <p
                 style={{
                   fontSize: '0.74rem',
-                  color: 'var(--color-text-muted, #94a3b8)',
+                  color: '#64748b',
                   margin: '2px 0 0 0',
                 }}
               >
@@ -154,13 +159,22 @@ export function NewSessionModal({
             style={{
               background: 'transparent',
               border: 'none',
-              padding: 6,
-              color: 'var(--color-text-muted, #94a3b8)',
+              padding: 5,
+              color: '#64748b',
               cursor: isCreating ? 'not-allowed' : 'pointer',
               borderRadius: 6,
               display: 'inline-flex',
               alignItems: 'center',
               justifyContent: 'center',
+              transition: 'background 0.15s ease, color 0.15s ease',
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.background = '#f1f5f9';
+              e.currentTarget.style.color = '#0f172a';
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.background = 'transparent';
+              e.currentTarget.style.color = '#64748b';
             }}
           >
             <X size={18} />
@@ -184,7 +198,7 @@ export function NewSessionModal({
                   display: 'block',
                   fontSize: '0.78rem',
                   fontWeight: 600,
-                  color: 'var(--color-text, #f8fafc)',
+                  color: '#334155',
                   marginBottom: 6,
                 }}
               >
@@ -193,150 +207,81 @@ export function NewSessionModal({
               <input
                 type="text"
                 value={title}
-                onChange={(e) => setTitle(e.target.value)}
+                onChange={(e) => {
+                  setTitle(e.target.value);
+                  setIsCustomTitle(e.target.value.trim().length > 0);
+                }}
                 placeholder="e.g. Implement authentication, Fix styling bug..."
                 required
                 disabled={isCreating}
                 style={{
                   width: '100%',
                   padding: '9px 12px',
-                  borderRadius: 6,
-                  border: '1px solid var(--color-border, #334155)',
-                  background: 'rgba(15, 23, 42, 0.7)',
-                  color: 'var(--color-text, #f8fafc)',
+                  borderRadius: 7,
+                  border: '1px solid #d1d5db',
+                  background: '#ffffff',
+                  color: '#0f172a',
                   fontSize: '0.85rem',
                   outline: 'none',
                   boxSizing: 'border-box',
+                  transition: 'border-color 0.15s ease, box-shadow 0.15s ease',
+                }}
+                onFocus={(e) => {
+                  e.currentTarget.style.borderColor = '#1B6EF3';
+                  e.currentTarget.style.boxShadow = '0 0 0 3px rgba(27, 110, 243, 0.12)';
+                }}
+                onBlur={(e) => {
+                  e.currentTarget.style.borderColor = '#d1d5db';
+                  e.currentTarget.style.boxShadow = 'none';
                 }}
               />
             </div>
 
-            {/* Agent Selection Cards */}
+            {/* Select AI Coding Agent */}
             <div>
-              <div
+              <label
                 style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                  marginBottom: 8,
+                  display: 'block',
+                  fontSize: '0.78rem',
+                  fontWeight: 600,
+                  color: '#334155',
+                  marginBottom: 6,
                 }}
               >
-                <label
-                  style={{
-                    fontSize: '0.78rem',
-                    fontWeight: 600,
-                    color: 'var(--color-text, #f8fafc)',
-                    margin: 0,
-                  }}
-                >
-                  Select AI Coding Agent
-                </label>
-                <span
-                  style={{
-                    fontSize: '0.7rem',
-                    color: 'var(--color-text-muted, #94a3b8)',
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: 4,
-                  }}
-                >
-                  <Lock size={10} color="#f59e0b" />
-                  Locked for this session
-                </span>
-              </div>
-
-              <div
+                Select AI Coding Agent
+              </label>
+              <select
+                value={selectedAgent}
+                onChange={(e) => handleAgentChange(e.target.value as SupportedAgent)}
+                disabled={isCreating}
                 style={{
-                  display: 'grid',
-                  gridTemplateColumns: 'repeat(3, 1fr)',
-                  gap: 10,
+                  width: '100%',
+                  padding: '9px 12px',
+                  borderRadius: 7,
+                  border: '1px solid #d1d5db',
+                  background: '#ffffff',
+                  color: '#0f172a',
+                  fontSize: '0.84rem',
+                  outline: 'none',
+                  boxSizing: 'border-box',
+                  cursor: isCreating ? 'not-allowed' : 'pointer',
+                  transition: 'border-color 0.15s ease, box-shadow 0.15s ease',
+                }}
+                onFocus={(e) => {
+                  e.currentTarget.style.borderColor = '#1B6EF3';
+                  e.currentTarget.style.boxShadow = '0 0 0 3px rgba(27, 110, 243, 0.12)';
+                }}
+                onBlur={(e) => {
+                  e.currentTarget.style.borderColor = '#d1d5db';
+                  e.currentTarget.style.boxShadow = 'none';
                 }}
               >
-                {AGENT_OPTIONS.map((opt) => {
-                  const isSelected = selectedAgent === opt.id;
-                  return (
-                    <div
-                      key={opt.id}
-                      onClick={() => !isCreating && setSelectedAgent(opt.id)}
-                      style={{
-                        padding: '12px 10px',
-                        borderRadius: 8,
-                        border: isSelected
-                          ? `1.5px solid ${opt.color}`
-                          : '1px solid var(--color-border, #334155)',
-                        background: isSelected
-                          ? opt.accentBg
-                          : 'rgba(15, 23, 42, 0.45)',
-                        cursor: isCreating ? 'not-allowed' : 'pointer',
-                        transition: 'all 0.15s ease',
-                        position: 'relative',
-                        display: 'flex',
-                        flexDirection: 'column',
-                        gap: 6,
-                      }}
-                    >
-                      <div
-                        style={{
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'space-between',
-                        }}
-                      >
-                        <span
-                          style={{
-                            fontSize: '0.62rem',
-                            fontWeight: 700,
-                            padding: '1px 5px',
-                            borderRadius: 4,
-                            background: opt.color,
-                            color: '#0f172a',
-                            letterSpacing: '0.4px',
-                          }}
-                        >
-                          {opt.badge}
-                        </span>
-                        {isSelected && (
-                          <div
-                            style={{
-                              width: 14,
-                              height: 14,
-                              borderRadius: '50%',
-                              background: opt.color,
-                              display: 'flex',
-                              alignItems: 'center',
-                              justifyContent: 'center',
-                              color: '#0f172a',
-                            }}
-                          >
-                            <Check size={10} strokeWidth={3} />
-                          </div>
-                        )}
-                      </div>
-
-                      <div
-                        style={{
-                          fontSize: '0.86rem',
-                          fontWeight: 650,
-                          color: isSelected ? opt.color : 'var(--color-text, #f8fafc)',
-                        }}
-                      >
-                        {opt.name}
-                      </div>
-
-                      <div
-                        style={{
-                          fontSize: '0.68rem',
-                          color: 'var(--color-text-muted, #94a3b8)',
-                          lineHeight: 1.3,
-                          flex: 1,
-                        }}
-                      >
-                        {opt.tagline}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
+                {AGENT_OPTIONS.map((opt) => (
+                  <option key={opt.id} value={opt.id}>
+                    {opt.name}
+                  </option>
+                ))}
+              </select>
             </div>
 
             {/* AI Model Selection */}
@@ -353,20 +298,20 @@ export function NewSessionModal({
                   style={{
                     fontSize: '0.78rem',
                     fontWeight: 600,
-                    color: 'var(--color-text, #f8fafc)',
+                    color: '#334155',
                     margin: 0,
                     display: 'flex',
                     alignItems: 'center',
                     gap: 6,
                   }}
                 >
-                  <Cpu size={14} color="#818cf8" />
+                  <Cpu size={14} color="#64748b" />
                   AI Gateway Model
                 </label>
                 <span
                   style={{
                     fontSize: '0.7rem',
-                    color: 'var(--color-text-muted, #94a3b8)',
+                    color: '#64748b',
                   }}
                 >
                   Governed via CompassX AI Gateway
@@ -380,10 +325,10 @@ export function NewSessionModal({
                     alignItems: 'center',
                     gap: 8,
                     padding: '9px 12px',
-                    borderRadius: 6,
-                    background: 'rgba(15, 23, 42, 0.7)',
-                    border: '1px solid var(--color-border, #334155)',
-                    color: 'var(--color-text-muted, #94a3b8)',
+                    borderRadius: 7,
+                    background: '#f8fafc',
+                    border: '1px solid #e2e8f0',
+                    color: '#64748b',
                     fontSize: '0.8rem',
                   }}
                 >
@@ -399,23 +344,32 @@ export function NewSessionModal({
                     style={{
                       width: '100%',
                       padding: '9px 12px',
-                      borderRadius: 6,
-                      border: '1px solid var(--color-border, #334155)',
-                      background: 'rgba(15, 23, 42, 0.7)',
-                      color: 'var(--color-text, #f8fafc)',
+                      borderRadius: 7,
+                      border: '1px solid #d1d5db',
+                      background: '#ffffff',
+                      color: '#0f172a',
                       fontSize: '0.84rem',
                       outline: 'none',
                       boxSizing: 'border-box',
                       cursor: isCreating ? 'not-allowed' : 'pointer',
+                      transition: 'border-color 0.15s ease, box-shadow 0.15s ease',
+                    }}
+                    onFocus={(e) => {
+                      e.currentTarget.style.borderColor = '#1B6EF3';
+                      e.currentTarget.style.boxShadow = '0 0 0 3px rgba(27, 110, 243, 0.12)';
+                    }}
+                    onBlur={(e) => {
+                      e.currentTarget.style.borderColor = '#d1d5db';
+                      e.currentTarget.style.boxShadow = 'none';
                     }}
                   >
                     {models.map((m) => (
-                      <option key={m.id} value={m.id} style={{ background: '#1e293b', color: '#f8fafc' }}>
+                      <option key={m.id} value={m.id} style={{ background: '#ffffff', color: '#0f172a' }}>
                         {m.name} {m.is_default ? '(Default)' : ''} {m.provider ? `• ${m.provider}` : ''}
                       </option>
                     ))}
                     {models.length === 0 && (
-                      <option value="gpt-5.4-mini" style={{ background: '#1e293b', color: '#f8fafc' }}>
+                      <option value="gpt-5.4-mini" style={{ background: '#ffffff', color: '#0f172a' }}>
                         gpt-5.4-mini (Default)
                       </option>
                     )}
@@ -424,34 +378,14 @@ export function NewSessionModal({
               )}
             </div>
 
-            {/* Architecture / Policy Callout */}
-            <div
-              style={{
-                display: 'flex',
-                alignItems: 'flex-start',
-                gap: 10,
-                padding: '10px 12px',
-                borderRadius: 8,
-                background: 'rgba(245, 158, 11, 0.08)',
-                border: '1px solid rgba(245, 158, 11, 0.25)',
-                color: '#fde68a',
-                fontSize: '0.74rem',
-                lineHeight: 1.45,
-              }}
-            >
-              <Lock size={15} color="#f59e0b" style={{ flexShrink: 0, marginTop: 2 }} />
-              <div>
-                <strong>1 Agent per Session Policy:</strong> The selected agent is permanently bound to this session's background tmux container runtime. To switch to a different agent, start a new session.
-              </div>
-            </div>
           </div>
 
           {/* Footer Actions */}
           <div
             style={{
               padding: '12px 20px',
-              borderTop: '1px solid var(--color-border, #334155)',
-              background: 'rgba(15, 23, 42, 0.5)',
+              borderTop: '1px solid #f1f5f9',
+              background: '#fafafa',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'flex-end',
@@ -465,12 +399,19 @@ export function NewSessionModal({
               style={{
                 padding: '7px 14px',
                 borderRadius: 6,
-                border: '1px solid var(--color-border, #334155)',
-                background: 'transparent',
-                color: 'var(--color-text-muted, #94a3b8)',
+                border: '1px solid #d1d5db',
+                background: '#ffffff',
+                color: '#374151',
                 fontSize: '0.8rem',
                 fontWeight: 500,
                 cursor: isCreating ? 'not-allowed' : 'pointer',
+                transition: 'background 0.15s ease',
+              }}
+              onMouseEnter={(e) => {
+                if (!isCreating) e.currentTarget.style.background = '#f9fafb';
+              }}
+              onMouseLeave={(e) => {
+                if (!isCreating) e.currentTarget.style.background = '#ffffff';
               }}
             >
               Cancel
@@ -482,29 +423,23 @@ export function NewSessionModal({
                 padding: '7px 18px',
                 borderRadius: 6,
                 border: 'none',
-                background: 'linear-gradient(135deg, #6366f1 0%, #4f46e5 100%)',
+                background: '#1B6EF3',
                 color: '#ffffff',
                 fontSize: '0.8rem',
                 fontWeight: 600,
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: 6,
                 cursor: isCreating || !title.trim() ? 'not-allowed' : 'pointer',
                 opacity: isCreating || !title.trim() ? 0.6 : 1,
-                boxShadow: '0 2px 8px rgba(99, 102, 241, 0.35)',
+                transition: 'background 0.15s ease',
+                boxShadow: '0 1px 2px rgba(27, 110, 243, 0.2)',
+              }}
+              onMouseEnter={(e) => {
+                if (!isCreating && title.trim()) e.currentTarget.style.background = '#1558C7';
+              }}
+              onMouseLeave={(e) => {
+                if (!isCreating && title.trim()) e.currentTarget.style.background = '#1B6EF3';
               }}
             >
-              {isCreating ? (
-                <>
-                  <Loader2 size={13} className="spin" />
-                  <span>Creating Session...</span>
-                </>
-              ) : (
-                <>
-                  <Sparkles size={13} />
-                  <span>Create Session</span>
-                </>
-              )}
+              {isCreating ? 'Creating Session...' : 'Create Session'}
             </button>
           </div>
         </form>

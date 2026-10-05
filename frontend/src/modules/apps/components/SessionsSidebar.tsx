@@ -5,6 +5,8 @@ import {
   Search,
   Loader2,
   PanelLeftClose,
+  Maximize2,
+  Minimize2,
 } from 'lucide-react';
 import type { DevSession } from '../hooks/useApps';
 import { AGENT_OPTIONS } from '../pages/AppBuildPage';
@@ -18,6 +20,8 @@ export interface SessionsSidebarProps {
   disabled?: boolean;
   isSwitching?: boolean;
   onClose?: () => void;
+  isMaximized?: boolean;
+  onToggleMaximized?: () => void;
 }
 
 const AGENT_NAMES: Record<string, string> = {
@@ -36,6 +40,8 @@ export function SessionsSidebar({
   disabled = false,
   isSwitching = false,
   onClose,
+  isMaximized = false,
+  onToggleMaximized,
 }: SessionsSidebarProps) {
   const [searchQuery, setSearchQuery] = useState('');
   const [hoveredSessionId, setHoveredSessionId] = useState<string | null>(null);
@@ -90,56 +96,90 @@ export function SessionsSidebar({
             padding: '3px 8px',
             borderRadius: 5,
             border: 'none',
-            background: 'linear-gradient(135deg, #4f46e5 0%, #4338ca 100%)',
+            background: '#1B6EF3',
             color: '#ffffff',
             fontSize: '0.7rem',
             fontWeight: 600,
             cursor: disabled ? 'not-allowed' : 'pointer',
-            boxShadow: '0 1px 2px rgba(79, 70, 229, 0.25)',
-            transition: 'opacity 0.15s ease',
+            boxShadow: '0 1px 2px rgba(27, 110, 243, 0.2)',
+            transition: 'background 0.15s ease',
           }}
           onMouseEnter={(e) => {
-            if (!disabled) e.currentTarget.style.opacity = '0.9';
+            if (!disabled) e.currentTarget.style.background = '#1558C7';
           }}
           onMouseLeave={(e) => {
-            if (!disabled) e.currentTarget.style.opacity = '1';
+            if (!disabled) e.currentTarget.style.background = '#1B6EF3';
           }}
         >
           <Plus size={11} strokeWidth={2.5} />
           <span>New Session</span>
         </button>
 
-        {/* Collapse Sidebar Button */}
-        {onClose && (
-          <button
-            type="button"
-            onClick={onClose}
-            title="Collapse Sessions Sidebar"
-            style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              width: 24,
-              height: 24,
-              borderRadius: 5,
-              border: 'none',
-              background: 'transparent',
-              color: '#64748b',
-              cursor: 'pointer',
-              transition: 'all 0.15s ease',
-            }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.color = '#0f172a';
-              e.currentTarget.style.background = '#f1f5f9';
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.color = '#64748b';
-              e.currentTarget.style.background = 'transparent';
-            }}
-          >
-            <PanelLeftClose size={13} />
-          </button>
-        )}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+          {/* Expand / Minimize Width Button */}
+          {onToggleMaximized && (
+            <button
+              type="button"
+              onClick={onToggleMaximized}
+              title={isMaximized ? 'Restore Width' : 'Expand Width'}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                width: 24,
+                height: 24,
+                borderRadius: 5,
+                border: 'none',
+                background: 'transparent',
+                color: '#64748b',
+                cursor: 'pointer',
+                transition: 'all 0.15s ease',
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.color = '#0f172a';
+                e.currentTarget.style.background = '#f1f5f9';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.color = '#64748b';
+                e.currentTarget.style.background = 'transparent';
+              }}
+            >
+              {isMaximized ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
+            </button>
+          )}
+
+          {/* Collapse Sidebar Button */}
+          {onClose && (
+            <button
+              type="button"
+              onClick={onClose}
+              title="Collapse Sessions Sidebar"
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                width: 24,
+                height: 24,
+                borderRadius: 5,
+                border: 'none',
+                background: 'transparent',
+                color: '#64748b',
+                cursor: 'pointer',
+                transition: 'all 0.15s ease',
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.color = '#0f172a';
+                e.currentTarget.style.background = '#f1f5f9';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.color = '#64748b';
+                e.currentTarget.style.background = 'transparent';
+              }}
+            >
+              <PanelLeftClose size={13} />
+            </button>
+          )}
+        </div>
       </div>
 
       {/* ── Search Bar (Shown when 4+ sessions exist) ── */}
@@ -230,12 +270,12 @@ export function SessionsSidebar({
                   borderRadius: 6,
                   cursor: disabled ? 'not-allowed' : 'pointer',
                   border: isActive
-                    ? '1px solid #c7d2fe'
+                    ? '1px solid #bfdbfe'
                     : isHovered
                     ? '1px solid #e2e8f0'
                     : '1px solid transparent',
                   background: isActive
-                    ? '#eef2ff'
+                    ? '#EBF2FF'
                     : isHovered
                     ? '#f8fafc'
                     : 'transparent',
@@ -257,7 +297,7 @@ export function SessionsSidebar({
                     style={{
                       fontSize: '0.78rem',
                       fontWeight: isActive ? 600 : 475,
-                      color: isActive ? '#1e1b4b' : '#334155',
+                      color: isActive ? '#1558C7' : '#334155',
                       overflow: 'hidden',
                       textOverflow: 'ellipsis',
                       whiteSpace: 'nowrap',
@@ -279,7 +319,7 @@ export function SessionsSidebar({
                 >
                   {/* Switching spinner if this session is switching */}
                   {isActive && isSwitching && (
-                    <Loader2 size={11} className="spin text-indigo-600" />
+                    <Loader2 size={11} className="spin" style={{ color: '#1B6EF3' }} />
                   )}
 
                   {/* Agent Name: Visible ONLY on Hover (Simple text, no box, no color) */}

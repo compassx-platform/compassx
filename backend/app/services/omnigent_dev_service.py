@@ -7,6 +7,8 @@ import logging
 import subprocess
 import difflib
 import uuid
+import base64
+import json
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Any, Tuple
 
@@ -1553,9 +1555,135 @@ class OmnigentDevService:
 
     # ── Workspace File Operations ──────────────────────────────────────────
 
-    def list_workspace_files(self, app) -> List[Dict[str, Any]]:
-        """List files in the app workspace."""
+    def _resolve_workspace_info(self, app, workspace_id: Optional[str] = None) -> Tuple[str, str, str, str]:
+        """Resolves (ws_id, ws_name, folder_path, branch) for an app dev workspace."""
+        clean_app_id = _clean_id(app.id)
+        from app.models.dev_workspace import DevWorkspace
+
+        # If explicitly default or main, target base repo /app
+        if workspace_id in ("default", "main", "/app"):
+            default_branch = getattr(app, "git_branch", "main") or "main"
+            return "default", "default", f"{clean_app_id}/default", default_branch
+
+        ws = None
+        if workspace_id:
+            try:
+                with _get_system_db() as db:
+                    ws = db.query(DevWorkspace).filter(
+                        DevWorkspace.app_id == app.id,
+                        (DevWorkspace.id == workspace_id) | (DevWorkspace.name == workspace_id),
+                    ).first()
+            except Exception as e:
+                logger.debug("Failed querying DevWorkspace by id %s: %s", workspace_id, e)
+
+        # Fallback to active workspace ONLY if no workspace_id was passed
+        if not ws and not workspace_id:
+            try:
+                with _get_system_db() as db:
+                    ws = db.query(DevWorkspace).filter(
+                        DevWorkspace.app_id == app.id,
+                        DevWorkspace.status == "active",
+                    ).first()
+            except Exception:
+                pass
+
+        if ws:
+            ws_id = ws.id
+            ws_name = ws.name or "default"
+            folder_path = ws.folder_path or f"{clean_app_id}/{_sanitize_workspace_name(ws_name)}"
+            branch = ws.git_branch or (f"dev/{ws_name}" if ws_name != "default" else getattr(app, "git_branch", "main"))
+            return ws_id, ws_name, folder_path, branch
+
+        target_name = _sanitize_workspace_name(workspace_id) if workspace_id else "default"
+        folder_path = f"{clean_app_id}/{target_name}"
+        branch = f"dev/{target_name}" if target_name != "default" else getattr(app, "git_branch", "main")
+        return target_name, target_name, folder_path, branch
+
+    def ensure_workspace_worktree(self, app, workspace_id: Optional[str] = None) -> str:
+        """Ensures the target workspace worktree exists inside dev container/pod and returns target_dir."""
+        ws_id, ws_name, folder_path, branch = self._resolve_workspace_info(app, workspace_id)
+        clean_folder = folder_path.strip("/")
+        dev_driver = driver_factory.get_dev_driver()
+
+        # If it's default workspace, target is /app
+        if ws_name == "default":
+            symlink_cmd = (
+                f"mkdir -p /workspaces/{clean_folder.rsplit('/', 1)[0]} 2>/dev/null; "
+                f"if [ ! -e '/workspaces/{clean_folder}' ]; then ln -sfn /app '/workspaces/{clean_folder}' 2>/dev/null || true; fi"
+            )
+            try:
+                dev_driver.exec_command_in_dev(app, command=symlink_cmd)
+            except Exception:
+                pass
+            return "/app"
+
+        target_dir = f"/workspaces/{clean_folder}"
+        # Check if worktree directory exists in container
+        chk_cmd = f"test -d '{target_dir}' && echo '__EXISTS__'"
+        try:
+            chk_res = dev_driver.exec_command_in_dev(app, command=chk_cmd)
+            if "__EXISTS__" not in (chk_res.get("output") or ""):
+                if hasattr(dev_driver, "create_git_worktree"):
+                    dev_driver.create_git_worktree(app, folder_path=clean_folder, branch=branch)
+        except Exception as e:
+            logger.warning("ensure_workspace_worktree error for app %s ws %s: %s", app.id, ws_name, e)
+
+        return target_dir
+
+    def list_workspace_files(self, app, workspace_id: Optional[str] = None) -> List[Dict[str, Any]]:
+        """List source code files in the specified app sandbox workspace."""
+        dev_driver = driver_factory.get_dev_driver()
+        is_running = False
+        try:
+            if hasattr(dev_driver, "is_dev_running"):
+                is_running = dev_driver.is_dev_running(app)
+            else:
+                chk = dev_driver.exec_command_in_dev(app, command="echo '__RUNNING__'")
+                is_running = "__RUNNING__" in (chk.get("output") or "")
+        except Exception:
+            is_running = False
+
+        if is_running:
+            try:
+                target_dir = self.ensure_workspace_worktree(app, workspace_id)
+                py_code = f"""
+import os, json
+root_dir = '{target_dir}'
+ign = {{'.git', 'node_modules', '__pycache__', '.venv', '.pytest_cache', '.DS_Store', '.mypy_cache', '.coverage'}}
+res = []
+for r, dirs, files in os.walk(root_dir):
+    dirs[:] = [d for d in dirs if d not in ign]
+    for f in files:
+        if f in ign: continue
+        p = os.path.join(r, f)
+        try:
+            st = os.stat(p)
+            sz = st.st_size
+            mt = int(st.st_mtime * 1000)
+            rel = os.path.relpath(p, root_dir).replace('\\\\', '/')
+            ext = f.split('.')[-1] if '.' in f else ''
+            res.append({{'path': rel, 'name': f, 'size': sz, 'bytes': sz, 'ext': ext, 'modified_at': mt}})
+        except Exception: pass
+print('__JSON_START__' + json.dumps(res) + '__JSON_END__')
+"""
+                b64_code = base64.b64encode(py_code.encode("utf-8")).decode("ascii")
+                exec_res = dev_driver.exec_command_in_dev(app, command=f"echo {b64_code} | base64 -d | python3")
+                out = exec_res.get("output") or ""
+                if "__JSON_START__" in out and "__JSON_END__" in out:
+                    raw_json = out.split("__JSON_START__", 1)[1].split("__JSON_END__", 1)[0]
+                    file_tree = json.loads(raw_json)
+                    return sorted(file_tree, key=lambda x: x["path"])
+            except Exception as e:
+                logger.warning("Failed listing container files for app %s ws %s: %s", app.id, workspace_id, e)
+
+        # Fallback to host repository
         repo_dir = self.get_repo_dir(app)
+        ws_id, ws_name, folder_path, _ = self._resolve_workspace_info(app, workspace_id)
+        if ws_name and ws_name != "default":
+            ws_host_dir = os.path.join(app_runner_service.get_app_dir(app.id), "workspaces", ws_name)
+            if os.path.exists(ws_host_dir):
+                repo_dir = ws_host_dir
+
         file_tree = []
         ignored = {".git", "node_modules", "__pycache__", ".venv", ".pytest_cache", ".DS_Store"}
 
@@ -1584,11 +1712,64 @@ class OmnigentDevService:
 
         return sorted(file_tree, key=lambda x: x["path"])
 
-    def read_workspace_file(self, app, file_path: str) -> Dict[str, Any]:
+    def read_workspace_file(self, app, file_path: str, workspace_id: Optional[str] = None) -> Dict[str, Any]:
         """Read text content of a workspace file."""
         self.touch_workspace_activity(app.id)
+        dev_driver = driver_factory.get_dev_driver()
+        clean_rel = file_path.lstrip("/\\")
+
+        is_running = False
+        try:
+            if hasattr(dev_driver, "is_dev_running"):
+                is_running = dev_driver.is_dev_running(app)
+            else:
+                chk = dev_driver.exec_command_in_dev(app, command="echo '__RUNNING__'")
+                is_running = "__RUNNING__" in (chk.get("output") or "")
+        except Exception:
+            is_running = False
+
+        if is_running:
+            try:
+                target_dir = self.ensure_workspace_worktree(app, workspace_id)
+                py_code = f"""
+import os, base64
+root_dir = '{target_dir}'
+p = os.path.normpath(os.path.join(root_dir, '{clean_rel}'))
+if not p.startswith(root_dir) or not os.path.exists(p) or not os.path.isfile(p):
+    print('__NOT_FOUND__')
+else:
+    with open(p, 'rb') as f:
+        print('__FILE_B64__' + base64.b64encode(f.read()).decode('ascii') + '__FILE_END__')
+"""
+                b64_code = base64.b64encode(py_code.encode("utf-8")).decode("ascii")
+                exec_res = dev_driver.exec_command_in_dev(app, command=f"echo {b64_code} | base64 -d | python3")
+                out = exec_res.get("output") or ""
+                if "__NOT_FOUND__" in out:
+                    raise FileNotFoundError(f"File '{file_path}' not found in workspace.")
+                if "__FILE_B64__" in out and "__FILE_END__" in out:
+                    b64_str = out.split("__FILE_B64__", 1)[1].split("__FILE_END__", 1)[0].strip()
+                    content_bytes = base64.b64decode(b64_str)
+                    content = content_bytes.decode("utf-8", errors="replace")
+                    return {
+                        "path": file_path,
+                        "content": content,
+                        "size": len(content),
+                        "ext": os.path.splitext(file_path)[1].lstrip("."),
+                    }
+            except FileNotFoundError:
+                raise
+            except Exception as e:
+                logger.warning("Failed reading file from container for %s: %s", file_path, e)
+
+        # Fallback to host repository
         repo_dir = self.get_repo_dir(app)
-        safe_path = os.path.normpath(os.path.join(repo_dir, file_path.lstrip("/\\")))
+        ws_id, ws_name, folder_path, _ = self._resolve_workspace_info(app, workspace_id)
+        if ws_name and ws_name != "default":
+            ws_host_dir = os.path.join(app_runner_service.get_app_dir(app.id), "workspaces", ws_name)
+            if os.path.exists(ws_host_dir):
+                repo_dir = ws_host_dir
+
+        safe_path = os.path.normpath(os.path.join(repo_dir, clean_rel))
         if not safe_path.startswith(repo_dir) or not os.path.exists(safe_path) or not os.path.isfile(safe_path):
             raise FileNotFoundError(f"File '{file_path}' not found in app repository.")
 
@@ -1602,11 +1783,75 @@ class OmnigentDevService:
             "ext": os.path.splitext(file_path)[1].lstrip("."),
         }
 
-    def write_workspace_file(self, app, file_path: str, content: str) -> Dict[str, Any]:
+    def write_workspace_file(self, app, file_path: str, content: str, workspace_id: Optional[str] = None) -> Dict[str, Any]:
         """Write content to a file in the workspace (triggering hot reload)."""
         self.touch_workspace_activity(app.id)
+        dev_driver = driver_factory.get_dev_driver()
+        clean_rel = file_path.lstrip("/\\")
+
+        is_running = False
+        try:
+            if hasattr(dev_driver, "is_dev_running"):
+                is_running = dev_driver.is_dev_running(app)
+            else:
+                chk = dev_driver.exec_command_in_dev(app, command="echo '__RUNNING__'")
+                is_running = "__RUNNING__" in (chk.get("output") or "")
+        except Exception:
+            is_running = False
+
+        if is_running:
+            try:
+                target_dir = self.ensure_workspace_worktree(app, workspace_id)
+                content_bytes = content.encode("utf-8")
+                b64_content = base64.b64encode(content_bytes).decode("ascii")
+                py_code = f"""
+import os, base64
+root_dir = '{target_dir}'
+p = os.path.normpath(os.path.join(root_dir, '{clean_rel}'))
+if not p.startswith(root_dir):
+    print('__ERROR_PATH__')
+else:
+    old = ''
+    if os.path.exists(p):
+        with open(p, 'rb') as f: old = base64.b64encode(f.read()).decode('ascii')
+    os.makedirs(os.path.dirname(p), exist_ok=True)
+    with open(p, 'wb') as f: f.write(base64.b64decode('{b64_content}'))
+    print('__SAVED__' + old + '__OLD_END__')
+"""
+                b64_code = base64.b64encode(py_code.encode("utf-8")).decode("ascii")
+                exec_res = dev_driver.exec_command_in_dev(app, command=f"echo {b64_code} | base64 -d | python3")
+                out = exec_res.get("output") or ""
+                if "__ERROR_PATH__" in out:
+                    raise ValueError("Invalid file path outside workspace root.")
+                if "__SAVED__" in out:
+                    old_b64 = out.split("__SAVED__", 1)[1].split("__OLD_END__", 1)[0].strip()
+                    old_content = base64.b64decode(old_b64).decode("utf-8", errors="replace") if old_b64 else ""
+                    diff = "".join(difflib.unified_diff(
+                        old_content.splitlines(keepends=True),
+                        content.splitlines(keepends=True),
+                        fromfile=f"a/{file_path}",
+                        tofile=f"b/{file_path}",
+                    ))
+                    return {
+                        "path": file_path,
+                        "diff": diff,
+                        "saved": True,
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                    }
+            except ValueError:
+                raise
+            except Exception as e:
+                logger.warning("Failed writing file to container for %s: %s", file_path, e)
+
+        # Fallback to host repository
         repo_dir = self.get_repo_dir(app)
-        safe_path = os.path.normpath(os.path.join(repo_dir, file_path.lstrip("/\\")))
+        ws_id, ws_name, folder_path, _ = self._resolve_workspace_info(app, workspace_id)
+        if ws_name and ws_name != "default":
+            ws_host_dir = os.path.join(app_runner_service.get_app_dir(app.id), "workspaces", ws_name)
+            if os.path.exists(ws_host_dir):
+                repo_dir = ws_host_dir
+
+        safe_path = os.path.normpath(os.path.join(repo_dir, clean_rel))
         if not safe_path.startswith(repo_dir):
             raise ValueError("Invalid file path outside workspace root.")
 

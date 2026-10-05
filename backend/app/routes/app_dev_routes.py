@@ -24,6 +24,7 @@ class FileWriteRequest(BaseModel):
 
     path: str
     content: str
+    workspace_id: Optional[str] = None
 
 class PublishRequest(BaseModel):
     commit_message: Optional[str] = "Update application via Omnigent Dev Studio"
@@ -416,6 +417,7 @@ def resume_dev_session(
 @router.get("/files")
 def list_workspace_files(
     app_id: str,
+    workspace_id: Optional[str] = Query(None, description="Active sandbox workspace ID or name"),
     db: Session = Depends(get_system_db),
     guard: Guard = Depends(get_guard),
 ):
@@ -429,7 +431,7 @@ def list_workspace_files(
     db.close()
 
     unified_reaper_service.touch_app_activity(app_id_val)
-    return omnigent_dev_service.list_workspace_files(app)
+    return omnigent_dev_service.list_workspace_files(app, workspace_id=workspace_id)
 
 
 
@@ -437,6 +439,7 @@ def list_workspace_files(
 def read_workspace_file(
     app_id: str,
     path: str = Query(..., description="Relative file path in workspace"),
+    workspace_id: Optional[str] = Query(None, description="Active sandbox workspace ID or name"),
     db: Session = Depends(get_system_db),
     guard: Guard = Depends(get_guard),
 ):
@@ -447,7 +450,7 @@ def read_workspace_file(
 
     try:
         unified_reaper_service.touch_app_activity(app.id)
-        return omnigent_dev_service.read_workspace_file(app, path)
+        return omnigent_dev_service.read_workspace_file(app, path, workspace_id=workspace_id)
     except FileNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
@@ -458,6 +461,7 @@ def read_workspace_file(
 def write_workspace_file(
     app_id: str,
     body: FileWriteRequest,
+    workspace_id: Optional[str] = Query(None, description="Active sandbox workspace ID or name"),
     db: Session = Depends(get_system_db),
     guard: Guard = Depends(get_guard),
 ):
@@ -468,7 +472,10 @@ def write_workspace_file(
 
     try:
         unified_reaper_service.touch_app_activity(app.id)
-        return omnigent_dev_service.write_workspace_file(app, body.path, body.content)
+        target_ws = body.workspace_id or workspace_id
+        return omnigent_dev_service.write_workspace_file(app, body.path, body.content, workspace_id=target_ws)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

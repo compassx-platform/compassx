@@ -119,8 +119,13 @@ class DevSessionService:
 
         clean_title = (title or "").strip()
         if not clean_title:
-            agent_label = norm_agent.capitalize()
-            clean_title = f"Session ({agent_label})"
+            agent_display = {
+                "opencode": "OpenCode",
+                "pi": "Pi",
+                "antigravity": "Antigravity",
+                "agy": "Antigravity",
+            }.get(norm_agent, norm_agent.capitalize())
+            clean_title = f"Session with {agent_display}"
 
         dev_session = DevSession(
             id=sess_id,

@@ -5,6 +5,24 @@ All notable changes to the CompassX Platform will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.2] - 2026-10-05
+
+### 🚀 Highlights
+
+CompassX `0.12.2` delivers **Polished Build Studio UI & Session Modals**, **Streamlined Terminal Lifecycle Integration**, **Rich Multi-Agent Protocol Streaming**, and **File Explorer Sidepanel Refinements**.
+
+### ✨ Features & Enhancements
+
+#### Application Build Studio & Session Polish
+- **Refined Sessions & Sandbox Management (`AppBuildPage.tsx`, `SessionsSidebar.tsx`, `SandboxSelector.tsx`, `NewSessionModal.tsx`, `NewSandboxModal.tsx`)**: Re-engineered modals with sleek backdrop blur, unified form layouts, interactive sandbox switching, and comprehensive error handling.
+- **Terminal Lifecycle Streamlining (`DevTerminal.tsx`, `dev_terminal_service.py`)**: Simplified terminal mount/unmount logic, clean WebSocket lifecycle management, and seamless auto-reconnect on active sandbox transitions.
+
+#### Omnigent Protocol & File Explorer Refinements
+- **Rich Agent Message Streaming (`omnigent_dev_service.py`)**: Added support for granular tool call lifecycle events, multi-agent conversation contexts, and enhanced Docker container path resolution.
+- **File Explorer Sidepanel Polish (`FileExplorerSidepanel.tsx`, `FileViewer.tsx`)**: Upgraded directory navigation with smooth transitions, breadcrumb updates, and quick path copy utilities.
+
+---
+
 ## [0.12.1] - 2026-10-04
 
 ### 🚀 Highlights
