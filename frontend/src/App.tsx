@@ -29,7 +29,6 @@ import CreateWorkspacePage from '@/pages/CreateWorkspacePage';
 import LandingPage from '@/pages/LandingPage';
 import IconsShowcasePage from '@/pages/IconsShowcasePage';
 import DataCatalog from '@/modules/data/pages/DataCatalog';
-import SqlWarehousePage from '@/modules/sql_warehouse/SqlWarehousePage';
 import AgentsPage from '@/modules/agents/pages/AgentsPage';
 import AgentToolDetailPage from '@/modules/agents/pages/AgentToolDetailPage';
 import AgentBuilderPage from '@/modules/agents/pages/AgentBuilderPage';
@@ -49,7 +48,6 @@ import DashboardEditorPage from '@/modules/dashboards/pages/DashboardEditorPage'
 import JobsListPage from '@/modules/jobs/pages/JobsListPage';
 import JobDetailPage from '@/modules/jobs/pages/JobDetailPage';
 import RunDetailPage from '@/modules/jobs/pages/RunDetailPage';
-import MonitoringPage from '@/modules/monitoring/pages/MonitoringPage';
 import IngestionConnectionsPage from '@/modules/ingestion/pages/ConnectionsPage';
 import IngestionConnectionDetailPage from '@/modules/ingestion/pages/ConnectionDetailPage';
 import IngestionJobConfigsPage from '@/modules/ingestion/pages/JobConfigsPage';
@@ -65,6 +63,10 @@ import WorkspaceSettingsPage from '@/pages/workspace/WorkspaceSettingsPage';
 import AIGatewayPage from '@/modules/ai_gateway/pages/AIGatewayPage';
 import { DEFAULT_APP_ID, isAppId, normalizeAppId, stripAppScope, getDefaultPathForApp, useCurrentAppId } from '@/lib/appNavigation';
 import { useMyWorkspaces } from '@/lib/workspaceApi';
+
+// ── Heavy chart-heavy modules (lazy loaded to optimize federation bundle) ─────
+const SqlWarehousePage = lazy(() => import('@/modules/sql_warehouse/SqlWarehousePage'));
+const MonitoringPage   = lazy(() => import('@/modules/monitoring/pages/MonitoringPage'));
 
 // ── User Manager v1 pages (lazy loaded) ─────────────────────────────────────
 import { isLoggedIn, getToken, getRefreshToken, isTokenExpired, refreshAccessToken } from '@/lib/auth';
@@ -306,9 +308,9 @@ export default function App() {
                   <Route path="data-catalog/:catalog/:schema/tool/:tool" element={<DataCatalog />} />
                   <Route path="data-catalog/:catalog/:schema/:table" element={<DataCatalog />} />
                   <Route path="sql-warehouse" element={<Navigate to="editor" replace />} />
-                  <Route path="sql-warehouse/:tab" element={<SqlWarehousePage />} />
-                  <Route path="sql-warehouse/:tab/:warehouseId" element={<SqlWarehousePage />} />
-                  <Route path="sql-warehouse/:tab/:warehouseId/:subtab" element={<SqlWarehousePage />} />
+                  <Route path="sql-warehouse/:tab" element={<UMSuspense><SqlWarehousePage /></UMSuspense>} />
+                  <Route path="sql-warehouse/:tab/:warehouseId" element={<UMSuspense><SqlWarehousePage /></UMSuspense>} />
+                  <Route path="sql-warehouse/:tab/:warehouseId/:subtab" element={<UMSuspense><SqlWarehousePage /></UMSuspense>} />
                   <Route path="agents" element={<AgentsPage />} />
                   <Route path="agents/new" element={<AgentBuilderPage />} />
                   <Route path="agents/create" element={<AgentBuilderPage />} />
@@ -334,7 +336,7 @@ export default function App() {
                   <Route path="notebooks/open" element={<NotebookPage />} />
                   <Route path="compute" element={<ComputePage />} />
                   <Route path="compute/:resourceId" element={<ComputeResourceDetailPage />} />
-                  <Route path="monitoring" element={<MonitoringPage />} />
+                  <Route path="monitoring" element={<UMSuspense><MonitoringPage /></UMSuspense>} />
                   <Route path="dashboards" element={<DashboardsPage />} />
                   <Route path="dashboards/:dashboardId" element={<DashboardEditorPage />} />
                   <Route path="dashboards/:dashboardId/edit" element={<DashboardEditorPage />} />

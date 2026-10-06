@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ArrowDownAZ,
   ArrowDownUp,
@@ -17,7 +17,7 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { WorkspaceFile } from '../../hooks/useApps';
-import { FolderTree, type ChangedSort } from './FolderTree';
+import { FolderTree, getFileIcon, type ChangedSort } from './FolderTree';
 import { CopyPathButton } from './CopyPathButton';
 import { formatBytes } from './fileStatusUtils';
 
@@ -127,6 +127,10 @@ export interface FilesPanelProps {
   onClose?: () => void;
   workspaceName?: string;
   workspacePath?: string;
+  cleanExplorerMode?: boolean;
+  externalSearchQuery?: string;
+  showHidden?: boolean;
+  onToggleHidden?: () => void;
 }
 
 export function FilesPanel({
@@ -136,9 +140,25 @@ export function FilesPanel({
   selectedPath,
   workspaceName,
   workspacePath,
+  cleanExplorerMode = false,
+  externalSearchQuery,
+  showHidden: controlledShowHidden,
+  onToggleHidden: controlledToggleHidden,
 }: FilesPanelProps) {
-  const [searchQuery, setSearchQuery] = useState('');
-  const [showHidden, setShowHidden] = useState(false);
+  const [internalSearchQuery, setInternalSearchQuery] = useState('');
+  const searchQuery = externalSearchQuery !== undefined ? externalSearchQuery : internalSearchQuery;
+  const setSearchQuery = setInternalSearchQuery;
+  const [internalShowHidden, setInternalShowHidden] = useState(true);
+  const showHidden = controlledShowHidden !== undefined ? controlledShowHidden : internalShowHidden;
+  const setShowHidden = controlledToggleHidden
+    ? () => controlledToggleHidden()
+    : (val: boolean | ((prev: boolean) => boolean)) => {
+        if (typeof val === 'function') {
+          setInternalShowHidden(val);
+        } else {
+          setInternalShowHidden(val);
+        }
+      };
   const [sort, setSort] = useState<ChangedSort>('alpha');
   // Collapsed by default — empty Set
   const [openPaths, setOpenPaths] = useState<Set<string>>(() => new Set<string>());
@@ -148,7 +168,8 @@ export function FilesPanel({
 
   const hiddenCount = useMemo(() => {
     return files.filter((f) => {
-      const parts = f.path.split('/');
+      const clean = (f.path || '').replace(/\\/g, '/').replace(/^\.\//, '').replace(/^\/+/, '');
+      const parts = clean.split('/').filter(Boolean);
       return parts.some((p) => p.startsWith('.'));
     }).length;
   }, [files]);
@@ -156,7 +177,8 @@ export function FilesPanel({
   const visibleFiles = useMemo(() => {
     if (showHidden) return files;
     return files.filter((f) => {
-      const parts = f.path.split('/');
+      const clean = (f.path || '').replace(/\\/g, '/').replace(/^\.\//, '').replace(/^\/+/, '');
+      const parts = clean.split('/').filter(Boolean);
       return !parts.some((p) => p.startsWith('.'));
     });
   }, [files, showHidden]);
@@ -165,7 +187,8 @@ export function FilesPanel({
   const allDirPaths = useMemo(() => {
     const dirs = new Set<string>();
     for (const file of visibleFiles) {
-      const parts = file.path.replace(/\\/g, '/').split('/');
+      const clean = (file.path || '').replace(/\\/g, '/').replace(/^\.\//, '').replace(/^\/+/, '');
+      const parts = clean.split('/').filter(Boolean);
       let current = '';
       for (let i = 0; i < parts.length - 1; i++) {
         current = current ? `${current}/${parts[i]}` : parts[i];
@@ -174,6 +197,23 @@ export function FilesPanel({
     }
     return dirs;
   }, [visibleFiles]);
+
+  // Auto-expand top-level directories on initial load
+  useEffect(() => {
+    if (openPaths.size === 0 && visibleFiles.length > 0) {
+      const topDirs = new Set<string>();
+      for (const file of visibleFiles) {
+        const clean = (file.path || '').replace(/\\/g, '/').replace(/^\.\//, '').replace(/^\/+/, '');
+        const parts = clean.split('/').filter(Boolean);
+        if (parts.length > 1) {
+          topDirs.add(parts[0]);
+        }
+      }
+      if (topDirs.size > 0) {
+        setOpenPaths(topDirs);
+      }
+    }
+  }, [visibleFiles, openPaths.size]);
 
   const handleTogglePath = useCallback((path: string) => {
     setOpenPaths((prev) => {
@@ -202,97 +242,101 @@ export function FilesPanel({
   }, [visibleFiles, searchQuery]);
 
   return (
-    <div className="flex h-full w-full min-h-0 flex-col overflow-hidden bg-white text-neutral-800 font-mono">
-      {/* Row 2: Working folder bar — matching user screenshot: [Working folder /workspaces/...] [expand all] [collapse all] [copy] [eye] */}
-      <div className="flex h-9.5 shrink-0 items-center justify-between px-3.5 border-b border-neutral-100 bg-white">
-        <div className="flex min-w-0 flex-1 items-center gap-2">
-          <span className="font-semibold text-[13px] text-neutral-900 shrink-0">Working folder</span>
-          <span
-            className="font-mono text-[12px] text-indigo-600/90 truncate cursor-pointer hover:underline"
-            title={folderPath}
-          >
-            {folderPath}
-          </span>
-        </div>
+    <div className="flex h-full w-full min-h-0 flex-col overflow-hidden bg-white text-neutral-800 font-sans">
+      {!cleanExplorerMode && (
+        <>
+          {/* Row 2: Working folder bar */}
+          <div className="flex h-9.5 shrink-0 items-center justify-between px-3.5 border-b border-neutral-100 bg-white">
+            <div className="flex min-w-0 flex-1 items-center gap-2">
+              <span className="font-semibold text-[13px] text-neutral-900 shrink-0">Working folder</span>
+              <span
+                className="font-mono text-[12px] text-indigo-600/90 truncate cursor-pointer hover:underline"
+                title={folderPath}
+              >
+                {folderPath}
+              </span>
+            </div>
 
-        <div className="flex shrink-0 items-center gap-1">
-          <button
-            type="button"
-            onClick={handleExpandAll}
-            className="inline-flex size-7 items-center justify-center rounded text-neutral-500 hover:bg-neutral-100 hover:text-neutral-900 transition-colors"
-            title="Expand all folders"
-            aria-label="Expand all folders"
-          >
-            <ChevronsUpDown className="size-3.5 text-neutral-600" strokeWidth={1.5} />
-          </button>
-          <button
-            type="button"
-            onClick={handleCollapseAll}
-            className="inline-flex size-7 items-center justify-center rounded text-neutral-500 hover:bg-neutral-100 hover:text-neutral-900 transition-colors"
-            title="Collapse all folders"
-            aria-label="Collapse all folders"
-          >
-            <ChevronsDownUp className="size-3.5 text-neutral-600" strokeWidth={1.5} />
-          </button>
-          <CopyPathButton path={folderPath} label="Copy working folder path" />
-          <HiddenFilesToggle
-            showHidden={showHidden}
-            onToggle={() => setShowHidden(!showHidden)}
-            hiddenCount={hiddenCount}
-          />
-        </div>
-      </div>
-
-      {/* Row 3: Search & Sort bar — matching user screenshot: [pill search input] [sliders] [Sort: icon] */}
-      <div className="shrink-0 px-3.5 py-2.5 border-b border-neutral-100 bg-white" onClick={(e) => e.stopPropagation()}>
-        <div className="flex min-w-0 flex-1 items-center gap-2.5">
-          {/* Pill Search Input */}
-          <div className="flex min-w-0 flex-1 items-center gap-2 rounded-full border border-neutral-200 bg-white px-3.5 py-1.5 shadow-2xs focus-within:border-neutral-500">
-            <Search className="size-3.5 text-neutral-400 shrink-0" strokeWidth={1.75} />
-            <input
-              aria-label="Search"
-              className="min-w-0 flex-1 bg-transparent font-mono text-[12.5px] leading-tight text-neutral-900 outline-none placeholder:text-neutral-400"
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search"
-              type="search"
-              value={searchQuery}
-            />
-            {searchQuery && (
+            <div className="flex shrink-0 items-center gap-1">
               <button
                 type="button"
-                onClick={() => setSearchQuery('')}
-                className="cursor-pointer text-neutral-400 hover:text-neutral-700"
-                title="Clear search"
+                onClick={handleExpandAll}
+                className="inline-flex size-7 items-center justify-center rounded text-neutral-500 hover:bg-neutral-100 hover:text-neutral-900 transition-colors"
+                title="Expand all folders"
+                aria-label="Expand all folders"
               >
-                <X className="size-3" />
+                <ChevronsUpDown className="size-3.5 text-neutral-600" strokeWidth={1.5} />
               </button>
-            )}
+              <button
+                type="button"
+                onClick={handleCollapseAll}
+                className="inline-flex size-7 items-center justify-center rounded text-neutral-500 hover:bg-neutral-100 hover:text-neutral-900 transition-colors"
+                title="Collapse all folders"
+                aria-label="Collapse all folders"
+              >
+                <ChevronsDownUp className="size-3.5 text-neutral-600" strokeWidth={1.5} />
+              </button>
+              <CopyPathButton path={folderPath} label="Copy working folder path" />
+              <HiddenFilesToggle
+                showHidden={showHidden}
+                onToggle={() => setShowHidden(!showHidden)}
+                hiddenCount={hiddenCount}
+              />
+            </div>
           </div>
 
-          {/* Filter Sliders Button */}
-          <button
-            type="button"
-            title="Filter files"
-            aria-label="Filter files"
-            className="inline-flex size-7 items-center justify-center rounded text-neutral-500 hover:bg-neutral-100 hover:text-neutral-900 transition-colors shrink-0"
-          >
-            <SlidersHorizontal className="size-3.5" strokeWidth={1.5} />
-          </button>
+          {/* Row 3: Search & Sort bar */}
+          <div className="shrink-0 px-3.5 py-2.5 border-b border-neutral-100 bg-white" onClick={(e) => e.stopPropagation()}>
+            <div className="flex min-w-0 flex-1 items-center gap-2.5">
+              {/* Pill Search Input */}
+              <div className="flex min-w-0 flex-1 items-center gap-2 rounded-full border border-neutral-200 bg-white px-3.5 py-1.5 shadow-2xs focus-within:border-neutral-500">
+                <Search className="size-3.5 text-neutral-400 shrink-0" strokeWidth={1.75} />
+                <input
+                  aria-label="Search"
+                  className="min-w-0 flex-1 bg-transparent font-mono text-[12.5px] leading-tight text-neutral-900 outline-none placeholder:text-neutral-400"
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="Search"
+                  type="search"
+                  value={searchQuery}
+                />
+                {searchQuery && (
+                  <button
+                    type="button"
+                    onClick={() => setSearchQuery('')}
+                    className="cursor-pointer text-neutral-400 hover:text-neutral-700"
+                    title="Clear search"
+                  >
+                    <X className="size-3" />
+                  </button>
+                )}
+              </div>
 
-          {/* Sort: selector button */}
-          <SortSelector sort={sort} onChange={setSort} />
-        </div>
-      </div>
+              {/* Filter Sliders Button */}
+              <button
+                type="button"
+                title="Filter files"
+                aria-label="Filter files"
+                className="inline-flex size-7 items-center justify-center rounded text-neutral-500 hover:bg-neutral-100 hover:text-neutral-900 transition-colors shrink-0"
+              >
+                <SlidersHorizontal className="size-3.5" strokeWidth={1.5} />
+              </button>
+
+              {/* Sort: selector button */}
+              <SortSelector sort={sort} onChange={setSort} />
+            </div>
+          </div>
+        </>
+      )}
 
       {/* Row 4: File Tree / Search Results Body */}
-      <section className="min-h-0 flex-1 overflow-y-auto px-0 pb-3 pt-2 bg-white [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-thumb]:bg-neutral-300 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-track]:bg-transparent">
+      <section className="min-h-0 flex-1 overflow-y-auto px-1 pb-3 pt-1 bg-white [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-thumb]:bg-neutral-300 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-track]:bg-transparent">
         {isLoading && files.length === 0 ? (
           <div className="flex h-32 flex-col items-center justify-center gap-2 text-neutral-400">
             <Loader2 className="size-5 animate-spin text-neutral-500" />
             <span className="text-xs font-mono">Loading workspace files...</span>
           </div>
         ) : searchQuery.trim() ? (
-          /* Search Results matching the user's white theme */
+          /* Search Results */
           <div>
             <div className="px-3.5 py-1 text-[11px] text-neutral-400 font-mono">
               {searchResults.length} {searchResults.length === 1 ? 'result' : 'results'} for "{searchQuery}"
@@ -314,12 +358,12 @@ export function FilesPanel({
                     <div
                       key={file.path}
                       className={cn(
-                        'group relative flex w-full min-w-0 items-center gap-1.5 rounded-[2px] py-[2px] pr-3.5 transition-colors cursor-pointer select-none',
+                        'group flex w-full min-w-0 items-center gap-1.5 py-[3px] pr-2 transition-colors cursor-pointer select-none',
                         isSelected
-                          ? 'border border-neutral-900 bg-white'
-                          : 'border border-transparent hover:bg-neutral-100/70'
+                          ? 'bg-[#e0f2fe] text-neutral-900'
+                          : 'hover:bg-neutral-50 text-neutral-700'
                       )}
-                      style={{ paddingLeft: '14px' }}
+                      style={{ paddingLeft: '12px' }}
                       onClick={() => onFileSelect(file.path)}
                     >
                       <button
@@ -330,12 +374,12 @@ export function FilesPanel({
                           onFileSelect(file.path);
                         }}
                       >
-                        <File className="size-3.5 text-neutral-600 shrink-0" strokeWidth={1.5} />
-                        <span className="min-w-0 flex-1 truncate font-mono text-[12px] leading-5" title={file.path}>
+                        {getFileIcon(fileName)}
+                        <span className="min-w-0 flex-1 truncate text-[12px] leading-normal font-sans" title={file.path}>
                           {dirPrefix && (
-                            <span className="text-neutral-400 font-mono">{dirPrefix}</span>
+                            <span className="text-neutral-400 text-xs mr-0.5">{dirPrefix}</span>
                           )}
-                          <span className={isSelected ? 'text-neutral-950 font-semibold' : 'text-neutral-800'}>
+                          <span className={isSelected ? 'text-neutral-900 font-normal' : 'text-neutral-800'}>
                             {fileName}
                           </span>
                         </span>

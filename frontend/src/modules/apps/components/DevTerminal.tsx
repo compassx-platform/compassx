@@ -109,20 +109,21 @@ export function DevTerminal({
     return (
       <div
         style={{
-          background: '#0d1117',
-          border: '1px solid #30363d',
+          background: '#ffffff',
+          border: '1px solid #e2e8f0',
           borderRadius: 8,
           padding: '32px 24px',
           textAlign: 'center',
-          color: '#8b949e',
+          color: '#64748b',
           display: 'flex',
           flexDirection: 'column',
           alignItems: 'center',
           gap: 12,
+          boxShadow: '0 1px 3px rgba(0, 0, 0, 0.05)',
         }}
       >
-        <TerminalIcon size={36} color="#484f58" />
-        <div style={{ fontSize: '1rem', fontWeight: 600, color: '#c9d1d9' }}>
+        <TerminalIcon size={36} color="#94a3b8" />
+        <div style={{ fontSize: '1rem', fontWeight: 600, color: '#0f172a' }}>
           Dev Container is Stopped
         </div>
         <div style={{ fontSize: '0.82rem', maxWidth: 420 }}>
@@ -162,20 +163,19 @@ export function DevTerminal({
         width: '100%',
         position: 'relative',
         overflow: 'hidden',
-        gap: 6,
+        gap: 0,
       }}
     >
-      {/* ── Omnigent TerminalView Surface (Chrome-Free Full Canvas) ── */}
+      {/* ── Omnigent TerminalView Surface (Clean Light Canvas) ── */}
       <div
         style={{
           height: '100%',
           flex: 1,
           width: '100%',
-          background: '#0a0e17',
-          border: '1px solid #1f2937',
-          borderRadius: 8,
+          background: '#000000',
+          border: 'none',
+          borderRadius: 0,
           overflow: 'hidden',
-          boxShadow: 'inset 0 2px 8px rgba(0, 0, 0, 0.4)',
           display: 'flex',
           flexDirection: 'column',
           position: 'relative',
@@ -192,7 +192,7 @@ export function DevTerminal({
               flexDirection: 'column',
               alignItems: 'center',
               justifyContent: 'center',
-              background: 'rgba(10, 14, 23, 0.75)',
+              background: 'rgba(0, 0, 0, 0.85)',
               backdropFilter: 'blur(3px)',
               gap: 10,
             }}
@@ -218,6 +218,7 @@ export function DevTerminal({
             onStateChange={setConnState}
             onActivity={handleTerminalActivity}
             adaptCodexPalette={true}
+            isDark={true}
             className="w-full h-full"
           />
         )}
@@ -234,13 +235,16 @@ export function DevTerminal({
             display: 'flex',
             alignItems: 'center',
             gap: 8,
-            background: '#111827',
-            border: '1px solid #1f2937',
-            borderRadius: 6,
-            padding: '6px 10px',
+            background: '#ffffff',
+            borderTop: '1px solid #e2e8f0',
+            borderLeft: 'none',
+            borderRight: 'none',
+            borderBottom: 'none',
+            borderRadius: 0,
+            padding: '7px 12px',
           }}
         >
-          <span style={{ color: '#a855f7', fontFamily: 'monospace', fontWeight: 700, fontSize: '0.85rem' }}>
+          <span style={{ color: '#7c3aed', fontFamily: 'monospace', fontWeight: 700, fontSize: '0.85rem' }}>
             $
           </span>
           <input
@@ -253,7 +257,7 @@ export function DevTerminal({
               background: 'transparent',
               border: 'none',
               outline: 'none',
-              color: '#f8fafc',
+              color: '#0f172a',
               fontFamily: 'JetBrains Mono, Menlo, monospace',
               fontSize: '0.82rem',
             }}
@@ -263,7 +267,7 @@ export function DevTerminal({
             className="btn"
             disabled={!customCommand.trim() || !isConnected}
             style={{
-              background: '#6366f1',
+              background: '#2563eb',
               color: '#ffffff',
               border: 'none',
               borderRadius: 4,

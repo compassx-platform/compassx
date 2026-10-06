@@ -95,6 +95,7 @@ export default defineConfig({
     alias: {
       "@": path.resolve(__dirname, "./src"),
       lib: path.resolve(__dirname, "../lib"),
+      "plotly.js/dist/plotly": path.resolve(__dirname, "node_modules/plotly.js/dist/plotly.min.js"),
     },
     dedupe: [
       "react",

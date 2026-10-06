@@ -1,5 +1,16 @@
 import React, { memo, useCallback, useMemo, useState } from 'react';
-import { ChevronDown, ChevronRight, File } from 'lucide-react';
+import {
+  ChevronDown,
+  ChevronRight,
+  Folder,
+  File,
+  FileCode,
+  FileText,
+  Image as ImageIcon,
+  Braces,
+  Hash,
+  Code2,
+} from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { WorkspaceFile } from '../../hooks/useApps';
 import { CopyPathButton } from './CopyPathButton';
@@ -7,26 +18,52 @@ import { formatBytes } from './fileStatusUtils';
 
 export type ChangedSort = 'alpha' | 'recent' | 'size' | 'type';
 
-// Indentation parameters: BASE_PAD = 14px matches px-3.5 of the top rows
-const INDENT_STEP = 16;
-const BASE_PAD = 14;
-const GUIDE_OFFSET = 7;
+// Indentation parameters: BASE_PAD = 10px matches clean explorer padding
+const INDENT_STEP = 14;
+const BASE_PAD = 8;
+const GUIDE_OFFSET = 6;
 const indentFor = (depth: number) => depth * INDENT_STEP + BASE_PAD;
 
-function IndentGuides({ depth }: { depth: number }) {
-  if (depth <= 0) return null;
-  return (
-    <>
-      {Array.from({ length: depth }, (_, level) => indentFor(level) + GUIDE_OFFSET).map((left) => (
-        <span
-          key={left}
-          aria-hidden
-          className="pointer-events-none absolute top-0 bottom-0 w-px bg-neutral-200"
-          style={{ left: `${left}px` }}
-        />
-      ))}
-    </>
-  );
+export function getFileIcon(name: string) {
+  const ext = fileExtension(name);
+  if (['png', 'jpg', 'jpeg', 'svg', 'gif', 'webp', 'ico'].includes(ext)) {
+    return <ImageIcon className="size-3.5 text-emerald-600/90 shrink-0" strokeWidth={1.5} />;
+  }
+  if (ext === 'json') {
+    return (
+      <span className="font-mono text-[10.5px] font-semibold text-sky-600/90 leading-none shrink-0 w-3.5 text-center">
+        &#123;&#125;
+      </span>
+    );
+  }
+  if (['ts', 'tsx', 'js', 'jsx'].includes(ext)) {
+    return <FileCode className="size-3.5 text-sky-600/90 shrink-0" strokeWidth={1.5} />;
+  }
+  if (['html', 'htm'].includes(ext)) {
+    return <Code2 className="size-3.5 text-sky-600/90 shrink-0" strokeWidth={1.5} />;
+  }
+  if (['css', 'scss', 'less'].includes(ext)) {
+    return <Hash className="size-3.5 text-slate-500 shrink-0" strokeWidth={1.5} />;
+  }
+  if (['md', 'markdown'].includes(ext)) {
+    return (
+      <span className="font-mono text-[9.5px] font-semibold text-slate-500 leading-none shrink-0 w-3.5 text-center">
+        M↓
+      </span>
+    );
+  }
+  if (['yaml', 'yml'].includes(ext)) {
+    return (
+      <span className="font-mono text-[9.5px] font-semibold text-slate-500 leading-none shrink-0 w-3.5 text-center">
+        [ ]
+      </span>
+    );
+  }
+  return <File className="size-3.5 text-neutral-400 shrink-0" strokeWidth={1.5} />;
+}
+
+function IndentGuides(_: { depth: number }) {
+  return null;
 }
 
 export interface FileNode {
@@ -78,14 +115,18 @@ export function buildTree(files: WorkspaceFile[], sort: ChangedSort = 'alpha'): 
   const root: DirNode = { type: 'dir', name: '', path: '', children: [] };
 
   for (const file of files) {
-    const parts = file.path.replace(/\\/g, '/').split('/');
+    const cleanPath = (file.path || '').replace(/\\/g, '/').replace(/^\.\//, '').replace(/^\/+/, '');
+    if (!cleanPath) continue;
+    const parts = cleanPath.split('/').filter(Boolean);
+    if (parts.length === 0) continue;
     let node = root;
 
     for (let i = 0; i < parts.length - 1; i++) {
       const part = parts[i];
+      const dirPath = parts.slice(0, i + 1).join('/');
       let dir = node.children.find((c): c is DirNode => c.type === 'dir' && c.name === part);
       if (!dir) {
-        dir = { type: 'dir', name: part, path: parts.slice(0, i + 1).join('/'), children: [] };
+        dir = { type: 'dir', name: part, path: dirPath, children: [] };
         node.children.push(dir);
       }
       node = dir;
@@ -132,52 +173,26 @@ const TreeItem = memo(function TreeItem({
 
   if (node.type === 'file') {
     const isSelected = selectedPath === node.file.path;
-    const bytes = node.file.bytes ?? node.file.size ?? null;
 
     return (
       <li className="list-none">
         <div
           className={cn(
-            'group relative flex w-full min-w-0 items-center gap-1.5 py-[2px] pr-3.5 transition-colors cursor-pointer select-none rounded-[2px]',
+            'group flex w-full min-w-0 items-center gap-1.5 py-[3px] pr-2 transition-colors cursor-pointer select-none',
             isSelected
-              ? 'border border-neutral-900 bg-white'
-              : 'border border-transparent hover:bg-neutral-100/70'
+              ? 'bg-[#e0f2fe] text-neutral-900'
+              : 'hover:bg-neutral-50 text-neutral-700'
           )}
-          style={{ paddingLeft: `${indentFor(depth)}px` }}
+          style={{ paddingLeft: `${depth * 16 + 24}px` }}
           onClick={() => onFileSelect(node.file.path)}
         >
-          <IndentGuides depth={depth} />
-
-          <button
-            type="button"
-            className="flex min-w-0 flex-1 cursor-pointer items-center gap-1.5 text-left outline-none"
-            onClick={(e) => {
-              e.stopPropagation();
-              onFileSelect(node.file.path);
-            }}
+          {getFileIcon(node.name)}
+          <span
+            className="min-w-0 flex-1 truncate text-[12.5px] leading-normal font-sans"
+            title={node.file.path}
           >
-            {/* Outline Document Icon matching user's image */}
-            <File className="size-3.5 text-neutral-600 shrink-0" strokeWidth={1.5} />
-            <span
-              className={cn(
-                'min-w-0 flex-1 truncate font-mono text-[12px] leading-5',
-                isSelected ? 'text-neutral-950 font-semibold' : 'text-neutral-800'
-              )}
-              title={node.file.path}
-            >
-              {node.name}
-            </span>
-          </button>
-
-          {/* Right Meta Column: show file size only on hover, alongside hover Copy button */}
-          <div className="flex shrink-0 items-center justify-end gap-1.5">
-            {bytes !== null && (
-              <span className="text-[11px] font-mono text-neutral-400 tabular-nums opacity-0 group-hover:opacity-100 transition-opacity">
-                {formatBytes(bytes)}
-              </span>
-            )}
-            <CopyPathButton path={node.file.path} revealOnHover />
-          </div>
+            {node.name}
+          </span>
         </div>
       </li>
     );
@@ -190,48 +205,26 @@ const TreeItem = memo(function TreeItem({
     <li className="list-none">
       <div
         className={cn(
-          'group relative flex w-full min-w-0 items-center gap-1.5 py-[2px] pr-3.5 transition-colors cursor-pointer select-none rounded-[2px]',
+          'group flex w-full min-w-0 items-center gap-1 py-[3px] pr-2 transition-colors cursor-pointer select-none',
           isSelected
-            ? 'border border-neutral-900 bg-white'
-            : 'border border-transparent hover:bg-neutral-100/70'
+            ? 'bg-[#e0f2fe] text-neutral-900'
+            : 'hover:bg-neutral-50 text-neutral-700'
         )}
-        style={{ paddingLeft: `${indentFor(depth)}px` }}
+        style={{ paddingLeft: `${depth * 16 + 4}px` }}
         onClick={() => {
           onTogglePath(node.path);
           onSelectFolder?.(node.path);
         }}
       >
-        <IndentGuides depth={depth} />
-
-        <button
-          type="button"
-          className="group/folder flex min-w-0 flex-1 cursor-pointer items-center gap-1.5 text-left outline-none"
-          onClick={(e) => {
-            e.stopPropagation();
-            onTogglePath(node.path);
-            onSelectFolder?.(node.path);
-          }}
-          aria-expanded={isOpen}
-        >
-          {/* Chevron only — no folder icon matching user's image */}
-          {isOpen ? (
-            <ChevronDown className="size-3.5 text-neutral-600 shrink-0" strokeWidth={1.5} />
-          ) : (
-            <ChevronRight className="size-3.5 text-neutral-600 shrink-0" strokeWidth={1.5} />
-          )}
-          <span
-            className={cn(
-              'min-w-0 flex-1 truncate font-mono text-[12px] leading-5',
-              isSelected ? 'text-neutral-950 font-semibold' : 'text-neutral-800'
-            )}
-          >
-            {node.name}/
-          </span>
-        </button>
-
-        <div className="flex shrink-0 items-center justify-end">
-          <CopyPathButton path={node.path} label="Copy folder path" revealOnHover />
-        </div>
+        {isOpen ? (
+          <ChevronDown className="size-3 text-neutral-500 shrink-0" strokeWidth={1.75} />
+        ) : (
+          <ChevronRight className="size-3 text-neutral-500 shrink-0" strokeWidth={1.75} />
+        )}
+        <Folder className="size-3.5 text-[#d97706] fill-[#fef3c7] shrink-0" strokeWidth={1.5} />
+        <span className="min-w-0 flex-1 truncate text-[12.5px] leading-normal font-sans">
+          {node.name}
+        </span>
       </div>
 
       {isOpen && (
@@ -269,7 +262,7 @@ export function FolderTree({
   files,
   onFileSelect,
   selectedPath,
-  showHidden = false,
+  showHidden = true,
   sort = 'alpha',
   openPaths: controlledOpenPaths,
   onTogglePath: controlledTogglePath,
@@ -307,7 +300,7 @@ export function FolderTree({
   const activeSelected = selectedPath ?? selectedFolderPath;
 
   return (
-    <ul className="flex flex-col select-none font-mono text-neutral-800 m-0 p-0 bg-white">
+    <ul className="flex flex-col select-none text-neutral-800 m-0 py-1 px-0 bg-white">
       {tree.map((node) => (
         <TreeItem
           key={node.type === 'dir' ? node.path : node.file.path}

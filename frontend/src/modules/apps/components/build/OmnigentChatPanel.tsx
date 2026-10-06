@@ -928,7 +928,7 @@ export function OmnigentChatPanel({
               flex: viewMode === 'split' ? '0 0 45%' : '1',
               display: 'flex',
               flexDirection: 'column',
-              background: '#090d16',
+              background: '#ffffff',
               overflow: 'hidden',
               position: 'relative',
             }}

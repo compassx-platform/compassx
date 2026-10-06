@@ -11,6 +11,8 @@ import {
 } from 'lucide-react';
 import ReactCodeMirror from '@uiw/react-codemirror';
 import { EditorView } from '@codemirror/view';
+import { HighlightStyle, syntaxHighlighting } from '@codemirror/language';
+import { tags as t } from '@lezer/highlight';
 import { javascript } from '@codemirror/lang-javascript';
 import { python } from '@codemirror/lang-python';
 import { json } from '@codemirror/lang-json';
@@ -26,7 +28,22 @@ export interface FileViewerProps {
   path: string;
   workspaceId?: string;
   onClose: () => void;
+  hideHeader?: boolean;
 }
+
+const codeHighlightStyle = HighlightStyle.define([
+  { tag: t.propertyName, color: '#dc2626' }, // soft red for JSON keys
+  { tag: t.string, color: '#0284c7' },       // soft sky-blue / cyan for strings
+  { tag: t.bool, color: '#2563eb' },         // blue for booleans
+  { tag: t.number, color: '#2563eb' },       // blue for numbers
+  { tag: t.keyword, color: '#7c3aed' },      // soft purple for keywords
+  { tag: t.comment, color: '#94a3b8', fontStyle: 'italic' },
+  { tag: t.operator, color: '#64748b' },
+  { tag: t.punctuation, color: '#64748b' },
+  { tag: t.variableName, color: '#0f172a' },
+  { tag: t.definition(t.variableName), color: '#0f172a' },
+  { tag: t.typeName, color: '#0d9488' },
+]);
 
 const editorTheme = EditorView.theme(
   {
@@ -42,30 +59,32 @@ const editorTheme = EditorView.theme(
       lineHeight: '1.6',
     },
     '.cm-content': {
-      padding: '8px 0',
+      padding: '6px 0',
       caretColor: '#0f172a',
     },
     '.cm-line': {
       padding: '0 8px',
     },
     '.cm-gutters': {
-      backgroundColor: '#f8fafc',
+      backgroundColor: '#ffffff',
       color: '#94a3b8',
-      borderRight: '1px solid #e2e8f0',
-      paddingRight: '6px',
+      borderRight: 'none',
+      paddingLeft: '6px',
+      paddingRight: '12px',
     },
     '.cm-activeLineGutter': {
-      backgroundColor: '#f1f5f9',
-      color: '#334155',
+      backgroundColor: 'transparent',
+      color: '#0f172a',
+      fontWeight: '500',
     },
     '.cm-activeLine': {
-      backgroundColor: 'rgba(0, 0, 0, 0.03)',
+      backgroundColor: 'rgba(0, 0, 0, 0.02)',
     },
   },
   { dark: false }
 );
 
-export function FileViewer({ appId, path, workspaceId, onClose }: FileViewerProps) {
+export function FileViewer({ appId, path, workspaceId, onClose, hideHeader = false }: FileViewerProps) {
   const { data: fileData, isLoading, isError, error, refetch } = useDevFileContent(appId, path, workspaceId);
   const writeMutation = useWriteDevFile();
 
@@ -92,7 +111,7 @@ export function FileViewer({ appId, path, workspaceId, onClose }: FileViewerProp
   }, [path]);
 
   const extensions = useMemo(() => {
-    const exts = [editorTheme];
+    const exts = [editorTheme, syntaxHighlighting(codeHighlightStyle)];
     if (['js', 'jsx', 'ts', 'tsx'].includes(ext)) {
       exts.push(javascript({ jsx: true, typescript: ['ts', 'tsx'].includes(ext) }));
     } else if (ext === 'py') {
@@ -156,120 +175,124 @@ export function FileViewer({ appId, path, workspaceId, onClose }: FileViewerProp
   }, [isModified, content, writeMutation.isPending]);
 
   return (
-    <div className="flex h-full w-full min-h-0 flex-col overflow-hidden bg-white text-neutral-800 font-mono">
-      {/* Header bar — White theme */}
-      <div className="flex h-11 shrink-0 items-center justify-between border-b border-neutral-200 bg-white px-3 py-2">
-        <div className="flex min-w-0 flex-1 items-center gap-2">
-          {/* Back button */}
-          <button
-            type="button"
-            onClick={onClose}
-            title="Back to files"
-            aria-label="Back to files"
-            className="inline-flex items-center gap-1 rounded px-2 py-1 text-[12px] font-mono text-neutral-600 transition-colors hover:bg-neutral-100 hover:text-neutral-900"
-          >
-            <ArrowLeft className="size-3.5" />
-            <span>Files</span>
-          </button>
+    <div className="relative flex h-full w-full min-h-0 flex-col overflow-hidden bg-white text-neutral-800">
+      {!hideHeader && (
+        <>
+          {/* Header bar — White theme */}
+          <div className="flex h-11 shrink-0 items-center justify-between border-b border-neutral-200 bg-white px-3 py-2 font-mono">
+            <div className="flex min-w-0 flex-1 items-center gap-2">
+              {/* Back button */}
+              <button
+                type="button"
+                onClick={onClose}
+                title="Back to files"
+                aria-label="Back to files"
+                className="inline-flex items-center gap-1 rounded px-2 py-1 text-[12px] font-mono text-neutral-600 transition-colors hover:bg-neutral-100 hover:text-neutral-900"
+              >
+                <ArrowLeft className="size-3.5" />
+                <span>Files</span>
+              </button>
 
-          <div className="h-4 w-px bg-neutral-200" />
+              <div className="h-4 w-px bg-neutral-200" />
 
-          {/* File icon and filename */}
-          <div className="flex min-w-0 items-center gap-1.5">
-            <File className="size-3.5 text-neutral-600 shrink-0" strokeWidth={1.5} />
-            <span
-              className="min-w-0 truncate font-mono text-[12px] font-semibold text-neutral-900"
-              title={path}
-            >
-              {filename}
-            </span>
+              {/* File icon and filename */}
+              <div className="flex min-w-0 items-center gap-1.5">
+                <File className="size-3.5 text-neutral-600 shrink-0" strokeWidth={1.5} />
+                <span
+                  className="min-w-0 truncate font-mono text-[12px] font-semibold text-neutral-900"
+                  title={path}
+                >
+                  {filename}
+                </span>
+              </div>
+
+              {/* Modified badge */}
+              {isModified && (
+                <span
+                  className="rounded bg-amber-50 border border-amber-300 px-1.5 py-0.5 text-[10px] font-medium text-amber-800 shrink-0"
+                  title="Unsaved changes (Ctrl+S to save)"
+                >
+                  Modified
+                </span>
+              )}
+            </div>
+
+            {/* Header Actions */}
+            <div className="flex shrink-0 items-center gap-1">
+              {/* File size */}
+              {fileData && (
+                <span className="mr-1 text-[11px] text-neutral-400 font-mono tabular-nums">
+                  {formatBytes(fileData.size)}
+                </span>
+              )}
+
+              {/* Save button */}
+              {isModified && (
+                <button
+                  type="button"
+                  onClick={handleSave}
+                  disabled={writeMutation.isPending}
+                  title="Save changes (Ctrl+S)"
+                  className="inline-flex items-center gap-1 rounded bg-neutral-900 px-2 py-1 text-[11px] font-mono font-medium text-white shadow-xs transition-colors hover:bg-neutral-800 disabled:opacity-50"
+                >
+                  {writeMutation.isPending ? (
+                    <Loader2 className="size-3 animate-spin" />
+                  ) : (
+                    <Save className="size-3" />
+                  )}
+                  <span>Save</span>
+                </button>
+              )}
+
+              {saveSuccess && (
+                <span className="inline-flex items-center gap-1 text-[11px] text-emerald-600 font-mono font-medium mr-1">
+                  <Check className="size-3.5" />
+                  <span>Saved</span>
+                </span>
+              )}
+
+              {/* Copy path */}
+              <button
+                type="button"
+                onClick={handleCopyPath}
+                title="Copy path"
+                aria-label="Copy path"
+                className="inline-flex size-7 items-center justify-center rounded text-neutral-400 transition-colors hover:bg-neutral-100 hover:text-neutral-900"
+              >
+                {copied ? <Check className="size-3.5 text-emerald-600" /> : <Copy className="size-3.5" />}
+              </button>
+
+              {/* Download */}
+              <button
+                type="button"
+                onClick={handleDownload}
+                title="Download file"
+                aria-label="Download file"
+                className="inline-flex size-7 items-center justify-center rounded text-neutral-400 transition-colors hover:bg-neutral-100 hover:text-neutral-900"
+              >
+                <Download className="size-3.5" />
+              </button>
+
+              {/* Close */}
+              <button
+                type="button"
+                onClick={onClose}
+                title="Close file viewer"
+                aria-label="Close file viewer"
+                className="inline-flex size-7 items-center justify-center rounded text-neutral-400 transition-colors hover:bg-neutral-100 hover:text-neutral-900"
+              >
+                <X className="size-4" />
+              </button>
+            </div>
           </div>
 
-          {/* Modified badge */}
-          {isModified && (
-            <span
-              className="rounded bg-amber-50 border border-amber-300 px-1.5 py-0.5 text-[10px] font-medium text-amber-800 shrink-0"
-              title="Unsaved changes (Ctrl+S to save)"
-            >
-              Modified
-            </span>
-          )}
-        </div>
-
-        {/* Header Actions */}
-        <div className="flex shrink-0 items-center gap-1">
-          {/* File size */}
-          {fileData && (
-            <span className="mr-1 text-[11px] text-neutral-400 font-mono tabular-nums">
-              {formatBytes(fileData.size)}
-            </span>
-          )}
-
-          {/* Save button */}
-          {isModified && (
-            <button
-              type="button"
-              onClick={handleSave}
-              disabled={writeMutation.isPending}
-              title="Save changes (Ctrl+S)"
-              className="inline-flex items-center gap-1 rounded bg-neutral-900 px-2 py-1 text-[11px] font-mono font-medium text-white shadow-xs transition-colors hover:bg-neutral-800 disabled:opacity-50"
-            >
-              {writeMutation.isPending ? (
-                <Loader2 className="size-3 animate-spin" />
-              ) : (
-                <Save className="size-3" />
-              )}
-              <span>Save</span>
-            </button>
-          )}
-
-          {saveSuccess && (
-            <span className="inline-flex items-center gap-1 text-[11px] text-emerald-600 font-mono font-medium mr-1">
-              <Check className="size-3.5" />
-              <span>Saved</span>
-            </span>
-          )}
-
-          {/* Copy path */}
-          <button
-            type="button"
-            onClick={handleCopyPath}
-            title="Copy path"
-            aria-label="Copy path"
-            className="inline-flex size-7 items-center justify-center rounded text-neutral-400 transition-colors hover:bg-neutral-100 hover:text-neutral-900"
-          >
-            {copied ? <Check className="size-3.5 text-emerald-600" /> : <Copy className="size-3.5" />}
-          </button>
-
-          {/* Download */}
-          <button
-            type="button"
-            onClick={handleDownload}
-            title="Download file"
-            aria-label="Download file"
-            className="inline-flex size-7 items-center justify-center rounded text-neutral-400 transition-colors hover:bg-neutral-100 hover:text-neutral-900"
-          >
-            <Download className="size-3.5" />
-          </button>
-
-          {/* Close */}
-          <button
-            type="button"
-            onClick={onClose}
-            title="Close file viewer"
-            aria-label="Close file viewer"
-            className="inline-flex size-7 items-center justify-center rounded text-neutral-400 transition-colors hover:bg-neutral-100 hover:text-neutral-900"
-          >
-            <X className="size-4" />
-          </button>
-        </div>
-      </div>
-
-      {/* Breadcrumb Path Banner */}
-      <div className="flex items-center border-b border-neutral-200 bg-neutral-50 px-3 py-1 font-mono text-[11px] text-neutral-500 truncate">
-        <span className="text-neutral-400 mr-1.5">Path:</span>
-        <span className="truncate">{path}</span>
-      </div>
+          {/* Breadcrumb Path Banner */}
+          <div className="flex items-center border-b border-neutral-200 bg-neutral-50 px-3 py-1 font-mono text-[11px] text-neutral-500 truncate">
+            <span className="text-neutral-400 mr-1.5">Path:</span>
+            <span className="truncate">{path}</span>
+          </div>
+        </>
+      )}
 
       {/* Editor Body — Clean white CodeMirror with light gutters */}
       <div className="flex-1 min-h-0 overflow-auto bg-white [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-thumb]:bg-neutral-300 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-track]:bg-transparent">
@@ -305,7 +328,7 @@ export function FileViewer({ appId, path, workspaceId, onClose }: FileViewerProp
               highlightActiveLineGutter: true,
               highlightSpecialChars: true,
               history: true,
-              foldGutter: true,
+              foldGutter: false,
               drawSelection: true,
               dropCursor: true,
               allowMultipleSelections: true,
@@ -337,6 +360,34 @@ export function FileViewer({ appId, path, workspaceId, onClose }: FileViewerProp
           />
         )}
       </div>
+
+      {/* Floating Save Status / Button when hideHeader is active */}
+      {hideHeader && isModified && (
+        <div className="absolute bottom-4 right-5 z-20 flex items-center gap-2 rounded-md border border-neutral-200 bg-white/95 px-3 py-1.5 shadow-md backdrop-blur-xs font-sans text-xs">
+          <span className="text-neutral-500">Unsaved changes</span>
+          <button
+            type="button"
+            onClick={handleSave}
+            disabled={writeMutation.isPending}
+            title="Save changes (Ctrl+S)"
+            className="inline-flex items-center gap-1.5 rounded bg-blue-600 px-2.5 py-1 text-[11px] font-medium text-white shadow-xs transition-colors hover:bg-blue-700 disabled:opacity-50 cursor-pointer"
+          >
+            {writeMutation.isPending ? (
+              <Loader2 className="size-3 animate-spin" />
+            ) : (
+              <Save className="size-3" />
+            )}
+            <span>Save (Ctrl+S)</span>
+          </button>
+        </div>
+      )}
+
+      {hideHeader && saveSuccess && (
+        <div className="absolute bottom-4 right-5 z-20 flex items-center gap-1.5 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-medium text-emerald-700 shadow-sm font-sans">
+          <Check className="size-3.5" />
+          <span>Saved</span>
+        </div>
+      )}
     </div>
   );
 }

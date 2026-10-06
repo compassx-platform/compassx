@@ -75,7 +75,8 @@ export default function AppShell() {
   const isWorkspaceAdmin = Boolean(isAccountAdmin || workspaceCtx?.current_user_role === "workspace_admin" || workspaceCtx?.current_user_role === "admin");
   const isWorkspaceDeveloper = Boolean(isWorkspaceAdmin || workspaceCtx?.current_user_role === "workspace_developer");
   const [searchParams] = useSearchParams();
-  const hideSidebar = searchParams.get('sidebar') === 'false' || searchParams.get('embed') === '1';
+  const isAppBuildPage = scopedPathname.includes('/apps/') && scopedPathname.includes('/build');
+  const hideSidebar = searchParams.get('sidebar') === 'false' || searchParams.get('embed') === '1' || isAppBuildPage;
   const isAgentSidePanelOpen = useAgentSidePanelStore((s) => s.isOpen);
   const toggleAgentSidePanel = useAgentSidePanelStore((s) => s.toggleOpen);
   const profileMenuRef = useRef<HTMLDivElement | null>(null);
@@ -298,10 +299,11 @@ export default function AppShell() {
         </nav>
       )}
 
-      <main className="app-main">
-        <header className="app-topbar">
-          <div className="app-topbar-title">{pageTitle}</div>
-          <div className="app-topbar-actions">
+      <main className="app-main" style={isAppBuildPage ? { height: '100vh', minHeight: '100vh', overflow: 'hidden' } : undefined}>
+        {!isAppBuildPage && (
+          <header className="app-topbar">
+            <div className="app-topbar-title">{pageTitle}</div>
+            <div className="app-topbar-actions">
             {/* In-Session Role Switcher */}
             <RoleSwitcherDropdown />
 
@@ -824,11 +826,18 @@ export default function AppShell() {
             </div>
           </div>
         </header>
+        )}
         <AssumedContextBanner />
 
-        <div className={`app-workspace ${isAgentSidePanelOpen ? 'has-nova-sidebar' : ''}`}>
+        <div
+          className={`app-workspace ${isAgentSidePanelOpen ? 'has-nova-sidebar' : ''}`}
+          style={isAppBuildPage ? { height: '100vh', minHeight: '100vh', maxHeight: '100vh' } : undefined}
+        >
           <div className="app-content">
-            <div className="page-content">
+            <div
+              className="page-content"
+              style={isAppBuildPage ? { padding: 0, height: '100%', overflow: 'hidden' } : undefined}
+            >
               <Outlet />
             </div>
           </div>

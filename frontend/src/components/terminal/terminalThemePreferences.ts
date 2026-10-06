@@ -60,7 +60,7 @@ export function resolveTerminalIsDark(mode: TerminalThemeMode, appIsDark: boolea
 
 // Card background colors matching Omnigent palette
 const CARD_LIGHT = '#ffffff';
-const CARD_DARK = '#131517';
+const CARD_DARK = '#000000';
 
 export function terminalTheme(isDark: boolean): ITheme {
   const bg = isDark ? CARD_DARK : CARD_LIGHT;

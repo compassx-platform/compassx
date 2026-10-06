@@ -14,12 +14,15 @@ import {
   Terminal,
   ChevronDown,
   ChevronUp,
+  ChevronLeft,
   Copy,
   FolderTree,
   Layers,
-  PanelLeftOpen,
-  PanelLeftClose,
   ExternalLink,
+  Plus,
+  Sparkles,
+  History,
+  SquarePen,
 } from 'lucide-react';
 import { useScopedNavigate } from '@/lib/appNavigation';
 import { useToast } from '@/lib/toast';
@@ -40,11 +43,14 @@ import {
   useDeleteDevSession,
   useDevWorkspaces,
   useActivateDevWorkspace,
+  useDeployApp,
+  useAppDeployments,
   type DevSession,
   type DevWorkspace,
 } from '../hooks/useApps';
 import { DevTerminal } from '../components/DevTerminal';
-import { SessionsSidebar } from '../components/SessionsSidebar';
+import { SessionHistoryPopover } from '../components/build/SessionHistoryPopover';
+import { CompassXLogo } from '@/components/common/CompassXLogo';
 import { useNewShellHotkey } from '../hooks/useNewShellHotkey';
 import { NewSessionModal } from '../components/NewSessionModal';
 import { SandboxSelector } from '../components/SandboxSelector';
@@ -52,6 +58,10 @@ import { NewSandboxModal } from '../components/NewSandboxModal';
 import { FileExplorerSidepanel } from '../components/files/FileExplorerSidepanel';
 import { FilesPanel } from '../components/files/FilesPanel';
 import { FileViewer } from '../components/files/FileViewer';
+import { BrowserToolbar, type CanvasViewMode } from '../components/build/BrowserToolbar';
+import { LivePreviewCanvas } from '../components/build/LivePreviewCanvas';
+import { CodeEditorCanvas } from '../components/build/CodeEditorCanvas';
+import { OutputDrawer } from '../components/build/OutputDrawer';
 
 interface BuildStep {
   id: string;
@@ -236,22 +246,41 @@ export default function AppBuildPage() {
     stage = 'stopping';
   } else if (userExplicitlyStopped) {
     stage = 'stopped';
-  } else if (isContainerRunning && hasCompletedInit) {
+  } else if (isContainerRunning) {
     stage = 'running';
   } else if (
     startDevMutation.isPending ||
     restartDevMutation.isPending ||
     devStatus?.status === 'provisioning' ||
-    devStatus?.is_scaling_node ||
-    (isContainerRunning && !hasCompletedInit)
+    devStatus?.is_scaling_node
   ) {
     stage = 'starting';
   } else {
     stage = 'stopped';
   }
 
-  // Live container logs query (active when log viewer is open)
-  const { data: devLogsData } = useDevLogs(resolvedAppId, isLogViewerOpen && stage === 'starting');
+  // Live container logs query (active when log viewer is open or stage is running)
+  const {
+    data: devLogsData,
+    refetch: refetchDevLogs,
+    isLoading: isDevLogsLoading,
+  } = useDevLogs(resolvedAppId, stage === 'running' || (isLogViewerOpen && stage === 'starting'));
+
+  // ── Deployment State & Handler ───────────────────────────────────────────────
+  const deployMutation = useDeployApp();
+  const { data: appDeployments = [] } = useAppDeployments(resolvedAppId, stage === 'running');
+  const latestDeployment = appDeployments?.[0];
+
+  const handleDeployApp = async () => {
+    if (!resolvedAppId) return;
+    try {
+      toast.info('Starting deployment to cluster...');
+      await deployMutation.mutateAsync(resolvedAppId);
+      toast.success('Deployment initiated successfully!');
+    } catch (err: any) {
+      toast.error(err?.response?.data?.detail || err?.message || 'Deployment failed');
+    }
+  };
 
   // ── Multi-Session State (App-Scoped) ──────────────────────────────────────────
   const { data: devSessions = [] } = useDevSessions(resolvedAppId, isContainerRunning);
@@ -394,49 +423,9 @@ export default function AppBuildPage() {
 
   useNewShellHotkey(handleCreateShellSession, isContainerRunning);
 
-  // ── Sessions Secondary Sidebar State ──────────────────────────────────────────
-  const [showSessionsSidebar, setShowSessionsSidebar] = useState<boolean>(() => {
-    try {
-      const saved = localStorage.getItem('compassx_show_sessions_sidebar');
-      if (saved !== null) return saved === 'true';
-    } catch (_) {}
-    return true;
-  });
-
-  const [sessionsSidebarWidth, setSessionsSidebarWidth] = useState<number>(() => {
-    try {
-      const saved = localStorage.getItem('compassx_sessions_sidebar_width');
-      if (saved) {
-        const parsed = parseInt(saved, 10);
-        if (Number.isFinite(parsed) && parsed >= 200 && parsed <= 450) return parsed;
-      }
-    } catch (_) {}
-    return 260;
-  });
-
-  const [isSessionsResizing, setIsSessionsResizing] = useState<boolean>(false);
-  const isSessionsResizingRef = useRef<boolean>(false);
-  const startSessionsXRef = useRef<number>(0);
-  const startSessionsWidthRef = useRef<number>(260);
-  const sessionsSidebarWidthRef = useRef<number>(sessionsSidebarWidth);
-
-  useEffect(() => {
-    sessionsSidebarWidthRef.current = sessionsSidebarWidth;
-  }, [sessionsSidebarWidth]);
-
-  const [isSessionsMaximized, setIsSessionsMaximized] = useState<boolean>(false);
-  const toggleSessionsMaximized = () => {
-    setIsSessionsMaximized((prev) => {
-      const next = !prev;
-      const targetWidth = next ? 420 : 260;
-      setSessionsSidebarWidth(targetWidth);
-      sessionsSidebarWidthRef.current = targetWidth;
-      try {
-        localStorage.setItem('compassx_sessions_sidebar_width', String(targetWidth));
-      } catch (_) {}
-      return next;
-    });
-  };
+  // ── Session History Popover & More Menu State ──────────────────────────────
+  const [isHistoryPopoverOpen, setIsHistoryPopoverOpen] = useState<boolean>(false);
+  const [isMoreMenuOpen, setIsMoreMenuOpen] = useState<boolean>(false);
 
   // ── File Explorer State ────────────────────────────────────────────────────────
   const [showFileExplorer, setShowFileExplorer] = useState<boolean>(() => {
@@ -448,6 +437,55 @@ export default function AppBuildPage() {
   });
   const [selectedFilePath, setSelectedFilePath] = useState<string | null>(null);
   const [isExplorerMaximized, setIsExplorerMaximized] = useState<boolean>(false);
+
+  // ── Studio 2-Column Split & Output Drawer State ────────────────────────────────
+  const [canvasViewMode, setCanvasViewMode] = useState<CanvasViewMode>('preview');
+  const [previewRoute, setPreviewRoute] = useState<string>('/');
+  const [previewReloadKey, setPreviewReloadKey] = useState<number>(0);
+  const [isCanvasMaximized, setIsCanvasMaximized] = useState<boolean>(false);
+  const [isOutputCollapsed, setIsOutputCollapsed] = useState<boolean>(true);
+
+  const [outputHeight, setOutputHeight] = useState<number>(() => {
+    try {
+      const saved = localStorage.getItem('compassx_build_output_height');
+      if (saved) {
+        const parsed = parseInt(saved, 10);
+        if (Number.isFinite(parsed) && parsed >= 120 && parsed <= 600) return parsed;
+      }
+    } catch (_) {}
+    return 220;
+  });
+
+  const [studioSplitRatio, setStudioSplitRatio] = useState<number>(() => {
+    try {
+      const saved = localStorage.getItem('compassx_build_split_ratio');
+      if (saved) {
+        const parsed = parseFloat(saved);
+        if (Number.isFinite(parsed) && parsed >= 25 && parsed <= 75) return parsed;
+      }
+    } catch (_) {}
+    return 42;
+  });
+
+  const [isStudioResizing, setIsStudioResizing] = useState<boolean>(false);
+  const [isStudioSplitterHovered, setIsStudioSplitterHovered] = useState<boolean>(false);
+  const isStudioResizingRef = useRef<boolean>(false);
+  const studioContainerRef = useRef<HTMLDivElement>(null);
+  const studioSplitRatioRef = useRef<number>(studioSplitRatio);
+
+  const [isOutputResizing, setIsOutputResizing] = useState<boolean>(false);
+  const isOutputResizingRef = useRef<boolean>(false);
+  const startOutputYRef = useRef<number>(0);
+  const startOutputHeightRef = useRef<number>(220);
+  const outputHeightRef = useRef<number>(outputHeight);
+
+  useEffect(() => {
+    studioSplitRatioRef.current = studioSplitRatio;
+  }, [studioSplitRatio]);
+
+  useEffect(() => {
+    outputHeightRef.current = outputHeight;
+  }, [outputHeight]);
 
   // Clear selected file when switching active sandbox/workspace
   useEffect(() => {
@@ -502,14 +540,26 @@ export default function AppBuildPage() {
 
   useEffect(() => {
     const handleMouseMove = (e: MouseEvent) => {
-      // Left-side sessions panel: moving cursor right increases width
-      if (isSessionsResizingRef.current) {
+      // 1. Studio vertical divider (Left vs Right column)
+      if (isStudioResizingRef.current && studioContainerRef.current) {
         e.preventDefault();
-        const deltaX = e.clientX - startSessionsXRef.current;
-        const rawWidth = startSessionsWidthRef.current + deltaX;
-        const clampedWidth = Math.min(Math.max(200, rawWidth), 450);
-        setSessionsSidebarWidth(clampedWidth);
-        sessionsSidebarWidthRef.current = clampedWidth;
+        const rect = studioContainerRef.current.getBoundingClientRect();
+        const mouseX = e.clientX - rect.left;
+        const newRatio = (mouseX / rect.width) * 100;
+        const clampedRatio = Math.min(Math.max(25, newRatio), 75);
+        setStudioSplitRatio(clampedRatio);
+        studioSplitRatioRef.current = clampedRatio;
+        return;
+      }
+
+      // 2. Output horizontal divider (Top Canvas vs Bottom Output Drawer)
+      if (isOutputResizingRef.current) {
+        e.preventDefault();
+        const deltaY = startOutputYRef.current - e.clientY;
+        const newHeight = startOutputHeightRef.current + deltaY;
+        const clampedHeight = Math.min(Math.max(120, newHeight), 600);
+        setOutputHeight(clampedHeight);
+        outputHeightRef.current = clampedHeight;
         return;
       }
 
@@ -534,11 +584,19 @@ export default function AppBuildPage() {
     };
 
     const handleMouseUp = () => {
-      if (isSessionsResizingRef.current) {
-        isSessionsResizingRef.current = false;
-        setIsSessionsResizing(false);
+      if (isStudioResizingRef.current) {
+        isStudioResizingRef.current = false;
+        setIsStudioResizing(false);
         try {
-          localStorage.setItem('compassx_sessions_sidebar_width', String(sessionsSidebarWidthRef.current));
+          localStorage.setItem('compassx_build_split_ratio', String(studioSplitRatioRef.current));
+        } catch (_) {}
+      }
+
+      if (isOutputResizingRef.current) {
+        isOutputResizingRef.current = false;
+        setIsOutputResizing(false);
+        try {
+          localStorage.setItem('compassx_build_output_height', String(outputHeightRef.current));
         } catch (_) {}
       }
 
@@ -564,24 +622,23 @@ export default function AppBuildPage() {
     };
   }, []);
 
-  const handleSessionsResizeMouseDown = (e: React.MouseEvent) => {
+  const handleStudioResizeMouseDown = (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    isSessionsResizingRef.current = true;
-    setIsSessionsResizing(true);
-    startSessionsXRef.current = e.clientX;
-    startSessionsWidthRef.current = sessionsSidebarWidthRef.current;
+    isStudioResizingRef.current = true;
+    setIsStudioResizing(true);
   };
 
-  const handleResetSessionsWidth = (e: React.MouseEvent) => {
+  const handleOutputResizeMouseDown = (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    setSessionsSidebarWidth(260);
-    sessionsSidebarWidthRef.current = 260;
-    try {
-      localStorage.setItem('compassx_sessions_sidebar_width', '260');
-    } catch (_) {}
+    isOutputResizingRef.current = true;
+    setIsOutputResizing(true);
+    startOutputYRef.current = e.clientY;
+    startOutputHeightRef.current = outputHeightRef.current;
   };
+
+
 
   const handleResizeMouseDown = (e: React.MouseEvent) => {
     e.preventDefault();
@@ -632,7 +689,7 @@ export default function AppBuildPage() {
     data: devFiles = [],
     isLoading: isDevFilesLoading,
     refetch: refetchDevFiles,
-  } = useDevFiles(resolvedAppId, activeWorkspace?.id || devStatus?.workspace_id, stage === 'running');
+  } = useDevFiles(resolvedAppId, activeWorkspace?.id || devStatus?.workspace_id, !!resolvedAppId);
 
   // Preview URL for the running application sandbox
   const previewUrl = useMemo(() => {
@@ -643,6 +700,20 @@ export default function AppBuildPage() {
       'http://localhost:9201'
     );
   }, [devStatus?.dev_url, devStatus?.dev_port, app?.slug]);
+
+  // Combined stdout/stderr output for Dev Server log viewer
+  const combinedLogs = useMemo(() => {
+    const parts: string[] = [];
+    if (gitOutput) parts.push(`[git] ${gitOutput}`);
+    if (installOutput) parts.push(`[install] ${installOutput}`);
+    if (runAppOutput) parts.push(`[run] ${runAppOutput}`);
+    if (Array.isArray(devLogsData) && devLogsData.length > 0) {
+      parts.push(devLogsData.join('\n'));
+    } else if (typeof devLogsData === 'string' && devLogsData.trim()) {
+      parts.push(devLogsData);
+    }
+    return parts.join('\n\n') || (isContainerRunning ? 'Dev server is running. Awaiting output...' : 'Dev server stopped.');
+  }, [gitOutput, installOutput, runAppOutput, devLogsData, isContainerRunning]);
 
   // Auto-scroll logs to bottom as lines arrive
   useEffect(() => {
@@ -1049,8 +1120,8 @@ export default function AppBuildPage() {
         style={{
           height: 52,
           padding: '0 20px',
-          background: 'var(--color-surface, #1e293b)',
-          borderBottom: '1px solid var(--color-border, #334155)',
+          background: '#ffffff',
+          borderBottom: '1px solid #e2e8f0',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
@@ -1058,82 +1129,116 @@ export default function AppBuildPage() {
           zIndex: 10,
         }}
       >
-        {/* Left: Breadcrumbs & Header Controls */}
+        {/* Left: Brand, Apps Breadcrumb, App Name & Controls */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <nav aria-label="Breadcrumb" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            <button
-              type="button"
-              onClick={() => navigate('/apps')}
-              title="Back to Apps"
+          {/* Platform Brand */}
+          <div
+            onClick={() => navigate('/apps')}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              cursor: 'pointer',
+              userSelect: 'none',
+              padding: '2px 4px',
+              borderRadius: 6,
+              transition: 'background 0.15s ease',
+            }}
+            title="Go to Apps"
+          >
+            <CompassXLogo size={20} color="#1B6EF3" />
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 4 }}>
+              <span style={{ fontSize: '0.9rem', fontWeight: 700, color: '#0f172a', letterSpacing: '-0.01em' }}>
+                Compass<span style={{ color: '#1B6EF3' }}>X</span>
+              </span>
+              <span style={{ fontSize: '0.78rem', fontWeight: 600, color: '#64748b' }}>
+                App Builder
+              </span>
+            </div>
+          </div>
+
+          <div style={{ height: 16, width: 1, background: '#e2e8f0', margin: '0 2px' }} />
+
+          {/* Breadcrumb back to Apps: "< Apps" matching screenshot */}
+          <button
+            type="button"
+            onClick={() => navigate('/apps')}
+            title="Back to Apps"
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 4,
+              background: 'transparent',
+              border: 'none',
+              padding: '3px 8px',
+              borderRadius: 5,
+              cursor: 'pointer',
+              color: '#64748b',
+              fontSize: '0.84rem',
+              fontWeight: 500,
+              transition: 'all 0.15s ease',
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.color = '#0f172a';
+              e.currentTarget.style.background = '#f1f5f9';
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.color = '#64748b';
+              e.currentTarget.style.background = 'transparent';
+            }}
+          >
+            <ChevronLeft size={14} />
+            <span>Apps</span>
+          </button>
+
+          <div style={{ height: 16, width: 1, background: '#e2e8f0', margin: '0 2px' }} />
+
+          {/* App Name with Status Indicator Dot */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <span
               style={{
-                background: 'none',
-                border: 'none',
-                padding: '2px 4px',
-                borderRadius: 4,
-                cursor: 'pointer',
-                color: 'var(--color-text-muted, #94a3b8)',
-                fontSize: '0.84rem',
-                fontWeight: 500,
-                transition: 'all 0.15s ease',
+                width: 7,
+                height: 7,
+                borderRadius: '50%',
+                background: stage === 'running' ? '#10b981' : stage === 'starting' ? '#f59e0b' : '#94a3b8',
+                boxShadow: stage === 'running' ? '0 0 6px rgba(16, 185, 129, 0.5)' : 'none',
+                display: 'inline-block',
+                flexShrink: 0,
               }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.color = '#f8fafc';
-                e.currentTarget.style.background = 'rgba(255, 255, 255, 0.06)';
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.color = 'var(--color-text-muted, #94a3b8)';
-                e.currentTarget.style.background = 'transparent';
-              }}
-            >
-              Apps
-            </button>
-
-            <span style={{ color: 'var(--color-text-muted, #64748b)', fontSize: '0.8rem', userSelect: 'none' }}>/</span>
-
+              title={stage === 'running' ? 'Sandbox Running' : stage === 'starting' ? 'Starting...' : 'Stopped'}
+            />
             <button
               type="button"
               onClick={() => navigate(`/apps/${resolvedAppId}`)}
-              title="Back to App Details"
+              title="View App Details"
               style={{
-                background: 'none',
+                background: 'transparent',
                 border: 'none',
-                padding: '2px 4px',
+                padding: '2px 6px',
                 borderRadius: 4,
                 cursor: 'pointer',
-                color: 'var(--color-text, #f8fafc)',
-                fontSize: '0.92rem',
+                color: '#0f172a',
+                fontSize: '0.88rem',
                 fontWeight: 600,
                 transition: 'all 0.15s ease',
               }}
               onMouseEnter={(e) => {
                 e.currentTarget.style.color = '#1B6EF3';
-                e.currentTarget.style.background = 'rgba(255, 255, 255, 0.06)';
+                e.currentTarget.style.background = '#f1f5f9';
               }}
               onMouseLeave={(e) => {
-                e.currentTarget.style.color = 'var(--color-text, #f8fafc)';
+                e.currentTarget.style.color = '#0f172a';
                 e.currentTarget.style.background = 'transparent';
               }}
             >
               {app?.name || 'App'}
             </button>
-          </nav>
+          </div>
 
-            {/* Host name in muted font */}
-            {(stage === 'running' || stage === 'starting') && (
-              <span
-                style={{
-                  fontSize: '0.78rem',
-                  color: 'var(--color-text-muted, #94a3b8)',
-                  marginLeft: 2,
-                }}
-                title={devStatus?.host_image || 'compassx-host:latest'}
-              >
-                CompassX Host
-              </span>
-            )}
-
-            {/* Sandbox (Git Worktree) Selector Dropdown */}
-            {(stage === 'running' || stage === 'starting') && (
+          {/* Sandbox (Git Worktree) Selector Dropdown & Quick Restart Action */}
+          {/* Sandbox (Git Worktree) Selector Dropdown */}
+          {(stage === 'running' || stage === 'starting') && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginLeft: 2 }}>
               <SandboxSelector
                 appId={resolvedAppId!}
                 workspaces={devWorkspaces}
@@ -1144,83 +1249,48 @@ export default function AppBuildPage() {
                 isSwitching={isSwitchingSandbox}
                 disabled={!isContainerRunning}
               />
-            )}
-          </div>
+            </div>
+          )}
+        </div>
 
-        {/* Right: Preview Link, Files Toggle Button & Three Dots Action Menu */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-          {stage === 'running' && (
-            <>
-              {/* Preview Link */}
-              <a
-                href={previewUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                title={`Open App Preview (${previewUrl})`}
-                aria-label="Open App Preview"
-                style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: 5,
-                  padding: '4px 10px',
-                  borderRadius: 6,
-                  fontSize: '0.76rem',
-                  fontWeight: 600,
-                  color: '#1B6EF3',
-                  background: 'rgba(27, 110, 243, 0.08)',
-                  border: '1px solid rgba(27, 110, 243, 0.22)',
-                  textDecoration: 'none',
-                  cursor: 'pointer',
-                  transition: 'all 0.15s ease',
-                  boxShadow: '0 1px 2px rgba(0, 0, 0, 0.04)',
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.background = 'rgba(27, 110, 243, 0.16)';
-                  e.currentTarget.style.borderColor = 'rgba(27, 110, 243, 0.4)';
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.background = 'rgba(27, 110, 243, 0.08)';
-                  e.currentTarget.style.borderColor = 'rgba(27, 110, 243, 0.22)';
-                }}
-              >
-                <ExternalLink size={13} />
-                <span>Preview</span>
-              </a>
-
-              {/* Files Toggle Button */}
-              <button
-                type="button"
-                onClick={toggleFileExplorer}
-                title={showFileExplorer ? 'Hide File Explorer' : 'Show File Explorer'}
-                aria-label="Toggle Files Explorer"
-                style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  background: showFileExplorer ? '#f1f5f9' : 'transparent',
-                  border: showFileExplorer ? '1px solid #e2e8f0' : '1px solid transparent',
-                  borderRadius: 6,
-                  padding: 5,
-                  color: showFileExplorer ? '#0f172a' : '#64748b',
-                  cursor: 'pointer',
-                  transition: 'all 0.15s ease',
-                }}
-                onMouseEnter={(e) => {
-                  if (!showFileExplorer) {
-                    e.currentTarget.style.background = '#f8fafc';
-                    e.currentTarget.style.color = '#0f172a';
-                  }
-                }}
-                onMouseLeave={(e) => {
-                  if (!showFileExplorer) {
-                    e.currentTarget.style.background = 'transparent';
-                    e.currentTarget.style.color = '#64748b';
-                  }
-                }}
-              >
-                <FolderTree size={15} />
-              </button>
-            </>
+        {/* Right: Refresh Sandbox Button & Three Dots Action Menu */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+          {/* Quick Restart Sandbox Button */}
+          {(stage === 'running' || stage === 'starting') && (
+            <button
+              type="button"
+              onClick={handleRestartSandbox}
+              disabled={restartDevMutation.isPending || !isContainerRunning}
+              title="Restart Dev Sandbox"
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                width: 28,
+                height: 28,
+                borderRadius: 4,
+                border: 'none',
+                background: 'transparent',
+                color: '#64748b',
+                cursor: restartDevMutation.isPending || !isContainerRunning ? 'not-allowed' : 'pointer',
+                transition: 'all 0.15s ease',
+              }}
+              onMouseEnter={(e) => {
+                if (isContainerRunning) {
+                  e.currentTarget.style.color = '#1e293b';
+                  e.currentTarget.style.background = '#f1f5f9';
+                }
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.color = '#64748b';
+                e.currentTarget.style.background = 'transparent';
+              }}
+            >
+              <RefreshCw
+                size={14}
+                className={restartDevMutation.isPending ? 'animate-spin text-blue-600' : ''}
+              />
+            </button>
           )}
 
           <div ref={menuRef} style={{ position: 'relative' }}>
@@ -1362,294 +1432,549 @@ export default function AppBuildPage() {
           flex: 1,
           width: '100%',
           minHeight: 0,
-          background: 'var(--color-bg, #0f172a)',
+          background: '#f8fafc',
           position: 'relative',
           overflow: stage === 'running' ? 'hidden' : 'auto',
-          padding: stage === 'running' ? '10px 14px' : '24px 32px',
+          padding: stage === 'running' ? 0 : '24px 32px',
           display: 'flex',
           flexDirection: 'column',
         }}
       >
         {stage === 'running' ? (
-          /* Stage: Running -> Split Layout (Sessions Sidebar on Left, DevTerminal in Middle, File Explorer on Right) */
+          /* Stage: Running -> 2-Column Split Studio Layout */
           <div
+            ref={studioContainerRef}
             style={{
               flex: 1,
               height: '100%',
               minHeight: 0,
               display: 'flex',
               gap: 0,
-              borderRadius: 8,
+              borderRadius: 0,
               overflow: 'hidden',
               animation: 'fadeIn 0.3s ease-in-out',
+              background: '#ffffff',
+              border: 'none',
+              boxShadow: 'none',
             }}
           >
-            {/* Left Column: Sessions Secondary Sidebar */}
-            {showSessionsSidebar ? (
-              <>
-                <aside
-                  style={{
-                    width: `${sessionsSidebarWidth}px`,
-                    minWidth: 200,
-                    maxWidth: 450,
-                    height: '100%',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    flexShrink: 0,
-                    borderRadius: '8px 0 0 8px',
-                    overflow: 'hidden',
-                    border: '1px solid #e2e8f0',
-                    background: '#ffffff',
-                    transition: isSessionsResizing ? 'none' : 'width 0.15s ease',
-                    boxShadow: '0 4px 20px -2px rgba(0, 0, 0, 0.08)',
-                  }}
-                >
-                  <SessionsSidebar
-                    sessions={allSessions}
-                    activeSessionId={activeSession?.id || activeSessionId}
-                    onSelectSession={handleSelectSession}
-                    onOpenNewSession={() => setIsNewSessionModalOpen(true)}
-                    onOpenNewShell={handleCreateShellSession}
-                    onDeleteSession={handleDeleteSession}
-                    disabled={!isContainerRunning}
-                    isSwitching={isSwitchingSession}
-                    isMaximized={isSessionsMaximized}
-                    onToggleMaximized={toggleSessionsMaximized}
-                    onClose={() =>
-                      setShowSessionsSidebar(() => {
-                        try {
-                          localStorage.setItem('compassx_show_sessions_sidebar', 'false');
-                        } catch (_) {}
-                        return false;
-                      })
-                    }
-                  />
-                </aside>
-
-                {/* Draggable Divider Handle between Sessions Sidebar & Terminal */}
-                <div
-                  role="separator"
-                  aria-orientation="vertical"
-                  title="Drag to resize sessions sidebar • Double-click to reset"
-                  onMouseDown={handleSessionsResizeMouseDown}
-                  onDoubleClick={handleResetSessionsWidth}
-                  style={{
-                    width: 10,
-                    flexShrink: 0,
-                    cursor: 'col-resize',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    position: 'relative',
-                    zIndex: 20,
-                    userSelect: 'none',
-                  }}
-                  className="group"
-                >
-                  <div
-                    style={{
-                      width: 3,
-                      height: 36,
-                      borderRadius: 9999,
-                      backgroundColor: isSessionsResizing ? '#1B6EF3' : '#cbd5e1',
-                      transition: 'background-color 0.15s ease, height 0.15s ease',
-                    }}
-                    onMouseEnter={(e) => {
-                      e.currentTarget.style.backgroundColor = '#1B6EF3';
-                      e.currentTarget.style.height = '48px';
-                    }}
-                    onMouseLeave={(e) => {
-                      e.currentTarget.style.backgroundColor = isSessionsResizing ? '#1B6EF3' : '#cbd5e1';
-                      e.currentTarget.style.height = '36px';
-                    }}
-                  />
-                </div>
-              </>
-            ) : (
-              /* Collapsed Secondary Sidebar: slim rail with small expand button */
+            {/* ── Left Column: Agent & Terminal Studio ── */}
+            <div
+              style={{
+                width: `${studioSplitRatio}%`,
+                height: '100%',
+                minWidth: 320,
+                display: 'flex',
+                flexDirection: 'column',
+                background: '#ffffff',
+                overflow: 'hidden',
+                position: 'relative',
+                flexShrink: 0,
+              }}
+            >
+              {/* Left Column Header / Toolstrip */}
               <div
                 style={{
-                  width: 34,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  padding: '0 12px',
+                  borderBottom: '1px solid #e2e8f0',
+                  background: '#ffffff',
+                  flexShrink: 0,
+                  height: 46,
+                  minHeight: 46,
+                }}
+              >
+                {/* Left: Active Session Title & Sandbox Subtitle */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0, overflow: 'hidden' }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0, overflow: 'hidden' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <span
+                        style={{
+                          fontSize: '0.82rem',
+                          fontWeight: 600,
+                          color: '#0f172a',
+                          whiteSpace: 'nowrap',
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                        }}
+                      >
+                        {activeSession?.title || 'Agent Session'}
+                      </span>
+
+                      {activeSession?.agent && (
+                        <span
+                          style={{
+                            fontSize: '0.66rem',
+                            padding: '1px 5px',
+                            borderRadius: 4,
+                            background: '#f1f5f9',
+                            color: '#475569',
+                            fontWeight: 500,
+                            fontFamily: 'monospace',
+                            flexShrink: 0,
+                          }}
+                        >
+                          {activeSession.agent}
+                        </span>
+                      )}
+                    </div>
+
+                    <span
+                      style={{
+                        fontSize: '0.69rem',
+                        color: '#64748b',
+                        whiteSpace: 'nowrap',
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                      }}
+                    >
+                      {activeWorkspace?.name || devStatus?.workspace_name || 'default'}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Right: Quick Action Buttons (History, New Session, More Options) */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 2, flexShrink: 0 }}>
+                  {/* 1. Session History Popover Trigger */}
+                  <div style={{ position: 'relative' }}>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsMoreMenuOpen(false);
+                        setIsHistoryPopoverOpen((prev) => !prev);
+                      }}
+                      title="Session History"
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        width: 28,
+                        height: 28,
+                        borderRadius: 4,
+                        border: 'none',
+                        background: isHistoryPopoverOpen ? '#e0f2fe' : 'transparent',
+                        color: isHistoryPopoverOpen ? '#0284c7' : '#52525b',
+                        cursor: 'pointer',
+                        transition: 'all 0.15s ease',
+                      }}
+                      onMouseEnter={(e) => {
+                        if (!isHistoryPopoverOpen) {
+                          e.currentTarget.style.background = '#f4f4f5';
+                          e.currentTarget.style.color = '#18181b';
+                        }
+                      }}
+                      onMouseLeave={(e) => {
+                        if (!isHistoryPopoverOpen) {
+                          e.currentTarget.style.background = 'transparent';
+                          e.currentTarget.style.color = '#52525b';
+                        }
+                      }}
+                    >
+                      <History size={16} strokeWidth={1.75} />
+                    </button>
+
+                    <SessionHistoryPopover
+                      isOpen={isHistoryPopoverOpen}
+                      onClose={() => setIsHistoryPopoverOpen(false)}
+                      sessions={allSessions}
+                      activeSessionId={activeSession?.id || activeSessionId}
+                      onSelectSession={(sid) => {
+                        handleSelectSession(sid);
+                        setIsHistoryPopoverOpen(false);
+                      }}
+                      onOpenNewSession={() => {
+                        setIsHistoryPopoverOpen(false);
+                        setIsNewSessionModalOpen(true);
+                      }}
+                      onOpenNewShell={() => {
+                        setIsHistoryPopoverOpen(false);
+                        handleCreateShellSession();
+                      }}
+                      onDeleteSession={handleDeleteSession}
+                      disabled={!isContainerRunning}
+                    />
+                  </div>
+
+                  {/* 2. New Session (SquarePen / Compose) Button */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsHistoryPopoverOpen(false);
+                      setIsMoreMenuOpen(false);
+                      setIsNewSessionModalOpen(true);
+                    }}
+                    disabled={!isContainerRunning}
+                    title="Start New Session with an AI Agent"
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      width: 28,
+                      height: 28,
+                      borderRadius: 4,
+                      border: 'none',
+                      background: 'transparent',
+                      color: '#52525b',
+                      cursor: isContainerRunning ? 'pointer' : 'not-allowed',
+                      opacity: isContainerRunning ? 1 : 0.5,
+                      transition: 'all 0.15s ease',
+                    }}
+                    onMouseEnter={(e) => {
+                      if (isContainerRunning) {
+                        e.currentTarget.style.background = '#f4f4f5';
+                        e.currentTarget.style.color = '#18181b';
+                      }
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.background = 'transparent';
+                      e.currentTarget.style.color = '#52525b';
+                    }}
+                  >
+                    <SquarePen size={16} strokeWidth={1.75} />
+                  </button>
+
+                  {/* 3. More Options Menu (Three Dots) Button */}
+                  <div style={{ position: 'relative' }}>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsHistoryPopoverOpen(false);
+                        setIsMoreMenuOpen((prev) => !prev);
+                      }}
+                      title="More options"
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        width: 28,
+                        height: 28,
+                        borderRadius: 4,
+                        border: 'none',
+                        background: isMoreMenuOpen ? '#e0f2fe' : 'transparent',
+                        color: isMoreMenuOpen ? '#0284c7' : '#52525b',
+                        cursor: 'pointer',
+                        transition: 'all 0.15s ease',
+                      }}
+                      onMouseEnter={(e) => {
+                        if (!isMoreMenuOpen) {
+                          e.currentTarget.style.background = '#f4f4f5';
+                          e.currentTarget.style.color = '#18181b';
+                        }
+                      }}
+                      onMouseLeave={(e) => {
+                        if (!isMoreMenuOpen) {
+                          e.currentTarget.style.background = 'transparent';
+                          e.currentTarget.style.color = '#52525b';
+                        }
+                      }}
+                    >
+                      <MoreVertical size={16} strokeWidth={1.75} />
+                    </button>
+
+                    {isMoreMenuOpen && (
+                      <>
+                        {/* Dismiss backdrop */}
+                        <div
+                          style={{ position: 'fixed', inset: 0, zIndex: 45 }}
+                          onClick={() => setIsMoreMenuOpen(false)}
+                        />
+                        {/* Dropdown Menu */}
+                        <div
+                          style={{
+                            position: 'absolute',
+                            right: 0,
+                            top: '100%',
+                            marginTop: 4,
+                            zIndex: 50,
+                            width: 190,
+                            background: '#ffffff',
+                            borderRadius: 6,
+                            border: '1px solid #e2e8f0',
+                            boxShadow: '0 4px 12px rgba(0, 0, 0, 0.08)',
+                            padding: 4,
+                            display: 'flex',
+                            flexDirection: 'column',
+                            gap: 1,
+                          }}
+                        >
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setIsMoreMenuOpen(false);
+                              handleCreateShellSession();
+                            }}
+                            disabled={!isContainerRunning}
+                            style={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: 8,
+                              width: '100%',
+                              padding: '6px 10px',
+                              borderRadius: 4,
+                              border: 'none',
+                              background: 'transparent',
+                              color: '#1e293b',
+                              fontSize: '0.78rem',
+                              textAlign: 'left',
+                              cursor: isContainerRunning ? 'pointer' : 'not-allowed',
+                              opacity: isContainerRunning ? 1 : 0.5,
+                              transition: 'background 0.12s ease',
+                            }}
+                            onMouseEnter={(e) => {
+                              if (isContainerRunning) e.currentTarget.style.background = '#f1f5f9';
+                            }}
+                            onMouseLeave={(e) => {
+                              e.currentTarget.style.background = 'transparent';
+                            }}
+                          >
+                            <Terminal size={14} color="#f59e0b" />
+                            <div style={{ display: 'flex', flexDirection: 'column' }}>
+                              <span style={{ fontWeight: 500 }}>New Bash Shell</span>
+                              <span style={{ fontSize: '0.68rem', color: '#64748b' }}>Ctrl+Shift+T</span>
+                            </div>
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setIsMoreMenuOpen(false);
+                              handleRestartSandbox();
+                            }}
+                            disabled={!isContainerRunning}
+                            style={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: 8,
+                              width: '100%',
+                              padding: '6px 10px',
+                              borderRadius: 4,
+                              border: 'none',
+                              background: 'transparent',
+                              color: '#1e293b',
+                              fontSize: '0.78rem',
+                              textAlign: 'left',
+                              cursor: isContainerRunning ? 'pointer' : 'not-allowed',
+                              opacity: isContainerRunning ? 1 : 0.5,
+                              transition: 'background 0.12s ease',
+                            }}
+                            onMouseEnter={(e) => {
+                              if (isContainerRunning) e.currentTarget.style.background = '#f1f5f9';
+                            }}
+                            onMouseLeave={(e) => {
+                              e.currentTarget.style.background = 'transparent';
+                            }}
+                          >
+                            <RefreshCw size={14} color="#0284c7" />
+                            <span style={{ fontWeight: 500 }}>Restart Sandbox</span>
+                          </button>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* Main Left Content: DevTerminal (occupies 100% of left column) */}
+              <div
+                style={{
+                  flex: 1,
+                  minWidth: 0,
                   height: '100%',
                   display: 'flex',
                   flexDirection: 'column',
-                  alignItems: 'center',
-                  paddingTop: 8,
-                  gap: 8,
-                  flexShrink: 0,
-                  borderRadius: '8px 0 0 8px',
-                  border: '1px solid #e2e8f0',
-                  background: '#ffffff',
-                  zIndex: 10,
+                  overflow: 'hidden',
+                  background: '#000000',
                 }}
               >
-                <button
-                  type="button"
-                  onClick={() =>
-                    setShowSessionsSidebar(() => {
-                      try {
-                        localStorage.setItem('compassx_show_sessions_sidebar', 'true');
-                      } catch (_) {}
-                      return true;
-                    })
-                  }
-                  title="Expand Sessions Sidebar"
-                  style={{
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    width: 24,
-                    height: 24,
-                    borderRadius: 5,
-                    border: '1px solid #e2e8f0',
-                    background: '#f8fafc',
-                    color: '#64748b',
-                    cursor: 'pointer',
-                    transition: 'all 0.15s ease',
-                  }}
-                  onMouseEnter={(e) => {
-                    e.currentTarget.style.color = '#0f172a';
-                    e.currentTarget.style.background = '#f1f5f9';
-                    e.currentTarget.style.borderColor = '#cbd5e1';
-                  }}
-                  onMouseLeave={(e) => {
-                    e.currentTarget.style.color = '#64748b';
-                    e.currentTarget.style.background = '#f8fafc';
-                    e.currentTarget.style.borderColor = '#e2e8f0';
-                  }}
-                >
-                  <PanelLeftOpen size={13} />
-                </button>
-                <button
-                  type="button"
-                  onClick={() =>
-                    setShowSessionsSidebar(() => {
-                      try {
-                        localStorage.setItem('compassx_show_sessions_sidebar', 'true');
-                      } catch (_) {}
-                      return true;
-                    })
-                  }
-                  title={`${allSessions.length} active sessions (Click to expand)`}
-                  style={{
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    background: 'transparent',
-                    border: 'none',
-                    color: '#94a3b8',
-                    cursor: 'pointer',
-                    padding: 4,
-                  }}
-                  onMouseEnter={(e) => {
-                    e.currentTarget.style.color = '#1B6EF3';
-                  }}
-                  onMouseLeave={(e) => {
-                    e.currentTarget.style.color = '#94a3b8';
-                  }}
-                >
-                  <Layers size={13} />
-                </button>
+                <div style={{ flex: 1, minHeight: 0, overflow: 'hidden', background: '#000000' }}>
+                  <DevTerminal
+                    appId={resolvedAppId!}
+                    appName={app?.name || 'app'}
+                    workspaceId={activeWorkspace?.id || devStatus?.workspace_id}
+                    workspaceName={activeWorkspace?.name || devStatus?.workspace_name}
+                    isDevPodRunning={isContainerRunning}
+                    agent={currentAgent}
+                    sessionId={activeSession?.id}
+                    sessionTitle={activeSession?.title}
+                    isSwitchingSession={isSwitchingSession || isSwitchingSandbox}
+                    onSessionReady={() => setIsSwitchingSession(false)}
+                    fullHeight={true}
+                  />
+                </div>
               </div>
-            )}
+            </div>
 
-            {/* Middle/Main Column: DevTerminal */}
+            {/* ── Draggable Splitter between Left & Right Column ── */}
             <div
+              role="separator"
+              aria-orientation="vertical"
+              title="Drag to resize columns • Double-click to reset"
+              onMouseDown={handleStudioResizeMouseDown}
+              onDoubleClick={() => setStudioSplitRatio(42)}
+              onMouseEnter={() => setIsStudioSplitterHovered(true)}
+              onMouseLeave={() => setIsStudioSplitterHovered(false)}
               style={{
-                flex: 1,
-                minWidth: 0,
-                height: '100%',
-                display: 'flex',
-                flexDirection: 'column',
-                borderRadius: showSessionsSidebar ? 0 : 8,
-                overflow: 'hidden',
+                width: 1,
+                flexShrink: 0,
+                cursor: 'col-resize',
+                position: 'relative',
+                zIndex: 20,
+                userSelect: 'none',
+                background: isStudioSplitterHovered || isStudioResizing ? '#2563eb' : '#e2e8f0',
+                boxShadow: isStudioSplitterHovered || isStudioResizing ? '0 0 6px rgba(37, 99, 235, 0.5)' : 'none',
+                transition: 'background-color 0.15s ease, box-shadow 0.15s ease',
               }}
             >
-              <DevTerminal
-                appId={resolvedAppId!}
-                appName={app?.name || 'app'}
-                workspaceId={activeWorkspace?.id || devStatus?.workspace_id}
-                workspaceName={activeWorkspace?.name || devStatus?.workspace_name}
-                isDevPodRunning={isContainerRunning}
-                agent={currentAgent}
-                sessionId={activeSession?.id}
-                sessionTitle={activeSession?.title}
-                isSwitchingSession={isSwitchingSession || isSwitchingSandbox}
-                onSessionReady={() => setIsSwitchingSession(false)}
-                fullHeight={true}
+              {/* Invisible 8px wide grab area centered on the 1px line */}
+              <div
+                style={{
+                  position: 'absolute',
+                  top: 0,
+                  bottom: 0,
+                  left: -4,
+                  right: -4,
+                  cursor: 'col-resize',
+                }}
               />
             </div>
 
-            {/* Draggable Divider Handle between Terminal & Explorer */}
-            {showFileExplorer && (
-              <div
-                role="separator"
-                aria-orientation="vertical"
-                title="Drag to resize sidebar • Double-click to reset"
-                onMouseDown={handleResizeMouseDown}
-                onDoubleClick={handleResetWidth}
-                style={{
-                  width: 10,
-                  flexShrink: 0,
-                  cursor: 'col-resize',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  position: 'relative',
-                  zIndex: 20,
-                  userSelect: 'none',
-                }}
-                className="group"
-              >
-                {/* Visual grab pill */}
-                <div
-                  style={{
-                    width: 3,
-                    height: 36,
-                    borderRadius: 9999,
-                    backgroundColor: isExplorerResizing ? '#3b82f6' : '#cbd5e1',
-                    transition: 'background-color 0.15s ease, height 0.15s ease',
-                  }}
-                  className="group-hover:bg-blue-500 group-hover:h-12"
-                />
-              </div>
-            )}
+            {/* ── Right Column: Dual Canvas & Runtime Diagnostics ── */}
+            <div
+              style={{
+                flex: 1,
+                minWidth: 360,
+                height: '100%',
+                display: 'flex',
+                flexDirection: 'column',
+                background: '#ffffff',
+                overflow: 'hidden',
+              }}
+            >
+              {/* Top Browser Toolbar with View Switcher, Address Bar & Deploy Button */}
+              <BrowserToolbar
+                viewMode={canvasViewMode}
+                onViewModeChange={setCanvasViewMode}
+                previewUrl={previewUrl}
+                route={previewRoute}
+                onRouteChange={setPreviewRoute}
+                onReload={() => setPreviewReloadKey(Date.now())}
+                isReloading={false}
+                onDeploy={handleDeployApp}
+                isDeploying={deployMutation.isPending}
+                isCanvasMaximized={isCanvasMaximized}
+                onToggleCanvasMaximized={() => setIsCanvasMaximized((prev) => !prev)}
+                isOutputCollapsed={isOutputCollapsed}
+                onToggleOutputCollapsed={() => setIsOutputCollapsed((prev) => !prev)}
+                disabled={!isContainerRunning}
+              />
 
-            {/* Right Column: File Explorer Sidepanel */}
-            {showFileExplorer && (
-              <aside
-                ref={asideRef}
+              {/* Main Top Canvas (Preview or Code) */}
+              <div
                 style={{
-                  width: isExplorerMaximized ? '62vw' : (selectedFilePath ? `${viewerWidth}px` : `${treeWidth}px`),
-                  maxWidth: isExplorerMaximized ? '85vw' : '75vw',
-                  height: '100%',
+                  flex: 1,
+                  minHeight: 0,
                   display: 'flex',
                   flexDirection: 'column',
-                  borderRadius: 8,
                   overflow: 'hidden',
-                  border: '1px solid #e2e8f0',
-                  background: '#ffffff',
-                  boxShadow: '0 4px 20px -2px rgba(0, 0, 0, 0.08)',
-                  transition: isExplorerResizing ? 'none' : 'width 0.15s ease',
-                  flexShrink: 0,
+                  position: 'relative',
                 }}
               >
-                <FileExplorerSidepanel
-                  appId={resolvedAppId!}
-                  appName={app?.slug || app?.name || 'app'}
-                  workspaceId={activeWorkspace?.id || devStatus?.workspace_id}
-                  workspaceName={activeWorkspace?.name || devStatus?.workspace_name}
-                  files={devFiles}
-                  isLoading={isDevFilesLoading}
-                  onRefresh={() => refetchDevFiles()}
-                  selectedFilePath={selectedFilePath}
-                  onSelectFilePath={setSelectedFilePath}
-                  onClose={toggleFileExplorer}
-                  isMaximized={isExplorerMaximized}
-                  onToggleMaximized={() => setIsExplorerMaximized((prev) => !prev)}
-                />
-              </aside>
-            )}
+                {canvasViewMode === 'preview' ? (
+                  <LivePreviewCanvas
+                    previewUrl={previewUrl}
+                    route={previewRoute}
+                    isContainerRunning={isContainerRunning}
+                    reloadKey={previewReloadKey}
+                    onReload={() => setPreviewReloadKey(Date.now())}
+                    onStartDevPod={() => handleStartDev('compassx')}
+                    isStartingDevPod={startDevMutation.isPending}
+                    initStep={initStep}
+                    step2Completed={step2Completed}
+                    step3Completed={step3Completed}
+                    step4Completed={step4Completed}
+                    hasCompletedInit={hasCompletedInit}
+                    startError={startError}
+                    onRetryGit={handleRetryGit}
+                    onRetryInstall={handleRetryInstall}
+                    onRetryRunApp={handleRetryRunApp}
+                    isRetrying={
+                      verifyGitMutation.isPending ||
+                      installDepsMutation.isPending ||
+                      runAppMutation.isPending
+                    }
+                    onToggleLogs={() => setIsOutputCollapsed((prev) => !prev)}
+                    isOutputCollapsed={isOutputCollapsed}
+                    devLogs={combinedLogs}
+                  />
+                ) : (
+                  <CodeEditorCanvas
+                    appId={resolvedAppId!}
+                    appName={app?.name}
+                    workspaceId={activeWorkspace?.id || devStatus?.workspace_id}
+                    workspaceName={activeWorkspace?.name || devStatus?.workspace_name}
+                    files={devFiles}
+                    isLoading={isDevFilesLoading}
+                    onRefresh={() => refetchDevFiles()}
+                    selectedFilePath={selectedFilePath}
+                    onSelectFilePath={setSelectedFilePath}
+                  />
+                )}
+              </div>
+
+              {/* Horizontal Resizer & Bottom Output Drawer (when not maximized) */}
+              {!isCanvasMaximized && (
+                <>
+                  {/* Draggable Divider Handle between Canvas & Output Drawer */}
+                  {!isOutputCollapsed && (
+                    <div
+                      role="separator"
+                      aria-orientation="horizontal"
+                      title="Drag to resize output drawer • Double-click to reset"
+                      onMouseDown={handleOutputResizeMouseDown}
+                      onDoubleClick={() => setOutputHeight(220)}
+                      style={{
+                        height: 6,
+                        flexShrink: 0,
+                        cursor: 'row-resize',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        position: 'relative',
+                        zIndex: 20,
+                        userSelect: 'none',
+                        background: '#f1f5f9',
+                        borderTop: '1px solid #e2e8f0',
+                      }}
+                    >
+                      <div
+                        style={{
+                          width: 36,
+                          height: 2,
+                          borderRadius: 9999,
+                          backgroundColor: isOutputResizing ? '#2563eb' : '#cbd5e1',
+                          transition: 'background-color 0.15s ease',
+                        }}
+                      />
+                    </div>
+                  )}
+
+                  {/* Bottom Output Drawer */}
+                  <OutputDrawer
+                    devLogs={combinedLogs}
+                    isDevRunning={isContainerRunning}
+                    onRefreshLogs={() => refetchDevLogs()}
+                    isRefreshing={isDevLogsLoading}
+                    isCollapsed={isOutputCollapsed}
+                    onToggleCollapsed={() => setIsOutputCollapsed((prev) => !prev)}
+                    onClose={() => setIsOutputCollapsed(true)}
+                    height={outputHeight}
+                    onHeightChange={setOutputHeight}
+                  />
+                </>
+              )}
+            </div>
           </div>
         ) : stage === 'stopping' ? (
           /* Stage: Stopping View */
@@ -1683,10 +2008,10 @@ export default function AppBuildPage() {
             >
               <Loader2 size={28} className="spin" />
             </div>
-            <h2 style={{ margin: '0 0 6px', fontSize: '1.2rem', fontWeight: 700, color: 'var(--color-text, #f8fafc)' }}>
+            <h2 style={{ margin: '0 0 6px', fontSize: '1.2rem', fontWeight: 700, color: '#0f172a' }}>
               Stopping Dev Sandbox...
             </h2>
-            <p style={{ margin: 0, fontSize: '0.85rem', color: 'var(--color-text-muted, #94a3b8)' }}>
+            <p style={{ margin: 0, fontSize: '0.85rem', color: '#64748b' }}>
               Gracefully tearing down container environment and freeing ports.
             </p>
           </div>
@@ -1832,14 +2157,14 @@ export default function AppBuildPage() {
             </div>
 
             {/* Title & Subtitle */}
-            <h2 style={{ margin: '0 0 6px', fontSize: '1.25rem', fontWeight: 700, color: 'var(--color-text, #f8fafc)' }}>
+            <h2 style={{ margin: '0 0 6px', fontSize: '1.25rem', fontWeight: 700, color: '#0f172a' }}>
               {startError
                 ? 'Sandbox Startup Failed'
                 : devStatus?.is_scaling_node
                 ? 'Allocating Cloud Cluster Compute'
                 : 'Preparing Build Environment'}
             </h2>
-            <p style={{ margin: '0 0 24px', fontSize: '0.85rem', color: 'var(--color-text-muted, #94a3b8)' }}>
+            <p style={{ margin: '0 0 24px', fontSize: '0.85rem', color: '#64748b' }}>
               {startError
                 ? 'An error occurred during sandbox initialization.'
                 : devStatus?.is_scaling_node
@@ -1932,7 +2257,7 @@ export default function AppBuildPage() {
                   <Loader2 size={15} className="spin" />
                   <span>Cluster Worker Node Autoscaling in Progress</span>
                 </div>
-                <div style={{ fontSize: '0.78rem', color: '#cbd5e1', lineHeight: 1.55 }}>
+                <div style={{ fontSize: '0.78rem', color: '#475569', lineHeight: 1.55 }}>
                   {devStatus.provisioning_message ||
                     'The Kubernetes cluster is provisioning a new worker node to allocate compute resources for this sandbox. This usually takes 1-3 minutes. The sandbox will initialize automatically once the node joins the cluster.'}
                 </div>
@@ -1947,7 +2272,7 @@ export default function AppBuildPage() {
                   alignItems: 'center',
                   gap: 8,
                   fontSize: '0.82rem',
-                  color: 'var(--color-text-muted, #94a3b8)',
+                  color: '#64748b',
                 }}
               >
                 {step4Completed ? (
@@ -1977,10 +2302,10 @@ export default function AppBuildPage() {
                     display: 'inline-flex',
                     alignItems: 'center',
                     gap: 6,
-                    background: isLogViewerOpen ? 'rgba(255, 255, 255, 0.1)' : 'rgba(255, 255, 255, 0.05)',
-                    border: '1px solid var(--color-border, #334155)',
+                    background: isLogViewerOpen ? '#e2e8f0' : '#f1f5f9',
+                    border: '1px solid #cbd5e1',
                     borderRadius: 6,
-                    color: 'var(--color-text, #cbd5e1)',
+                    color: '#334155',
                     padding: '5px 12px',
                     fontSize: '0.78rem',
                     fontWeight: 500,
@@ -1988,7 +2313,7 @@ export default function AppBuildPage() {
                     transition: 'all 0.15s ease',
                   }}
                 >
-                  <Terminal size={13} color="#38bdf8" />
+                  <Terminal size={13} color="#2563eb" />
                   <span>
                     {isLogViewerOpen
                       ? 'Hide Initialization Logs'
@@ -2006,14 +2331,14 @@ export default function AppBuildPage() {
                     style={{
                       marginTop: 12,
                       width: '100%',
-                      background: '#090d16',
-                      border: '1px solid #1e293b',
+                      background: '#ffffff',
+                      border: '1px solid #e2e8f0',
                       borderRadius: 8,
                       display: 'flex',
                       flexDirection: 'column',
                       overflow: 'hidden',
                       textAlign: 'left',
-                      boxShadow: '0 8px 24px rgba(0, 0, 0, 0.45)',
+                      boxShadow: '0 4px 12px rgba(0, 0, 0, 0.05)',
                     }}
                   >
                     {/* Log Console Header Bar */}
@@ -2023,10 +2348,10 @@ export default function AppBuildPage() {
                         alignItems: 'center',
                         justifyContent: 'space-between',
                         padding: '6px 12px',
-                        background: '#0f172a',
-                        borderBottom: '1px solid #1e293b',
+                        background: '#f8fafc',
+                        borderBottom: '1px solid #e2e8f0',
                         fontSize: '0.72rem',
-                        color: '#94a3b8',
+                        color: '#475569',
                       }}
                     >
                       <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 600 }}>
@@ -2058,7 +2383,7 @@ export default function AppBuildPage() {
                           style={{
                             background: 'transparent',
                             border: 'none',
-                            color: autoScrollLogs ? '#38bdf8' : '#64748b',
+                            color: autoScrollLogs ? '#2563eb' : '#64748b',
                             fontSize: '0.7rem',
                             cursor: 'pointer',
                             fontWeight: 500,
@@ -2078,7 +2403,7 @@ export default function AppBuildPage() {
                           style={{
                             background: 'transparent',
                             border: 'none',
-                            color: '#cbd5e1',
+                            color: '#64748b',
                             cursor: 'pointer',
                             display: 'flex',
                             alignItems: 'center',
@@ -2104,7 +2429,7 @@ export default function AppBuildPage() {
                         fontSize: '0.73rem',
                         fontFamily:
                           'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
-                        color: startError ? '#fca5a5' : '#cbd5e1',
+                        color: startError ? '#dc2626' : '#334155',
                         lineHeight: 1.55,
                         whiteSpace: 'pre-wrap',
                         wordBreak: 'break-all',
@@ -2276,14 +2601,14 @@ export default function AppBuildPage() {
           </div>
         )}
 
-        {/* Transparent overlay during sidebar resize to lock cursor and prevent iframe/xterm event loss */}
-        {isExplorerResizing && (
+        {/* Transparent overlay during resize to lock cursor and prevent iframe/xterm event loss */}
+        {(isStudioResizing || isOutputResizing || isExplorerResizing) && (
           <div
             style={{
               position: 'fixed',
               inset: 0,
               zIndex: 99999,
-              cursor: 'col-resize',
+              cursor: isOutputResizing ? 'row-resize' : 'col-resize',
               userSelect: 'none',
               backgroundColor: 'transparent',
             }}

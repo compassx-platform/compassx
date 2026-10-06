@@ -307,23 +307,18 @@ class DockerDevDriver(BaseDevDriver):
         # Container boot script: writes config.yaml with app identity, configures TLS, starts FastAPI and React/Vite, then runs Omnigent host runner
         container_cmd = (
             f"mkdir -p /root/.gemini/antigravity-cli && "
-            f"if [ ! -f /root/.gemini/antigravity-cli/antigravity-oauth-token ]; then "
-            f"  printf '{{\"auth_method\":\"oauth\",\"token\":{{\"access_token\":\"auto-authenticated-dev-cluster-token\",\"refresh_token\":\"1//auto-authenticated-dev-cluster-token\",\"token_type\":\"Bearer\",\"expiry\":\"2099-01-01T00:00:00Z\"}}}}' > /root/.gemini/antigravity-cli/antigravity-oauth-token; "
-            f"fi; "
-            f"if [ ! -f /root/.gemini/oauth_creds.json ]; then "
-            f"  printf '{{\"access_token\":\"auto-authenticated-dev-cluster-token\",\"refresh_token\":\"1//auto-authenticated-dev-cluster-token\",\"token_type\":\"Bearer\",\"expiry_date\":4102444800000}}' > /root/.gemini/oauth_creds.json; "
-            f"fi; "
-            # Background daemon: syncs any real agy OAuth tokens acquired in any session back to /root/.gemini
+            # Background daemon: syncs any real agy OAuth tokens between /root/.gemini and session directories
             f"(while true; do "
-            f"  for t in /root/.omnigent/antigravity-native/*/agy-home/.gemini/antigravity-cli/antigravity-oauth-token /root/.omnigent/antigravity-native/*/agy-home/.gemini/oauth_creds.json; do "
-            f"    if [ -f \"$t\" ] && ! grep -q 'auto-authenticated-dev-cluster-token' \"$t\" 2>/dev/null; then "
-            f"      case \"$t\" in "
-            f"        *antigravity-oauth-token) cp -f \"$t\" /root/.gemini/antigravity-cli/antigravity-oauth-token 2>/dev/null ;; "
-            f"        *oauth_creds.json) cp -f \"$t\" /root/.gemini/oauth_creds.json 2>/dev/null ;; "
-            f"      esac; "
+            f"  if [ -f /root/.gemini/antigravity-cli/antigravity-oauth-token ] && [ ! -f /root/.gemini/oauth_creds.json ]; then "
+            f"    cp -f /root/.gemini/antigravity-cli/antigravity-oauth-token /root/.gemini/oauth_creds.json 2>/dev/null || true; "
+            f"  fi; "
+            f"  for t in /root/.omnigent/antigravity-native/*/agy-home/.gemini/antigravity-cli/antigravity-oauth-token; do "
+            f"    if [ -f \"$t\" ] && grep -q 'refresh_token' \"$t\" 2>/dev/null; then "
+            f"      cp -f \"$t\" /root/.gemini/antigravity-cli/antigravity-oauth-token 2>/dev/null || true; "
+            f"      cp -f \"$t\" /root/.gemini/oauth_creds.json 2>/dev/null || true; "
             f"    fi; "
             f"  done; "
-            f"  sleep 2; "
+            f"  sleep 3; "
             f"done) & "
             f"mkdir -p /root/.omnigent /root/.config/omnigent /root/.config/opencode /root/.opencode && "
             f"printf 'host:\\n  host_id: {host_id}\\n  name: \"{host_name}\"\\n' | tee /root/.omnigent/config.yaml /root/.config/omnigent/config.yaml /root/.config/opencode/config.yaml /root/.opencode/config.yaml >/dev/null; "
@@ -552,6 +547,12 @@ class DockerDevDriver(BaseDevDriver):
         container_id = (run_res.stdout or "").strip()[:12]
         dev_url = ingress_service.get_app_dev_url(app, dev_port=dev_port)
 
+        # Immediately seed CA certificates, Antigravity OAuth tokens, OpenCode & Pi configs
+        try:
+            self.ensure_agent_configs(app)
+        except Exception as seed_err:
+            logger.debug("Initial container config seeding: %s", seed_err)
+
         return {
             "mode": "docker",
             "container_id": container_id,
@@ -755,17 +756,46 @@ class DockerDevDriver(BaseDevDriver):
             # Ensure Antigravity OAuth token persistence across containers and restarts
             token_storage_dir = os.path.join(backend_dir, "storage", "credentials", "antigravity")
             host_token_file = os.path.join(token_storage_dir, "antigravity-oauth-token")
+            host_creds_file = os.path.join(token_storage_dir, "oauth_creds.json")
             os.makedirs(token_storage_dir, exist_ok=True)
+
+            # Check if container has an active valid OAuth token
             chk = subprocess.run(
                 ["docker", "exec", dev_container_name, "bash", "-c", "test -f /root/.gemini/antigravity-cli/antigravity-oauth-token && cat /root/.gemini/antigravity-cli/antigravity-oauth-token"],
                 capture_output=True, text=True, check=False, timeout=3.0,
             )
-            if chk.returncode == 0 and "refresh_token" in chk.stdout and "auto-authenticated" not in chk.stdout:
-                with open(host_token_file, "w") as f:
-                    f.write(chk.stdout)
+            container_token_content = (chk.stdout or "").strip() if chk.returncode == 0 else ""
+
+            if container_token_content and "refresh_token" in container_token_content and "auto-authenticated" not in container_token_content:
+                # Container has genuine token; persist to host storage
+                with open(host_token_file, "w", encoding="utf-8") as f:
+                    f.write(container_token_content)
+                with open(host_creds_file, "w", encoding="utf-8") as f:
+                    f.write(container_token_content)
             elif os.path.isfile(host_token_file):
+                # Container is missing or has stale token; seed from host storage
+                subprocess.run(
+                    ["docker", "exec", dev_container_name, "mkdir", "-p", "/root/.gemini/antigravity-cli"],
+                    capture_output=True, check=False, timeout=3.0,
+                )
                 subprocess.run(
                     ["docker", "cp", host_token_file, f"{dev_container_name}:/root/.gemini/antigravity-cli/antigravity-oauth-token"],
+                    capture_output=True, check=False, timeout=3.0,
+                )
+                subprocess.run(
+                    ["docker", "cp", host_token_file, f"{dev_container_name}:/root/.gemini/oauth_creds.json"],
+                    capture_output=True, check=False, timeout=3.0,
+                )
+                # Also propagate to any running omnigent antigravity session home directories
+                subprocess.run(
+                    ["docker", "exec", dev_container_name, "bash", "-c",
+                     "for d in /root/.omnigent/antigravity-native/*/agy-home/.gemini; do "
+                     "  if [ -d \"$d\" ]; then "
+                     "    mkdir -p \"$d/antigravity-cli\"; "
+                     "    cp -f /root/.gemini/antigravity-cli/antigravity-oauth-token \"$d/antigravity-cli/\" 2>/dev/null || true; "
+                     "    cp -f /root/.gemini/oauth_creds.json \"$d/\" 2>/dev/null || true; "
+                     "  fi; "
+                     "done"],
                     capture_output=True, check=False, timeout=3.0,
                 )
         except Exception:
@@ -1059,7 +1089,8 @@ class DockerDevDriver(BaseDevDriver):
             f"if [ -d '{target_dir}' ]; then "
             f"  echo '__WORKTREE_EXISTS__'; "
             f"else "
-            f"  cd /app && (git worktree add -B '{branch}' '{target_dir}' '{base}' 2>&1 || git worktree add -B '{branch}' '{target_dir}' HEAD 2>&1) && "
+            f"  cd /app && git worktree prune 2>/dev/null; "
+            f"  cd /app && (git worktree add -f -B '{branch}' '{target_dir}' '{base}' 2>&1 || git worktree add -f -B '{branch}' '{target_dir}' HEAD 2>&1) && "
             f"  echo '__WORKTREE_CREATED__'; "
             f"fi"
         )

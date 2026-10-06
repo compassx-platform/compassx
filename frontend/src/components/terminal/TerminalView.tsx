@@ -48,6 +48,7 @@ export interface TerminalViewProps {
   adaptCodexPalette?: boolean;
   className?: string;
   style?: React.CSSProperties;
+  isDark?: boolean;
 }
 
 export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(
@@ -65,6 +66,7 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(
       adaptCodexPalette = false,
       className = '',
       style,
+      isDark: isDarkProp,
     },
     ref,
   ) {
@@ -80,8 +82,8 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(
     );
     useEffect(() => subscribeTerminalTheme(setTerminalMode), []);
 
-    // Check if system dark mode is active
-    const isDark = resolveTerminalIsDark(terminalMode, true);
+    // Resolve dark vs light mode (defaults to light mode if not configured)
+    const isDark = isDarkProp !== undefined ? isDarkProp : resolveTerminalIsDark(terminalMode, false);
     const terminalBackground = terminalTheme(isDark).background;
     const isDarkRef = useRef(isDark);
     isDarkRef.current = isDark;
@@ -260,8 +262,50 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(
         className={`relative isolate flex min-h-0 flex-1 flex-col ${className}`}
         style={style}
       >
+        <style>{`
+          .xterm .xterm-viewport {
+            overflow-y: auto !important;
+            scrollbar-width: thin;
+          }
+          .xterm .xterm-viewport::-webkit-scrollbar {
+            width: 4px;
+          }
+          .xterm .xterm-viewport::-webkit-scrollbar-thumb {
+            background: rgba(0, 0, 0, 0.15);
+            border-radius: 2px;
+          }
+          .xterm,
+          .xterm-screen,
+          .xterm-helpers {
+            overflow: hidden !important;
+          }
+          .xterm .xterm-helpers {
+            position: absolute !important;
+            top: 0 !important;
+            left: 0 !important;
+            width: 0 !important;
+            height: 0 !important;
+            overflow: hidden !important;
+          }
+          .xterm .xterm-helper-textarea {
+            position: absolute !important;
+            opacity: 0 !important;
+            width: 0 !important;
+            height: 0 !important;
+            left: 0 !important;
+            top: 0 !important;
+            margin: 0 !important;
+            padding: 0 !important;
+            border: none !important;
+            outline: none !important;
+            overflow: hidden !important;
+            resize: none !important;
+            z-index: -10 !important;
+            pointer-events: none !important;
+          }
+        `}</style>
         <div
-          className="relative min-h-0 flex-1 overflow-hidden p-2.5"
+          className="relative min-h-0 flex-1 overflow-hidden p-0"
           style={{ backgroundColor: terminalBackground }}
         >
           <div
@@ -279,6 +323,7 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(
               }}
               resumePending={resumePending}
               resumeError={resumeError}
+              isDark={isDark}
             />
           )}
         </div>
@@ -293,30 +338,46 @@ function StatusOverlay({
   onResume,
   resumePending,
   resumeError,
+  isDark = false,
 }: {
   state: ConnectionState;
   reconnectPending: boolean;
   onResume?: () => void | Promise<void>;
   resumePending: boolean;
   resumeError: string | null;
+  isDark?: boolean;
 }) {
   return (
-    <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/80 text-white backdrop-blur-[2px]">
+    <div
+      className={`absolute inset-0 z-50 flex items-center justify-center backdrop-blur-[2px] ${
+        isDark ? 'bg-black/80 text-white' : 'bg-white/85 text-slate-800'
+      }`}
+    >
       {state.kind === 'connecting' && (
-        <span className="flex items-center gap-2.5 text-sm font-medium text-zinc-300">
-          <Loader2Icon className="h-4 w-4 animate-spin text-cyan-400" />
+        <span
+          className={`flex items-center gap-2.5 text-sm font-medium ${
+            isDark ? 'text-zinc-300' : 'text-slate-600'
+          }`}
+        >
+          <Loader2Icon className="h-4 w-4 animate-spin text-blue-600" />
           Connecting to sandbox terminal…
         </span>
       )}
       {state.kind === 'closed' && reconnectPending && (
-        <span className="flex items-center gap-2.5 text-sm font-medium text-amber-400">
+        <span className="flex items-center gap-2.5 text-sm font-medium text-amber-500">
           <Loader2Icon className="h-4 w-4 animate-spin" />
           Connection interrupted • Reconnecting…
         </span>
       )}
       {state.kind === 'closed' && !reconnectPending && (
-        <div className="flex flex-col items-center justify-center gap-3 px-4 py-3 bg-zinc-900 border border-zinc-700/80 rounded-xl shadow-xl max-w-md text-center">
-          <span className="text-sm font-semibold text-zinc-200">
+        <div
+          className={`flex flex-col items-center justify-center gap-3 px-5 py-4 rounded-xl shadow-xl max-w-md text-center border ${
+            isDark
+              ? 'bg-zinc-900 border-zinc-700/80 text-zinc-200'
+              : 'bg-white border-slate-200 text-slate-800'
+          }`}
+        >
+          <span className="text-sm font-semibold">
             Terminal connection closed ({state.reason})
           </span>
           {onResume && (
@@ -324,25 +385,29 @@ function StatusOverlay({
               type="button"
               onClick={onResume}
               disabled={resumePending}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 text-white transition-colors disabled:opacity-50"
+              className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-semibold bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-50 cursor-pointer"
             >
               <RefreshCwIcon className={`h-3.5 w-3.5 ${resumePending ? 'animate-spin' : ''}`} />
               {resumePending ? 'Reconnecting…' : 'Reconnect Session'}
             </button>
           )}
           {resumeError && (
-            <span className="text-xs text-rose-400">{resumeError}</span>
+            <span className="text-xs text-rose-500">{resumeError}</span>
           )}
         </div>
       )}
       {state.kind === 'error' && (
         <div className="flex flex-col items-center gap-2">
-          <span className="text-sm font-medium text-rose-400">WebSocket Bridge Error</span>
+          <span className="text-sm font-medium text-rose-500">WebSocket Bridge Error</span>
           {onResume && (
             <button
               type="button"
               onClick={onResume}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700 transition-colors"
+              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors cursor-pointer ${
+                isDark
+                  ? 'bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border-zinc-700'
+                  : 'bg-slate-100 hover:bg-slate-200 text-slate-800 border-slate-300'
+              }`}
             >
               Retry
             </button>

@@ -5,6 +5,27 @@ All notable changes to the CompassX Platform will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.5] - 2026-10-06
+
+### 🚀 Highlights
+
+CompassX `0.12.5` delivers **Modular Build Studio Canvases**, **Interactive Live Browser Preview & Toolbar**, **Dedicated Code Editor Canvas**, **Collapsible Output Drawer**, and **Refined File Explorer & Session Navigation**.
+
+### ✨ Features & Enhancements
+
+#### Modular Build Studio Architecture & Canvases
+- **Modular Studio Layout (`AppBuildPage.tsx`)**: Completely redesigned App Build Studio with modular, resizable canvases for Live Preview, Code Editor, and Omnigent Chat.
+- **Interactive Live Preview Canvas & Browser Toolbar (`LivePreviewCanvas.tsx`, `BrowserToolbar.tsx`)**: Embedded application preview canvas with responsive viewport modes (Desktop, Tablet, Mobile), URL navigation, refresh controls, and sandbox preview proxying.
+- **Dedicated Code Editor Canvas (`CodeEditorCanvas.tsx`)**: High-performance multi-tab code editor with language syntax highlighting, unsaved change indicators, and quick save bindings.
+- **Collapsible Bottom Output Drawer (`OutputDrawer.tsx`)**: Integrated bottom drawer housing dev terminal, build logs, and console outputs with collapsible height controls.
+
+#### File Explorer & Session Navigation Refinements
+- **Refined Files Panel & Folder Tree (`FileViewer.tsx`, `FilesPanel.tsx`, `FolderTree.tsx`)**: Clean modern file explorer with inline file creation, search filtering, smooth folder tree expanding/collapsing, and breadcrumb bar navigation.
+- **Sleek Session History Popover (`SessionHistoryPopover.tsx`)**: Fast popup session switcher with search filtering, status indicators, and clean session lifecycle management.
+- **Terminal View & Theme Polish (`TerminalView.tsx`, `DevTerminal.tsx`, `terminalThemePreferences.ts`)**: Streamlined terminal sizing, theme preference bindings, and seamless reconnects.
+
+---
+
 ## [0.12.4] - 2026-10-06
 
 ### 🚀 Highlights

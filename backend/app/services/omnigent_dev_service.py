@@ -1745,6 +1745,8 @@ class OmnigentDevService:
                 py_code = f"""
 import os, json
 root_dir = '{target_dir}'
+if not os.path.exists(root_dir) or not os.path.isdir(root_dir):
+    root_dir = '/app'
 ign = {{'.git', 'node_modules', '__pycache__', '.venv', '.pytest_cache', '.DS_Store', '.mypy_cache', '.coverage'}}
 res = []
 for r, dirs, files in os.walk(root_dir):
@@ -1830,6 +1832,8 @@ print('__JSON_START__' + json.dumps(res) + '__JSON_END__')
                 py_code = f"""
 import os, base64
 root_dir = '{target_dir}'
+if not os.path.exists(root_dir) or not os.path.isdir(root_dir):
+    root_dir = '/app'
 p = os.path.normpath(os.path.join(root_dir, '{clean_rel}'))
 if not p.startswith(root_dir) or not os.path.exists(p) or not os.path.isfile(p):
     print('__NOT_FOUND__')
@@ -1903,6 +1907,8 @@ else:
                 py_code = f"""
 import os, base64
 root_dir = '{target_dir}'
+if not os.path.exists(root_dir) or not os.path.isdir(root_dir):
+    root_dir = '/app'
 p = os.path.normpath(os.path.join(root_dir, '{clean_rel}'))
 if not p.startswith(root_dir):
     print('__ERROR_PATH__')

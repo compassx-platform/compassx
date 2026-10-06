@@ -92,7 +92,7 @@ export function SandboxSelector({
 
   return (
     <div ref={containerRef} style={{ position: 'relative', display: 'inline-block' }}>
-      {/* ── Header Trigger Pill (Clean Light Theme) ── */}
+      {/* ── Header Trigger Pill (Clean Minimalist Theme) ── */}
       <button
         type="button"
         onClick={() => !disabled && setIsOpen(!isOpen)}
@@ -103,15 +103,14 @@ export function SandboxSelector({
           alignItems: 'center',
           gap: 6,
           padding: '3px 10px',
-          borderRadius: 8,
-          fontSize: '0.74rem',
-          fontWeight: 600,
-          border: isOpen ? '1px solid #1B6EF3' : '1px solid #e2e8f0',
+          borderRadius: 6,
+          fontSize: '0.75rem',
+          border: isOpen ? '1px solid #94a3b8' : '1px solid #e2e8f0',
           background: isOpen ? '#f8fafc' : '#ffffff',
           color: '#0f172a',
           cursor: disabled || isSwitching ? 'not-allowed' : 'pointer',
           transition: 'all 0.15s ease',
-          boxShadow: '0 1px 2px rgba(0, 0, 0, 0.05)',
+          height: 28,
         }}
         onMouseEnter={(e) => {
           if (!disabled && !isSwitching && !isOpen) {
@@ -127,17 +126,16 @@ export function SandboxSelector({
         }}
       >
         {isSwitching ? (
-          <Loader2 size={12} className="spin" style={{ color: '#1B6EF3' }} />
+          <Loader2 size={13} className="spin text-sky-600" />
         ) : (
-          <FolderGit2 size={13} style={{ color: '#1B6EF3' }} />
+          <GitBranch size={13} className="text-neutral-500 shrink-0" />
         )}
 
-        <span style={{ color: '#64748b', fontWeight: 500 }}>Sandbox:</span>
         <span
           style={{
             color: '#0f172a',
-            fontWeight: 600,
-            maxWidth: 220,
+            fontWeight: 500,
+            maxWidth: 180,
             overflow: 'hidden',
             textOverflow: 'ellipsis',
             whiteSpace: 'nowrap',
@@ -146,36 +144,30 @@ export function SandboxSelector({
           {activeName}
         </span>
 
-        {/* Branch Tag */}
+        <span style={{ color: '#94a3b8', fontSize: '0.72rem', userSelect: 'none' }}>/</span>
+
         <span
           style={{
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: 3,
-            padding: '1px 6px',
-            borderRadius: 4,
-            background: '#f1f5f9',
-            color: '#475569',
-            border: '1px solid #e2e8f0',
-            fontSize: '0.67rem',
+            color: '#64748b',
             fontFamily: 'ui-monospace, SFMono-Regular, monospace',
+            fontSize: '0.71rem',
             maxWidth: 160,
             overflow: 'hidden',
             textOverflow: 'ellipsis',
             whiteSpace: 'nowrap',
           }}
         >
-          <GitBranch size={9} />
           {activeBranch}
         </span>
 
         <ChevronDown
           size={12}
           style={{
-            color: '#64748b',
+            color: '#94a3b8',
             transform: isOpen ? 'rotate(180deg)' : 'none',
             transition: 'transform 0.15s ease',
-            marginLeft: 2,
+            marginLeft: 1,
+            flexShrink: 0,
           }}
         />
       </button>
