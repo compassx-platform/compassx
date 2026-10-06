@@ -296,6 +296,7 @@ class DockerDevDriver(BaseDevDriver):
         host_name = str(app.name or app.slug or app.id).strip()
 
         app_type = getattr(app, "app_type", "custom_web") or "custom_web"
+        git_subdir = (getattr(app, "git_subdir", "") or "").strip("/\\")
 
         target_branch = workspace_branch
         if not target_branch and workspace_folder:
@@ -327,6 +328,7 @@ class DockerDevDriver(BaseDevDriver):
             f"mkdir -p /root/.omnigent /root/.config/omnigent /root/.config/opencode /root/.opencode && "
             f"printf 'host:\\n  host_id: {host_id}\\n  name: \"{host_name}\"\\n' | tee /root/.omnigent/config.yaml /root/.config/omnigent/config.yaml /root/.config/opencode/config.yaml /root/.opencode/config.yaml >/dev/null; "
             f"export OMNIGENT_HOST_ID={host_id} OMNIGENT_HOST_NAME=\"{host_name}\" HOST_ID={host_id} HOST_NAME=\"{host_name}\" OPENCODE_HOST_ID={host_id} OPENCODE_HOST_NAME=\"{host_name}\" "
+            f"POSTGRES_DSN=\"postgresql://postgres:postgres@postgres:5432/autonomic\" REDIS_URL=\"redis://redis:6379/0\" JWT_SECRET=\"dev-jwt-secret-change-me-for-production-use-min-32-chars\" "
             f"CHOKIDAR_USEPOLLING=1 CHOKIDAR_INTERVAL=2000 WATCHPACK_POLLING=true WATCHPACK_POLLING_INTERVAL=2000 WATCHFILES_FORCE_POLLING=true WATCHFILES_POLL_DELAY_MS=2000 "
             f"NODE_TLS_REJECT_UNAUTHORIZED=0 NPM_CONFIG_STRICT_SSL=false PYTHONHTTPSVERIFY=0 GIT_SSL_NO_VERIFY=true CURL_INSECURE=1; "
             f"(which agy >/dev/null 2>&1 || (curl -k -fsSL -o /tmp/agy.tar.gz 'https://github.com/google-antigravity/antigravity-cli/releases/download/1.0.10/agy_cli_linux_x64.tar.gz' 2>/dev/null && tar -xzf /tmp/agy.tar.gz -C /tmp antigravity 2>/dev/null && install -m 0755 /tmp/antigravity /usr/local/bin/agy 2>/dev/null && rm -f /tmp/agy.tar.gz /tmp/antigravity) || (curl -k -fsSL https://antigravity.google/install.sh | bash 2>/dev/null || true)); "
@@ -415,35 +417,77 @@ class DockerDevDriver(BaseDevDriver):
             f"cl_data[\"projects\"][cwd][\"mcpServers\"] = mcp_cl\n"
             f"with open(cl_path, \"w\") as f: json.dump(cl_data, f, indent=2)\n"
             f"' 2>/dev/null || true) && "
-            # 1. Detect and start Python FastAPI Backend in background (live reload on port 8000)
+            # 1. Resolve Project Root considering Source Code Path (git_subdir) or auto-detect
+            f"ROOT_DIR=\"/app\"; "
+            f"if [ -n \"{workspace_folder}\" ] && [ -d \"/workspaces/{workspace_folder}\" ]; then ROOT_DIR=\"/workspaces/{workspace_folder}\"; fi; "
+            f"APP_SUBDIR=\"{git_subdir}\"; "
+            f"BASE_DIR=\"$ROOT_DIR\"; "
+            f"if [ -n \"$APP_SUBDIR\" ] && [ -d \"$ROOT_DIR/$APP_SUBDIR\" ]; then BASE_DIR=\"$ROOT_DIR/$APP_SUBDIR\"; "
+            f"else "
+            f"  for d in \"$ROOT_DIR\"/*; do "
+            f"    if [ -d \"$d\" ] && ( [ -d \"$d/frontend\" ] || [ -d \"$d/backend\" ] || [ -f \"$d/package.json\" ] ); then BASE_DIR=\"$d\"; break; fi; "
+            f"  done; "
+            f"fi; "
+            # 2. Detect and start Python FastAPI Backend in background (live reload on port 8000 or DASHBOARD_PORT)
             f"BACKEND_DIR=\"\"; "
-            f"if [ -d /app/backend ] && ( [ -f /app/backend/app.py ] || [ -f /app/backend/main.py ] || [ -f /app/backend/requirements.txt ] ); then BACKEND_DIR=\"/app/backend\"; "
-            f"elif [ -d /app/api ] && ( [ -f /app/api/app.py ] || [ -f /app/api/main.py ] ); then BACKEND_DIR=\"/app/api\"; "
-            f"elif [ -d /app/server ] && ( [ -f /app/server/app.py ] || [ -f /app/server/main.py ] ); then BACKEND_DIR=\"/app/server\"; "
-            f"elif [ -f /app/app.py ] || [ -f /app/main.py ]; then BACKEND_DIR=\"/app\"; "
+            f"if [ -d \"$BASE_DIR/backend\" ] && ( [ -f \"$BASE_DIR/backend/app.py\" ] || [ -f \"$BASE_DIR/backend/main.py\" ] || [ -f \"$BASE_DIR/backend/requirements.txt\" ] ); then BACKEND_DIR=\"$BASE_DIR/backend\"; "
+            f"elif [ -d \"$BASE_DIR/api\" ] && ( [ -f \"$BASE_DIR/api/app.py\" ] || [ -f \"$BASE_DIR/api/main.py\" ] ); then BACKEND_DIR=\"$BASE_DIR/api\"; "
+            f"elif [ -d \"$BASE_DIR/server\" ] && ( [ -f \"$BASE_DIR/server/app.py\" ] || [ -f \"$BASE_DIR/server/main.py\" ] ); then BACKEND_DIR=\"$BASE_DIR/server\"; "
+            f"elif [ -f \"$BASE_DIR/app.py\" ] || [ -f \"$BASE_DIR/main.py\" ]; then BACKEND_DIR=\"$BASE_DIR\"; "
+            f"elif [ -d \"$ROOT_DIR/backend\" ] && ( [ -f \"$ROOT_DIR/backend/app.py\" ] || [ -f \"$ROOT_DIR/backend/main.py\" ] || [ -f \"$ROOT_DIR/backend/requirements.txt\" ] ); then BACKEND_DIR=\"$ROOT_DIR/backend\"; "
+            f"elif [ -d \"$ROOT_DIR/api\" ] && ( [ -f \"$ROOT_DIR/api/app.py\" ] || [ -f \"$ROOT_DIR/api/main.py\" ] ); then BACKEND_DIR=\"$ROOT_DIR/api\"; "
+            f"elif [ -d \"$ROOT_DIR/server\" ] && ( [ -f \"$ROOT_DIR/server/app.py\" ] || [ -f \"$ROOT_DIR/server/main.py\" ] ); then BACKEND_DIR=\"$ROOT_DIR/server\"; "
+            f"elif [ -f \"$ROOT_DIR/app.py\" ] || [ -f \"$ROOT_DIR/main.py\" ]; then BACKEND_DIR=\"$ROOT_DIR\"; "
             f"fi; "
             f"if [ -n \"$BACKEND_DIR\" ]; then "
             f"  (cd \"$BACKEND_DIR\" && "
+            f"   export DASHBOARD_PORT=8000 PORT=8000 POSTGRES_DSN=\"postgresql://postgres:postgres@postgres:5432/autonomic\" REDIS_URL=\"redis://redis:6379/0\" JWT_SECRET=\"dev-jwt-secret-change-me-for-production-use-min-32-chars\"; "
             f"   (if [ -f requirements.txt ]; then pip install --no-cache-dir -r requirements.txt; fi) && "
-            f"   (pip install --no-cache-dir uvicorn fastapi || true) && "
+            f"   (pip install --no-cache-dir uvicorn fastapi asyncpg || true) && "
+            f"   (python3 -c '\n"
+            f"import os, asyncpg, asyncio, glob\n"
+            f"async def init_schema():\n"
+            f"    dsn = os.environ.get(\"POSTGRES_DSN\")\n"
+            f"    if not dsn: return\n"
+            f"    try:\n"
+            f"        conn = await asyncpg.connect(dsn)\n"
+            f"        has_events = await conn.fetchval(\"SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = \\x27events\\x27)\")\n"
+            f"        if not has_events:\n"
+            f"            for p in glob.glob(\"/app/**/schema.sql\", recursive=True) + glob.glob(\"/workspaces/**/schema.sql\", recursive=True):\n"
+            f"                try:\n"
+            f"                    sql = open(p).read()\n"
+            f"                    await conn.execute(sql)\n"
+            f"                    break\n"
+            f"                except Exception:\n"
+            f"                    pass\n"
+            f"        await conn.close()\n"
+            f"    except Exception:\n"
+            f"        pass\n"
+            f"asyncio.run(init_schema())\n"
+            f"' 2>/dev/null || true) && "
             f"   if [ -f app.py ]; then "
-            f"     (uvicorn app:app --host 0.0.0.0 --port 8000 --reload --reload-delay 2.0 --reload-exclude '**/node_modules/**' --reload-exclude '**/.git/**' || python app.py) & "
+            f"     (while true; do uvicorn app:app --host 0.0.0.0 --port 8000 --reload --reload-delay 2.0 --reload-exclude '**/node_modules/**' --reload-exclude '**/.git/**' || python app.py || true; sleep 2; done) & "
             f"   elif [ -f main.py ]; then "
-            f"     (uvicorn main:app --host 0.0.0.0 --port 8000 --reload --reload-delay 2.0 --reload-exclude '**/node_modules/**' --reload-exclude '**/.git/**' || python main.py) & "
+            f"     (while true; do uvicorn main:app --host 0.0.0.0 --port 8000 --reload --reload-delay 2.0 --reload-exclude '**/node_modules/**' --reload-exclude '**/.git/**' || python main.py || true; sleep 2; done) & "
             f"   fi) & "
             f"fi; "
-            # 2. Detect and start React / Vite Frontend in background (npm run dev on port 8080)
+            # 3. Detect and start React / Vite Frontend in background (npm run dev on port 8080)
             f"FRONTEND_DIR=\"\"; "
-            f"if [ -d /app/frontend ] && [ -f /app/frontend/package.json ]; then FRONTEND_DIR=\"/app/frontend\"; "
-            f"elif [ -d /app/client ] && [ -f /app/client/package.json ]; then FRONTEND_DIR=\"/app/client\"; "
-            f"elif [ -d /app/web ] && [ -f /app/web/package.json ]; then FRONTEND_DIR=\"/app/web\"; "
-            f"elif [ -f /app/package.json ]; then FRONTEND_DIR=\"/app\"; "
+            f"if [ -d \"$BASE_DIR/frontend\" ] && [ -f \"$BASE_DIR/frontend/package.json\" ]; then FRONTEND_DIR=\"$BASE_DIR/frontend\"; "
+            f"elif [ -d \"$BASE_DIR/client\" ] && [ -f \"$BASE_DIR/client/package.json\" ]; then FRONTEND_DIR=\"$BASE_DIR/client\"; "
+            f"elif [ -d \"$BASE_DIR/web\" ] && [ -f \"$BASE_DIR/web/package.json\" ]; then FRONTEND_DIR=\"$BASE_DIR/web\"; "
+            f"elif [ -f \"$BASE_DIR/package.json\" ]; then FRONTEND_DIR=\"$BASE_DIR\"; "
+            f"elif [ -d \"$ROOT_DIR/frontend\" ] && [ -f \"$ROOT_DIR/frontend/package.json\" ]; then FRONTEND_DIR=\"$ROOT_DIR/frontend\"; "
+            f"elif [ -d \"$ROOT_DIR/client\" ] && [ -f \"$ROOT_DIR/client/package.json\" ]; then FRONTEND_DIR=\"$ROOT_DIR/client\"; "
+            f"elif [ -d \"$ROOT_DIR/web\" ] && [ -f \"$ROOT_DIR/web/package.json\" ]; then FRONTEND_DIR=\"$ROOT_DIR/web\"; "
+            f"elif [ -f \"$ROOT_DIR/package.json\" ]; then FRONTEND_DIR=\"$ROOT_DIR\"; "
             f"fi; "
             f"if [ -n \"$FRONTEND_DIR\" ]; then "
             f"  (cd \"$FRONTEND_DIR\" && "
+            f"   export DASHBOARD_PORT=8000 DASHBOARD_UI_PORT=8080; "
             f"   (python3 -c \"import os, re\\nfor f in ['vite.config.ts', 'vite.config.js']:\\n if os.path.exists(f):\\n  c = open(f, 'r').read()\\n  if 'usePolling' not in c: c = re.sub(r'(server:\\s*\\{{)', r'\\\\1\\\\n    allowedHosts: true,\\\\n    watch: {{ usePolling: true, interval: 2000, ignored: [\\\\\"**/node_modules/**\\\\\", \\\\\"**/.git/**\\\\\", \\\\\"**/dist/**\\\\\", \\\\\"**/.cache/**\\\\\\\"] }},\\\\n    hmr: {{ clientPort: 443 }},', c)\\n  else: c = re.sub(r'watch:\\s*\\{{[^}}]*\\}}', 'watch: {{ usePolling: true, interval: 2000, ignored: [\\\\\"**/node_modules/**\\\\\", \\\\\"**/.git/**\\\\\", \\\\\"**/dist/**\\\\\", \\\\\"**/.cache/**\\\\\\\"] }}', c)\\n  c = c.replace('http://localhost:8080', 'http://localhost:8000')\\n  c = c.replace('http://127.0.0.1:8085', 'http://localhost:8000')\\n  open(f, 'w').write(c)\" 2>/dev/null || true) && "
             f"   (if [ ! -d node_modules ]; then npm install --prefer-offline --no-audit || npm install || true; fi) && "
-            f"   (npx --yes vite --host 0.0.0.0 --port 8080 --cors || npm run dev -- --host 0.0.0.0 --port 8080 || npm start -- -p 8080 || npx --yes serve -l 8080 .)) & "
+            f"   (while true; do npx --yes vite --host 0.0.0.0 --port 8080 --cors || npm run dev -- --host 0.0.0.0 --port 8080 || npm start -- -p 8080 || npx --yes serve -l 8080 . || true; sleep 2; done)) & "
             f"elif [ -n \"$BACKEND_DIR\" ]; then "
             # Pure Python app (Streamlit or FastAPI on port 8080)
             f"  (cd \"$BACKEND_DIR\" && "
@@ -487,6 +531,9 @@ class DockerDevDriver(BaseDevDriver):
             "-e", "DEV_MODE=true",
             "-e", f"APP_NAME={app.name}",
             "-e", f"APP_ID={app.id}",
+            "-e", "POSTGRES_DSN=postgresql://postgres:postgres@postgres:5432/autonomic",
+            "-e", "REDIS_URL=redis://redis:6379/0",
+            "-e", "JWT_SECRET=dev-jwt-secret-change-me-for-production-use-min-32-chars",
             "-e", "OPENAI_BASE_URL=http://host.docker.internal:8000/api/v1/ai-gateway/v1",
             "-e", f"OPENAI_API_KEY=cx_gw_app_{app.id}",
             "-e", f"OMNIGENT_HOST_ID={host_id}",
@@ -762,8 +809,29 @@ class DockerDevDriver(BaseDevDriver):
             "    except Exception:\n"
             "        pass\n"
             "try:\n"
+            "    tmux_cfg = (\n"
+            "        'set-option -g history-limit 50000\\n'\n"
+            "        'set-option -sq extended-keys on\\n'\n"
+            "        'set-option -sq extended-keys-format csi-u\\n'\n"
+            "        'set-option -sq set-clipboard external\\n'\n"
+            "        'set-option -g mouse on\\n'\n"
+            "        'set-option -g focus-events on\\n'\n"
+            "        'set-option -g escape-time 0\\n'\n"
+            "        'set-option -g window-size latest\\n'\n"
+            "        'set-option -g aggressive-resize on\\n'\n"
+            "        'set-option -g default-terminal \"xterm-256color\"\\n'\n"
+            "        'set-option -g prefix None\\n'\n"
+            "        'set-option -g prefix2 None\\n'\n"
+            "        'set-option -g status off\\n'\n"
+            "        'bind-key -T root PPage if-shell -F \"#{alternate_on}\" \"send-keys PPage\" \"copy-mode -eu\"\\n'\n"
+            "        'bind-key -T copy-mode WheelUpPane select-pane \\\\; send-keys -X -N 5 scroll-up\\n'\n"
+            "        'bind-key -T copy-mode WheelDownPane select-pane \\\\; send-keys -X -N 5 scroll-down\\n'\n"
+            "        'bind-key -T copy-mode-vi WheelUpPane select-pane \\\\; send-keys -X -N 5 scroll-up\\n'\n"
+            "        'bind-key -T copy-mode-vi WheelDownPane select-pane \\\\; send-keys -X -N 5 scroll-down\\n'\n"
+            "    )\n"
             "    with open('/root/.tmux.conf', 'w') as f:\n"
-            "        f.write('set-option -g window-size latest\\nset-option -g aggressive-resize on\\nset-option -g default-terminal \"xterm-256color\"\\n')\n"
+            "        f.write(tmux_cfg)\n"
+            "    os.system('tmux source-file /root/.tmux.conf 2>/dev/null')\n"
             "except Exception:\n"
             "    pass\n"
             "try:\n"
@@ -832,6 +900,8 @@ class DockerDevDriver(BaseDevDriver):
                 cli_cmd = "opencode"
             elif agent in ("antigravity", "agy"):
                 cli_cmd = "agy"
+            elif agent in ("bash", "shell", "sh"):
+                cli_cmd = "exec /bin/bash -l"
 
         try:
             if session_name and cli_cmd:
@@ -844,7 +914,8 @@ class DockerDevDriver(BaseDevDriver):
                     f"rows = int(os.environ.get('LINES', {rows})); "
                     "pid, m = pty.fork(); "
                     "("
-                    f"    os.execlp('tmux', 'tmux', 'new-session', '-A', '-D', '-s', '{tmux_target}', '-c', '{workdir}', '{clean_cmd} || bash') if pid == 0 else ("
+                    "    (os.system('tmux source-file /root/.tmux.conf 2>/dev/null'), "
+                    f"    os.execlp('tmux', 'tmux', 'new-session', '-A', '-D', '-s', '{tmux_target}', '-c', '{workdir}', '{clean_cmd} || bash'))[1] if pid == 0 else ("
                     "        fcntl.ioctl(m, termios.TIOCSWINSZ, struct.pack('HHHH', rows, cols, 0, 0)), "
                     "        pty._copy(m, pty._read, pty._read), "
                     "        os.close(m), "

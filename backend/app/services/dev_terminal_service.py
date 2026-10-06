@@ -118,8 +118,8 @@ class DevTerminalService:
             cli_cmd = dev_session_service.get_session_cli_command(session_obj)
             dev_session_service.touch_session(app.id, session_obj.id)
 
-        # Send greeting banner (suppress for native agent CLIs to preserve their clean startup banners)
-        if resolved_agent not in ("pi", "opencode", "antigravity", "agy"):
+        # Send greeting banner (suppress for native agent CLIs and bash shell to preserve clean startup)
+        if resolved_agent not in ("pi", "opencode", "antigravity", "agy", "bash", "shell", "sh"):
             welcome_banner = (
                 f"\r\n\x1b[1;35m╭──────────────────────────────────────────────────────────╮\x1b[0m\r\n"
                 f"\x1b[1;35m│\x1b[0m \x1b[1;32m● Connected to Dev Sandbox Terminal\x1b[0m                      \x1b[1;35m│\x1b[0m\r\n"

@@ -13,7 +13,7 @@ from app.models.dev_session import DevSession
 
 logger = logging.getLogger(__name__)
 
-SUPPORTED_AGENTS = ("opencode", "pi", "antigravity")
+SUPPORTED_AGENTS = ("opencode", "pi", "antigravity", "bash")
 
 
 class DevSessionService:
@@ -21,6 +21,8 @@ class DevSessionService:
 
     def _normalize_agent(self, agent: str) -> str:
         clean = (agent or "opencode").strip().lower()
+        if clean in ("bash", "shell", "sh", "terminal"):
+            return "bash"
         if clean in ("agy", "antigravity"):
             return "antigravity"
         if clean in ("pi", "pi-coding-agent"):
@@ -29,7 +31,9 @@ class DevSessionService:
 
     def _generate_external_session_id(self, agent: str) -> str:
         """Mint a clean native session ID accepted by the agent CLI."""
-        if agent == "pi":
+        if agent == "bash":
+            return f"sh_{uuid.uuid4().hex[:8]}"
+        elif agent == "pi":
             return str(uuid.uuid4())
         elif agent == "antigravity":
             return str(uuid.uuid4())
@@ -43,6 +47,8 @@ class DevSessionService:
 
     def get_session_cli_command(self, session: DevSession) -> str:
         """Assemble the native agent launch command with its persistent session flags."""
+        if session.agent == "bash":
+            return "exec /bin/bash -l"
         ext_id = session.external_session_id or self._generate_external_session_id(session.agent)
         model = getattr(session, "model", None) or "gpt-5.4-mini"
         if session.agent == "pi":
@@ -124,6 +130,7 @@ class DevSessionService:
                 "pi": "Pi",
                 "antigravity": "Antigravity",
                 "agy": "Antigravity",
+                "bash": "Bash Shell",
             }.get(norm_agent, norm_agent.capitalize())
             clean_title = f"Session with {agent_display}"
 
@@ -211,8 +218,12 @@ class DevSessionService:
             # Attempt to kill the tmux session in the running container
             dev_container_name = f"compassx-app-dev-{app.id}"
             try:
+                base_name = session.tmux_session_name
                 subprocess.run(
-                    ["docker", "exec", dev_container_name, "tmux", "kill-session", "-t", session.tmux_session_name],
+                    [
+                        "docker", "exec", dev_container_name, "bash", "-c",
+                        f"for s in $(tmux list-sessions -F '#{{session_name}}' 2>/dev/null); do if [[ \"$s\" == {base_name}* ]]; then tmux kill-session -t \"$s\" 2>/dev/null; fi; done",
+                    ],
                     capture_output=True,
                     check=False,
                 )

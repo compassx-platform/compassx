@@ -15,13 +15,11 @@ import {
   ChevronDown,
   ChevronUp,
   Copy,
-  Check,
-  Cpu,
-  Sparkles,
   FolderTree,
   Layers,
   PanelLeftOpen,
   PanelLeftClose,
+  ExternalLink,
 } from 'lucide-react';
 import { useScopedNavigate } from '@/lib/appNavigation';
 import { useToast } from '@/lib/toast';
@@ -45,6 +43,7 @@ import {
 } from '../hooks/useApps';
 import { DevTerminal } from '../components/DevTerminal';
 import { SessionsSidebar } from '../components/SessionsSidebar';
+import { useNewShellHotkey } from '../hooks/useNewShellHotkey';
 import { NewSessionModal } from '../components/NewSessionModal';
 import { SandboxSelector } from '../components/SandboxSelector';
 import { NewSandboxModal } from '../components/NewSandboxModal';
@@ -83,7 +82,7 @@ const BUILD_STEPS: BuildStep[] = [
 
 type SandboxStage = 'running' | 'starting' | 'stopping' | 'stopped';
 
-export type SupportedAgent = 'pi' | 'opencode' | 'antigravity';
+export type SupportedAgent = 'pi' | 'opencode' | 'antigravity' | 'bash';
 
 export interface AgentOption {
   id: SupportedAgent;
@@ -130,6 +129,17 @@ export const AGENT_OPTIONS: AgentOption[] = [
     color: '#4ade80',
     accentBg: 'rgba(74, 222, 128, 0.12)',
     borderColor: 'rgba(74, 222, 128, 0.35)',
+  },
+  {
+    id: 'bash',
+    name: 'Bash Shell',
+    binary: 'bash',
+    tagline: 'Interactive System Shell',
+    badge: 'SHELL',
+    description: 'Interactive Linux Bash shell inside the active workspace container with full PTY and toolchain access.',
+    color: '#f59e0b',
+    accentBg: 'rgba(245, 158, 11, 0.12)',
+    borderColor: 'rgba(245, 158, 11, 0.35)',
   },
 ];
 
@@ -181,35 +191,8 @@ export default function AppBuildPage() {
   const [startError, setStartError] = useState<string | null>(null);
   const [isMenuOpen, setIsMenuOpen] = useState<boolean>(false);
   const [userExplicitlyStopped, setUserExplicitlyStopped] = useState<boolean>(false);
-  const [selectedHost, setSelectedHost] = useState<'compassx' | 'omnigent'>(() => {
-    try {
-      const saved = localStorage.getItem('compassx_preferred_dev_host');
-      if (saved === 'compassx' || saved === 'omnigent') return saved;
-    } catch (_) {}
-    return 'compassx';
-  });
-
-  const handleSelectHost = (host: 'compassx' | 'omnigent') => {
-    setSelectedHost(host);
-    try {
-      localStorage.setItem('compassx_preferred_dev_host', host);
-    } catch (_) {}
-  };
-
-  const [selectedAgent, setSelectedAgent] = useState<SupportedAgent>(() => {
-    try {
-      const saved = localStorage.getItem('compassx_preferred_dev_agent');
-      if (saved === 'pi' || saved === 'opencode' || saved === 'antigravity') return saved as SupportedAgent;
-    } catch (_) {}
-    return 'pi';
-  });
-
-  const handleSelectAgent = (agent: SupportedAgent) => {
-    setSelectedAgent(agent);
-    try {
-      localStorage.setItem('compassx_preferred_dev_agent', agent);
-    } catch (_) {}
-  };
+  const selectedHost: 'compassx' | 'omnigent' = 'compassx';
+  const selectedAgent: SupportedAgent = 'opencode';
 
   const [initStep, setInitStep] = useState<number>(0);
   const [step2Completed, setStep2Completed] = useState<boolean>(false);
@@ -369,6 +352,30 @@ export default function AppBuildPage() {
       toast.error(err?.response?.data?.detail || err?.message || 'Failed to delete session');
     }
   };
+
+  const handleCreateShellSession = async () => {
+    try {
+      setIsSwitchingSession(true);
+      const shellCount = (allSessions || []).filter((s) => s.agent === 'bash').length + 1;
+      const created = await createDevSessionMutation.mutateAsync({
+        title: `Shell ${shellCount}`,
+        agent: 'bash',
+        workspace_id: activeWorkspace?.id || devStatus?.workspace_id,
+      });
+      setJustCreatedSession(created);
+      setActiveSessionId(created.id);
+      try {
+        localStorage.setItem(`compassx_active_session_${resolvedAppId}`, created.id);
+      } catch (_) {}
+      setIsNewSessionModalOpen(false);
+      toast.success(`Started new Bash Shell #${shellCount}`);
+    } catch (err: any) {
+      setIsSwitchingSession(false);
+      toast.error(err?.response?.data?.detail || err?.message || 'Failed to start shell session');
+    }
+  };
+
+  useNewShellHotkey(handleCreateShellSession, isContainerRunning);
 
   // ── Sessions Secondary Sidebar State ──────────────────────────────────────────
   const [showSessionsSidebar, setShowSessionsSidebar] = useState<boolean>(() => {
@@ -610,6 +617,16 @@ export default function AppBuildPage() {
     refetch: refetchDevFiles,
   } = useDevFiles(resolvedAppId, activeWorkspace?.id || devStatus?.workspace_id, stage === 'running');
 
+  // Preview URL for the running application sandbox
+  const previewUrl = useMemo(() => {
+    return (
+      devStatus?.dev_url ||
+      (devStatus?.dev_port ? `http://localhost:${devStatus.dev_port}` : '') ||
+      (app?.slug ? `https://${app.slug}-dev.135.13.180.167.nip.io` : '') ||
+      'http://localhost:9201'
+    );
+  }, [devStatus?.dev_url, devStatus?.dev_port, app?.slug]);
+
   // Auto-scroll logs to bottom as lines arrive
   useEffect(() => {
     if (isLogViewerOpen && autoScrollLogs && logsContainerRef.current) {
@@ -658,15 +675,29 @@ export default function AppBuildPage() {
     }
   }, [devStatus, isDevLoading, isContainerRunning, isStoppingOperation]);
 
-  // Sync host selection with running container if available
+  // Track running container status
   useEffect(() => {
-    if (devStatus?.host_type === 'compassx' || devStatus?.host_type === 'omnigent') {
-      setSelectedHost(devStatus.host_type);
-    }
     if (devStatus && (devStatus.status === 'active' || devStatus.phase === 'Running')) {
       hasTriggeredInitialStart.current = true;
     }
   }, [devStatus]);
+
+  // Clean & simple: start CompassX host by default on page load if not running and not explicitly stopped
+  useEffect(() => {
+    if (
+      !isDevLoading &&
+      !isContainerRunning &&
+      !userExplicitlyStopped &&
+      !hasTriggeredInitialStart.current &&
+      resolvedAppId &&
+      app &&
+      !startDevMutation.isPending &&
+      devStatus?.status !== 'provisioning'
+    ) {
+      hasTriggeredInitialStart.current = true;
+      handleStartDev('compassx');
+    }
+  }, [isDevLoading, isContainerRunning, userExplicitlyStopped, resolvedAppId, app, devStatus, startDevMutation.isPending]);
 
   // ── Step 1 -> Step 2 -> Step 3 -> Step 4 -> Studio Canvas Progression ──────────────────
   useEffect(() => {
@@ -1026,12 +1057,9 @@ export default function AppBuildPage() {
                   color: 'var(--color-text-muted, #94a3b8)',
                   marginLeft: 2,
                 }}
-                title={
-                  devStatus?.host_image ||
-                  (selectedHost === 'compassx' ? 'compassx-host:latest' : 'ghcr.io/omnigent-ai/omnigent-host:latest')
-                }
+                title={devStatus?.host_image || 'compassx-host:latest'}
               >
-                {devStatus?.host_type === 'omnigent' || (!devStatus?.host_type && selectedHost === 'omnigent') ? 'Omnigent' : 'CompassX'}
+                CompassX Host
               </span>
             )}
 
@@ -1049,41 +1077,80 @@ export default function AppBuildPage() {
             )}
           </div>
 
-        {/* Right: Files Toggle Button & Three Dots Action Menu */}
+        {/* Right: Preview Link, Files Toggle Button & Three Dots Action Menu */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
           {stage === 'running' && (
-            <button
-              type="button"
-              onClick={toggleFileExplorer}
-              title={showFileExplorer ? 'Hide File Explorer' : 'Show File Explorer'}
-              aria-label="Toggle Files Explorer"
-              style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                background: showFileExplorer ? '#f1f5f9' : 'transparent',
-                border: showFileExplorer ? '1px solid #e2e8f0' : '1px solid transparent',
-                borderRadius: 6,
-                padding: 5,
-                color: showFileExplorer ? '#0f172a' : '#64748b',
-                cursor: 'pointer',
-                transition: 'all 0.15s ease',
-              }}
-              onMouseEnter={(e) => {
-                if (!showFileExplorer) {
-                  e.currentTarget.style.background = '#f8fafc';
-                  e.currentTarget.style.color = '#0f172a';
-                }
-              }}
-              onMouseLeave={(e) => {
-                if (!showFileExplorer) {
-                  e.currentTarget.style.background = 'transparent';
-                  e.currentTarget.style.color = '#64748b';
-                }
-              }}
-            >
-              <FolderTree size={15} />
-            </button>
+            <>
+              {/* Preview Link */}
+              <a
+                href={previewUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                title={`Open App Preview (${previewUrl})`}
+                aria-label="Open App Preview"
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 5,
+                  padding: '4px 10px',
+                  borderRadius: 6,
+                  fontSize: '0.76rem',
+                  fontWeight: 600,
+                  color: '#1B6EF3',
+                  background: 'rgba(27, 110, 243, 0.08)',
+                  border: '1px solid rgba(27, 110, 243, 0.22)',
+                  textDecoration: 'none',
+                  cursor: 'pointer',
+                  transition: 'all 0.15s ease',
+                  boxShadow: '0 1px 2px rgba(0, 0, 0, 0.04)',
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.background = 'rgba(27, 110, 243, 0.16)';
+                  e.currentTarget.style.borderColor = 'rgba(27, 110, 243, 0.4)';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = 'rgba(27, 110, 243, 0.08)';
+                  e.currentTarget.style.borderColor = 'rgba(27, 110, 243, 0.22)';
+                }}
+              >
+                <ExternalLink size={13} />
+                <span>Preview</span>
+              </a>
+
+              {/* Files Toggle Button */}
+              <button
+                type="button"
+                onClick={toggleFileExplorer}
+                title={showFileExplorer ? 'Hide File Explorer' : 'Show File Explorer'}
+                aria-label="Toggle Files Explorer"
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  background: showFileExplorer ? '#f1f5f9' : 'transparent',
+                  border: showFileExplorer ? '1px solid #e2e8f0' : '1px solid transparent',
+                  borderRadius: 6,
+                  padding: 5,
+                  color: showFileExplorer ? '#0f172a' : '#64748b',
+                  cursor: 'pointer',
+                  transition: 'all 0.15s ease',
+                }}
+                onMouseEnter={(e) => {
+                  if (!showFileExplorer) {
+                    e.currentTarget.style.background = '#f8fafc';
+                    e.currentTarget.style.color = '#0f172a';
+                  }
+                }}
+                onMouseLeave={(e) => {
+                  if (!showFileExplorer) {
+                    e.currentTarget.style.background = 'transparent';
+                    e.currentTarget.style.color = '#64748b';
+                  }
+                }}
+              >
+                <FolderTree size={15} />
+              </button>
+            </>
           )}
 
           <div ref={menuRef} style={{ position: 'relative' }}>
@@ -1138,6 +1205,39 @@ export default function AppBuildPage() {
                 animation: 'fadeIn 0.12s ease-out',
               }}
             >
+              {stage === 'running' && (
+                <a
+                  href={previewUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  onClick={() => setIsMenuOpen(false)}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 8,
+                    width: '100%',
+                    padding: '7px 10px',
+                    background: 'transparent',
+                    border: 'none',
+                    borderRadius: 6,
+                    color: '#1B6EF3',
+                    fontSize: '0.78rem',
+                    fontWeight: 500,
+                    textDecoration: 'none',
+                    textAlign: 'left',
+                    transition: 'background 0.12s ease',
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.background = 'rgba(27, 110, 243, 0.08)';
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.background = 'transparent';
+                  }}
+                >
+                  <ExternalLink size={13} />
+                  <span>Open Live Preview</span>
+                </a>
+              )}
               <button
                 onClick={handleStopDev}
                 disabled={isStoppingOperation || (stage === 'stopped' && !isContainerRunning)}
@@ -1239,6 +1339,7 @@ export default function AppBuildPage() {
                     activeSessionId={activeSession?.id || activeSessionId}
                     onSelectSession={handleSelectSession}
                     onOpenNewSession={() => setIsNewSessionModalOpen(true)}
+                    onOpenNewShell={handleCreateShellSession}
                     onDeleteSession={handleDeleteSession}
                     disabled={!isContainerRunning}
                     isSwitching={isSwitchingSession}
@@ -1520,7 +1621,7 @@ export default function AppBuildPage() {
             </p>
           </div>
         ) : stage === 'stopped' ? (
-          /* Stage: Sandbox Stopped View with Host Environment Selection */
+          /* Stage: Sandbox Stopped View */
           <div
             style={{
               flex: 1,
@@ -1529,7 +1630,7 @@ export default function AppBuildPage() {
               alignItems: 'center',
               justifyContent: 'center',
               padding: '40px 20px',
-              maxWidth: 680,
+              maxWidth: 480,
               margin: '0 auto',
               width: '100%',
               textAlign: 'center',
@@ -1537,27 +1638,27 @@ export default function AppBuildPage() {
           >
             <div
               style={{
-                width: 64,
-                height: 64,
+                width: 60,
+                height: 60,
                 borderRadius: 16,
-                background: 'linear-gradient(135deg, rgba(99, 102, 241, 0.15) 0%, rgba(139, 92, 246, 0.15) 100%)',
-                border: '1px solid rgba(129, 140, 248, 0.3)',
+                background: 'rgba(27, 110, 243, 0.08)',
+                border: '1px solid rgba(27, 110, 243, 0.2)',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
-                color: '#818cf8',
+                color: '#1B6EF3',
                 marginBottom: 20,
-                boxShadow: '0 8px 24px rgba(99, 102, 241, 0.15)',
+                boxShadow: '0 8px 24px rgba(27, 110, 243, 0.1)',
               }}
             >
-              <Server size={30} />
+              <Server size={28} />
             </div>
 
             <h2 style={{ margin: '0 0 8px', fontSize: '1.35rem', fontWeight: 700, color: '#0f172a' }}>
-              Select Host Environment
+              Development Sandbox Stopped
             </h2>
-            <p style={{ margin: '0 0 28px', fontSize: '0.86rem', color: '#64748b', lineHeight: 1.5, maxWidth: 480 }}>
-              Choose the runtime host image for your dev sandbox before opening the Build Studio canvas.
+            <p style={{ margin: '0 0 24px', fontSize: '0.88rem', color: '#64748b', lineHeight: 1.5, maxWidth: 420 }}>
+              Start the CompassX dev sandbox to open the Build Studio canvas and launch agent coding sessions.
             </p>
 
             {startError && (
@@ -1578,326 +1679,47 @@ export default function AppBuildPage() {
               </div>
             )}
 
-            {/* Host Cards Grid */}
-            <div
-              style={{
-                display: 'grid',
-                gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))',
-                gap: 16,
-                width: '100%',
-                marginBottom: 20,
-                textAlign: 'left',
-              }}
-            >
-              {/* CompassX Host Card */}
-              <div
-                onClick={() => handleSelectHost('compassx')}
-                style={{
-                  border: selectedHost === 'compassx' ? '2px solid #4f46e5' : '1px solid #e2e8f0',
-                  background: selectedHost === 'compassx' ? '#eef2ff' : '#ffffff',
-                  borderRadius: 12,
-                  padding: '18px 18px',
-                  cursor: 'pointer',
-                  transition: 'all 0.15s ease',
-                  boxShadow: selectedHost === 'compassx' ? '0 4px 12px rgba(79, 70, 229, 0.12)' : '0 1px 3px rgba(0, 0, 0, 0.05)',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  justifyContent: 'space-between',
-                }}
-              >
-                <div>
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
-                    <div
-                      style={{
-                        width: 20,
-                        height: 20,
-                        borderRadius: '50%',
-                        border: selectedHost === 'compassx' ? 'none' : '2px solid #cbd5e1',
-                        background: selectedHost === 'compassx' ? '#4f46e5' : 'transparent',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                      }}
-                    >
-                      {selectedHost === 'compassx' && <Check size={13} color="#ffffff" strokeWidth={3} />}
-                    </div>
-
-                    <span
-                      style={{
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        gap: 4,
-                        background: 'linear-gradient(135deg, #4f46e5 0%, #4338ca 100%)',
-                        color: '#ffffff',
-                        fontSize: '0.66rem',
-                        fontWeight: 700,
-                        padding: '2px 8px',
-                        borderRadius: 10,
-                        letterSpacing: '0.4px',
-                      }}
-                    >
-                      <Sparkles size={10} /> RECOMMENDED
-                    </span>
-                  </div>
-
-                  <div style={{ fontSize: '1.02rem', fontWeight: 650, color: '#0f172a' }}>
-                    CompassX Host
-                  </div>
-                  <div
-                    style={{
-                      fontSize: '0.72rem',
-                      fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
-                      color: '#4f46e5',
-                      marginTop: 4,
-                    }}
-                  >
-                    compassx-host:latest
-                  </div>
-                </div>
-
-                <p
-                  style={{
-                    fontSize: '0.8rem',
-                    color: '#64748b',
-                    lineHeight: 1.45,
-                    marginTop: 12,
-                    marginBottom: 0,
-                  }}
-                >
-                  Tailored runtime environment pre-bundled with CompassX agent bindings and platform tools.
-                </p>
-              </div>
-
-              {/* Omnigent Host Card */}
-              <div
-                onClick={() => handleSelectHost('omnigent')}
-                style={{
-                  border: selectedHost === 'omnigent' ? '2px solid #4f46e5' : '1px solid #e2e8f0',
-                  background: selectedHost === 'omnigent' ? '#eef2ff' : '#ffffff',
-                  borderRadius: 12,
-                  padding: '18px 18px',
-                  cursor: 'pointer',
-                  transition: 'all 0.15s ease',
-                  boxShadow: selectedHost === 'omnigent' ? '0 4px 12px rgba(79, 70, 229, 0.12)' : '0 1px 3px rgba(0, 0, 0, 0.05)',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  justifyContent: 'space-between',
-                }}
-              >
-                <div>
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
-                    <div
-                      style={{
-                        width: 20,
-                        height: 20,
-                        borderRadius: '50%',
-                        border: selectedHost === 'omnigent' ? 'none' : '2px solid #cbd5e1',
-                        background: selectedHost === 'omnigent' ? '#4f46e5' : 'transparent',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                      }}
-                    >
-                      {selectedHost === 'omnigent' && <Check size={13} color="#ffffff" strokeWidth={3} />}
-                    </div>
-
-                    <span
-                      style={{
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        background: '#f1f5f9',
-                        color: '#475569',
-                        fontSize: '0.66rem',
-                        fontWeight: 600,
-                        padding: '2px 8px',
-                        borderRadius: 10,
-                      }}
-                    >
-                      UPSTREAM
-                    </span>
-                  </div>
-
-                  <div style={{ fontSize: '1.02rem', fontWeight: 650, color: '#0f172a' }}>
-                    Omnigent Host
-                  </div>
-                  <div
-                    style={{
-                      fontSize: '0.72rem',
-                      fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
-                      color: '#64748b',
-                      marginTop: 4,
-                    }}
-                  >
-                    omnigent-host:latest
-                  </div>
-                </div>
-
-                <p
-                  style={{
-                    fontSize: '0.8rem',
-                    color: '#64748b',
-                    lineHeight: 1.45,
-                    marginTop: 12,
-                    marginBottom: 0,
-                  }}
-                >
-                  Standard upstream Omnigent developer runtime container for generic workspace execution.
-                </p>
-              </div>
-            </div>
-
-            {/* Subtext info */}
-            <div style={{ fontSize: '0.76rem', color: '#64748b', marginBottom: 20, maxWidth: 540 }}>
-              CompassX Host is cloned from the Omnigent Host base image and provides the base runtime for sandbox containers.
-            </div>
-
-            {/* Coding Agent Selection Section */}
-            <div style={{ width: '100%', marginBottom: 24, textAlign: 'left' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
-                <Cpu size={15} color="#4f46e5" />
-                <span style={{ fontSize: '0.96rem', fontWeight: 650, color: '#0f172a' }}>
-                  Select Coding Agent
-                </span>
-                <span style={{ fontSize: '0.72rem', color: '#64748b', marginLeft: 4 }}>
-                  (Executes in container sandbox PTY)
-                </span>
-              </div>
-              <p style={{ margin: '0 0 12px', fontSize: '0.79rem', color: '#64748b' }}>
-                Choose which autonomous agent to provision and run natively in your dev sandbox canvas:
-              </p>
-
-              <div
-                style={{
-                  display: 'grid',
-                  gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))',
-                  gap: 12,
-                  width: '100%',
-                }}
-              >
-                {AGENT_OPTIONS.map((agentOpt) => {
-                  const isSelected = selectedAgent === agentOpt.id;
-                  return (
-                    <div
-                      key={agentOpt.id}
-                      onClick={() => handleSelectAgent(agentOpt.id)}
-                      style={{
-                        border: isSelected ? '2px solid #4f46e5' : '1px solid #e2e8f0',
-                        background: isSelected ? '#eef2ff' : '#ffffff',
-                        borderRadius: 10,
-                        padding: '14px 14px',
-                        cursor: 'pointer',
-                        transition: 'all 0.15s ease',
-                        boxShadow: isSelected ? '0 4px 12px rgba(79, 70, 229, 0.12)' : '0 1px 3px rgba(0, 0, 0, 0.05)',
-                        display: 'flex',
-                        flexDirection: 'column',
-                        justifyContent: 'space-between',
-                      }}
-                    >
-                      <div>
-                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-                          <div
-                            style={{
-                              width: 18,
-                              height: 18,
-                              borderRadius: '50%',
-                              border: isSelected ? 'none' : '2px solid #cbd5e1',
-                              background: isSelected ? '#4f46e5' : 'transparent',
-                              display: 'flex',
-                              alignItems: 'center',
-                              justifyContent: 'center',
-                            }}
-                          >
-                            {isSelected && <Check size={11} color="#ffffff" strokeWidth={3} />}
-                          </div>
-
-                          <span
-                            style={{
-                              display: 'inline-flex',
-                              alignItems: 'center',
-                              background: isSelected ? '#4f46e5' : '#f1f5f9',
-                              color: isSelected ? '#ffffff' : '#475569',
-                              fontSize: '0.62rem',
-                              fontWeight: 700,
-                              padding: '1px 6px',
-                              borderRadius: 8,
-                              letterSpacing: '0.3px',
-                            }}
-                          >
-                            {agentOpt.badge}
-                          </span>
-                        </div>
-
-                        <div style={{ fontSize: '0.94rem', fontWeight: 650, color: isSelected ? '#4338ca' : '#0f172a' }}>
-                          {agentOpt.name}
-                        </div>
-                        <div
-                          style={{
-                            fontSize: '0.7rem',
-                            fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
-                            color: isSelected ? '#4f46e5' : '#64748b',
-                            marginTop: 2,
-                          }}
-                        >
-                          {agentOpt.binary}
-                        </div>
-                      </div>
-
-                      <p
-                        style={{
-                          fontSize: '0.74rem',
-                          color: '#64748b',
-                          lineHeight: 1.4,
-                          marginTop: 10,
-                          marginBottom: 0,
-                        }}
-                      >
-                        {agentOpt.description}
-                      </p>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-
-            {/* Start Button */}
             <button
-              onClick={() => handleStartDev(selectedHost)}
+              onClick={() => handleStartDev('compassx')}
               disabled={startDevMutation.isPending}
               style={{
                 display: 'inline-flex',
                 alignItems: 'center',
                 gap: 8,
-                background: 'linear-gradient(135deg, #6366f1 0%, #4f46e5 100%)',
+                background: '#1B6EF3',
                 border: 'none',
                 borderRadius: 8,
                 color: '#ffffff',
-                padding: '11px 26px',
-                fontSize: '0.9rem',
+                padding: '11px 28px',
+                fontSize: '0.92rem',
                 fontWeight: 600,
                 cursor: startDevMutation.isPending ? 'not-allowed' : 'pointer',
                 opacity: startDevMutation.isPending ? 0.6 : 1,
-                boxShadow: '0 4px 14px rgba(79, 70, 229, 0.4)',
-                transition: 'transform 0.1s ease, box-shadow 0.15s ease',
+                boxShadow: '0 4px 14px rgba(27, 110, 243, 0.35)',
+                transition: 'all 0.15s ease',
               }}
               onMouseEnter={(e) => {
                 if (!startDevMutation.isPending) {
-                  e.currentTarget.style.transform = 'translateY(-1px)';
-                  e.currentTarget.style.boxShadow = '0 6px 18px rgba(79, 70, 229, 0.5)';
+                  e.currentTarget.style.background = '#1558c7';
+                  e.currentTarget.style.boxShadow = '0 6px 18px rgba(27, 110, 243, 0.45)';
                 }
               }}
               onMouseLeave={(e) => {
-                e.currentTarget.style.transform = 'translateY(0)';
-                e.currentTarget.style.boxShadow = '0 4px 14px rgba(79, 70, 229, 0.4)';
+                e.currentTarget.style.background = '#1B6EF3';
+                e.currentTarget.style.boxShadow = '0 4px 14px rgba(27, 110, 243, 0.35)';
               }}
             >
               {startDevMutation.isPending ? (
-                <Loader2 size={16} className="spin" />
+                <>
+                  <Loader2 size={16} className="animate-spin" />
+                  <span>Starting Sandbox...</span>
+                </>
               ) : (
-                <Play size={16} fill="currentColor" />
+                <>
+                  <Play size={16} fill="currentColor" />
+                  <span>Start Dev Sandbox</span>
+                </>
               )}
-              <span>
-                Start Dev Sandbox with {selectedHost === 'compassx' ? 'CompassX Host' : 'Omnigent Host'} & {AGENT_OPTIONS.find((a) => a.id === selectedAgent)?.name || 'Pi CLI'}
-              </span>
             </button>
           </div>
         ) : (

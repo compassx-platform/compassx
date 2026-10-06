@@ -5,6 +5,24 @@ All notable changes to the CompassX Platform will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.3] - 2026-10-06
+
+### 🚀 Highlights
+
+CompassX `0.12.3` delivers **Global Fast Shell Hotkey (`Ctrl+Shift+T`)**, **Precision Container Working Directory Resolution**, and **Polished Build Studio Session Navigation**.
+
+### ✨ Features & Enhancements
+
+#### Fast Shell Hotkeys & Terminal Shortcuts
+- **Global Terminal Hotkey (`useNewShellHotkey.ts`, `AppBuildPage.tsx`)**: Added `Ctrl+Shift+T` / `Cmd+Shift+T` accelerator to spawn and focus new terminal shell sessions instantly inside the active workspace.
+- **Terminal Focus & Keyboard Navigation (`TerminalSession.ts`)**: Streamlined keyboard event dispatching and auto-focus transitions.
+
+#### Dev Driver & Container Shell Improvements
+- **Container Working Directory Resolution (`docker_driver.py`, `kubernetes_driver.py`)**: Enhanced shell launch routines with precise directory binding and shell startup script seeding.
+- **Studio Session Sidebar Polish (`SessionsSidebar.tsx`, `NewSessionModal.tsx`)**: Cleaner sessions layout, status indicators, and streamlined creation dialogs.
+
+---
+
 ## [0.12.2] - 2026-10-05
 
 ### 🚀 Highlights

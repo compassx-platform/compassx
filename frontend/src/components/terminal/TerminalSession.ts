@@ -310,7 +310,7 @@ export class TerminalSession {
 
     this.term = new Terminal({
       ...terminalFontOptions(readCodeFont()),
-      scrollback: 20000,
+      scrollback: 50000,
       cursorBlink: true,
       theme: this.theme(isDark),
       minimumContrastRatio: 4.5,
@@ -424,7 +424,7 @@ export class TerminalSession {
       return false;
     });
 
-    (this.term as any).attachCustomWheelEventHandler?.((e: WheelEvent) => {
+    const onWheel = (e: WheelEvent) => {
       const result = wheelReportPayload(
         e,
         {
@@ -435,11 +435,27 @@ export class TerminalSession {
         this.wheelPartialLines,
       );
       this.wheelPartialLines = result.partial;
-      if (!result.consume) return true;
-      if (result.data) (this.term as any).input?.(result.data, true);
-      e.preventDefault();
-      return false;
-    });
+      if (result.consume) {
+        e.preventDefault();
+        e.stopPropagation();
+        if (result.data) {
+          onInput?.();
+          this.lastUserInputAt = performance.now();
+          if (this.ws.readyState === WebSocket.OPEN) {
+            this.ws.send(INPUT_ENCODER.encode(result.data));
+          }
+        }
+        return;
+      }
+      // If the active buffer is alternate (e.g. tmux or full-screen TUI) and mouse tracking
+      // is not active, prevent xterm's default fallback of synthesizing Up/Down arrow keystrokes
+      // which cycles prompt history into the message composer input line.
+      if (this.term.buffer.active.type === 'alternate') {
+        e.preventDefault();
+        e.stopPropagation();
+      }
+    };
+    container.addEventListener('wheel', onWheel, { passive: false, capture: true, signal });
 
     container.addEventListener(
       'touchstart',
@@ -485,7 +501,13 @@ export class TerminalSession {
         this.touchPartialLines = result.partial;
         if (!result.consume) return;
         if (e.cancelable) e.preventDefault();
-        if (result.data) (this.term as any).input?.(result.data, true);
+        if (result.data) {
+          onInput?.();
+          this.lastUserInputAt = performance.now();
+          if (this.ws.readyState === WebSocket.OPEN) {
+            this.ws.send(INPUT_ENCODER.encode(result.data));
+          }
+        }
         if (result.lines !== 0) this.term.scrollLines(result.lines);
       },
       { passive: false, signal },

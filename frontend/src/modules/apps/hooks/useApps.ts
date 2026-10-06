@@ -807,7 +807,7 @@ export interface DevSession {
   app_id: string;
   workspace_id?: string | null;
   title: string;
-  agent: 'pi' | 'opencode' | 'antigravity';
+  agent: 'pi' | 'opencode' | 'antigravity' | 'bash';
   model?: string | null;
   external_session_id?: string | null;
   tmux_session_name?: string | null;
@@ -820,7 +820,7 @@ export interface DevSession {
 
 export interface CreateDevSessionPayload {
   title: string;
-  agent: 'pi' | 'opencode' | 'antigravity';
+  agent: 'pi' | 'opencode' | 'antigravity' | 'bash';
   workspace_id?: string;
   model?: string;
 }

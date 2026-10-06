@@ -31,6 +31,7 @@ export function NewSessionModal({
   const { data: models = [], isLoading: isLoadingModels } = useAppDevModels(appId);
 
   const getDefaultTitleForAgent = (agentId: SupportedAgent) => {
+    if (agentId === 'bash') return 'Bash Shell';
     const agentObj = AGENT_OPTIONS.find((a) => a.id === agentId);
     return `Session with ${agentObj?.name || 'Agent'}`;
   };
@@ -65,7 +66,7 @@ export function NewSessionModal({
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     const cleanTitle = title.trim() || getDefaultTitleForAgent(selectedAgent);
-    onSubmit(cleanTitle, selectedAgent, selectedModel || undefined);
+    onSubmit(cleanTitle, selectedAgent, selectedAgent === 'bash' ? undefined : (selectedModel || undefined));
   };
 
   return (
@@ -284,99 +285,122 @@ export function NewSessionModal({
               </select>
             </div>
 
-            {/* AI Model Selection */}
-            <div>
+            {/* AI Model Selection or Shell Info */}
+            {selectedAgent === 'bash' ? (
               <div
                 style={{
                   display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                  marginBottom: 6,
+                  alignItems: 'flex-start',
+                  gap: 10,
+                  padding: '12px 14px',
+                  borderRadius: 8,
+                  background: 'rgba(245, 158, 11, 0.08)',
+                  border: '1px solid rgba(245, 158, 11, 0.25)',
+                  color: '#92400e',
+                  fontSize: '0.8rem',
+                  lineHeight: '1.45',
                 }}
               >
-                <label
-                  style={{
-                    fontSize: '0.78rem',
-                    fontWeight: 600,
-                    color: '#334155',
-                    margin: 0,
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 6,
-                  }}
-                >
-                  <Cpu size={14} color="#64748b" />
-                  AI Gateway Model
-                </label>
-                <span
-                  style={{
-                    fontSize: '0.7rem',
-                    color: '#64748b',
-                  }}
-                >
-                  Governed via CompassX AI Gateway
-                </span>
+                <Terminal size={16} color="#d97706" style={{ marginTop: 2, flexShrink: 0 }} />
+                <div>
+                  <div style={{ fontWeight: 650, color: '#b45309', marginBottom: 2 }}>Interactive Linux Shell</div>
+                  Launches a direct Bash shell inside the active container sandbox with full PTY support, tmux persistence, and workspace filesystem access.
+                </div>
               </div>
-
-              {isLoadingModels ? (
+            ) : (
+              <div>
                 <div
                   style={{
                     display: 'flex',
                     alignItems: 'center',
-                    gap: 8,
-                    padding: '9px 12px',
-                    borderRadius: 7,
-                    background: '#f8fafc',
-                    border: '1px solid #e2e8f0',
-                    color: '#64748b',
-                    fontSize: '0.8rem',
+                    justifyContent: 'space-between',
+                    marginBottom: 6,
                   }}
                 >
-                  <Loader2 size={13} className="spin" />
-                  <span>Loading available models...</span>
-                </div>
-              ) : (
-                <div style={{ position: 'relative' }}>
-                  <select
-                    value={selectedModel}
-                    onChange={(e) => setSelectedModel(e.target.value)}
-                    disabled={isCreating}
+                  <label
                     style={{
-                      width: '100%',
-                      padding: '9px 12px',
-                      borderRadius: 7,
-                      border: '1px solid #d1d5db',
-                      background: '#ffffff',
-                      color: '#0f172a',
-                      fontSize: '0.84rem',
-                      outline: 'none',
-                      boxSizing: 'border-box',
-                      cursor: isCreating ? 'not-allowed' : 'pointer',
-                      transition: 'border-color 0.15s ease, box-shadow 0.15s ease',
-                    }}
-                    onFocus={(e) => {
-                      e.currentTarget.style.borderColor = '#1B6EF3';
-                      e.currentTarget.style.boxShadow = '0 0 0 3px rgba(27, 110, 243, 0.12)';
-                    }}
-                    onBlur={(e) => {
-                      e.currentTarget.style.borderColor = '#d1d5db';
-                      e.currentTarget.style.boxShadow = 'none';
+                      fontSize: '0.78rem',
+                      fontWeight: 600,
+                      color: '#334155',
+                      margin: 0,
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 6,
                     }}
                   >
-                    {models.map((m) => (
-                      <option key={m.id} value={m.id} style={{ background: '#ffffff', color: '#0f172a' }}>
-                        {m.name} {m.is_default ? '(Default)' : ''} {m.provider ? `• ${m.provider}` : ''}
-                      </option>
-                    ))}
-                    {models.length === 0 && (
-                      <option value="gpt-5.4-mini" style={{ background: '#ffffff', color: '#0f172a' }}>
-                        gpt-5.4-mini (Default)
-                      </option>
-                    )}
-                  </select>
+                    <Cpu size={14} color="#64748b" />
+                    AI Gateway Model
+                  </label>
+                  <span
+                    style={{
+                      fontSize: '0.7rem',
+                      color: '#64748b',
+                    }}
+                  >
+                    Governed via CompassX AI Gateway
+                  </span>
                 </div>
-              )}
-            </div>
+
+                {isLoadingModels ? (
+                  <div
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 8,
+                      padding: '9px 12px',
+                      borderRadius: 7,
+                      background: '#f8fafc',
+                      border: '1px solid #e2e8f0',
+                      color: '#64748b',
+                      fontSize: '0.8rem',
+                    }}
+                  >
+                    <Loader2 size={13} className="spin" />
+                    <span>Loading available models...</span>
+                  </div>
+                ) : (
+                  <div style={{ position: 'relative' }}>
+                    <select
+                      value={selectedModel}
+                      onChange={(e) => setSelectedModel(e.target.value)}
+                      disabled={isCreating}
+                      style={{
+                        width: '100%',
+                        padding: '9px 12px',
+                        borderRadius: 7,
+                        border: '1px solid #d1d5db',
+                        background: '#ffffff',
+                        color: '#0f172a',
+                        fontSize: '0.84rem',
+                        outline: 'none',
+                        boxSizing: 'border-box',
+                        cursor: isCreating ? 'not-allowed' : 'pointer',
+                        transition: 'border-color 0.15s ease, box-shadow 0.15s ease',
+                      }}
+                      onFocus={(e) => {
+                        e.currentTarget.style.borderColor = '#1B6EF3';
+                        e.currentTarget.style.boxShadow = '0 0 0 3px rgba(27, 110, 243, 0.12)';
+                      }}
+                      onBlur={(e) => {
+                        e.currentTarget.style.borderColor = '#d1d5db';
+                        e.currentTarget.style.boxShadow = 'none';
+                      }}
+                    >
+                      {models.map((m) => (
+                        <option key={m.id} value={m.id} style={{ background: '#ffffff', color: '#0f172a' }}>
+                          {m.name} {m.is_default ? '(Default)' : ''} {m.provider ? `• ${m.provider}` : ''}
+                        </option>
+                      ))}
+                      {models.length === 0 && (
+                        <option value="gpt-5.4-mini" style={{ background: '#ffffff', color: '#0f172a' }}>
+                          gpt-5.4-mini (Default)
+                        </option>
+                      )}
+                    </select>
+                  </div>
+                )}
+              </div>
+            )}
 
           </div>
 

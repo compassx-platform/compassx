@@ -7,6 +7,7 @@ import {
   PanelLeftClose,
   Maximize2,
   Minimize2,
+  Terminal,
 } from 'lucide-react';
 import type { DevSession } from '../hooks/useApps';
 import { AGENT_OPTIONS } from '../pages/AppBuildPage';
@@ -16,6 +17,7 @@ export interface SessionsSidebarProps {
   activeSessionId: string | null;
   onSelectSession: (sessionId: string) => void;
   onOpenNewSession: () => void;
+  onOpenNewShell?: () => void;
   onDeleteSession?: (sessionId: string) => void;
   disabled?: boolean;
   isSwitching?: boolean;
@@ -28,6 +30,7 @@ const AGENT_NAMES: Record<string, string> = {
   opencode: 'OpenCode',
   pi: 'Pi',
   antigravity: 'Antigravity',
+  bash: 'Bash Shell',
 };
 
 
@@ -36,6 +39,7 @@ export function SessionsSidebar({
   activeSessionId,
   onSelectSession,
   onOpenNewSession,
+  onOpenNewShell,
   onDeleteSession,
   disabled = false,
   isSwitching = false,
@@ -83,37 +87,78 @@ export function SessionsSidebar({
           flexShrink: 0,
         }}
       >
-        {/* New Session Button */}
-        <button
-          type="button"
-          onClick={onOpenNewSession}
-          disabled={disabled}
-          title="Start New Session with an AI Agent"
-          style={{
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: 4,
-            padding: '3px 8px',
-            borderRadius: 5,
-            border: 'none',
-            background: '#1B6EF3',
-            color: '#ffffff',
-            fontSize: '0.7rem',
-            fontWeight: 600,
-            cursor: disabled ? 'not-allowed' : 'pointer',
-            boxShadow: '0 1px 2px rgba(27, 110, 243, 0.2)',
-            transition: 'background 0.15s ease',
-          }}
-          onMouseEnter={(e) => {
-            if (!disabled) e.currentTarget.style.background = '#1558C7';
-          }}
-          onMouseLeave={(e) => {
-            if (!disabled) e.currentTarget.style.background = '#1B6EF3';
-          }}
-        >
-          <Plus size={11} strokeWidth={2.5} />
-          <span>New Session</span>
-        </button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+          {/* New Session Button */}
+          <button
+            type="button"
+            onClick={onOpenNewSession}
+            disabled={disabled}
+            title="Start New Session with an AI Agent"
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 4,
+              padding: '3px 7px',
+              borderRadius: 5,
+              border: 'none',
+              background: '#1B6EF3',
+              color: '#ffffff',
+              fontSize: '0.69rem',
+              fontWeight: 600,
+              cursor: disabled ? 'not-allowed' : 'pointer',
+              boxShadow: '0 1px 2px rgba(27, 110, 243, 0.2)',
+              transition: 'background 0.15s ease',
+            }}
+            onMouseEnter={(e) => {
+              if (!disabled) e.currentTarget.style.background = '#1558C7';
+            }}
+            onMouseLeave={(e) => {
+              if (!disabled) e.currentTarget.style.background = '#1B6EF3';
+            }}
+          >
+            <Plus size={11} strokeWidth={2.5} />
+            <span>New Session</span>
+          </button>
+
+          {/* New Shell Button */}
+          {onOpenNewShell && (
+            <button
+              type="button"
+              onClick={onOpenNewShell}
+              disabled={disabled}
+              title="Start Interactive Bash Shell (Ctrl+Alt+T)"
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 4,
+                padding: '3px 7px',
+                borderRadius: 5,
+                border: '1px solid #cbd5e1',
+                background: '#f8fafc',
+                color: '#334155',
+                fontSize: '0.69rem',
+                fontWeight: 600,
+                cursor: disabled ? 'not-allowed' : 'pointer',
+                transition: 'all 0.15s ease',
+              }}
+              onMouseEnter={(e) => {
+                if (!disabled) {
+                  e.currentTarget.style.background = '#f1f5f9';
+                  e.currentTarget.style.color = '#0f172a';
+                }
+              }}
+              onMouseLeave={(e) => {
+                if (!disabled) {
+                  e.currentTarget.style.background = '#f8fafc';
+                  e.currentTarget.style.color = '#334155';
+                }
+              }}
+            >
+              <Terminal size={11} strokeWidth={2.5} color="#d97706" />
+              <span>Shell</span>
+            </button>
+          )}
+        </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
           {/* Expand / Minimize Width Button */}
@@ -293,6 +338,16 @@ export function SessionsSidebar({
                     marginRight: 6,
                   }}
                 >
+                  {session.agent === 'bash' && (
+                    <Terminal
+                      size={12}
+                      style={{
+                        marginRight: 6,
+                        color: isActive ? '#d97706' : '#b45309',
+                        flexShrink: 0,
+                      }}
+                    />
+                  )}
                   <span
                     style={{
                       fontSize: '0.78rem',
