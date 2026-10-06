@@ -338,6 +338,9 @@ export interface DevSessionStatus {
   host_image?: string;
   workspace?: string;
   started_at?: string;
+  is_scaling_node?: boolean;
+  provisioning_reason?: string;
+  provisioning_message?: string;
 }
 
 export function useDevWorkspaces(appId?: string) {
@@ -366,8 +369,10 @@ export function useDevStatus(appId?: string, enabled = true) {
     gcTime: 0,
     refetchOnMount: 'always',
     refetchInterval: (query) => {
-      const st = query.state.data?.status;
-      return st === 'active' || st === 'provisioning' ? 3000 : 6000;
+      const data = query.state.data;
+      const st = data?.status;
+      if (st === 'provisioning' || data?.is_scaling_node) return 2000;
+      return st === 'active' ? 4000 : 6000;
     },
   });
 }
@@ -405,6 +410,39 @@ export function useStartDevSession() {
   });
 }
 
+export function useRestartDevSandbox() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      appId,
+      workspaceId,
+      workspaceName,
+      hostType,
+    }: {
+      appId: string;
+      workspaceId?: string;
+      workspaceName?: string;
+      hostType?: 'compassx' | 'omnigent' | string;
+    }) => {
+      const res = await api.post<DevSessionStatus>(
+        `/apps/${appId}/dev/restart`,
+        {
+          workspace_id: workspaceId ?? null,
+          workspace_name: workspaceName ?? null,
+          host_type: hostType ?? 'compassx',
+        },
+        { timeout: 120000 }
+      );
+      return res.data;
+    },
+    onSuccess: (data, { appId }) => {
+      qc.setQueryData(['app-dev-status', appId], data);
+      qc.invalidateQueries({ queryKey: ['app-dev-status', appId] });
+      qc.invalidateQueries({ queryKey: ['app-dev-workspaces', appId] });
+    },
+  });
+}
+
 export function useCreateDevWorkspace() {
   const qc = useQueryClient();
   return useMutation({
@@ -412,18 +450,24 @@ export function useCreateDevWorkspace() {
       appId,
       name,
       gitBranch,
+      baseBranch,
+      fetchRemote,
     }: {
       appId: string;
       name: string;
       gitBranch?: string;
+      baseBranch?: string;
+      fetchRemote?: boolean;
     }) => {
       const res = await api.post<DevWorkspace>(
         `/apps/${appId}/dev/workspaces`,
         {
           name,
           git_branch: gitBranch ?? null,
+          base_branch: baseBranch ?? 'main',
+          fetch_remote: fetchRemote ?? true,
         },
-        { timeout: 60000 }
+        { timeout: 90000 }
       );
       return res.data;
     },
@@ -476,6 +520,47 @@ export function useActivateDevWorkspace() {
       qc.invalidateQueries({ queryKey: ['app-dev-workspaces', appId] });
       qc.invalidateQueries({ queryKey: ['app-dev-status', appId] });
       qc.invalidateQueries({ queryKey: ['app-dev-sessions', appId] });
+    },
+  });
+}
+
+export interface SyncWorkspaceResult {
+  success: boolean;
+  already_up_to_date?: boolean;
+  conflict?: boolean;
+  conflicting_files?: string[];
+  commits_merged?: number;
+  workspace_id?: string;
+  workspace_name?: string;
+  branch?: string;
+  message?: string;
+  error?: string;
+  output?: string;
+}
+
+export function useSyncWorkspaceWithMain() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      appId,
+      workspaceId,
+      baseBranch = 'main',
+    }: {
+      appId: string;
+      workspaceId: string;
+      baseBranch?: string;
+    }) => {
+      const res = await api.post<SyncWorkspaceResult>(
+        `/apps/${appId}/dev/workspaces/${workspaceId}/sync-main`,
+        { base_branch: baseBranch },
+        { timeout: 90000 }
+      );
+      return res.data;
+    },
+    onSuccess: (_, { appId }) => {
+      qc.invalidateQueries({ queryKey: ['app-dev-workspaces', appId] });
+      qc.invalidateQueries({ queryKey: ['app-dev-status', appId] });
+      qc.invalidateQueries({ queryKey: ['app-dev-files', appId] });
     },
   });
 }

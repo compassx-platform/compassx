@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { X, GitBranch, Layers } from 'lucide-react';
+import { X, GitBranch, Layers, GitFork } from 'lucide-react';
 import { useToast } from '@/lib/toast';
 import { useCreateDevWorkspace, useActivateDevWorkspace } from '../hooks/useApps';
 
@@ -9,6 +9,8 @@ interface NewSandboxModalProps {
   appId: string;
   appName?: string;
   onCreated?: (workspaceId: string) => void;
+  activeBranch?: string;
+  defaultBaseBranch?: string;
 }
 
 export function NewSandboxModal({
@@ -17,6 +19,8 @@ export function NewSandboxModal({
   appId,
   appName,
   onCreated,
+  activeBranch,
+  defaultBaseBranch = 'main',
 }: NewSandboxModalProps) {
   const toast = useToast();
   const createWorkspaceMutation = useCreateDevWorkspace();
@@ -24,6 +28,9 @@ export function NewSandboxModal({
 
   const [sandboxName, setSandboxName] = useState('');
   const [gitBranch, setGitBranch] = useState('');
+  const [baseBranchOption, setBaseBranchOption] = useState<'main' | 'current' | 'custom'>('main');
+  const [customBaseBranch, setCustomBaseBranch] = useState('');
+  const [fetchRemote, setFetchRemote] = useState(true);
   const [switchImmediately, setSwitchImmediately] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -45,12 +52,21 @@ export function NewSandboxModal({
     const cleanName = sandboxName.trim().toLowerCase().replace(/[^a-z0-9-_]/g, '-');
     const branchToUse = gitBranch.trim() || `dev/${cleanName}`;
 
+    let baseBranchToUse = defaultBaseBranch || 'main';
+    if (baseBranchOption === 'current') {
+      baseBranchToUse = activeBranch || defaultBaseBranch || 'main';
+    } else if (baseBranchOption === 'custom') {
+      baseBranchToUse = customBaseBranch.trim() || defaultBaseBranch || 'main';
+    }
+
     try {
       setIsSubmitting(true);
       const created = await createWorkspaceMutation.mutateAsync({
         appId,
         name: cleanName,
         gitBranch: branchToUse,
+        baseBranch: baseBranchToUse,
+        fetchRemote: fetchRemote,
       });
 
       if (switchImmediately && created?.id) {
@@ -235,7 +251,7 @@ export function NewSandboxModal({
               }}
             >
               <GitBranch size={13} color="#64748b" />
-              Git Branch
+              New Git Branch
             </label>
             <input
               type="text"
@@ -256,6 +272,175 @@ export function NewSandboxModal({
                 fontFamily: 'ui-monospace, SFMono-Regular, monospace',
               }}
             />
+          </div>
+
+          {/* Base Branch / Fork From Field */}
+          <div style={{ marginBottom: 16 }}>
+            <label
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 6,
+                fontSize: '0.8rem',
+                fontWeight: 600,
+                color: '#334155',
+                marginBottom: 6,
+              }}
+            >
+              <GitFork size={13} color="#64748b" />
+              Base Branch (Fork From)
+            </label>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {/* Option 1: Remote Main */}
+              <label
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 8,
+                  padding: '7px 10px',
+                  borderRadius: 7,
+                  border: baseBranchOption === 'main' ? '1px solid #1B6EF3' : '1px solid #e2e8f0',
+                  background: baseBranchOption === 'main' ? '#f0f7ff' : '#ffffff',
+                  cursor: 'pointer',
+                  fontSize: '0.78rem',
+                  color: '#1e293b',
+                  transition: 'all 0.15s ease',
+                }}
+              >
+                <input
+                  type="radio"
+                  name="baseBranchOption"
+                  value="main"
+                  checked={baseBranchOption === 'main'}
+                  onChange={() => setBaseBranchOption('main')}
+                  disabled={isSubmitting}
+                  style={{ accentColor: '#1B6EF3', cursor: 'pointer' }}
+                />
+                <span style={{ fontWeight: 600 }}>Remote {defaultBaseBranch || 'main'}</span>
+                <span style={{ color: '#64748b', fontSize: '0.72rem' }}>
+                  (origin/{defaultBaseBranch || 'main'}) - Recommended
+                </span>
+              </label>
+
+              {/* Option 2: Current sandbox branch (if available and different from main) */}
+              {activeBranch && activeBranch !== 'main' && activeBranch !== (defaultBaseBranch || 'main') && (
+                <label
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 8,
+                    padding: '7px 10px',
+                    borderRadius: 7,
+                    border: baseBranchOption === 'current' ? '1px solid #1B6EF3' : '1px solid #e2e8f0',
+                    background: baseBranchOption === 'current' ? '#f0f7ff' : '#ffffff',
+                    cursor: 'pointer',
+                    fontSize: '0.78rem',
+                    color: '#1e293b',
+                    transition: 'all 0.15s ease',
+                  }}
+                >
+                  <input
+                    type="radio"
+                    name="baseBranchOption"
+                    value="current"
+                    checked={baseBranchOption === 'current'}
+                    onChange={() => setBaseBranchOption('current')}
+                    disabled={isSubmitting}
+                    style={{ accentColor: '#1B6EF3', cursor: 'pointer' }}
+                  />
+                  <span style={{ fontWeight: 600 }}>Current Sandbox</span>
+                  <span style={{ color: '#64748b', fontSize: '0.72rem', fontFamily: 'monospace' }}>
+                    ({activeBranch})
+                  </span>
+                </label>
+              )}
+
+              {/* Option 3: Custom ref */}
+              <label
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 8,
+                  padding: '7px 10px',
+                  borderRadius: 7,
+                  border: baseBranchOption === 'custom' ? '1px solid #1B6EF3' : '1px solid #e2e8f0',
+                  background: baseBranchOption === 'custom' ? '#f0f7ff' : '#ffffff',
+                  cursor: 'pointer',
+                  fontSize: '0.78rem',
+                  color: '#1e293b',
+                  transition: 'all 0.15s ease',
+                }}
+              >
+                <input
+                  type="radio"
+                  name="baseBranchOption"
+                  value="custom"
+                  checked={baseBranchOption === 'custom'}
+                  onChange={() => setBaseBranchOption('custom')}
+                  disabled={isSubmitting}
+                  style={{ accentColor: '#1B6EF3', cursor: 'pointer' }}
+                />
+                <span>Custom branch or tag ref</span>
+              </label>
+
+              {baseBranchOption === 'custom' && (
+                <input
+                  type="text"
+                  value={customBaseBranch}
+                  onChange={(e) => setCustomBaseBranch(e.target.value)}
+                  placeholder="e.g. origin/develop, release-v2"
+                  disabled={isSubmitting}
+                  style={{
+                    marginTop: 2,
+                    padding: '7px 10px',
+                    borderRadius: 7,
+                    background: '#ffffff',
+                    border: '1px solid #d1d5db',
+                    color: '#0f172a',
+                    fontSize: '0.8rem',
+                    fontFamily: 'monospace',
+                    outline: 'none',
+                  }}
+                />
+              )}
+            </div>
+          </div>
+
+          {/* Fetch Remote Checkbox */}
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              padding: '8px 12px',
+              borderRadius: 8,
+              background: '#f8fafc',
+              border: '1px solid #e2e8f0',
+              marginBottom: 16,
+              cursor: 'pointer',
+            }}
+            onClick={() => !isSubmitting && setFetchRemote(!fetchRemote)}
+          >
+            <input
+              type="checkbox"
+              id="fetch-remote"
+              checked={fetchRemote}
+              onChange={(e) => setFetchRemote(e.target.checked)}
+              disabled={isSubmitting}
+              style={{ cursor: 'pointer', accentColor: '#1B6EF3' }}
+            />
+            <label
+              htmlFor="fetch-remote"
+              style={{
+                fontSize: '0.77rem',
+                fontWeight: 500,
+                color: '#334155',
+                cursor: 'pointer',
+                userSelect: 'none',
+              }}
+            >
+              Fetch latest commits from remote (git fetch origin) before creating
+            </label>
           </div>
 
           {/* Switch Immediately Checkbox */}

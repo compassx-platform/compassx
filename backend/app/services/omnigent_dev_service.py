@@ -685,15 +685,21 @@ class OmnigentDevService:
         except Exception as mcp_err:
             logger.debug("Non-fatal workspace MCP sync warning: %s", mcp_err)
 
+        driver_status = raw_driver_res.get("status", "active")
         session_info = {
             "app_id": app.id,
             "app_identifier": f"compassx-app-{app.id}",
-            "status": "active",
+            "status": driver_status,
+            "phase": raw_driver_res.get("phase", "Running" if driver_status == "active" else "Pending"),
+            "is_scaling_node": raw_driver_res.get("is_scaling_node", False),
+            "provisioning_reason": raw_driver_res.get("provisioning_reason"),
+            "provisioning_message": raw_driver_res.get("provisioning_message"),
             "mode": raw_driver_res.get("mode", "docker"),
             "host_type": raw_driver_res.get("host_type") or host_type,
             "host_image": raw_driver_res.get("host_image"),
             "container_id": raw_driver_res.get("container_id"),
             "container_name": raw_driver_res.get("container_name"),
+            "pod_name": raw_driver_res.get("pod_name"),
             "dev_port": dev_port,
             "dev_url": dev_url,
             "repo_dir": repo_dir,
@@ -701,7 +707,7 @@ class OmnigentDevService:
             "workspace_name": ws_name,
             "workspace_folder": folder_path,
             "started_at": datetime.now(timezone.utc).isoformat(),
-            "omnigent_attached": True,
+            "omnigent_attached": (driver_status == "active"),
             "omnigent_server_url": omnigent_link.get("server_url"),
             "omnigent_server_connected": omnigent_link.get("server_connected"),
             "omnigent_session_id": omnigent_link.get("session_id"),
@@ -748,6 +754,9 @@ class OmnigentDevService:
                 "pod_name": dev_status.get("pod_name"),
                 "phase": dev_status.get("phase", "Stopped"),
                 "mode": dev_status.get("mode", "docker"),
+                "is_scaling_node": dev_status.get("is_scaling_node", False),
+                "provisioning_reason": dev_status.get("provisioning_reason"),
+                "provisioning_message": dev_status.get("provisioning_message"),
             }
 
         # Container is active or in memory: resolve Omnigent details (using 10s TTL cache)
@@ -769,6 +778,9 @@ class OmnigentDevService:
             sess["host_online"] = host_online or is_active
             sess["phase"] = dev_status.get("phase")
             sess["pod_name"] = dev_status.get("pod_name")
+            sess["is_scaling_node"] = dev_status.get("is_scaling_node", False)
+            sess["provisioning_reason"] = dev_status.get("provisioning_reason")
+            sess["provisioning_message"] = dev_status.get("provisioning_message")
             if dev_status.get("host_type"):
                 sess["host_type"] = dev_status.get("host_type")
             if dev_status.get("host_image"):
@@ -792,7 +804,42 @@ class OmnigentDevService:
             "pod_name": dev_status.get("pod_name"),
             "phase": dev_status.get("phase"),
             "mode": dev_status.get("mode", "docker"),
+            "is_scaling_node": dev_status.get("is_scaling_node", False),
+            "provisioning_reason": dev_status.get("provisioning_reason"),
+            "provisioning_message": dev_status.get("provisioning_message"),
         }
+
+    def restart_dev_sandbox(
+        self,
+        app,
+        workspace_id: Optional[str] = None,
+        workspace_name: Optional[str] = None,
+        host_type: str = "compassx",
+    ) -> Dict[str, Any]:
+        """Cleanly restart dev sandbox: wipe stuck/error state and re-provision."""
+        # 1. Clear session cache
+        _DEV_SESSIONS.pop(app.id, None)
+        for k in list(_DEV_SESSIONS.keys()):
+            if k.startswith(f"{app.id}:"):
+                _DEV_SESSIONS.pop(k, None)
+
+        # 2. Trigger driver restart
+        dev_driver = driver_factory.get_dev_driver()
+        try:
+            if hasattr(dev_driver, "restart_dev"):
+                dev_driver.restart_dev(app)
+            else:
+                dev_driver.stop_dev(app)
+        except Exception as e:
+            logger.warning("Error during driver restart for app %s: %s", app.id, e)
+
+        # 3. Start fresh session
+        return self.start_dev_session(
+            app,
+            workspace_id=workspace_id,
+            workspace_name=workspace_name,
+            host_type=host_type,
+        )
 
     def stop_dev_session(self, app) -> Dict[str, Any]:
         """Stop and clean up development sandbox. Workspace folder is kept on PVC."""
@@ -951,7 +998,32 @@ class OmnigentDevService:
             logger.warning("Could not list DevWorkspaces: %s", e)
             return []
 
-    def create_dev_workspace(self, app, name: str, git_branch: Optional[str] = None) -> Dict[str, Any]:
+    def _get_authenticated_git_url(self, app) -> str:
+        """Resolve authenticated Git URL with decrypted PAT for GitHub/GitLab."""
+        git_url = getattr(app, "git_repo_url", None) or ""
+        git_token = None
+        if hasattr(app, "git_pat_enc") and app.git_pat_enc:
+            try:
+                from app.services.encryption import decrypt_field
+                git_token = decrypt_field(app.git_pat_enc)
+            except Exception as enc_err:
+                logger.warning("Could not decrypt PAT token: %s", enc_err)
+
+        auth_url = git_url
+        if git_token and git_url and "github.com" in git_url and not ("@" in git_url.split("//")[-1]):
+            auth_url = git_url.replace("https://", f"https://x-access-token:{git_token}@")
+        elif git_token and git_url and not ("@" in git_url.split("//")[-1]):
+            auth_url = git_url.replace("https://", f"https://oauth2:{git_token}@")
+        return auth_url
+
+    def create_dev_workspace(
+        self,
+        app,
+        name: str,
+        git_branch: Optional[str] = None,
+        base_branch: Optional[str] = "main",
+        fetch_remote: bool = True,
+    ) -> Dict[str, Any]:
         """Create a new dev workspace record with auto-generated dev/<name> branch and matching folder path."""
         from app.models.dev_workspace import DevWorkspace
         clean_app_id = _clean_id(app.id)
@@ -959,6 +1031,25 @@ class OmnigentDevService:
         folder_path = f"{clean_app_id}/{clean_name}"
         branch = git_branch or f"dev/{clean_name}"
         ws_id = clean_name[:32]
+
+        auth_url = self._get_authenticated_git_url(app)
+        clean_base = (base_branch or "main").strip()
+        worktree_base = f"origin/{clean_base}" if clean_base not in ("HEAD",) else clean_base
+
+        # Fetch remote updates before creating worktree if requested
+        if fetch_remote and auth_url:
+            try:
+                dev_driver = driver_factory.get_dev_driver()
+                remote_snippet = f"git remote set-url origin '{auth_url}' 2>/dev/null || true; "
+                fetch_cmd = (
+                    f"cd /app 2>/dev/null; "
+                    f"export GIT_TERMINAL_PROMPT=0; "
+                    f"{remote_snippet}"
+                    f"git fetch origin {clean_base} 2>&1 || git fetch origin 2>&1"
+                )
+                dev_driver.exec_command_in_dev(app, fetch_cmd)
+            except Exception as f_err:
+                logger.debug("Fetch remote in create_dev_workspace: %s", f_err)
 
         try:
             with _get_system_db() as db:
@@ -1000,7 +1091,9 @@ class OmnigentDevService:
                 try:
                     dev_driver = driver_factory.get_dev_driver()
                     if hasattr(dev_driver, "create_git_worktree"):
-                        dev_driver.create_git_worktree(app, folder_path=folder_path, branch=branch)
+                        dev_driver.create_git_worktree(
+                            app, folder_path=folder_path, branch=branch, base_branch=worktree_base
+                        )
                 except Exception as wt_err:
                     logger.debug("Non-fatal create_git_worktree on workspace creation: %s", wt_err)
 
@@ -1384,12 +1477,15 @@ class OmnigentDevService:
         exec_res = dev_driver.exec_command_in_dev(app, command=git_check_cmd, workspace_folder=folder_path)
         output = (exec_res.get("output") or "").strip()
         success = exec_res.get("success", False)
+        is_pending = exec_res.get("pending", False)
+        is_ok = success or ("Workspace codebase verified" in output)
 
         return {
-            "success": success or ("Workspace codebase verified" in output),
+            "success": is_ok,
+            "pending": is_pending,
             "branch": target_branch,
             "output": output,
-            "message": "Workspace codebase verified and ready.",
+            "message": "Workspace codebase verified and ready." if is_ok else (output or "Workspace codebase preparation failed."),
         }
 
     def run_dev_app(
@@ -1970,21 +2066,7 @@ else:
             branch = (target_ws.git_branch if target_ws else None) or getattr(app, "git_branch", None) or "main"
 
         # 2. Authenticated Git Push URL
-        git_url = getattr(app, "git_repo_url", None) or ""
-        git_token = None
-        if hasattr(app, "git_pat_enc") and app.git_pat_enc:
-            try:
-                from app.services.encryption import decrypt_field
-                git_token = decrypt_field(app.git_pat_enc)
-            except Exception as enc_err:
-                logger.warning("Could not decrypt PAT token: %s", enc_err)
-
-        auth_url = git_url
-        if git_token and git_url and "github.com" in git_url and not ("@" in git_url.split("//")[-1]):
-            auth_url = git_url.replace("https://", f"https://x-access-token:{git_token}@")
-        elif git_token and git_url and not ("@" in git_url.split("//")[-1]):
-            auth_url = git_url.replace("https://", f"https://oauth2:{git_token}@")
-
+        auth_url = self._get_authenticated_git_url(app)
         msg = (commit_message or "").strip() or f"Dev updates [{folder_name}] - {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M')}"
 
         # 3. Ensure Dev Pod is running if currently stopped
@@ -2065,6 +2147,123 @@ else:
             "git_output": git_output,
             "pushed_to_remote": True,
             "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+
+    def sync_workspace_with_remote_main(
+        self,
+        app,
+        workspace_id: Optional[str] = None,
+        base_branch: str = "main",
+    ) -> Dict[str, Any]:
+        """Fetch remote main and merge into active workspace branch using Git merge."""
+        dev_driver = driver_factory.get_dev_driver()
+        ws_id, ws_name, folder_path, branch = self._resolve_workspace_info(app, workspace_id)
+        target_dir = f"/workspaces/{folder_path.strip('/')}" if ws_name != "default" else "/app"
+        auth_url = self._get_authenticated_git_url(app)
+
+        remote_snippet = f"git remote set-url origin '{auth_url}' 2>/dev/null || true; " if auth_url else ""
+        clean_base = (base_branch or getattr(app, "git_branch", None) or "main").strip() or "main"
+
+        script = (
+            f"cd {target_dir} 2>/dev/null || cd /app; "
+            f"export GIT_TERMINAL_PROMPT=0; "
+            f"{remote_snippet}"
+            f"git fetch origin {clean_base} 2>&1 || git fetch origin 2>&1; "
+            f"BEHIND=$(git rev-list --count HEAD..origin/{clean_base} 2>/dev/null || echo '0'); "
+            f"echo \"---BEHIND:$BEHIND---\"; "
+            f"if [ \"$BEHIND\" = \"0\" ]; then "
+            f"  echo '__UP_TO_DATE__'; "
+            f"  exit 0; "
+            f"fi; "
+            f"DIRTY=$(git status --porcelain 2>/dev/null); "
+            f"STASHED=0; "
+            f"if [ -n \"$DIRTY\" ]; then "
+            f"  git stash push -u -m 'CompassX pre-merge auto-stash' >/dev/null 2>&1; "
+            f"  STASHED=1; "
+            f"fi; "
+            f"git config user.name 'CompassX Dev'; "
+            f"git config user.email 'dev@compassx.io'; "
+            f"MERGE_OUT=$(git merge --no-edit -m \"Merge remote {clean_base} into {branch}\" origin/{clean_base} 2>&1); "
+            f"MERGE_STATUS=$?; "
+            f"if [ \"$STASHED\" = \"1\" ]; then "
+            f"  git stash pop >/dev/null 2>&1; "
+            f"fi; "
+            f"CONFLICTS=$(git diff --name-only --diff-filter=U 2>/dev/null); "
+            f"if [ -n \"$CONFLICTS\" ] || [ $MERGE_STATUS -ne 0 ]; then "
+            f"  echo '__CONFLICT__'; "
+            f"  echo \"$CONFLICTS\"; "
+            f"  echo \"---OUTPUT---\"; "
+            f"  echo \"$MERGE_OUT\"; "
+            f"else "
+            f"  echo '__MERGED__'; "
+            f"  echo \"---OUTPUT---\"; "
+            f"  echo \"$MERGE_OUT\"; "
+            f"  git rev-parse --short HEAD 2>/dev/null || echo ''; "
+            f"fi"
+        )
+
+        res = dev_driver.exec_command_in_dev(app, command=script, workspace_folder=folder_path)
+        raw_output = res.get("output", "")
+
+        behind_count = 0
+        if "---BEHIND:" in raw_output:
+            try:
+                behind_str = raw_output.split("---BEHIND:", 1)[1].split("---", 1)[0].strip()
+                behind_count = int(behind_str)
+            except Exception:
+                behind_count = 0
+
+        if "__UP_TO_DATE__" in raw_output:
+            return {
+                "success": True,
+                "already_up_to_date": True,
+                "commits_merged": 0,
+                "workspace_id": ws_id,
+                "workspace_name": ws_name,
+                "branch": branch,
+                "message": f"Workspace '{ws_name}' ({branch}) is already up-to-date with remote '{clean_base}'.",
+                "output": raw_output,
+            }
+
+        if "__CONFLICT__" in raw_output:
+            conflicts_block = raw_output.split("__CONFLICT__", 1)[1].split("---OUTPUT---", 1)[0].strip()
+            conflict_files = [f.strip() for f in conflicts_block.splitlines() if f.strip()]
+            return {
+                "success": False,
+                "conflict": True,
+                "conflicting_files": conflict_files,
+                "workspace_id": ws_id,
+                "workspace_name": ws_name,
+                "branch": branch,
+                "message": f"Merge encountered conflicts in {len(conflict_files)} file(s). Please resolve them in the editor or shell.",
+                "output": raw_output,
+            }
+
+        if "__MERGED__" in raw_output:
+            # Re-install dependencies if manifests changed
+            try:
+                self.install_dev_dependencies(app, workspace_id=ws_id, force=False)
+            except Exception as e:
+                logger.debug("Post-merge dependency check: %s", e)
+
+            return {
+                "success": True,
+                "already_up_to_date": False,
+                "commits_merged": behind_count or 1,
+                "workspace_id": ws_id,
+                "workspace_name": ws_name,
+                "branch": branch,
+                "message": f"Successfully merged {behind_count or 'latest'} commit(s) from remote '{clean_base}' into '{branch}'.",
+                "output": raw_output,
+            }
+
+        return {
+            "success": False,
+            "error": raw_output or "Git merge failed",
+            "workspace_id": ws_id,
+            "workspace_name": ws_name,
+            "branch": branch,
+            "output": raw_output,
         }
 
     def get_omnigent_agents(self) -> List[Dict[str, Any]]:

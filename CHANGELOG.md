@@ -5,6 +5,24 @@ All notable changes to the CompassX Platform will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.4] - 2026-10-06
+
+### 🚀 Highlights
+
+CompassX `0.12.4` delivers **Sandbox Remote Git Sync (`origin/main`)**, **Conflict-Aware Pre-Merge Auto-Stashing**, and **Flexible Base Branch Selection for Dev Sandboxes**.
+
+### ✨ Features & Enhancements
+
+#### Sandbox Remote Git Synchronization
+- **Sync Active Sandbox with Remote Main (`SandboxSelector.tsx`, `useApps.ts`, `app_dev_routes.py`, `omnigent_dev_service.py`)**: Added dedicated sync endpoint and UI action to fetch and merge upstream remote changes (`origin/main` or configured base branch) into the active sandbox with behind-commit counting, conflict reporting, and automatic dependency re-evaluation.
+- **Pre-Merge Auto-Stashing & Safe Merging (`omnigent_dev_service.py`)**: Automatically stashes uncommitted working tree changes before merging remote changes and restores them afterward to prevent work loss.
+
+#### Dev Worktree & Branch Management
+- **Base Branch Selection on Sandbox Creation (`NewSandboxModal.tsx`, `AppBuildPage.tsx`)**: Enabled selecting custom base branches (e.g. `main` or active branch) when launching new sandboxes, with automated remote repository pre-fetching.
+- **Git Worktree Driver Extensions (`docker_driver.py`, `kubernetes_driver.py`)**: Enhanced worktree provisioning routines to support custom base branches during worktree branch initialization.
+
+---
+
 ## [0.12.3] - 2026-10-06
 
 ### 🚀 Highlights

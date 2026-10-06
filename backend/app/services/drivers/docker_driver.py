@@ -570,6 +570,11 @@ class DockerDevDriver(BaseDevDriver):
         res = subprocess.run(["docker", "rm", "-f", dev_container_name], capture_output=True, text=True, check=False)
         return res.returncode == 0
 
+    def restart_dev(self, app) -> bool:
+        dev_container_name = f"compassx-app-dev-{app.id}"
+        subprocess.run(["docker", "rm", "-f", dev_container_name], capture_output=True, text=True, check=False)
+        return True
+
     def get_dev_status(self, app) -> Dict[str, Any]:
         dev_container_name = f"compassx-app-dev-{app.id}"
         res = subprocess.run(["docker", "inspect", "-f", "{{.State.Status}}|{{.Config.Image}}", dev_container_name], capture_output=True, text=True, check=False)
@@ -1054,7 +1059,7 @@ class DockerDevDriver(BaseDevDriver):
             f"if [ -d '{target_dir}' ]; then "
             f"  echo '__WORKTREE_EXISTS__'; "
             f"else "
-            f"  cd /app && git worktree add -B '{branch}' '{target_dir}' '{base}' 2>&1 && "
+            f"  cd /app && (git worktree add -B '{branch}' '{target_dir}' '{base}' 2>&1 || git worktree add -B '{branch}' '{target_dir}' HEAD 2>&1) && "
             f"  echo '__WORKTREE_CREATED__'; "
             f"fi"
         )

@@ -72,6 +72,10 @@ class BaseDevDriver(ABC):
         """Resume a suspended dev sandbox compute (scale-to-one)."""
         return False
 
+    def restart_dev(self, app) -> bool:
+        """Restart dev sandbox runtime (override in sub-drivers)."""
+        return self.stop_dev(app)
+
     def exec_git_in_workspace(
         self,
         app,

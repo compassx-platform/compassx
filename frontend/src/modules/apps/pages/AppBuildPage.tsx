@@ -23,10 +23,12 @@ import {
 } from 'lucide-react';
 import { useScopedNavigate } from '@/lib/appNavigation';
 import { useToast } from '@/lib/toast';
+import { useQueryClient } from '@tanstack/react-query';
 import {
   useApp,
   useDevStatus,
   useStartDevSession,
+  useRestartDevSandbox,
   useStopDevSession,
   useVerifyGitWorkspace,
   useInstallDevDependencies,
@@ -154,7 +156,9 @@ export default function AppBuildPage() {
 
   const { data: app, isLoading: isAppLoading } = useApp(resolvedAppId);
   const { data: devStatus, isLoading: isDevLoading, refetch: refetchDevStatus } = useDevStatus(resolvedAppId);
+  const qc = useQueryClient();
   const startDevMutation = useStartDevSession();
+  const restartDevMutation = useRestartDevSandbox();
   const stopDevMutation = useStopDevSession();
   const verifyGitMutation = useVerifyGitWorkspace();
   const installDepsMutation = useInstallDevDependencies();
@@ -214,7 +218,14 @@ export default function AppBuildPage() {
   const runAppTriggered = useRef<boolean>(false);
 
   // ── Unified Sandbox Stage Calculation ──────────────────────────────────────────
-  const isContainerRunning = devStatus?.status === 'active' || devStatus?.phase === 'Running';
+  const isContainerRunning =
+    (devStatus?.status === 'active' || devStatus?.phase === 'Running') &&
+    devStatus?.status !== 'provisioning' &&
+    devStatus?.phase !== 'Pending' &&
+    devStatus?.phase !== 'ContainerCreating' &&
+    devStatus?.phase !== 'Terminating' &&
+    !devStatus?.is_scaling_node;
+
   const isStoppingOperation =
     stopDevMutation.isPending ||
     devStatus?.status === 'stopping' ||
@@ -227,7 +238,13 @@ export default function AppBuildPage() {
     stage = 'stopped';
   } else if (isContainerRunning && hasCompletedInit) {
     stage = 'running';
-  } else if (startDevMutation.isPending || devStatus?.status === 'provisioning' || (isContainerRunning && !hasCompletedInit)) {
+  } else if (
+    startDevMutation.isPending ||
+    restartDevMutation.isPending ||
+    devStatus?.status === 'provisioning' ||
+    devStatus?.is_scaling_node ||
+    (isContainerRunning && !hasCompletedInit)
+  ) {
     stage = 'starting';
   } else {
     stage = 'stopped';
@@ -652,7 +669,7 @@ export default function AppBuildPage() {
     if (!devStatus || isDevLoading) return;
     if (!initialChecked.current) {
       initialChecked.current = true;
-      if (devStatus.status === 'active' || devStatus.phase === 'Running') {
+      if (isContainerRunning) {
         setHasCompletedInit(true);
         setStep2Completed(true);
         setStep3Completed(true);
@@ -677,10 +694,10 @@ export default function AppBuildPage() {
 
   // Track running container status
   useEffect(() => {
-    if (devStatus && (devStatus.status === 'active' || devStatus.phase === 'Running')) {
+    if (isContainerRunning) {
       hasTriggeredInitialStart.current = true;
     }
-  }, [devStatus]);
+  }, [isContainerRunning]);
 
   // Clean & simple: start CompassX host by default on page load if not running and not explicitly stopped
   useEffect(() => {
@@ -692,12 +709,14 @@ export default function AppBuildPage() {
       resolvedAppId &&
       app &&
       !startDevMutation.isPending &&
-      devStatus?.status !== 'provisioning'
+      !restartDevMutation.isPending &&
+      devStatus?.status !== 'provisioning' &&
+      !devStatus?.is_scaling_node
     ) {
       hasTriggeredInitialStart.current = true;
       handleStartDev('compassx');
     }
-  }, [isDevLoading, isContainerRunning, userExplicitlyStopped, resolvedAppId, app, devStatus, startDevMutation.isPending]);
+  }, [isDevLoading, isContainerRunning, userExplicitlyStopped, resolvedAppId, app, devStatus, startDevMutation.isPending, restartDevMutation.isPending]);
 
   // ── Step 1 -> Step 2 -> Step 3 -> Step 4 -> Studio Canvas Progression ──────────────────
   useEffect(() => {
@@ -840,6 +859,56 @@ export default function AppBuildPage() {
       {
         onError: (err: any) => {
           setStartError(err?.response?.data?.detail || err?.message || 'Failed to start dev sandbox.');
+        },
+      }
+    );
+  }
+
+  // Clean Restart Dev Sandbox
+  function handleRestartSandbox() {
+    if (!resolvedAppId || !app) return;
+    setStartError(null);
+    setUserExplicitlyStopped(false);
+    setInitStep(0);
+    setStep2Completed(false);
+    setStep3Completed(false);
+    setStep4Completed(false);
+    setHasCompletedInit(false);
+    setGitOutput('');
+    setInstallOutput('');
+    setRunAppOutput('');
+    setIsLogViewerOpen(false);
+    verifyGitTriggered.current = false;
+    installDepsTriggered.current = false;
+    runAppTriggered.current = false;
+    hasTriggeredInitialStart.current = true;
+
+    // Optimistically update dev status to provisioning
+    qc.setQueryData(['app-dev-status', resolvedAppId], (prev: any) => ({
+      ...prev,
+      status: 'provisioning',
+      phase: 'Pending',
+      is_scaling_node: false,
+      provisioning_message: 'Restarting sandbox and recreating pod...',
+    }));
+
+    restartDevMutation.mutate(
+      {
+        appId: resolvedAppId,
+        hostType: selectedHost,
+        workspaceId: activeWorkspace?.id || devStatus?.workspace_id,
+        workspaceName: activeWorkspace?.name || devStatus?.workspace_name,
+      },
+      {
+        onSuccess: (data) => {
+          setStartError(null);
+          qc.setQueryData(['app-dev-status', resolvedAppId], data);
+          qc.invalidateQueries({ queryKey: ['app-dev-status', resolvedAppId] });
+          qc.invalidateQueries({ queryKey: ['app-dev-workspaces', resolvedAppId] });
+        },
+        onError: (err: any) => {
+          const msg = err?.response?.data?.detail || err?.message || 'Failed to restart dev sandbox.';
+          setStartError(msg);
         },
       }
     );
@@ -1069,6 +1138,7 @@ export default function AppBuildPage() {
                 appId={resolvedAppId!}
                 workspaces={devWorkspaces}
                 activeWorkspaceId={activeWorkspace?.id}
+                baseBranch={app?.git_branch || 'main'}
                 onSelectWorkspace={handleSelectWorkspace}
                 onOpenNewSandboxModal={() => setIsNewSandboxModalOpen(true)}
                 isSwitching={isSwitchingSandbox}
@@ -1763,11 +1833,17 @@ export default function AppBuildPage() {
 
             {/* Title & Subtitle */}
             <h2 style={{ margin: '0 0 6px', fontSize: '1.25rem', fontWeight: 700, color: 'var(--color-text, #f8fafc)' }}>
-              {startError ? 'Sandbox Startup Failed' : 'Preparing Build Environment'}
+              {startError
+                ? 'Sandbox Startup Failed'
+                : devStatus?.is_scaling_node
+                ? 'Allocating Cloud Cluster Compute'
+                : 'Preparing Build Environment'}
             </h2>
             <p style={{ margin: '0 0 24px', fontSize: '0.85rem', color: 'var(--color-text-muted, #94a3b8)' }}>
               {startError
                 ? 'An error occurred during sandbox initialization.'
+                : devStatus?.is_scaling_node
+                ? 'Cluster is scaling worker node to allocate compute resources (1-3 min)...'
                 : step4Completed
                 ? 'Step 4 of 4 • Application Running'
                 : `Step ${initStep + 1} of ${BUILD_STEPS.length} • ${BUILD_STEPS[initStep].title}`}
@@ -1834,6 +1910,35 @@ export default function AppBuildPage() {
               })}
             </div>
 
+            {/* Node Scaling Information Banner */}
+            {devStatus?.is_scaling_node && !startError && (
+              <div
+                style={{
+                  margin: '4px 0 16px',
+                  padding: '12px 16px',
+                  background: 'rgba(245, 158, 11, 0.08)',
+                  border: '1px solid rgba(245, 158, 11, 0.25)',
+                  borderRadius: 8,
+                  maxWidth: 480,
+                  width: '100%',
+                  textAlign: 'left',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 6,
+                  boxShadow: '0 4px 16px rgba(245, 158, 11, 0.08)',
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: '#f59e0b', fontSize: '0.84rem', fontWeight: 600 }}>
+                  <Loader2 size={15} className="spin" />
+                  <span>Cluster Worker Node Autoscaling in Progress</span>
+                </div>
+                <div style={{ fontSize: '0.78rem', color: '#cbd5e1', lineHeight: 1.55 }}>
+                  {devStatus.provisioning_message ||
+                    'The Kubernetes cluster is provisioning a new worker node to allocate compute resources for this sandbox. This usually takes 1-3 minutes. The sandbox will initialize automatically once the node joins the cluster.'}
+                </div>
+              </div>
+            )}
+
             {/* Step Description / Status Details */}
             {!startError ? (
               <div
@@ -1853,6 +1958,10 @@ export default function AppBuildPage() {
                 <span>
                   {step4Completed
                     ? 'Application services running and dev server responsive.'
+                    : devStatus?.is_scaling_node
+                    ? 'Waiting for cluster worker node to become ready (1-3 min)...'
+                    : devStatus?.status === 'provisioning' && devStatus?.provisioning_message
+                    ? devStatus.provisioning_message
                     : BUILD_STEPS[initStep].description}
                 </span>
               </div>
@@ -2131,7 +2240,8 @@ export default function AppBuildPage() {
                   )}
                   <button
                     type="button"
-                    onClick={() => handleStartDev()}
+                    onClick={handleRestartSandbox}
+                    disabled={restartDevMutation.isPending || startDevMutation.isPending}
                     style={{
                       display: 'inline-flex',
                       alignItems: 'center',
@@ -2143,12 +2253,22 @@ export default function AppBuildPage() {
                       padding: '8px 18px',
                       fontSize: '0.82rem',
                       fontWeight: 600,
-                      cursor: 'pointer',
+                      cursor: restartDevMutation.isPending || startDevMutation.isPending ? 'not-allowed' : 'pointer',
+                      opacity: restartDevMutation.isPending || startDevMutation.isPending ? 0.7 : 1,
                       boxShadow: '0 2px 8px rgba(37, 99, 235, 0.3)',
                     }}
                   >
-                    <RefreshCw size={14} />
-                    <span>Restart Sandbox</span>
+                    {restartDevMutation.isPending ? (
+                      <>
+                        <Loader2 size={14} className="spin" />
+                        <span>Restarting Sandbox...</span>
+                      </>
+                    ) : (
+                      <>
+                        <RefreshCw size={14} />
+                        <span>Restart Sandbox</span>
+                      </>
+                    )}
                   </button>
                 </div>
               </div>
@@ -2186,6 +2306,8 @@ export default function AppBuildPage() {
         onClose={() => setIsNewSandboxModalOpen(false)}
         appId={resolvedAppId!}
         appName={app?.name}
+        activeBranch={activeWorkspace?.git_branch}
+        defaultBaseBranch={app?.git_branch || 'main'}
         onCreated={() => {
           refetchDevWorkspaces();
           refetchDevStatus();

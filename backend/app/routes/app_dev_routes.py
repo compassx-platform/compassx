@@ -63,6 +63,11 @@ class StartDevRequest(BaseModel):
 class CreateWorkspaceRequest(BaseModel):
     name: str
     git_branch: Optional[str] = None
+    base_branch: Optional[str] = "main"
+    fetch_remote: Optional[bool] = True
+
+class SyncWorkspaceRequest(BaseModel):
+    base_branch: Optional[str] = "main"
 
 class InstallDepsRequest(BaseModel):
     workspace_id: Optional[str] = None
@@ -113,7 +118,13 @@ def create_dev_workspace(
         raise HTTPException(status_code=400, detail="Workspace name cannot be empty.")
     try:
         unified_reaper_service.touch_app_activity(app.id)
-        return omnigent_dev_service.create_dev_workspace(app, name=body.name.strip(), git_branch=body.git_branch)
+        return omnigent_dev_service.create_dev_workspace(
+            app,
+            name=body.name.strip(),
+            git_branch=body.git_branch,
+            base_branch=body.base_branch or "main",
+            fetch_remote=body.fetch_remote if body.fetch_remote is not None else True,
+        )
     except Exception as e:
         logger.exception("Failed to create dev workspace for app %s: %s", app.name, e)
         raise HTTPException(status_code=500, detail=f"Failed to create dev workspace: {str(e)}")
@@ -159,6 +170,31 @@ def activate_dev_workspace(
     except Exception as e:
         logger.exception("Failed to activate dev workspace %s for app %s: %s", workspace_id, app.name, e)
         raise HTTPException(status_code=500, detail=f"Failed to activate dev workspace: {str(e)}")
+
+
+@router.post("/workspaces/{workspace_id}/sync-main")
+def sync_dev_workspace_with_remote_main(
+    app_id: str,
+    workspace_id: str,
+    body: Optional[SyncWorkspaceRequest] = None,
+    db: Session = Depends(get_system_db),
+    guard: Guard = Depends(get_guard),
+):
+    """Fetch remote main and merge it into this sandbox workspace."""
+    app = db.query(App).filter(App.id == app_id).first()
+    if not app:
+        raise HTTPException(status_code=404, detail=f"App '{app_id}' not found.")
+    if guard.workspace_id and app.workspace_id != guard.workspace_id:
+        raise HTTPException(status_code=403, detail="Cannot access app in another workspace.")
+    try:
+        unified_reaper_service.touch_app_activity(app.id)
+        base_branch = (body.base_branch if body and body.base_branch else "main")
+        return omnigent_dev_service.sync_workspace_with_remote_main(
+            app, workspace_id=workspace_id, base_branch=base_branch
+        )
+    except Exception as e:
+        logger.exception("Failed to sync dev workspace %s with remote main: %s", workspace_id, e)
+        raise HTTPException(status_code=500, detail=f"Failed to sync with remote main: {str(e)}")
 
 
 @router.get("/sessions")
@@ -340,6 +376,39 @@ def start_dev_session(
     except Exception as e:
         logger.exception("Failed to start dev session for app %s: %s", app.name, e)
         raise HTTPException(status_code=500, detail=f"Failed to start dev session: {str(e)}")
+
+
+@router.post("/restart")
+def restart_dev_sandbox(
+    app_id: str,
+    body: Optional[StartDevRequest] = None,
+    db: Session = Depends(get_system_db),
+    guard: Guard = Depends(get_guard),
+):
+    """Restart dev sandbox: clean up stuck pods/containers and re-provision."""
+    app = db.query(App).filter(App.id == app_id).first()
+    if not app:
+        raise HTTPException(status_code=404, detail=f"App '{app_id}' not found.")
+
+    if guard.workspace_id and app.workspace_id != guard.workspace_id:
+        raise HTTPException(status_code=403, detail="Cannot access app in another workspace.")
+
+    workspace_id = body.workspace_id if body else None
+    workspace_name = body.workspace_name if body else None
+    host_type = (body.host_type if body and body.host_type else "compassx").lower()
+    app_id_val = app.id
+    db.expunge(app)
+    db.close()
+
+    try:
+        unified_reaper_service.touch_app_activity(app_id_val)
+        session = omnigent_dev_service.restart_dev_sandbox(
+            app, workspace_id=workspace_id, workspace_name=workspace_name, host_type=host_type
+        )
+        return session
+    except Exception as e:
+        logger.exception("Failed to restart dev session for app %s: %s", app.name, e)
+        raise HTTPException(status_code=500, detail=f"Failed to restart dev session: {str(e)}")
 
 
 @router.get("/status")

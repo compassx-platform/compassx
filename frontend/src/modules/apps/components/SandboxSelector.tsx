@@ -6,13 +6,16 @@ import {
   FolderPlus,
   Loader2,
   GitBranch,
+  GitMerge,
 } from 'lucide-react';
-import type { DevWorkspace } from '../hooks/useApps';
+import { useToast } from '@/lib/toast';
+import { useSyncWorkspaceWithMain, type DevWorkspace } from '../hooks/useApps';
 
 export interface SandboxSelectorProps {
   appId: string;
   workspaces: DevWorkspace[];
   activeWorkspaceId?: string;
+  baseBranch?: string;
   onSelectWorkspace: (workspaceId: string) => void;
   onOpenNewSandboxModal: () => void;
   isSwitching?: boolean;
@@ -23,11 +26,14 @@ export function SandboxSelector({
   appId,
   workspaces,
   activeWorkspaceId,
+  baseBranch = 'main',
   onSelectWorkspace,
   onOpenNewSandboxModal,
   isSwitching = false,
   disabled = false,
 }: SandboxSelectorProps) {
+  const toast = useToast();
+  const syncMutation = useSyncWorkspaceWithMain();
   const [isOpen, setIsOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -54,6 +60,35 @@ export function SandboxSelector({
 
   const activeName = activeWs?.name || 'default';
   const activeBranch = activeWs?.git_branch || `dev/${activeName}`;
+
+  const handleSyncWithMain = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!activeWs?.id || syncMutation.isPending) return;
+
+    try {
+      const res = await syncMutation.mutateAsync({
+        appId,
+        workspaceId: activeWs.id,
+        baseBranch: baseBranch || 'main',
+      });
+
+      if (res.already_up_to_date) {
+        toast.info(res.message || `Sandbox "${activeName}" is already up to date with remote ${baseBranch || 'main'}.`);
+      } else if (res.conflict) {
+        toast.error(
+          res.message || `Merge conflict in: ${(res.conflicting_files || []).join(', ')}. Please resolve in editor.`
+        );
+      } else if (res.success) {
+        toast.success(
+          res.message || `Successfully merged latest commits from remote ${baseBranch || 'main'} into "${activeName}".`
+        );
+      } else {
+        toast.error(res.error || res.message || 'Failed to sync with remote main.');
+      }
+    } catch (err: any) {
+      toast.error(err?.response?.data?.detail || err?.message || 'Sync failed.');
+    }
+  };
 
   return (
     <div ref={containerRef} style={{ position: 'relative', display: 'inline-block' }}>
@@ -272,6 +307,56 @@ export function SandboxSelector({
 
           {/* Divider */}
           <div style={{ height: 1, background: '#f3f4f6', margin: '4px 0' }} />
+
+          {/* Action Row: Sync active sandbox with remote main */}
+          <div
+            onClick={handleSyncWithMain}
+            title={`Fetch and merge remote origin/${baseBranch || 'main'} into active sandbox '${activeName}'`}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              padding: '6px 8px',
+              borderRadius: 6,
+              cursor: syncMutation.isPending ? 'not-allowed' : 'pointer',
+              color: '#111827',
+              fontSize: '0.78rem',
+              fontWeight: 500,
+              transition: 'background 0.12s ease',
+              opacity: syncMutation.isPending ? 0.75 : 1,
+            }}
+            onMouseEnter={(e) => {
+              if (!syncMutation.isPending) e.currentTarget.style.background = '#f9fafb';
+            }}
+            onMouseLeave={(e) => {
+              if (!syncMutation.isPending) e.currentTarget.style.background = 'transparent';
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              {syncMutation.isPending ? (
+                <Loader2 size={14} className="spin" style={{ color: '#1B6EF3' }} />
+              ) : (
+                <GitMerge size={14} style={{ color: '#1B6EF3' }} />
+              )}
+              <span>
+                {syncMutation.isPending
+                  ? `Merging origin/${baseBranch || 'main'} into ${activeName}...`
+                  : `Sync active sandbox with remote ${baseBranch || 'main'}`}
+              </span>
+            </div>
+            <span
+              style={{
+                fontSize: '0.67rem',
+                color: '#64748b',
+                background: '#f1f5f9',
+                padding: '1px 6px',
+                borderRadius: 4,
+                fontFamily: 'ui-monospace, SFMono-Regular, monospace',
+              }}
+            >
+              merge origin/{baseBranch || 'main'}
+            </span>
+          </div>
 
           {/* Action Row: Open / New Sandbox */}
           <div
