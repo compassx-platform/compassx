@@ -142,39 +142,42 @@ class KubernetesAppDriver(BaseAppDriver):
                 f"  echo '[BUILD] [1/3] Cloning repository ({git_ref})...' && "
                 f"  mkdir -p /app_src && cd /app_src && "
                 f"  (git clone --branch '{git_ref}' '{auth_url}' . || git clone '{auth_url}' . || true) && "
+                f"  APP_ROOT='/app_src' && "
+                f"  if [ -n '{subdir}' ] && [ -d '/app_src/{subdir}' ]; then APP_ROOT='/app_src/{subdir}'; fi && "
+                f"  echo \"[BUILD] Source code root directory resolved to: $APP_ROOT\" && "
                 f"  echo '[BUILD] [2/3] Building dependencies and compiling assets...' && "
                 # 1. Build Frontend if present (supports monorepo frontend, web, client, or root)
-                f"  if [ -d /app_src/frontend ] && [ -f /app_src/frontend/package.json ]; then "
+                f"  if [ -d \"$APP_ROOT/frontend\" ] && [ -f \"$APP_ROOT/frontend/package.json\" ]; then "
                 f"    echo '[BUILD] Detected frontend directory. Installing dependencies & building...' && "
-                f"    (cd /app_src/frontend && (npm install --legacy-peer-deps --prefer-offline --no-audit || npm install --legacy-peer-deps || npm install --force) && npm run build) || "
-                f"    (echo '[ERROR] Frontend build failed in /app_src/frontend' && return 1); "
-                f"  elif [ -d /app_src/client ] && [ -f /app_src/client/package.json ]; then "
+                f"    (cd \"$APP_ROOT/frontend\" && (npm install --legacy-peer-deps --prefer-offline --no-audit || npm install --legacy-peer-deps || npm install --force) && npm run build) || "
+                f"    (echo '[ERROR] Frontend build failed in $APP_ROOT/frontend' && return 1); "
+                f"  elif [ -d \"$APP_ROOT/client\" ] && [ -f \"$APP_ROOT/client/package.json\" ]; then "
                 f"    echo '[BUILD] Detected client directory. Installing dependencies & building...' && "
-                f"    (cd /app_src/client && (npm install --legacy-peer-deps --prefer-offline --no-audit || npm install --legacy-peer-deps || npm install --force) && npm run build) || "
-                f"    (echo '[ERROR] Client build failed in /app_src/client' && return 1); "
-                f"  elif [ -d /app_src/web ] && [ -f /app_src/web/package.json ]; then "
+                f"    (cd \"$APP_ROOT/client\" && (npm install --legacy-peer-deps --prefer-offline --no-audit || npm install --legacy-peer-deps || npm install --force) && npm run build) || "
+                f"    (echo '[ERROR] Client build failed in $APP_ROOT/client' && return 1); "
+                f"  elif [ -d \"$APP_ROOT/web\" ] && [ -f \"$APP_ROOT/web/package.json\" ]; then "
                 f"    echo '[BUILD] Detected web directory. Installing dependencies & building...' && "
-                f"    (cd /app_src/web && (npm install --legacy-peer-deps --prefer-offline --no-audit || npm install --legacy-peer-deps || npm install --force) && npm run build) || "
-                f"    (echo '[ERROR] Web build failed in /app_src/web' && return 1); "
-                f"  elif [ -f /app_src/package.json ]; then "
+                f"    (cd \"$APP_ROOT/web\" && (npm install --legacy-peer-deps --prefer-offline --no-audit || npm install --legacy-peer-deps || npm install --force) && npm run build) || "
+                f"    (echo '[ERROR] Web build failed in $APP_ROOT/web' && return 1); "
+                f"  elif [ -f \"$APP_ROOT/package.json\" ]; then "
                 f"    echo '[BUILD] Detected root package.json. Installing dependencies & building...' && "
-                f"    (cd /app_src && (npm install --legacy-peer-deps --prefer-offline --no-audit || npm install --legacy-peer-deps || npm install --force) && (npm run build --if-present || true)) || "
+                f"    (cd \"$APP_ROOT\" && (npm install --legacy-peer-deps --prefer-offline --no-audit || npm install --legacy-peer-deps || npm install --force) && (npm run build --if-present || true)) || "
                 f"    (echo '[ERROR] Root frontend build failed' && return 1); "
                 f"  fi && "
                 # 2. Start Application: Python Backend vs Pure Python / Streamlit vs Node Frontend
-                f"  if [ -d /app_src/backend ] && ( [ -f /app_src/backend/main.py ] || [ -f /app_src/backend/app.py ] || [ -f /app_src/backend/requirements.txt ] ); then "
-                f"    cd /app_src && "
+                f"  if [ -d \"$APP_ROOT/backend\" ] && ( [ -f \"$APP_ROOT/backend/main.py\" ] || [ -f \"$APP_ROOT/backend/app.py\" ] || [ -f \"$APP_ROOT/backend/requirements.txt\" ] ); then "
+                f"    cd \"$APP_ROOT\" && "
                 f"    (if [ -f backend/requirements.txt ]; then echo '[BUILD] Installing Python dependencies from backend/requirements.txt...' && (pip install --no-cache-dir -r backend/requirements.txt || (echo '[ERROR] pip install failed for backend/requirements.txt' && return 1)); fi) && "
                 f"    (pip install --no-cache-dir uvicorn fastapi || true) && "
                 f"    echo '[BUILD] [3/3] Build phase completed successfully.' && "
                 f"    echo '[BUILD] ========================================================' && "
                 f"    echo '[RUNTIME] Launching application server on port 8080...' && "
-                f"    export PYTHONPATH=\"/app_src:/app_src/backend:$PYTHONPATH\" && "
+                f"    export PYTHONPATH=\"$APP_ROOT:$APP_ROOT/backend:/app_src:/app_src/backend:$PYTHONPATH\" && "
                 f"    if [ -f backend/main.py ]; then (cd backend && uvicorn main:app --host 0.0.0.0 --port 8080) || uvicorn backend.main:app --host 0.0.0.0 --port 8080; "
                 f"    elif [ -f backend/app.py ]; then (cd backend && uvicorn app:app --host 0.0.0.0 --port 8080) || uvicorn backend.app:app --host 0.0.0.0 --port 8080; "
                 f"    fi; "
-                f"  elif [ -f /app_src/main.py ] || [ -f /app_src/app.py ] || [ -f /app_src/requirements.txt ] || [ '{app_type}' = 'streamlit' ]; then "
-                f"    cd /app_src && "
+                f"  elif [ -f \"$APP_ROOT/main.py\" ] || [ -f \"$APP_ROOT/app.py\" ] || [ -f \"$APP_ROOT/requirements.txt\" ] || [ '{app_type}' = 'streamlit' ]; then "
+                f"    cd \"$APP_ROOT\" && "
                 f"    (if [ -f requirements.txt ]; then echo '[BUILD] Installing Python dependencies from requirements.txt...' && (pip install --no-cache-dir -r requirements.txt || (echo '[ERROR] pip install failed for requirements.txt' && return 1)); fi) && "
                 f"    (pip install --no-cache-dir uvicorn fastapi streamlit || true) && "
                 f"    echo '[BUILD] [3/3] Build phase completed successfully.' && "
@@ -185,26 +188,26 @@ class KubernetesAppDriver(BaseAppDriver):
                 f"    elif [ -f main.py ]; then uvicorn main:app --host 0.0.0.0 --port 8080; "
                 f"    elif [ -f app.py ]; then uvicorn app:app --host 0.0.0.0 --port 8080; "
                 f"    fi; "
-                f"  elif [ -f /app_src/package.json ]; then "
+                f"  elif [ -f \"$APP_ROOT/package.json\" ]; then "
                 f"    echo '[BUILD] [3/3] Build phase completed successfully.' && "
                 f"    echo '[BUILD] ========================================================' && "
                 f"    echo '[RUNTIME] Launching application server on port 8080...' && "
-                f"    cd /app_src && (npm start -- -p 8080 || ( [ -d frontend/dist ] && npx --yes serve -l 8080 frontend/dist ) || ( [ -d dist ] && npx --yes serve -l 8080 dist ) || ( [ -d build ] && npx --yes serve -l 8080 build ) || ( [ -d out ] && npx --yes serve -l 8080 out ) || npx --yes serve -l 8080 .); "
-                f"  elif [ -d /app_src/frontend/dist ]; then "
+                f"    cd \"$APP_ROOT\" && (npm start -- -p 8080 || ( [ -d frontend/dist ] && npx --yes serve -l 8080 frontend/dist ) || ( [ -d dist ] && npx --yes serve -l 8080 dist ) || ( [ -d build ] && npx --yes serve -l 8080 build ) || ( [ -d out ] && npx --yes serve -l 8080 out ) || npx --yes serve -l 8080 .); "
+                f"  elif [ -d \"$APP_ROOT/frontend/dist\" ]; then "
                 f"    echo '[BUILD] [3/3] Build phase completed successfully.' && "
                 f"    echo '[BUILD] ========================================================' && "
                 f"    echo '[RUNTIME] Launching application server on port 8080...' && "
-                f"    npx --yes serve -l 8080 /app_src/frontend/dist; "
-                f"  elif [ -f /app_src/index.html ]; then "
+                f"    npx --yes serve -l 8080 \"$APP_ROOT/frontend/dist\"; "
+                f"  elif [ -f \"$APP_ROOT/index.html\" ]; then "
                 f"    echo '[BUILD] [3/3] Build phase completed successfully.' && "
                 f"    echo '[BUILD] ========================================================' && "
                 f"    echo '[RUNTIME] Launching application server on port 8080...' && "
-                f"    npx --yes serve -l 8080 /app_src; "
+                f"    npx --yes serve -l 8080 \"$APP_ROOT\"; "
                 f"  else "
                 f"    echo '[BUILD] [3/3] Build phase completed successfully.' && "
                 f"    echo '[BUILD] ========================================================' && "
                 f"    echo '[RUNTIME] Launching application server on port 8080...' && "
-                f"    echo '<!DOCTYPE html><html><body><h1>{app.name}</h1><p>Running on CompassX</p></body></html>' > /app_src/index.html && npx --yes serve -l 8080 /app_src; "
+                f"    echo '<!DOCTYPE html><html><body><h1>{app.name}</h1><p>Running on CompassX</p></body></html>' > \"$APP_ROOT/index.html\" && npx --yes serve -l 8080 \"$APP_ROOT\"; "
                 f"  fi; "
                 f"}} && "
                 f"(run_app || hold_on_error) && hold_on_error"
@@ -1054,7 +1057,7 @@ class KubernetesDevDriver(BaseDevDriver):
                     f"printf 'host:\\n  host_id: {host_id}\\n  name: \"{host_name}\"\\n' | tee /root/.omnigent/config.yaml /root/.config/omnigent/config.yaml /root/.config/opencode/config.yaml /root/.opencode/config.yaml >/dev/null; "
                     f"export OMNIGENT_HOST_ID={host_id} OMNIGENT_HOST_NAME=\"{host_name}\" HOST_ID={host_id} HOST_NAME=\"{host_name}\" OPENCODE_HOST_ID={host_id} OPENCODE_HOST_NAME=\"{host_name}\" "
                     f"POSTGRES_DSN=\"${{POSTGRES_DSN:-postgresql://postgres:postgres@compassx-postgres:5432/autonomic}}\" REDIS_URL=\"${{REDIS_URL:-redis://compassx-redis:6379/0}}\" JWT_SECRET=\"${{JWT_SECRET:-dev-jwt-secret-change-me-for-production-use-min-32-chars}}\" "
-                    f"COMPASSX_WORKLOAD_IDENTITY=\"{workload_identity_id}\" WORKSPACE_ID=\"{getattr(app, 'workspace_id', '')}\" APP_ID=\"{app.id}\" APP_NAME=\"{app.name}\" APP_SLUG=\"{app.slug}\" "
+                    f"COMPASSX_WORKLOAD_IDENTITY=\"{workload_identity_id}\" WORKSPACE_ID=\"{getattr(app, 'workspace_id', '')}\" APP_ID=\"{app.id}\" APP_NAME=\"{app.name}\" APP_SLUG=\"{app.slug}\" GIT_SUBDIR=\"{git_subdir}\" APP_SUBDIR=\"{git_subdir}\" "
                     f"CHOKIDAR_USEPOLLING=1 CHOKIDAR_INTERVAL=2000 WATCHPACK_POLLING=true WATCHPACK_POLLING_INTERVAL=2000 WATCHFILES_FORCE_POLLING=true WATCHFILES_POLL_DELAY_MS=2000 "
                     f"NODE_TLS_REJECT_UNAUTHORIZED=0 NPM_CONFIG_STRICT_SSL=false PYTHONHTTPSVERIFY=0 GIT_SSL_NO_VERIFY=true CURL_INSECURE=1; "
                     f"(which opencode >/dev/null 2>&1 || npm install -g opencode-ai@1.18.0 || true); "
@@ -1065,6 +1068,7 @@ class KubernetesDevDriver(BaseDevDriver):
                     # Install and start Dev Server Supervisor for active sandbox
                     f"echo '{runner_script_b64}' | base64 -d > /usr/local/bin/dev-runner.sh && "
                     f"chmod +x /usr/local/bin/dev-runner.sh && "
+                    f"export GIT_SUBDIR=\"{git_subdir}\" APP_SUBDIR=\"{git_subdir}\" && "
                     f"/usr/local/bin/dev-runner.sh reload '{workdir}' && "
                     # Start Omnigent Host Runner in foreground
                     f"exec omnigent host --server {omnigent_internal_url} --non-interactive"
@@ -1088,6 +1092,8 @@ class KubernetesDevDriver(BaseDevDriver):
                         client.V1EnvVar(name="OMNIGENT_HOST_NAME", value=str(host_name)),
                         client.V1EnvVar(name="OMNIGENT_SERVER_URL", value=str(omnigent_internal_url)),
                         client.V1EnvVar(name="DEV_WORKSPACE_DIR", value=workdir),
+                        client.V1EnvVar(name="GIT_SUBDIR", value=str(git_subdir)),
+                        client.V1EnvVar(name="APP_SUBDIR", value=str(git_subdir)),
                     ],
                     resources=client.V1ResourceRequirements(
                         requests={"cpu": "500m", "memory": "1Gi"},
@@ -2323,9 +2329,13 @@ class KubernetesDevDriver(BaseDevDriver):
             'python3 -m http.server 8080 --directory /tmp/cx_splash >> /tmp/frontend.log 2>&1 &\n'
             'SPLASH_PID=$!\n'
             '\n'
-            '# Resolve BASE_DIR (if project is inside an inner subdirectory)\n'
+            '# Resolve BASE_DIR (if Source Code Path or inner subdirectory is configured)\n'
+            'GIT_SUBDIR_VAL="${GIT_SUBDIR:-${APP_SUBDIR:-}}"\n'
             'BASE_DIR="$ACTIVE_DIR"\n'
-            'if [ ! -d "$BASE_DIR/frontend" ] && [ ! -d "$BASE_DIR/backend" ] && [ ! -d "$BASE_DIR/client" ] && [ ! -d "$BASE_DIR/web" ] && [ ! -d "$BASE_DIR/ui" ] && [ ! -f "$BASE_DIR/package.json" ] && [ ! -f "$BASE_DIR/app.py" ] && [ ! -f "$BASE_DIR/main.py" ] && [ ! -f "$BASE_DIR/server.py" ]; then\n'
+            'if [ -n "$GIT_SUBDIR_VAL" ] && [ -d "$ACTIVE_DIR/$GIT_SUBDIR_VAL" ]; then\n'
+            '  BASE_DIR="$ACTIVE_DIR/$GIT_SUBDIR_VAL"\n'
+            '  echo "[DEV-RUNNER] Using configured Source Code Path: $BASE_DIR"\n'
+            'elif [ ! -d "$BASE_DIR/frontend" ] && [ ! -d "$BASE_DIR/backend" ] && [ ! -d "$BASE_DIR/client" ] && [ ! -d "$BASE_DIR/web" ] && [ ! -d "$BASE_DIR/ui" ] && [ ! -f "$BASE_DIR/package.json" ] && [ ! -f "$BASE_DIR/app.py" ] && [ ! -f "$BASE_DIR/main.py" ] && [ ! -f "$BASE_DIR/server.py" ]; then\n'
             '  for d in "$ACTIVE_DIR"/*; do\n'
             '    if [ -d "$d" ] && [ "$d" != "$ACTIVE_DIR/.git" ] && ( [ -d "$d/frontend" ] || [ -d "$d/backend" ] || [ -d "$d/client" ] || [ -d "$d/web" ] || [ -d "$d/ui" ] || [ -d "$d/src" ] || [ -f "$d/package.json" ] || [ -f "$d/app.py" ] || [ -f "$d/main.py" ] || [ -f "$d/server.py" ] ); then\n'
             '      BASE_DIR="$d"\n'
@@ -2342,7 +2352,7 @@ class KubernetesDevDriver(BaseDevDriver):
             '  BACKEND_DIR="$BASE_DIR/api"\n'
             'elif [ -d "$BASE_DIR/server" ] && ( [ -f "$BASE_DIR/server/app.py" ] || [ -f "$BASE_DIR/server/main.py" ] || [ -f "$BASE_DIR/server/requirements.txt" ] ); then\n'
             '  BACKEND_DIR="$BASE_DIR/server"\n'
-            'elif [ -f "$BASE_DIR/app.py" ] || [ -f "$BASE_DIR/main.py" ] || [ -f "$BASE_DIR/server.py" ] || [ -f "$BASE_DIR/api.py" ]; then\n'
+            'elif [ -f "$BASE_DIR/app.py" ] || [ -f "$BASE_DIR/main.py" ] || [ -f "$BASE_DIR/server.py" ] || [ -f "$BASE_DIR/api.py" ] || [ -f "$BASE_DIR/requirements.txt" ]; then\n'
             '  BACKEND_DIR="$BASE_DIR"\n'
             'fi\n'
             '\n'
@@ -2514,9 +2524,11 @@ class KubernetesDevDriver(BaseDevDriver):
         target_dir = f"/workspaces/{clean_folder}" if clean_folder else f"/workspaces/{clean_app}/default"
 
         runner_script_b64 = base64.b64encode(self._get_dev_runner_script().encode("utf-8")).decode("ascii")
+        git_subdir = (getattr(app, "git_subdir", "") or "").strip("/\\")
         cmd = (
             f"echo '{runner_script_b64}' | base64 -d > /usr/local/bin/dev-runner.sh && "
             f"chmod +x /usr/local/bin/dev-runner.sh && "
+            f"export GIT_SUBDIR='{git_subdir}' APP_SUBDIR='{git_subdir}' && "
             f"/usr/local/bin/dev-runner.sh reload '{target_dir}' && "
             f"echo '__SWITCH_SUCCESS__'"
         )

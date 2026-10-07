@@ -1213,9 +1213,11 @@ class DockerDevDriver(BaseDevDriver):
             return {"success": False, "error": f"Dev container {dev_container_name} is not running"}
 
         runner_script_b64 = base64.b64encode(self._get_dev_runner_script().encode("utf-8")).decode("ascii")
+        git_subdir = (getattr(app, "git_subdir", "") or "").strip("/\\")
         switch_script = (
             f"echo '{runner_script_b64}' | base64 -d > /usr/local/bin/dev-runner.sh && "
             f"chmod +x /usr/local/bin/dev-runner.sh && "
+            f"export GIT_SUBDIR='{git_subdir}' APP_SUBDIR='{git_subdir}' && "
             f"/usr/local/bin/dev-runner.sh reload '{target_dir}' && "
             f"echo '__SWITCH_SUCCESS__'"
         )
