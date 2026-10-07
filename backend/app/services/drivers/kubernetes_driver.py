@@ -2102,25 +2102,24 @@ class KubernetesDevDriver(BaseDevDriver):
 
         cmd = (
             f"mkdir -p /workspaces/{clean_app} && "
-            f"if [ -d '{target_dir}' ] && [ -e '{target_dir}/.git' ]; then "
-            f"  echo '__WORKTREE_EXISTS__'; "
-            f"elif [ -d '{target_dir}' ] && [ -n \"$(ls -A '{target_dir}' 2>/dev/null)\" ]; then "
+            f"if [ -d '{target_dir}' ] && [ -e '{target_dir}/.git' ] && [ -n \"$(find '{target_dir}' -maxdepth 2 -not -name '.git*' -not -name 'index.html' 2>/dev/null)\" ]; then "
             f"  echo '__WORKTREE_EXISTS__'; "
             f"else "
             f"  BASE_REPO=\"\"; "
-            f"  for d in /workspaces/{clean_app}/default /workspaces/{clean_app}/* /workspaces/* /app; do "
-            f"    if [ -d \"$d/.git\" ] && [ \"$d\" != \"{target_dir}\" ]; then BASE_REPO=\"$d\"; break; fi; "
+            f"  for d in /workspaces/{clean_app}/default /workspaces/{clean_app}/main /workspaces/{clean_app}/* /workspaces/* /app; do "
+            f"    if [ -e \"$d/.git\" ] && [ \"$d\" != \"{target_dir}\" ] && [ -n \"$(ls -A \"$d\" 2>/dev/null)\" ]; then BASE_REPO=\"$d\"; break; fi; "
             f"  done; "
             f"  if [ -n \"$BASE_REPO\" ]; then "
             f"    (cd \"$BASE_REPO\" && git worktree prune 2>/dev/null || true); "
             f"    (cd \"$BASE_REPO\" && git fetch origin 2>/dev/null || true); "
+            f"    rm -rf '{target_dir}'; "
             f"    if (cd \"$BASE_REPO\" && (git worktree add -f -B '{branch}' '{target_dir}' '{base}' 2>&1 || git worktree add -f -B '{branch}' '{target_dir}' 'origin/{base}' 2>&1 || git worktree add -f --detach '{target_dir}' '{base}' 2>&1 || git worktree add -f -B '{branch}' '{target_dir}' HEAD 2>&1)); then "
             f"      echo '__WORKTREE_CREATED__'; "
             f"    else "
             f"      mkdir -p '{target_dir}' && (git clone --shared \"$BASE_REPO\" '{target_dir}' 2>&1 || cp -a \"$BASE_REPO/.\" '{target_dir}/') && (cd '{target_dir}' && git checkout -B '{branch}' 2>/dev/null || true) && echo '__WORKTREE_CREATED__'; "
             f"    fi; "
             f"  elif [ -n '{auth_url}' ]; then "
-            f"    mkdir -p '{target_dir}' && cd '{target_dir}' && (git clone --branch '{base}' '{auth_url}' . 2>&1 || git clone '{auth_url}' . 2>&1) && (git checkout -B '{branch}' 2>/dev/null || true) && echo '__WORKTREE_CREATED__'; "
+            f"    rm -rf '{target_dir}' && mkdir -p '{target_dir}' && cd '{target_dir}' && (git clone --branch '{base}' '{auth_url}' . 2>&1 || git clone '{auth_url}' . 2>&1) && (git checkout -B '{branch}' 2>/dev/null || true) && echo '__WORKTREE_CREATED__'; "
             f"  else "
             f"    mkdir -p '{target_dir}' && echo '__WORKTREE_CREATED__'; "
             f"  fi; "
@@ -2144,8 +2143,8 @@ class KubernetesDevDriver(BaseDevDriver):
         clean_app = re.sub(r'[^a-z0-9-]', '-', app.id.lower()).strip('-')
         cmd = (
             f"BASE_REPO=\"\"; "
-            f"for d in /workspaces/{clean_app}/default /workspaces/{clean_app}/* /workspaces/* /app; do "
-            f"  if [ -d \"$d/.git\" ]; then BASE_REPO=\"$d\"; break; fi; "
+            f"for d in /workspaces/{clean_app}/default /workspaces/{clean_app}/main /workspaces/{clean_app}/* /workspaces/* /app; do "
+            f"  if [ -e \"$d/.git\" ]; then BASE_REPO=\"$d\"; break; fi; "
             f"done; "
             f"if [ -n \"$BASE_REPO\" ]; then cd \"$BASE_REPO\" && git worktree remove --force '{target_dir}' 2>/dev/null || true; cd \"$BASE_REPO\" && git worktree prune 2>/dev/null || true; fi; "
             f"rm -rf '{target_dir}'"
@@ -2176,7 +2175,7 @@ class KubernetesDevDriver(BaseDevDriver):
             'fi\n'
             '\n'
             'if [ -z "$ACTIVE_DIR" ] || [ ! -d "$ACTIVE_DIR" ]; then\n'
-            '  for d in "/workspaces/${CLEAN_APP}/default" "/workspaces/${CLEAN_APP}"/* /workspaces/* /app; do\n'
+            '  for d in "/workspaces/${CLEAN_APP}/default" "/workspaces/${CLEAN_APP}/main" "/workspaces/${CLEAN_APP}"/* /workspaces/* /app; do\n'
             '    if [ -d "$d" ] && [ "$d" != "/workspaces" ] && [ "$d" != "/workspaces/.shared_auth" ]; then\n'
             '      ACTIVE_DIR="$d"\n'
             '      break\n'
@@ -2207,7 +2206,7 @@ class KubernetesDevDriver(BaseDevDriver):
             '            pid = int(parts[0])\n'
             '            if pid not in (my_pid, parent_pid, 1):\n'
             '                cmdline = \' \'.join(parts[1:])\n'
-            '                if any(k in cmdline for k in [\'uvicorn\', \'vite\', \'streamlit\', \'http.server\', \'dev-runner.sh\']) and \'python3 -c\' not in cmdline and \'omnigent host\' not in cmdline:\n'
+            '                if any(k in cmdline for k in [\'uvicorn\', \'vite\', \'next\', \'streamlit\', \'http.server\', \'dev-runner.sh\']) and \'python3 -c\' not in cmdline and \'omnigent host\' not in cmdline:\n'
             '                    try: os.kill(pid, signal.SIGKILL)\n'
             '                    except Exception: pass\n'
             'except Exception: pass\n'
@@ -2215,6 +2214,7 @@ class KubernetesDevDriver(BaseDevDriver):
             '\n'
             '(fuser -k -9 8080/tcp 8000/tcp 2>/dev/null || true)\n'
             'pkill -9 -f "vite" 2>/dev/null || true\n'
+            'pkill -9 -f "next" 2>/dev/null || true\n'
             'pkill -9 -f "uvicorn" 2>/dev/null || true\n'
             'pkill -9 -f "streamlit" 2>/dev/null || true\n'
             'pkill -9 -f "http.server" 2>/dev/null || true\n'
@@ -2225,28 +2225,41 @@ class KubernetesDevDriver(BaseDevDriver):
             '  exit 0\n'
             'fi\n'
             '\n'
+            '# Resolve BASE_DIR (if project is inside an inner subdirectory)\n'
+            'BASE_DIR="$ACTIVE_DIR"\n'
+            'if [ ! -d "$BASE_DIR/frontend" ] && [ ! -d "$BASE_DIR/backend" ] && [ ! -d "$BASE_DIR/client" ] && [ ! -f "$BASE_DIR/package.json" ] && [ ! -f "$BASE_DIR/app.py" ] && [ ! -f "$BASE_DIR/main.py" ]; then\n'
+            '  for d in "$ACTIVE_DIR"/*; do\n'
+            '    if [ -d "$d" ] && [ "$d" != "$ACTIVE_DIR/.git" ] && ( [ -d "$d/frontend" ] || [ -d "$d/backend" ] || [ -d "$d/client" ] || [ -d "$d/src" ] || [ -f "$d/package.json" ] || [ -f "$d/app.py" ] || [ -f "$d/main.py" ] ); then\n'
+            '      BASE_DIR="$d"\n'
+            '      break\n'
+            '    fi\n'
+            '  done\n'
+            'fi\n'
+            '\n'
             '# Detect Backend Directory\n'
             'BACKEND_DIR=""\n'
-            'if [ -d "$ACTIVE_DIR/backend" ] && ( [ -f "$ACTIVE_DIR/backend/app.py" ] || [ -f "$ACTIVE_DIR/backend/main.py" ] || [ -f "$ACTIVE_DIR/backend/requirements.txt" ] ); then\n'
-            '  BACKEND_DIR="$ACTIVE_DIR/backend"\n'
-            'elif [ -d "$ACTIVE_DIR/api" ] && ( [ -f "$ACTIVE_DIR/api/app.py" ] || [ -f "$ACTIVE_DIR/api/main.py" ] || [ -f "$ACTIVE_DIR/api/requirements.txt" ] ); then\n'
-            '  BACKEND_DIR="$ACTIVE_DIR/api"\n'
-            'elif [ -d "$ACTIVE_DIR/server" ] && ( [ -f "$ACTIVE_DIR/server/app.py" ] || [ -f "$ACTIVE_DIR/server/main.py" ] || [ -f "$ACTIVE_DIR/server/requirements.txt" ] ); then\n'
-            '  BACKEND_DIR="$ACTIVE_DIR/server"\n'
-            'elif [ -f "$ACTIVE_DIR/app.py" ] || [ -f "$ACTIVE_DIR/main.py" ]; then\n'
-            '  BACKEND_DIR="$ACTIVE_DIR"\n'
+            'if [ -d "$BASE_DIR/backend" ] && ( [ -f "$BASE_DIR/backend/app.py" ] || [ -f "$BASE_DIR/backend/main.py" ] || [ -f "$BASE_DIR/backend/requirements.txt" ] ); then\n'
+            '  BACKEND_DIR="$BASE_DIR/backend"\n'
+            'elif [ -d "$BASE_DIR/api" ] && ( [ -f "$BASE_DIR/api/app.py" ] || [ -f "$BASE_DIR/api/main.py" ] || [ -f "$BASE_DIR/api/requirements.txt" ] ); then\n'
+            '  BACKEND_DIR="$BASE_DIR/api"\n'
+            'elif [ -d "$BASE_DIR/server" ] && ( [ -f "$BASE_DIR/server/app.py" ] || [ -f "$BASE_DIR/server/main.py" ] || [ -f "$BASE_DIR/server/requirements.txt" ] ); then\n'
+            '  BACKEND_DIR="$BASE_DIR/server"\n'
+            'elif [ -f "$BASE_DIR/app.py" ] || [ -f "$BASE_DIR/main.py" ]; then\n'
+            '  BACKEND_DIR="$BASE_DIR"\n'
             'fi\n'
             '\n'
             '# Detect Frontend Directory\n'
             'FRONTEND_DIR=""\n'
-            'if [ -d "$ACTIVE_DIR/frontend" ] && [ -f "$ACTIVE_DIR/frontend/package.json" ]; then\n'
-            '  FRONTEND_DIR="$ACTIVE_DIR/frontend"\n'
-            'elif [ -d "$ACTIVE_DIR/client" ] && [ -f "$ACTIVE_DIR/client/package.json" ]; then\n'
-            '  FRONTEND_DIR="$ACTIVE_DIR/client"\n'
-            'elif [ -d "$ACTIVE_DIR/web" ] && [ -f "$ACTIVE_DIR/web/package.json" ]; then\n'
-            '  FRONTEND_DIR="$ACTIVE_DIR/web"\n'
-            'elif [ -f "$ACTIVE_DIR/package.json" ]; then\n'
-            '  FRONTEND_DIR="$ACTIVE_DIR"\n'
+            'if [ -d "$BASE_DIR/frontend" ] && [ -f "$BASE_DIR/frontend/package.json" ]; then\n'
+            '  FRONTEND_DIR="$BASE_DIR/frontend"\n'
+            'elif [ -d "$BASE_DIR/client" ] && [ -f "$BASE_DIR/client/package.json" ]; then\n'
+            '  FRONTEND_DIR="$BASE_DIR/client"\n'
+            'elif [ -d "$BASE_DIR/web" ] && [ -f "$BASE_DIR/web/package.json" ]; then\n'
+            '  FRONTEND_DIR="$BASE_DIR/web"\n'
+            'elif [ -d "$BASE_DIR/ui" ] && [ -f "$BASE_DIR/ui/package.json" ]; then\n'
+            '  FRONTEND_DIR="$BASE_DIR/ui"\n'
+            'elif [ -f "$BASE_DIR/package.json" ]; then\n'
+            '  FRONTEND_DIR="$BASE_DIR"\n'
             'fi\n'
             '\n'
             '# Setup Frontend Dependencies and Configuration\n'
@@ -2254,7 +2267,7 @@ class KubernetesDevDriver(BaseDevDriver):
             '  cd "$FRONTEND_DIR" || true\n'
             '  if [ ! -d "node_modules" ]; then\n'
             '    FOUND_NM=""\n'
-            '    for nm in "/workspaces/${CLEAN_APP}/default/frontend/node_modules" "/workspaces/${CLEAN_APP}/default/node_modules" "/workspaces"/*"/frontend/node_modules" "/workspaces"/*"/node_modules" "/app/frontend/node_modules" "/app/node_modules"; do\n'
+            '    for nm in "/workspaces/${CLEAN_APP}/default/frontend/node_modules" "/workspaces/${CLEAN_APP}/default/node_modules" "/workspaces/${CLEAN_APP}/main/frontend/node_modules" "/workspaces/${CLEAN_APP}/main/node_modules" "/workspaces"/*"/frontend/node_modules" "/workspaces"/*"/node_modules" "/app/frontend/node_modules" "/app/node_modules"; do\n'
             '      if [ -d "$nm" ] && [ "$nm" != "$FRONTEND_DIR/node_modules" ]; then\n'
             '        FOUND_NM="$nm"\n'
             '        break\n'
@@ -2287,47 +2300,51 @@ class KubernetesDevDriver(BaseDevDriver):
             '" 2>/dev/null || true\n'
             'fi\n'
             '\n'
-            '# Start Backend\n'
+            '# Start Backend (on 8000 if frontend exists, or 8080 if backend is standalone)\n'
             'if [ -n "$BACKEND_DIR" ]; then\n'
+            '  BACKEND_PORT="8000"\n'
+            '  if [ -z "$FRONTEND_DIR" ]; then\n'
+            '    BACKEND_PORT="8080"\n'
+            '  fi\n'
             '  (\n'
             '    cd "$BACKEND_DIR" || exit 1\n'
-            '    export PYTHONPATH="$ACTIVE_DIR:$BACKEND_DIR:$ACTIVE_DIR/backend:$ACTIVE_DIR/api:$ACTIVE_DIR/server:$PYTHONPATH"\n'
-            '    export PORT=8000 DASHBOARD_PORT=8000 DATABASE_URL="${DATABASE_URL:-sqlite:////tmp/app.db}"\n'
-            '    echo "[DEV-RUNNER] Starting backend on port 8000 ($BACKEND_DIR)..." >> /tmp/backend.log\n'
+            '    export PYTHONPATH="$ACTIVE_DIR:$BASE_DIR:$BACKEND_DIR:$BASE_DIR/backend:$BASE_DIR/api:$BASE_DIR/server:$PYTHONPATH"\n'
+            '    export PORT=$BACKEND_PORT DASHBOARD_PORT=$BACKEND_PORT DATABASE_URL="${DATABASE_URL:-sqlite:////tmp/app.db}"\n'
+            '    echo "[DEV-RUNNER] Starting backend on port $BACKEND_PORT ($BACKEND_DIR)..." >> /tmp/backend.log\n'
             '    if [ -f requirements.txt ] && [ ! -f /tmp/.reqs_installed ]; then\n'
             '      pip install --no-cache-dir -r requirements.txt >> /tmp/backend.log 2>&1 || true\n'
             '      touch /tmp/.reqs_installed\n'
             '    fi\n'
-            '    if [ -f app.py ]; then\n'
-            '      exec uvicorn app:app --host 0.0.0.0 --port 8000 --reload --reload-delay 1.0 --reload-exclude \'**/node_modules/**\' --reload-exclude \'**/.git/**\' >> /tmp/backend.log 2>&1\n'
+            '    if grep -q "streamlit" app.py 2>/dev/null || [ "${APP_TYPE:-}" = "streamlit" ]; then\n'
+            '      exec streamlit run app.py --server.port $BACKEND_PORT --server.address 0.0.0.0 --server.headless true --server.enableCORS false >> /tmp/backend.log 2>&1\n'
+            '    elif [ -f app.py ]; then\n'
+            '      exec uvicorn app:app --host 0.0.0.0 --port $BACKEND_PORT --reload --reload-delay 1.0 --reload-exclude \'**/node_modules/**\' --reload-exclude \'**/.git/**\' >> /tmp/backend.log 2>&1\n'
             '    elif [ -f main.py ]; then\n'
-            '      exec uvicorn main:app --host 0.0.0.0 --port 8000 --reload --reload-delay 1.0 --reload-exclude \'**/node_modules/**\' --reload-exclude \'**/.git/**\' >> /tmp/backend.log 2>&1\n'
+            '      exec uvicorn main:app --host 0.0.0.0 --port $BACKEND_PORT --reload --reload-delay 1.0 --reload-exclude \'**/node_modules/**\' --reload-exclude \'**/.git/**\' >> /tmp/backend.log 2>&1\n'
             '    fi\n'
             '  ) &\n'
             'fi\n'
             '\n'
-            '# Start Frontend\n'
+            '# Start Frontend (on 8080)\n'
             'if [ -n "$FRONTEND_DIR" ]; then\n'
             '  (\n'
             '    cd "$FRONTEND_DIR" || exit 1\n'
-            '    export DASHBOARD_PORT=8000 DASHBOARD_UI_PORT=8080\n'
+            '    export DASHBOARD_PORT=8000 DASHBOARD_UI_PORT=8080 PORT=8080\n'
             '    echo "[DEV-RUNNER] Starting frontend on port 8080 ($FRONTEND_DIR)..." >> /tmp/frontend.log\n'
-            '    exec npx --yes vite --host 0.0.0.0 --port 8080 --strictPort --cors >> /tmp/frontend.log 2>&1\n'
-            '  ) &\n'
-            'elif [ -n "$BACKEND_DIR" ]; then\n'
-            '  (\n'
-            '    cd "$BACKEND_DIR" || exit 1\n'
-            '    export PYTHONPATH="$ACTIVE_DIR:$BACKEND_DIR:$ACTIVE_DIR/backend:$ACTIVE_DIR/api:$ACTIVE_DIR/server:$PYTHONPATH"\n'
-            '    if grep -q "streamlit" app.py 2>/dev/null || [ "${APP_TYPE:-}" = "streamlit" ]; then\n'
-            '      echo "[DEV-RUNNER] Starting Streamlit on port 8080..." >> /tmp/backend.log\n'
-            '      exec streamlit run app.py --server.port 8080 --server.address 0.0.0.0 --server.headless true --server.enableCORS false >> /tmp/backend.log 2>&1\n'
-            '    elif [ -f app.py ]; then\n'
-            '      exec uvicorn app:app --host 0.0.0.0 --port 8080 --reload --reload-delay 1.0 >> /tmp/backend.log 2>&1\n'
-            '    elif [ -f main.py ]; then\n'
-            '      exec uvicorn main:app --host 0.0.0.0 --port 8080 --reload --reload-delay 1.0 >> /tmp/backend.log 2>&1\n'
+            '    if grep -q \'"next"\' package.json 2>/dev/null; then\n'
+            '      exec npx next dev -p 8080 -H 0.0.0.0 >> /tmp/frontend.log 2>&1\n'
+            '    elif grep -q \'"vite"\' package.json 2>/dev/null || [ -f vite.config.ts ] || [ -f vite.config.js ]; then\n'
+            '      exec npx --yes vite --host 0.0.0.0 --port 8080 --strictPort --cors >> /tmp/frontend.log 2>&1\n'
+            '    elif grep -q \'"dev"\' package.json 2>/dev/null; then\n'
+            '      exec npm run dev -- --host 0.0.0.0 --port 8080 >> /tmp/frontend.log 2>&1\n'
+            '    elif grep -q \'"start"\' package.json 2>/dev/null; then\n'
+            '      exec npm start -- -p 8080 >> /tmp/frontend.log 2>&1\n'
+            '    else\n'
+            '      exec npx --yes serve -l 8080 . >> /tmp/frontend.log 2>&1\n'
             '    fi\n'
             '  ) &\n'
-            'else\n'
+            'elif [ -z "$BACKEND_DIR" ]; then\n'
+            '  # Static HTML fallback only if no frontend AND no backend\n'
             '  (\n'
             '    if [ ! -f "$ACTIVE_DIR/index.html" ]; then\n'
             '      echo \'<!DOCTYPE html><html><head><title>Dev Sandbox</title></head><body style="font-family:sans-serif;padding:2rem;"><h2>Live Sandbox Active</h2><p style="color:#0284c7;">Connected to CompassX Dev Studio</p></body></html>\' > "$ACTIVE_DIR/index.html"\n'

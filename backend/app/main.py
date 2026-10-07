@@ -471,7 +471,7 @@ app = FastAPI(
     lifespan=lifespan,
     title="CompassX API",
     description="CompassX Platform API",
-    version="0.12.8",
+    version="0.12.9",
     docs_url="/api/swagger/docs",
     openapi_url="/api/swagger.json",
 )
@@ -609,11 +609,11 @@ app.include_router(omnigent_router, prefix="/api/v1/services/omnigent")
 
 
 @app.get("/")
-def read_root():
+async def read_root():
     return {"service": "CompassX API", "status": "running"}
 
 
 @app.get("/healthcheck")
-def health():
+async def health():
     return {"status": "ok"}
 

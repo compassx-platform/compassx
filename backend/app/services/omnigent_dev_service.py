@@ -1767,8 +1767,8 @@ class OmnigentDevService:
 
         # Check if worktree directory exists and is populated in container
         chk_cmd = (
-            f"if [ -d '{target_dir}' ] && [ -e '{target_dir}/.git' ]; then echo '__EXISTS__'; "
-            f"elif [ -d '{target_dir}' ] && [ -n \"$(ls -A '{target_dir}' 2>/dev/null)\" ]; then echo '__EXISTS__'; "
+            f"if [ -d '{target_dir}' ] && [ -e '{target_dir}/.git' ] && [ -n \"$(find '{target_dir}' -maxdepth 2 -not -name '.git*' -not -name 'index.html' 2>/dev/null)\" ]; then echo '__EXISTS__'; "
+            f"elif [ -d '{target_dir}' ] && [ -n \"$(find '{target_dir}' -mindepth 1 -maxdepth 2 -not -name '.git*' -not -name 'index.html' 2>/dev/null)\" ]; then echo '__EXISTS__'; "
             f"else echo '__MISSING__'; fi"
         )
         try:

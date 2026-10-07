@@ -5,6 +5,26 @@ All notable changes to the CompassX Platform will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.9] - 2026-10-07
+
+### 🚀 Highlights
+
+CompassX `0.12.9` delivers **Dynamic Framework Detection in Dev Runner**, **Multi-Target Port Allocation**, **Deep Worktree Population Verification**, and **Branch Creation Cache Synchronization**.
+
+### ✨ Features & Enhancements
+
+#### Dynamic Dev-Runner Framework Detection & Port Allocation
+- **Multi-Framework Runner Detection (`docker_driver.py`, `kubernetes_driver.py`)**: Added intelligent discovery and auto-launching for Next.js (`npx next dev -p 8080`), Vite dev server (`npx vite --port 8080`), Streamlit (`streamlit run app.py --server.port 8080`), custom npm scripts (`npm run dev`, `npm start`), and static web fallbacks (`npx serve`, `python -m http.server`).
+- **Dynamic Port Assignment (`docker_driver.py`, `kubernetes_driver.py`)**: Dev-runner automatically assigns port 8000 for backend services when a frontend client is present, or port 8080 for standalone Python/Streamlit services.
+
+#### Deep Worktree Population Verification
+- **Non-Empty Tree Validation (`omnigent_dev_service.py`)**: Improved worktree verification to check for meaningful source code files beyond `.git` and placeholder `index.html` before flagging sandboxes as initialized.
+
+#### Branch Creation React Cache Invalidation
+- **Workspace Invalidation & Preview Reload (`AppBuildPage.tsx`)**: Invalidate React Query caches (`app-dev-files`, `app-dev-status`, `app-dev-workspaces`) and trigger live preview reload keys on branch and workspace creation.
+
+---
+
 ## [0.12.8] - 2026-10-07
 
 ### 🚀 Highlights

@@ -2785,8 +2785,14 @@ export default function AppBuildPage() {
         activeBranch={activeWorkspace?.git_branch}
         defaultBaseBranch={app?.git_branch || 'main'}
         onCreated={() => {
+          setPreviewReloadKey(Date.now());
+          qc.invalidateQueries({ queryKey: ['app-dev-files', resolvedAppId] });
+          qc.invalidateQueries({ queryKey: ['app-dev-status', resolvedAppId] });
+          qc.invalidateQueries({ queryKey: ['app-dev-workspaces', resolvedAppId] });
           refetchDevWorkspaces();
           refetchDevStatus();
+          refetchDevFiles();
+          refetchDevLogs();
         }}
       />
     </div>
