@@ -5,6 +5,28 @@ All notable changes to the CompassX Platform will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.11] - 2026-10-07
+
+### 🚀 Highlights
+
+CompassX `0.12.11` introduces a **Single Active Dev Pod Guarantee**, **Cluster-Wide Idle Dev Pod Sweeping**, and **Optimistic React Sandbox Switching State**.
+
+### ✨ Features & Enhancements
+
+#### Single Active Dev Pod Guarantee & Lifecycle Hardening
+- **Single Active Pod per App (`omnigent_dev_service.py`)**: `start_dev` and `switch_active_sandbox` verify existing pod presence before provisioning, reusing active pods and dispatching in-place dev-runner reload commands to avoid duplicate pods.
+- **Synchronized Status Updates (`omnigent_dev_service.py`)**: Comprehensive database updates transition all active DevWorkspace rows to `stopped` or `suspended` when dev environments are stopped or reaped.
+
+#### Cluster-Wide Idle Dev Pod Reaper
+- **Direct Cluster Workload Discovery (`sandbox_reaper_service.py`, `kubernetes_driver.py`, `docker_driver.py`)**: Added `list_running_dev_app_ids()` across runtime drivers to detect all actively running dev deployments/containers in the cluster and reconcile them against activity timestamps and idle timeouts.
+- **Orphaned Pod Sweeping (`sandbox_reaper_service.py`)**: Automatically detects and tears down orphaned or deleted app dev pods directly from Kubernetes/Docker.
+
+#### Optimistic React Sandbox State Management
+- **Instant Sandbox Selection (`AppBuildPage.tsx`)**: Added local selection state in React to immediately update active sandbox indicators, tabs, and file trees before backend queries resolve.
+- **Auto-Selection of Newly Created Sandboxes (`AppBuildPage.tsx`)**: Automatically selects and activates new sandboxes upon branch creation.
+
+---
+
 ## [0.12.10] - 2026-10-07
 
 ### 🚀 Highlights
