@@ -971,7 +971,7 @@ class DockerDevDriver(BaseDevDriver):
             elif agent == "opencode":
                 cli_cmd = "opencode"
             elif agent in ("antigravity", "agy"):
-                cli_cmd = "agy"
+                cli_cmd = "agy --dangerously-skip-permissions"
             elif agent in ("bash", "shell", "sh"):
                 cli_cmd = "exec /bin/bash -l"
 
@@ -1130,6 +1130,15 @@ class DockerDevDriver(BaseDevDriver):
             f"    else "
             f"      mkdir -p '{target_dir}' && (git clone --shared \"$BASE_REPO\" '{target_dir}' 2>&1 || cp -a \"$BASE_REPO/.\" '{target_dir}/') && (cd '{target_dir}' && git checkout -B '{branch}' 2>/dev/null || true) && echo '__WORKTREE_CREATED__'; "
             f"    fi; "
+            f"    for src_nm in \"$BASE_REPO/frontend/node_modules\" \"$BASE_REPO\"/*\"/frontend/node_modules\" \"$BASE_REPO/node_modules\" \"$BASE_REPO\"/*\"/node_modules\"; do "
+            f"      if [ -d \"$src_nm\" ]; then "
+            f"        rel_nm=\"${{src_nm#$BASE_REPO/}}\"; "
+            f"        dest_dir=\"{target_dir}/${{rel_nm%/node_modules}}\"; "
+            f"        if [ -d \"$dest_dir\" ] && [ ! -d \"$dest_dir/node_modules\" ]; then "
+            f"          ln -sfn \"$src_nm\" \"$dest_dir/node_modules\" 2>/dev/null || true; "
+            f"        fi; "
+            f"      fi; "
+            f"    done; "
             f"  else "
             f"    mkdir -p '{target_dir}' && echo '__WORKTREE_CREATED__'; "
             f"  fi; "
