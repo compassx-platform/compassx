@@ -1431,7 +1431,17 @@ class KubernetesDevDriver(BaseDevDriver):
                 replicas = dep.spec.replicas if dep.spec else 1
                 if replicas and replicas > 0:
                     labels = dep.metadata.labels or {} if dep.metadata else {}
-                    app_id = labels.get("compassx/app-id")
+                    annos = dep.metadata.annotations or {} if dep.metadata else {}
+                    raw_id = annos.get("compassx.io/app-id")
+                    if not raw_id and dep.spec and dep.spec.template and dep.spec.template.spec:
+                        for c in dep.spec.template.spec.containers or []:
+                            for ev in c.env or []:
+                                if ev.name == "APP_ID" and ev.value:
+                                    raw_id = ev.value
+                                    break
+                            if raw_id:
+                                break
+                    app_id = raw_id or labels.get("compassx/app-id")
                     if app_id:
                         app_ids.append(app_id)
         except Exception as e:

@@ -8,6 +8,7 @@ Manages inactivity detection, user-configured auto-shutdown, and storage reclama
 import asyncio
 import json
 import logging
+import re
 from datetime import datetime, timezone, timedelta
 from typing import Optional, Dict, Any
 
@@ -145,17 +146,34 @@ class SandboxReaperService:
                 if not all_candidate_app_ids:
                     return
 
-                for app_id in all_candidate_app_ids:
-                    app = db.query(App).filter((App.id == app_id) | (App.slug == app_id)).first()
+                for candidate_id in all_candidate_app_ids:
+                    cand_str = str(candidate_id).strip()
+                    cand_clean = re.sub(r"[^a-z0-9]", "", cand_str.lower())
+
+                    # 1. Exact match by id or slug (or with -/_ swap)
+                    app = db.query(App).filter(
+                        (App.id == cand_str)
+                        | (App.id == cand_str.replace("-", "_"))
+                        | (App.slug == cand_str)
+                        | (App.slug == cand_str.replace("_", "-"))
+                    ).first()
+
+                    # 2. Normalized alphanumeric match across all apps in DB
+                    if not app and cand_clean:
+                        for a in db.query(App).all():
+                            if re.sub(r"[^a-z0-9]", "", str(a.id).lower()) == cand_clean or re.sub(r"[^a-z0-9]", "", str(a.slug).lower()) == cand_clean:
+                                app = a
+                                break
+
                     # If app doesn't exist in DB anymore or is deleted, suspend pod immediately
                     if not app:
                         class DummyApp:
-                            id = app_id
-                            name = app_id
-                            slug = app_id
+                            id = candidate_id
+                            name = candidate_id
+                            slug = candidate_id
                             workspace_id = ""
                             config = {}
-                        logger.info("Suspending orphaned dev sandbox for unknown/deleted app_id '%s'", app_id)
+                        logger.info("Suspending orphaned dev sandbox for unknown/deleted app_id '%s'", candidate_id)
                         try:
                             dev_driver.suspend_dev(DummyApp())
                         except Exception:

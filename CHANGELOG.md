@@ -5,6 +5,27 @@ All notable changes to the CompassX Platform will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.12] - 2026-10-07
+
+### 🚀 Highlights
+
+CompassX `0.12.12` delivers **Production Auto-Reload Protection & Directory Targeting**, **Dev Pod Metadata Discovery**, and **Fuzzy App Matching in Sandbox Reaper**.
+
+### ✨ Features & Enhancements
+
+#### Production Auto-Reload Protection & Target Directory Scoping
+- **Cloud/Pod Auto-Reload Disabling (`app.py`, `values.yaml`)**: Explicitly disables Uvicorn watchfiles auto-reload when running in Kubernetes or cloud production (`COMPASSX_BACKEND_RUNTIME=pod`, `COMPASSX_ENV=production`), preventing worker restart loops caused by high-frequency shared filesystem events.
+- **Scoped Watch Directories (`app.py`)**: Restricts local dev auto-reload tracking explicitly to the `app/` directory while excluding `storage/`, `workspaces/`, `node_modules/`, `.git/`, and build directories.
+
+#### Multi-Source Dev Pod App Metadata Discovery
+- **Comprehensive Identifier Discovery (`kubernetes_driver.py`)**: Enhanced `list_running_dev_app_ids()` to inspect pod annotations (`compassx.io/app-id`), environment variables (`APP_ID`), and pod labels (`compassx/app-id`) across running dev deployments, ensuring accurate reconciliation even during partial updates.
+
+#### Fuzzy App Matching & Reaper Resilience
+- **Fuzzy Identifier Normalization (`sandbox_reaper_service.py`)**: Added hyphen/underscore normalization and alphanumeric fuzzy matching to prevent false-positive orphan detection and unintentional teardown of active dev workloads.
+- **Reaper Bug Fix**: Resolved missing regex module import in idle reaper background sweep task.
+
+---
+
 ## [0.12.11] - 2026-10-07
 
 ### 🚀 Highlights

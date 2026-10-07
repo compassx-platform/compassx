@@ -56,7 +56,7 @@ backend:
   image:
     repository: ghcr.io/compassx-platform/backend
     pullPolicy: IfNotPresent
-    tag: \"v0.12.11\"
+    tag: \"v0.12.12\"
 
   service:
     type: ClusterIP
@@ -66,6 +66,8 @@ backend:
   env:
     COMPASSX_PLATFORM_PROFILE: "kubernetes-cloud"
     COMPASSX_ENV: "production"
+    COMPASSX_BACKEND_RUNTIME: "pod"
+    UVICORN_RELOAD: "0"
     SYSTEM_DB_NAME: "compassx_account"
     DATA_DB_NAME: "compassx_system"
     STORAGE_BUCKET: "compassx"
@@ -124,7 +126,7 @@ frontend:
   image:
     repository: ghcr.io/compassx-platform/frontend
     pullPolicy: IfNotPresent
-    tag: \"v0.12.11\"
+    tag: \"v0.12.12\"
 
   service:
     type: ClusterIP
