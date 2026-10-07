@@ -5,6 +5,24 @@ All notable changes to the CompassX Platform will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.10] - 2026-10-07
+
+### 🚀 Highlights
+
+CompassX `0.12.10` brings **Leaf Sandbox Workspace Discovery**, **Isolated Fallback Placeholder Serving**, and **Expanded Backend/Frontend Framework Dispatching**.
+
+### ✨ Features & Enhancements
+
+#### Leaf Sandbox Directory Discovery & Root Resolution
+- **Nested Monorepo Root Resolution (`docker_driver.py`, `kubernetes_driver.py`, `omnigent_dev_service.py`)**: Added recursive directory scan for project markers (`package.json`, `requirements.txt`, `app.py`, `main.py`, `vite.config.*`, `next.config.*`) up to 3 levels deep to locate and bind the active codebase within multi-layer monorepo structures.
+- **Dedicated Fallback Isolation (`docker_driver.py`, `kubernetes_driver.py`)**: Provisioned sandbox initialization fallback HTML in `/tmp/cx_fallback/index.html` instead of the active workspace folder, preventing unintended workspace file pollution and git dirtying.
+
+#### Multi-Framework Dispatching & Server Automation
+- **Multi-Entry Backend Dispatcher (`docker_driver.py`, `kubernetes_driver.py`)**: Dispatches `app.py`, `main.py`, `server.py`, and `api.py` with automatic detection for FastAPI, Starlette, Flask, Bottle, and Streamlit.
+- **Resilient Frontend Dev Scripting (`docker_driver.py`, `kubernetes_driver.py`)**: Prioritizes local `./node_modules/.bin/vite` and `./node_modules/.bin/next` executables before falling back to `npx`, and seamlessly hosts built static outputs (`dist/`, `build/`).
+
+---
+
 ## [0.12.9] - 2026-10-07
 
 ### 🚀 Highlights
