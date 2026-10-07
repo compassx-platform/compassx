@@ -5,6 +5,20 @@ All notable changes to the CompassX Platform will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.14] - 2026-10-07
+
+### 🚀 Highlights
+
+CompassX `0.12.14` introduces a **Production Fullstack Gateway** for unified static asset serving and backend API proxying in production containers.
+
+### ✨ Features & Enhancements
+
+#### Production Fullstack Gateway & API Routing
+- **Integrated Python Gateway (`kubernetes_driver.py`)**: Built an embedded, lightweight `ThreadingHTTPServer` (`/tmp/cx_gateway.py`) inside production app containers to simultaneously serve built frontend assets (`dist/`, `build/`) on port 8080 and transparently proxy `/api/*`, `/healthcheck`, and backend endpoints to the co-located Python backend on port 8000.
+- **Auto-Detection for Fullstack & Static Layouts (`kubernetes_driver.py`)**: Seamlessly handles fullstack setups (frontend static dist + Uvicorn/FastAPI backend), standalone backend frameworks (FastAPI, Streamlit, Flask, Bottle), and pure static single-page apps without requiring separate ingress rewrites or external reverse proxies.
+
+---
+
 ## [0.12.13] - 2026-10-07
 
 ### 🚀 Highlights
