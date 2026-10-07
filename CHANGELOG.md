@@ -5,6 +5,20 @@ All notable changes to the CompassX Platform will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.15] - 2026-10-07
+
+### 🚀 Highlights
+
+CompassX `0.12.15` introduces **Automated Ingress & nip.io Host Allowance for Vite Dev Sandboxes** across Docker and Kubernetes runtime drivers.
+
+### ✨ Features & Enhancements
+
+#### Vite Dev Host Dynamic Patching
+- **Recursive Configuration Discovery (`docker_driver.py`, `kubernetes_driver.py`)**: Recursively scans all workspace directories for `vite.config.*` (`.ts`, `.js`, `.mjs`, `.cjs`, `.mts`) and dynamically patches `allowedHosts: true`, preventing `Blocked request: Host is not allowed` errors on `nip.io` and custom ingress domains.
+- **Auto-Provisioning Fallback (`kubernetes_driver.py`)**: Automatically creates a preconfigured `vite.config.js` with `allowedHosts: true` and HMR port mappings if a project contains Vite dependencies but lacks an explicit Vite config file.
+
+---
+
 ## [0.12.14] - 2026-10-07
 
 ### 🚀 Highlights
