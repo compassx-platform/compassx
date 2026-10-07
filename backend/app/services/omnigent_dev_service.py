@@ -654,6 +654,33 @@ class OmnigentDevService:
             if status.get("status") == "active":
                 return sess
 
+        # Enforce single active dev pod per CompassX workspace to conserve cluster compute
+        try:
+            current_ws_id = getattr(app, "workspace_id", None)
+            if current_ws_id:
+                from app.models.app import App
+                with _get_system_db() as db:
+                    sibling_apps = db.query(App).filter(
+                        App.workspace_id == current_ws_id,
+                        App.id != app.id,
+                    ).all()
+                    dev_driver_instance = driver_factory.get_dev_driver()
+                    for sib in sibling_apps:
+                        try:
+                            st = dev_driver_instance.get_dev_status(sib)
+                            if st.get("status") == "active":
+                                logger.info(
+                                    "Auto-suspending sibling app dev pod for '%s' (%s) to enforce single active dev pod in workspace '%s'",
+                                    sib.name,
+                                    sib.id,
+                                    current_ws_id,
+                                )
+                                self.suspend_dev_session(sib)
+                        except Exception as sib_err:
+                            logger.debug("Sibling app dev suspend check error: %s", sib_err)
+        except Exception as auto_susp_err:
+            logger.debug("Error checking sibling app dev pods: %s", auto_susp_err)
+
         # 1. Ensure Omnigent Server is up
         self.ensure_omnigent_server()
         omnigent_internal_url = self.get_omnigent_internal_url()
@@ -706,6 +733,7 @@ class OmnigentDevService:
             "workspace_id": ws_id,
             "workspace_name": ws_name,
             "workspace_folder": folder_path,
+            "git_branch": ws_branch,
             "started_at": datetime.now(timezone.utc).isoformat(),
             "omnigent_attached": (driver_status == "active"),
             "omnigent_server_url": omnigent_link.get("server_url"),
@@ -736,6 +764,28 @@ class OmnigentDevService:
         sess_id = f"sess_omnigent_{app.id}"
         session_url = ingress_service.get_omnigent_session_url(sess_id)
 
+        # Resolve active DevWorkspace record from DB
+        active_ws = None
+        clean_app_id = _clean_id(app.id)
+        try:
+            from app.models.dev_workspace import DevWorkspace
+            with _get_system_db() as db:
+                active_ws = db.query(DevWorkspace).filter(
+                    DevWorkspace.app_id == app.id,
+                    DevWorkspace.status == "active",
+                ).first()
+                if not active_ws:
+                    active_ws = db.query(DevWorkspace).filter(
+                        DevWorkspace.app_id == app.id
+                    ).order_by(DevWorkspace.updated_at.desc(), DevWorkspace.created_at.desc()).first()
+        except Exception as ws_err:
+            logger.debug("Could not resolve active DevWorkspace for app %s: %s", app.id, ws_err)
+
+        resolved_ws_id = active_ws.id if active_ws else None
+        resolved_ws_name = active_ws.name if active_ws else "default"
+        resolved_ws_folder = active_ws.folder_path if active_ws else f"{clean_app_id}/default"
+        resolved_ws_branch = active_ws.git_branch if active_ws else (getattr(app, "git_branch", None) or "main")
+
         # Fast path if container is not active and not in sessions: return immediately without remote HTTP calls (<0.02s)
         if not is_active and app.id not in _DEV_SESSIONS:
             return {
@@ -743,6 +793,10 @@ class OmnigentDevService:
                 "status": dev_status.get("status", "stopped"),
                 "dev_url": dev_url,
                 "repo_dir": repo_dir,
+                "workspace_id": resolved_ws_id,
+                "workspace_name": resolved_ws_name,
+                "workspace_folder": resolved_ws_folder,
+                "git_branch": resolved_ws_branch,
                 "omnigent_attached": False,
                 "omnigent_server_available": False,
                 "omnigent_session_url": session_url,
@@ -781,6 +835,10 @@ class OmnigentDevService:
             sess["is_scaling_node"] = dev_status.get("is_scaling_node", False)
             sess["provisioning_reason"] = dev_status.get("provisioning_reason")
             sess["provisioning_message"] = dev_status.get("provisioning_message")
+            sess.setdefault("workspace_id", resolved_ws_id)
+            sess.setdefault("workspace_name", resolved_ws_name)
+            sess.setdefault("workspace_folder", resolved_ws_folder)
+            sess.setdefault("git_branch", resolved_ws_branch)
             if dev_status.get("host_type"):
                 sess["host_type"] = dev_status.get("host_type")
             if dev_status.get("host_image"):
@@ -792,6 +850,10 @@ class OmnigentDevService:
             "status": dev_status.get("status", "inactive"),
             "dev_url": dev_url,
             "repo_dir": repo_dir,
+            "workspace_id": resolved_ws_id,
+            "workspace_name": resolved_ws_name,
+            "workspace_folder": resolved_ws_folder,
+            "git_branch": resolved_ws_branch,
             "omnigent_attached": is_active,
             "omnigent_server_available": server_status.get("available", False),
             "omnigent_server_url": server_status.get("server_url") or self.get_omnigent_server_url(),
@@ -851,16 +913,24 @@ class OmnigentDevService:
         dev_driver.stop_dev(app)
 
         # Mark workspace as stopped in DB
-        if ws_id:
-            try:
-                from app.models.dev_workspace import DevWorkspace
-                with _get_system_db() as db:
+        try:
+            from app.models.dev_workspace import DevWorkspace
+            with _get_system_db() as db:
+                if ws_id:
                     ws = db.query(DevWorkspace).filter(DevWorkspace.id == ws_id).first()
                     if ws:
                         ws.status = "stopped"
                         db.commit()
-            except Exception as e:
-                logger.warning("Could not update DevWorkspace status: %s", e)
+                else:
+                    active_workspaces = db.query(DevWorkspace).filter(
+                        DevWorkspace.app_id == app.id,
+                        DevWorkspace.status == "active",
+                    ).all()
+                    for w in active_workspaces:
+                        w.status = "stopped"
+                    db.commit()
+        except Exception as e:
+            logger.warning("Could not update DevWorkspace status: %s", e)
 
         # Clean composite key too
         if ws_id:
@@ -880,16 +950,24 @@ class OmnigentDevService:
         if sess:
             sess["status"] = "suspended"
 
-        if ws_id:
-            try:
-                from app.models.dev_workspace import DevWorkspace
-                with _get_system_db() as db:
+        try:
+            from app.models.dev_workspace import DevWorkspace
+            with _get_system_db() as db:
+                if ws_id:
                     ws = db.query(DevWorkspace).filter(DevWorkspace.id == ws_id).first()
                     if ws:
                         ws.status = "suspended"
                         db.commit()
-            except Exception as e:
-                logger.warning("Could not update DevWorkspace status to suspended: %s", e)
+                else:
+                    active_workspaces = db.query(DevWorkspace).filter(
+                        DevWorkspace.app_id == app.id,
+                        DevWorkspace.status == "active",
+                    ).all()
+                    for w in active_workspaces:
+                        w.status = "suspended"
+                    db.commit()
+        except Exception as e:
+            logger.warning("Could not update DevWorkspace status to suspended: %s", e)
 
         return {"status": "suspended" if suspended else "failed", "app_id": app.id}
 

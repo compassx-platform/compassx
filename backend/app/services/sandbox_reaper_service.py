@@ -118,20 +118,48 @@ class SandboxReaperService:
             from app.services.omnigent_dev_service import omnigent_dev_service
 
             now = datetime.now(timezone.utc)
+            dev_driver = driver_factory.get_dev_driver()
 
             with SystemSessionLocal() as db:
+                # 1. Gather all running dev app IDs reported by the runtime driver (K8s/Docker)
+                running_driver_app_ids = set()
+                if hasattr(dev_driver, "list_running_dev_app_ids"):
+                    try:
+                        running_driver_app_ids = set(dev_driver.list_running_dev_app_ids())
+                    except Exception as e:
+                        logger.debug("Could not query running dev deployments: %s", e)
+
+                # 2. Gather all active DevWorkspace records in DB
                 active_workspaces = (
                     db.query(DevWorkspace)
                     .filter(DevWorkspace.status == "active")
                     .all()
                 )
 
-                if not active_workspaces:
+                # Map app_id -> active DevWorkspace
+                active_ws_by_app: Dict[str, DevWorkspace] = {ws.app_id: ws for ws in active_workspaces}
+
+                # Combined set of apps to check (either active in DB or running in cluster)
+                all_candidate_app_ids = set(active_ws_by_app.keys()) | running_driver_app_ids
+
+                if not all_candidate_app_ids:
                     return
 
-                for ws in active_workspaces:
-                    app = db.query(App).filter(App.id == ws.app_id).first()
+                for app_id in all_candidate_app_ids:
+                    app = db.query(App).filter((App.id == app_id) | (App.slug == app_id)).first()
+                    # If app doesn't exist in DB anymore or is deleted, suspend pod immediately
                     if not app:
+                        class DummyApp:
+                            id = app_id
+                            name = app_id
+                            slug = app_id
+                            workspace_id = ""
+                            config = {}
+                        logger.info("Suspending orphaned dev sandbox for unknown/deleted app_id '%s'", app_id)
+                        try:
+                            dev_driver.suspend_dev(DummyApp())
+                        except Exception:
+                            pass
                         continue
 
                     # Read app-specific configuration
@@ -154,11 +182,20 @@ class SandboxReaperService:
                         idle_timeout_secs = self.idle_timeout_seconds
 
                     cutoff = now - timedelta(seconds=idle_timeout_secs)
-                    last_active = _parse_datetime(ws.last_active_at)
+                    ws = active_ws_by_app.get(app.id)
+                    if not ws:
+                        # Query most recent workspace for this app
+                        ws = (
+                            db.query(DevWorkspace)
+                            .filter(DevWorkspace.app_id == app.id)
+                            .order_by(DevWorkspace.updated_at.desc(), DevWorkspace.created_at.desc())
+                            .first()
+                        )
+
+                    last_active = _parse_datetime(ws.last_active_at if ws else (app.updated_at or app.created_at))
 
                     if not last_active or last_active < cutoff:
                         # Check runtime status
-                        dev_driver = driver_factory.get_dev_driver()
                         status = dev_driver.get_dev_status(app)
                         if status.get("status") == "active":
                             # Multi-layer active work verification:

@@ -572,6 +572,42 @@ class DockerDevDriver(BaseDevDriver):
         res = subprocess.run(["docker", "rm", "-f", dev_container_name], capture_output=True, text=True, check=False)
         return res.returncode == 0
 
+    def suspend_dev(self, app) -> bool:
+        """Suspend dev container by stopping it."""
+        dev_container_name = f"compassx-app-dev-{app.id}"
+        res = subprocess.run(["docker", "stop", dev_container_name], capture_output=True, text=True, check=False)
+        return res.returncode == 0
+
+    def resume_dev(self, app) -> bool:
+        """Resume suspended dev container."""
+        dev_container_name = f"compassx-app-dev-{app.id}"
+        res = subprocess.run(["docker", "start", dev_container_name], capture_output=True, text=True, check=False)
+        return res.returncode == 0
+
+    def list_running_dev_app_ids(self) -> List[str]:
+        """List app IDs of all running dev containers."""
+        try:
+            res = subprocess.run(
+                ["docker", "ps", "--filter", "name=compassx-app-dev-", "--format", "{{.Names}}"],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if res.returncode != 0:
+                return []
+            app_ids: List[str] = []
+            prefix = "compassx-app-dev-"
+            for line in (res.stdout or "").splitlines():
+                line = line.strip()
+                if line.startswith(prefix):
+                    app_id = line[len(prefix):]
+                    if app_id:
+                        app_ids.append(app_id)
+            return app_ids
+        except Exception as e:
+            logger.debug("Failed listing running dev containers: %s", e)
+            return []
+
     def restart_dev(self, app) -> bool:
         dev_container_name = f"compassx-app-dev-{app.id}"
         subprocess.run(["docker", "rm", "-f", dev_container_name], capture_output=True, text=True, check=False)

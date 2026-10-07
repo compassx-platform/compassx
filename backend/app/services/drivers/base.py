@@ -156,3 +156,7 @@ class BaseDevDriver(ABC):
         """Seed or update agent configuration files and credentials inside the dev environment."""
         pass
 
+    def list_running_dev_app_ids(self) -> List[str]:
+        """List app IDs of all active dev pods / containers."""
+        return []
+

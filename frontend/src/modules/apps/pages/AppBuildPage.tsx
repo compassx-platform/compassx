@@ -178,18 +178,27 @@ export default function AppBuildPage() {
   const runAppMutation = useRunDevApp();
   const { data: devWorkspaces = [], refetch: refetchDevWorkspaces } = useDevWorkspaces(resolvedAppId);
   const activateWorkspaceMutation = useActivateDevWorkspace();
+  const [selectedWsId, setSelectedWsId] = useState<string | null>(null);
   const [isNewSandboxModalOpen, setIsNewSandboxModalOpen] = useState<boolean>(false);
   const [isSwitchingSandbox, setIsSwitchingSandbox] = useState<boolean>(false);
 
   // Current active sandbox/workspace
-  const activeWorkspace =
-    devWorkspaces.find((w) => w.id === devStatus?.workspace_id || w.name === devStatus?.workspace_name) ||
-    devWorkspaces.find((w) => w.status === 'active') ||
-    devWorkspaces[0];
+  const activeWorkspace = useMemo(() => {
+    if (selectedWsId) {
+      const found = devWorkspaces.find((w) => w.id === selectedWsId || w.name === selectedWsId);
+      if (found) return found;
+    }
+    return (
+      devWorkspaces.find((w) => w.id === devStatus?.workspace_id || w.name === devStatus?.workspace_name) ||
+      devWorkspaces.find((w) => w.status === 'active') ||
+      devWorkspaces[0]
+    );
+  }, [selectedWsId, devWorkspaces, devStatus?.workspace_id, devStatus?.workspace_name]);
 
   const handleSelectWorkspace = async (workspaceId: string) => {
     if (!resolvedAppId || workspaceId === activeWorkspace?.id) return;
     try {
+      setSelectedWsId(workspaceId);
       setIsSwitchingSandbox(true);
       await activateWorkspaceMutation.mutateAsync({
         appId: resolvedAppId,
@@ -2784,7 +2793,8 @@ export default function AppBuildPage() {
         appName={app?.name}
         activeBranch={activeWorkspace?.git_branch}
         defaultBaseBranch={app?.git_branch || 'main'}
-        onCreated={() => {
+        onCreated={(newWsId) => {
+          if (newWsId) setSelectedWsId(newWsId);
           setPreviewReloadKey(Date.now());
           qc.invalidateQueries({ queryKey: ['app-dev-files', resolvedAppId] });
           qc.invalidateQueries({ queryKey: ['app-dev-status', resolvedAppId] });

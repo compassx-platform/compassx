@@ -1415,6 +1415,29 @@ class KubernetesDevDriver(BaseDevDriver):
             logger.warning("Could not resume dev sandbox %s: %s", name, e)
             return False
 
+    def list_running_dev_app_ids(self) -> List[str]:
+        """List app IDs of all active (replicas > 0) dev deployments in the cluster."""
+        k8s = self._get_k8s_client()
+        if not k8s:
+            return []
+        ns = settings.K8S_NAMESPACE
+        app_ids: List[str] = []
+        try:
+            deps = k8s.apps().list_namespaced_deployment(
+                namespace=ns,
+                label_selector="compassx/dev=true",
+            )
+            for dep in (deps.items or []):
+                replicas = dep.spec.replicas if dep.spec else 1
+                if replicas and replicas > 0:
+                    labels = dep.metadata.labels or {} if dep.metadata else {}
+                    app_id = labels.get("compassx/app-id")
+                    if app_id:
+                        app_ids.append(app_id)
+        except Exception as e:
+            logger.debug("Failed listing running dev deployments: %s", e)
+        return app_ids
+
     def get_dev_status(self, app) -> Dict[str, Any]:
         clean_id = re.sub(r"[^a-z0-9-]", "-", app.id.lower()).strip("-")
         dev_name = f"compassx-app-dev-{clean_id}"
