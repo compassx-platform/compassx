@@ -1746,13 +1746,8 @@ class OmnigentDevService:
         clean_app_id = _clean_id(app.id)
         from app.models.dev_workspace import DevWorkspace
 
-        # If explicitly default or main, target base repo /app
-        if workspace_id in ("default", "main", "/app"):
-            default_branch = getattr(app, "git_branch", "main") or "main"
-            return "default", "default", f"{clean_app_id}/default", default_branch
-
         ws = None
-        if workspace_id:
+        if workspace_id and workspace_id not in ("default", "/app"):
             try:
                 with _get_system_db() as db:
                     ws = db.query(DevWorkspace).filter(
@@ -1761,6 +1756,11 @@ class OmnigentDevService:
                     ).first()
             except Exception as e:
                 logger.debug("Failed querying DevWorkspace by id %s: %s", workspace_id, e)
+
+        # If explicitly default or not found and workspace_id is default/app
+        if not ws and workspace_id in ("default", "/app"):
+            default_branch = getattr(app, "git_branch", "main") or "main"
+            return "default", "default", f"{clean_app_id}/default", default_branch
 
         # Fallback to active workspace ONLY if no workspace_id was passed
         if not ws and not workspace_id:
@@ -1789,23 +1789,16 @@ class OmnigentDevService:
         """Ensures the target workspace worktree exists inside dev container/pod and returns target_dir."""
         ws_id, ws_name, folder_path, branch = self._resolve_workspace_info(app, workspace_id)
         clean_folder = folder_path.strip("/")
+        clean_app_id = _clean_id(app.id)
         dev_driver = driver_factory.get_dev_driver()
-
-        # If it's default workspace, target is /app
-        if ws_name == "default":
-            symlink_cmd = (
-                f"mkdir -p /workspaces/{clean_folder.rsplit('/', 1)[0]} 2>/dev/null; "
-                f"if [ ! -e '/workspaces/{clean_folder}' ]; then ln -sfn /app '/workspaces/{clean_folder}' 2>/dev/null || true; fi"
-            )
-            try:
-                dev_driver.exec_command_in_dev(app, command=symlink_cmd)
-            except Exception:
-                pass
-            return "/app"
-
         target_dir = f"/workspaces/{clean_folder}"
-        # Check if worktree directory exists in container
-        chk_cmd = f"test -d '{target_dir}' && echo '__EXISTS__'"
+
+        # Check if worktree directory exists and is populated in container
+        chk_cmd = (
+            f"if [ -d '{target_dir}' ] && [ -e '{target_dir}/.git' ]; then echo '__EXISTS__'; "
+            f"elif [ -d '{target_dir}' ] && [ -n \"$(ls -A '{target_dir}' 2>/dev/null)\" ]; then echo '__EXISTS__'; "
+            f"else echo '__MISSING__'; fi"
+        )
         try:
             chk_res = dev_driver.exec_command_in_dev(app, command=chk_cmd)
             if "__EXISTS__" not in (chk_res.get("output") or ""):
@@ -1832,11 +1825,25 @@ class OmnigentDevService:
         if is_running:
             try:
                 target_dir = self.ensure_workspace_worktree(app, workspace_id)
+                clean_app_id = _clean_id(app.id)
                 py_code = f"""
 import os, json, subprocess
 root_dir = '{target_dir}'
-if not os.path.exists(root_dir) or not os.path.isdir(root_dir):
-    root_dir = '/app'
+if not os.path.exists(root_dir) or not os.path.isdir(root_dir) or not os.listdir(root_dir):
+    candidates = [
+        '{target_dir}',
+        '/workspaces/{clean_app_id}/default',
+        '/workspaces/{clean_app_id}/main',
+        '/workspaces/{clean_app_id}',
+        '/workspaces/default',
+        '/app',
+    ]
+    for c in candidates:
+        if os.path.exists(c) and os.path.isdir(c) and any(f for f in os.listdir(c) if f != '.git'):
+            root_dir = c
+            break
+if not os.path.exists(root_dir):
+    root_dir = '/workspaces'
 
 git_statuses = {{}}
 try:
@@ -1978,11 +1985,24 @@ print('__JSON_START__' + json.dumps(res) + '__JSON_END__')
         if is_running:
             try:
                 target_dir = self.ensure_workspace_worktree(app, workspace_id)
+                clean_app_id = _clean_id(app.id)
                 py_code = f"""
 import os, base64
 root_dir = '{target_dir}'
 if not os.path.exists(root_dir) or not os.path.isdir(root_dir):
-    root_dir = '/app'
+    candidates = [
+        '{target_dir}',
+        '/workspaces/{clean_app_id}/default',
+        '/workspaces/{clean_app_id}/main',
+        '/workspaces/{clean_app_id}',
+        '/workspaces/default',
+        '/app',
+    ]
+    for c in candidates:
+        if os.path.exists(c) and os.path.isdir(c) and any(f for f in os.listdir(c) if f != '.git'):
+            root_dir = c
+            break
+
 p = os.path.normpath(os.path.join(root_dir, '{clean_rel}'))
 if not p.startswith(root_dir) or not os.path.exists(p) or not os.path.isfile(p):
     print('__NOT_FOUND__')
@@ -2051,13 +2071,26 @@ else:
         if is_running:
             try:
                 target_dir = self.ensure_workspace_worktree(app, workspace_id)
+                clean_app_id = _clean_id(app.id)
                 content_bytes = content.encode("utf-8")
                 b64_content = base64.b64encode(content_bytes).decode("ascii")
                 py_code = f"""
 import os, base64
 root_dir = '{target_dir}'
 if not os.path.exists(root_dir) or not os.path.isdir(root_dir):
-    root_dir = '/app'
+    candidates = [
+        '{target_dir}',
+        '/workspaces/{clean_app_id}/default',
+        '/workspaces/{clean_app_id}/main',
+        '/workspaces/{clean_app_id}',
+        '/workspaces/default',
+        '/app',
+    ]
+    for c in candidates:
+        if os.path.exists(c) and os.path.isdir(c) and any(f for f in os.listdir(c) if f != '.git'):
+            root_dir = c
+            break
+
 p = os.path.normpath(os.path.join(root_dir, '{clean_rel}'))
 if not p.startswith(root_dir):
     print('__ERROR_PATH__')
@@ -2313,14 +2346,14 @@ else:
         """Fetch remote main and merge into active workspace branch using Git merge."""
         dev_driver = driver_factory.get_dev_driver()
         ws_id, ws_name, folder_path, branch = self._resolve_workspace_info(app, workspace_id)
-        target_dir = f"/workspaces/{folder_path.strip('/')}" if ws_name != "default" else "/app"
+        target_dir = f"/workspaces/{folder_path.strip('/')}"
         auth_url = self._get_authenticated_git_url(app)
 
         remote_snippet = f"git remote set-url origin '{auth_url}' 2>/dev/null || true; " if auth_url else ""
         clean_base = (base_branch or getattr(app, "git_branch", None) or "main").strip() or "main"
 
         script = (
-            f"cd {target_dir} 2>/dev/null || cd /app; "
+            f"cd {target_dir} 2>/dev/null || cd /workspaces 2>/dev/null || cd /app 2>/dev/null; "
             f"export GIT_TERMINAL_PROMPT=0; "
             f"{remote_snippet}"
             f"git fetch origin {clean_base} 2>&1 || git fetch origin 2>&1; "

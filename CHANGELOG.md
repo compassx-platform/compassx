@@ -5,6 +5,21 @@ All notable changes to the CompassX Platform will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.7] - 2026-10-07
+
+### 🚀 Highlights
+
+CompassX `0.12.7` delivers **Multi-Candidate Workspace Path Resolution**, **Verified Git Worktree Provisioning**, and **Resilient Shared Local Repo Cloning**.
+
+### ✨ Features & Enhancements
+
+#### Resilient Worktree & Sandbox Root Discovery
+- **Multi-Candidate Workspace Path Resolution (`omnigent_dev_service.py`)**: Added candidate directory discovery fallbacks (`/workspaces/{app_id}/default`, `/workspaces/{app_id}/main`, `/workspaces/{app_id}`, `/workspaces/default`, `/app`) for live file tree rendering, file reading, and inline saving across dev containers and Kubernetes dev pods.
+- **Verified Worktree Integrity (`omnigent_dev_service.py`)**: Enhanced worktree checks to verify both directory presence and non-empty file contents / valid `.git` references before initiating operations.
+- **Shared Local Repo Cloning & Fallbacks (`docker_driver.py`, `kubernetes_driver.py`)**: Enhanced git worktree creation routines with fallback local cloning (`git clone --shared`) and direct git checkout for sandbox worktrees.
+
+---
+
 ## [0.12.6] - 2026-10-07
 
 ### 🚀 Highlights

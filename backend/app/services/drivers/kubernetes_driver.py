@@ -2165,16 +2165,46 @@ class KubernetesDevDriver(BaseDevDriver):
         clean_folder = folder_path.strip("/")
         target_dir = f"/workspaces/{clean_folder}"
         clean_app = re.sub(r'[^a-z0-9-]', '-', app.id.lower()).strip('-')
-        base = base_branch or "HEAD"
+        base = (base_branch or "main").strip() or "main"
+
+        git_url = getattr(app, "git_repo_url", None)
+        git_token = None
+        if hasattr(app, "git_pat_enc") and app.git_pat_enc:
+            try:
+                from app.services.encryption import decrypt_field
+                git_token = decrypt_field(app.git_pat_enc)
+            except Exception:
+                pass
+        auth_url = git_url or ""
+        if git_token and git_url and "github.com" in git_url and not ("@" in git_url.split("//")[-1]):
+            auth_url = git_url.replace("https://", f"https://x-access-token:{git_token}@")
+        elif git_token and git_url and not ("@" in git_url.split("//")[-1]):
+            auth_url = git_url.replace("https://", f"https://oauth2:{git_token}@")
+
         cmd = (
-            f"mkdir -p /workspaces && "
-            f"if [ -d '{target_dir}' ]; then echo '__WORKTREE_EXISTS__'; else "
-            f"BASE_REPO=\"\"; "
-            f"for d in /workspaces/{clean_app}/default /workspaces/{clean_app}/* /workspaces/* /app; do "
-            f"  if [ -d \"$d/.git\" ]; then BASE_REPO=\"$d\"; break; fi; "
-            f"done; "
-            f"if [ -z \"$BASE_REPO\" ]; then BASE_REPO=\"/workspaces\"; fi; "
-            f"cd \"$BASE_REPO\" && (git worktree add -B '{branch}' '{target_dir}' '{base}' 2>&1 || git worktree add -B '{branch}' '{target_dir}' HEAD 2>&1) && echo '__WORKTREE_CREATED__'; "
+            f"mkdir -p /workspaces/{clean_app} && "
+            f"if [ -d '{target_dir}' ] && [ -e '{target_dir}/.git' ]; then "
+            f"  echo '__WORKTREE_EXISTS__'; "
+            f"elif [ -d '{target_dir}' ] && [ -n \"$(ls -A '{target_dir}' 2>/dev/null)\" ]; then "
+            f"  echo '__WORKTREE_EXISTS__'; "
+            f"else "
+            f"  BASE_REPO=\"\"; "
+            f"  for d in /workspaces/{clean_app}/default /workspaces/{clean_app}/* /workspaces/* /app; do "
+            f"    if [ -d \"$d/.git\" ] && [ \"$d\" != \"{target_dir}\" ]; then BASE_REPO=\"$d\"; break; fi; "
+            f"  done; "
+            f"  if [ -n \"$BASE_REPO\" ]; then "
+            f"    (cd \"$BASE_REPO\" && git worktree prune 2>/dev/null || true); "
+            f"    (cd \"$BASE_REPO\" && git fetch origin 2>/dev/null || true); "
+            f"    if (cd \"$BASE_REPO\" && (git worktree add -f -B '{branch}' '{target_dir}' '{base}' 2>&1 || git worktree add -f -B '{branch}' '{target_dir}' 'origin/{base}' 2>&1 || git worktree add -f --detach '{target_dir}' '{base}' 2>&1 || git worktree add -f -B '{branch}' '{target_dir}' HEAD 2>&1)); then "
+            f"      echo '__WORKTREE_CREATED__'; "
+            f"    else "
+            f"      mkdir -p '{target_dir}' && (git clone --shared \"$BASE_REPO\" '{target_dir}' 2>&1 || cp -a \"$BASE_REPO/.\" '{target_dir}/') && (cd '{target_dir}' && git checkout -B '{branch}' 2>/dev/null || true) && echo '__WORKTREE_CREATED__'; "
+            f"    fi; "
+            f"  elif [ -n '{auth_url}' ]; then "
+            f"    mkdir -p '{target_dir}' && cd '{target_dir}' && (git clone --branch '{base}' '{auth_url}' . 2>&1 || git clone '{auth_url}' . 2>&1) && (git checkout -B '{branch}' 2>/dev/null || true) && echo '__WORKTREE_CREATED__'; "
+            f"  else "
+            f"    mkdir -p '{target_dir}' && echo '__WORKTREE_CREATED__'; "
+            f"  fi; "
             f"fi"
         )
         res = self.exec_command_in_dev(app, cmd)

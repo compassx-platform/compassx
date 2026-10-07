@@ -1073,25 +1073,30 @@ class DockerDevDriver(BaseDevDriver):
         dev_container_name = f"compassx-app-dev-{app.id}"
         clean_folder = folder_path.strip("/")
         target_dir = f"/workspaces/{clean_folder}"
-        base = base_branch or "HEAD"
-
-        chk = subprocess.run(
-            ["docker", "inspect", "-f", "{{.State.Running}}", dev_container_name],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        if chk.returncode != 0 or chk.stdout.strip() != "true":
-            return {"success": False, "error": f"Dev container {dev_container_name} is not running"}
+        base = (base_branch or "main").strip() or "main"
 
         script = (
             f"mkdir -p /workspaces && "
-            f"if [ -d '{target_dir}' ]; then "
+            f"if [ -d '{target_dir}' ] && [ -e '{target_dir}/.git' ]; then "
+            f"  echo '__WORKTREE_EXISTS__'; "
+            f"elif [ -d '{target_dir}' ] && [ -n \"$(ls -A '{target_dir}' 2>/dev/null)\" ]; then "
             f"  echo '__WORKTREE_EXISTS__'; "
             f"else "
-            f"  cd /app && git worktree prune 2>/dev/null; "
-            f"  cd /app && (git worktree add -f -B '{branch}' '{target_dir}' '{base}' 2>&1 || git worktree add -f -B '{branch}' '{target_dir}' HEAD 2>&1) && "
-            f"  echo '__WORKTREE_CREATED__'; "
+            f"  BASE_REPO=\"\"; "
+            f"  for d in /app /workspaces/*/default /workspaces/*/* /workspaces/*; do "
+            f"    if [ -d \"$d/.git\" ] && [ \"$d\" != \"{target_dir}\" ]; then BASE_REPO=\"$d\"; break; fi; "
+            f"  done; "
+            f"  if [ -n \"$BASE_REPO\" ]; then "
+            f"    (cd \"$BASE_REPO\" && git worktree prune 2>/dev/null || true); "
+            f"    (cd \"$BASE_REPO\" && git fetch origin 2>/dev/null || true); "
+            f"    if (cd \"$BASE_REPO\" && (git worktree add -f -B '{branch}' '{target_dir}' '{base}' 2>&1 || git worktree add -f -B '{branch}' '{target_dir}' 'origin/{base}' 2>&1 || git worktree add -f --detach '{target_dir}' '{base}' 2>&1 || git worktree add -f -B '{branch}' '{target_dir}' HEAD 2>&1)); then "
+            f"      echo '__WORKTREE_CREATED__'; "
+            f"    else "
+            f"      mkdir -p '{target_dir}' && (git clone --shared \"$BASE_REPO\" '{target_dir}' 2>&1 || cp -a \"$BASE_REPO/.\" '{target_dir}/') && (cd '{target_dir}' && git checkout -B '{branch}' 2>/dev/null || true) && echo '__WORKTREE_CREATED__'; "
+            f"    fi; "
+            f"  else "
+            f"    mkdir -p '{target_dir}' && echo '__WORKTREE_CREATED__'; "
+            f"  fi; "
             f"fi"
         )
         res = subprocess.run(
