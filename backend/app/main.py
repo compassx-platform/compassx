@@ -471,7 +471,7 @@ app = FastAPI(
     lifespan=lifespan,
     title="CompassX API",
     description="CompassX Platform API",
-    version="0.12.12",
+    version="0.12.13",
     docs_url="/api/swagger/docs",
     openapi_url="/api/swagger.json",
 )

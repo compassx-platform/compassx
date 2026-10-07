@@ -5,6 +5,27 @@ All notable changes to the CompassX Platform will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.13] - 2026-10-07
+
+### 🚀 Highlights
+
+CompassX `0.12.13` introduces a **Zero-502 Dev Splash Supervisor**, **Direct Source Subdirectory (`git_subdir`) Binding**, and **Recursive Multi-Layer `node_modules` Symlinking**.
+
+### ✨ Features & Enhancements
+
+#### Zero-502 Splash Supervisor & Port 8080 Handover
+- **Instant Live Splash Screen (`docker_driver.py`, `kubernetes_driver.py`)**: Dev-runner immediately boots a responsive splash page on port 8080 during sandbox start/reload, eliminating initial 502 Bad Gateway / connection refused errors while dependencies and dev servers initialize.
+- **Clean Handover & Watchdog (`kubernetes_driver.py`)**: Dev-runner cleanly terminates the splash supervisor and frees port 8080 immediately before launching the active frontend/backend process; includes an 8-second watchdog to auto-serve built static outputs (`dist/`, `build/`) if the dynamic dev server fails to bind.
+
+#### Source Subdirectory (`git_subdir`) Path Resolution
+- **Subdirectory Binding (`kubernetes_driver.py`, `docker_driver.py`)**: Dev-runner and production container builders directly honor `git_subdir` / `APP_SUBDIR` across workspaces, allowing nested multi-package apps to launch and build cleanly without directory ambiguity.
+
+#### Recursive Multi-Layer `node_modules` Symlinking
+- **Deep Dependency Linking (`kubernetes_driver.py`)**: Recursively locates pre-installed `node_modules` across parent and sibling workspace paths up to 5 levels deep, significantly accelerating startup and avoiding redundant npm install operations.
+- **AGY Security Trusted Bypass (`kubernetes_driver.py`)**: Automatically configures trusted workspace security overrides in dev environments to prevent blocking modal prompts during automated tool execution.
+
+---
+
 ## [0.12.12] - 2026-10-07
 
 ### 🚀 Highlights
