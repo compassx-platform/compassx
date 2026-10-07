@@ -14,6 +14,51 @@ from app.services.ingress_service import ingress_service
 
 logger = logging.getLogger(__name__)
 
+_DOCKER_VITE_PATCHER = """
+import os, re
+found_configs = set()
+search_dirs = [d for d in [os.environ.get("FRONTEND_DIR", ""), os.environ.get("BASE_DIR", ""), os.getcwd(), "/app"] if d and os.path.isdir(d)]
+for sdir in search_dirs:
+    for root, dirs, files in os.walk(sdir):
+        if "node_modules" in root or ".git" in root: continue
+        for f in files:
+            if f.startswith("vite.config.") and f.endswith(('.ts', '.js', '.mjs', '.cjs', '.mts')):
+                found_configs.add(os.path.join(root, f))
+for cfg_path in found_configs:
+    try:
+        with open(cfg_path, 'r', encoding='utf-8') as fh: c = fh.read()
+        orig = c
+        if 'allowedHosts' in c:
+            c = re.sub(r'allowedHosts\s*:\s*(?:\[[^\]]*\]|false|true|(?:\'[^\']*\')|(?:"[^"]*"))', 'allowedHosts: true', c)
+        if re.search(r'server\s*:\s*\{', c):
+            if 'allowedHosts' not in c:
+                c = re.sub(r'server\s*:\s*\{', 'server: {\n    allowedHosts: true,\n    host: "0.0.0.0",\n    port: 8080,\n    cors: true,\n    watch: { usePolling: true, interval: 1000 },\n    hmr: { clientPort: 443 },', c, count=1)
+        else:
+            if 'return {' in c:
+                c = re.sub(r'return\s*\{', 'return {\n  server: { host: "0.0.0.0", port: 8080, allowedHosts: true, cors: true, watch: { usePolling: true, interval: 1000 }, hmr: { clientPort: 443 } },', c, count=1)
+            elif re.search(r'defineConfig\s*\(\s*(?:\([^)]*\)\s*=>\s*)?\(?\s*\{', c):
+                c = re.sub(r'(defineConfig\s*\(\s*(?:\([^)]*\)\s*=>\s*)?\(?\s*)\{', r'\1{\n  server: { host: "0.0.0.0", port: 8080, allowedHosts: true, cors: true, watch: { usePolling: true, interval: 1000 }, hmr: { clientPort: 443 } },', c, count=1)
+            elif 'export default {' in c:
+                c = c.replace('export default {', 'export default {\n  server: { host: "0.0.0.0", port: 8080, allowedHosts: true, cors: true, watch: { usePolling: true, interval: 1000 }, hmr: { clientPort: 443 } },', 1)
+            elif 'module.exports = {' in c:
+                c = c.replace('module.exports = {', 'module.exports = {\n  server: { host: "0.0.0.0", port: 8080, allowedHosts: true, cors: true, watch: { usePolling: true, interval: 1000 }, hmr: { clientPort: 443 } },', 1)
+        c = c.replace('http://localhost:8080', 'http://localhost:8000')
+        c = c.replace('http://127.0.0.1:8085', 'http://localhost:8000')
+        if c != orig:
+            with open(cfg_path, 'w', encoding='utf-8') as fh: fh.write(c)
+    except Exception: pass
+fdir = os.environ.get("FRONTEND_DIR") or os.getcwd()
+if os.path.isdir(fdir) and not any(f.startswith('vite.config.') for f in os.listdir(fdir)):
+    pkg_path = os.path.join(fdir, 'package.json')
+    if os.path.exists(pkg_path):
+        try:
+            with open(pkg_path, 'r', encoding='utf-8') as pf: pkg_content = pf.read()
+            if 'vite' in pkg_content:
+                new_cfg = "import { defineConfig } from 'vite';\\n\\nexport default defineConfig({\\n  server: {\\n    host: '0.0.0.0',\\n    port: 8080,\\n    allowedHosts: true,\\n    cors: true,\\n    watch: { usePolling: true, interval: 1000 },\\n    hmr: { clientPort: 443 },\\n  }\\n});\\n"
+                with open(os.path.join(fdir, 'vite.config.js'), 'w', encoding='utf-8') as cf: cf.write(new_cfg)
+        except Exception: pass
+"""
+
 
 def find_free_tcp_port(start_port: int, max_port: int) -> int:
     """Find an available TCP port on localhost that is not occupied or allocated by Docker."""
@@ -305,6 +350,8 @@ class DockerDevDriver(BaseDevDriver):
         if not target_branch:
             target_branch = "dev/default"
 
+        vite_patch_b64 = base64.b64encode(_DOCKER_VITE_PATCHER.encode("utf-8")).decode("ascii")
+
         # Container boot script: writes config.yaml with app identity, configures TLS, starts FastAPI and React/Vite, then runs Omnigent host runner
         container_cmd = (
             f"mkdir -p /root/.gemini/antigravity-cli && "
@@ -480,8 +527,8 @@ class DockerDevDriver(BaseDevDriver):
             f"fi; "
             f"if [ -n \"$FRONTEND_DIR\" ]; then "
             f"  (cd \"$FRONTEND_DIR\" && "
-            f"   export DASHBOARD_PORT=8000 DASHBOARD_UI_PORT=8080; "
-            f"   (python3 -c \"import os, re\\nfor f in ['vite.config.ts', 'vite.config.js']:\\n if os.path.exists(f):\\n  c = open(f, 'r').read()\\n  if 'usePolling' not in c: c = re.sub(r'(server:\\s*\\{{)', r'\\\\1\\\\n    allowedHosts: true,\\\\n    watch: {{ usePolling: true, interval: 2000, ignored: [\\\\\"**/node_modules/**\\\\\", \\\\\"**/.git/**\\\\\", \\\\\"**/dist/**\\\\\", \\\\\"**/.cache/**\\\\\\\"] }},\\\\n    hmr: {{ clientPort: 443 }},', c)\\n  else: c = re.sub(r'watch:\\s*\\{{[^}}]*\\}}', 'watch: {{ usePolling: true, interval: 2000, ignored: [\\\\\"**/node_modules/**\\\\\", \\\\\"**/.git/**\\\\\", \\\\\"**/dist/**\\\\\", \\\\\"**/.cache/**\\\\\\\"] }}', c)\\n  c = c.replace('http://localhost:8080', 'http://localhost:8000')\\n  c = c.replace('http://127.0.0.1:8085', 'http://localhost:8000')\\n  open(f, 'w').write(c)\" 2>/dev/null || true) && "
+            f"   export DASHBOARD_PORT=8000 DASHBOARD_UI_PORT=8080 PORT=8080 HOST=0.0.0.0 DANGEROUSLY_DISABLE_HOST_CHECK=true; "
+            f"   (python3 -c \"$(echo '{vite_patch_b64}' | base64 -d)\" 2>/dev/null || true) && "
             f"   (if [ ! -d node_modules ]; then npm install --prefer-offline --no-audit || npm install || true; fi) && "
             f"   (while true; do npx --yes vite --host 0.0.0.0 --port 8080 --cors || npm run dev -- --host 0.0.0.0 --port 8080 || npm start -- -p 8080 || npx --yes serve -l 8080 . || true; sleep 2; done)) & "
             f"elif [ -n \"$BACKEND_DIR\" ]; then "
