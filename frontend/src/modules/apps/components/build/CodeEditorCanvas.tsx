@@ -10,6 +10,7 @@ import { cn } from '@/lib/utils';
 import type { WorkspaceFile } from '../../hooks/useApps';
 import { FilesPanel } from '../files/FilesPanel';
 import { FileViewer } from '../files/FileViewer';
+import { getFileIcon } from '../files/FolderTree';
 
 interface CodeEditorCanvasProps {
   appId: string;
@@ -208,7 +209,7 @@ export function CodeEditorCanvas({
         }}
       >
         {/* Open Files Tabs Strip */}
-        <div className="flex items-stretch h-8 border-b border-neutral-200 bg-[#f9fafb] overflow-x-auto shrink-0 select-none [&::-webkit-scrollbar]:hidden">
+        <div className="flex items-stretch h-8 border-b border-neutral-200 bg-[#f9fafb] overflow-x-auto shrink-0 select-none [&::-webkit-scrollbar]:h-1 [&::-webkit-scrollbar-thumb]:bg-neutral-300 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-track]:bg-transparent">
           {openFiles.map((path) => {
             const name = path.split('/').filter(Boolean).pop() ?? path;
             const isActive = selectedFilePath === path;
@@ -218,20 +219,21 @@ export function CodeEditorCanvas({
                 key={path}
                 onClick={() => onSelectFilePath(path)}
                 className={cn(
-                  'group flex items-center gap-2 h-full px-3 cursor-pointer text-[12px] font-sans transition-colors shrink-0 border-r border-neutral-200',
+                  'group flex items-center gap-1.5 h-full px-3 cursor-pointer text-[12px] font-sans transition-colors shrink-0 border-r border-neutral-200',
                   isActive
-                    ? 'bg-white text-neutral-800 font-normal -mb-[1px] border-b border-b-white z-10'
+                    ? 'bg-white text-neutral-900 font-normal -mb-[1px] border-b border-b-white z-10'
                     : 'bg-[#fafafa] text-neutral-500 hover:text-neutral-800 hover:bg-neutral-100/60'
                 )}
                 title={path}
               >
-                <span className="max-w-[160px] truncate">
+                {getFileIcon(name)}
+                <span className="whitespace-nowrap select-none">
                   {name}
                 </span>
                 <button
                   type="button"
                   onClick={(e) => handleCloseTab(path, e)}
-                  className="rounded p-0.5 text-neutral-400 hover:bg-neutral-200/70 hover:text-neutral-800 transition-colors cursor-pointer"
+                  className="rounded p-0.5 text-neutral-400 hover:bg-neutral-200/70 hover:text-neutral-800 transition-colors cursor-pointer ml-1"
                   title={`Close ${name}`}
                 >
                   <X size={11} />

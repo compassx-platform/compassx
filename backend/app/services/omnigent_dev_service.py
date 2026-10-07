@@ -1488,6 +1488,96 @@ class OmnigentDevService:
             "message": "Workspace codebase verified and ready." if is_ok else (output or "Workspace codebase preparation failed."),
         }
 
+    def get_git_commits(
+        self,
+        app,
+        workspace_id: Optional[str] = None,
+        workspace_name: Optional[str] = None,
+        limit: int = 50,
+    ) -> Dict[str, Any]:
+        """Fetch git commit history from the workspace repository inside the container."""
+        sess = _DEV_SESSIONS.get(app.id)
+        mode = sess.get("mode") if sess else None
+        dev_driver = driver_factory.get_dev_driver(mode)
+        if not dev_driver:
+            return {"success": False, "is_git": False, "branch": "", "commits": [], "count": 0, "message": "Dev container is not running."}
+
+        clean_id = _clean_id(app.id)
+        ws_name = "default"
+        target_branch = None
+        if workspace_name:
+            ws_name = _sanitize_workspace_name(workspace_name)
+        elif workspace_id:
+            try:
+                from app.models.dev_workspace import DevWorkspace
+                with _get_system_db() as db:
+                    ws = db.query(DevWorkspace).filter(
+                        DevWorkspace.app_id == app.id,
+                        (DevWorkspace.id == workspace_id) | (DevWorkspace.name == workspace_id),
+                    ).first()
+                    if ws:
+                        if ws.name:
+                            ws_name = ws.name
+                        if ws.git_branch:
+                            target_branch = ws.git_branch
+            except Exception:
+                ws_name = workspace_id
+        folder_path = f"{clean_id}/{ws_name}"
+
+        delimiter = "---CX_GIT_LOG_DELIMITER---"
+        field_sep = "---CX_FIELD_SEP---"
+        git_cmd = (
+            f"if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then "
+            f"  echo 'NOT_A_GIT_REPO'; "
+            f"  exit 0; "
+            f"fi; "
+            f"BRANCH=$(git branch --show-current 2>/dev/null || git rev-parse --abbrev-ref HEAD 2>/dev/null || echo 'HEAD'); "
+            f"echo \"BRANCH:$BRANCH\"; "
+            f"git log -n {int(limit)} --date=iso --format=\"{delimiter}%h{field_sep}%H{field_sep}%an{field_sep}%ae{field_sep}%ad{field_sep}%cr{field_sep}%s\" 2>/dev/null || true"
+        )
+
+        exec_res = dev_driver.exec_command_in_dev(app, command=git_cmd, workspace_folder=folder_path)
+        output = (exec_res.get("output") or "").strip()
+
+        if "NOT_A_GIT_REPO" in output:
+            return {"success": True, "is_git": False, "branch": "", "commits": [], "count": 0}
+
+        branch = target_branch or "main"
+        commits = []
+        lines = output.split(delimiter)
+        for chunk in lines:
+            chunk = chunk.strip()
+            if not chunk:
+                continue
+            if "BRANCH:" in chunk:
+                for line in chunk.split("\n"):
+                    if line.startswith("BRANCH:"):
+                        branch = line.replace("BRANCH:", "").strip()
+                if "\n" in chunk:
+                    chunk = "\n".join([l for l in chunk.split("\n") if not l.startswith("BRANCH:")]).strip()
+                else:
+                    continue
+
+            fields = chunk.split(field_sep)
+            if len(fields) >= 7:
+                commits.append({
+                    "short_hash": fields[0].strip(),
+                    "hash": fields[1].strip(),
+                    "author": fields[2].strip(),
+                    "email": fields[3].strip(),
+                    "date": fields[4].strip(),
+                    "relative_date": fields[5].strip(),
+                    "message": fields[6].strip(),
+                })
+
+        return {
+            "success": True,
+            "is_git": True,
+            "branch": branch,
+            "commits": commits,
+            "count": len(commits),
+        }
+
     def run_dev_app(
         self,
         app,
@@ -1743,10 +1833,39 @@ class OmnigentDevService:
             try:
                 target_dir = self.ensure_workspace_worktree(app, workspace_id)
                 py_code = f"""
-import os, json
+import os, json, subprocess
 root_dir = '{target_dir}'
 if not os.path.exists(root_dir) or not os.path.isdir(root_dir):
     root_dir = '/app'
+
+git_statuses = {{}}
+try:
+    p = subprocess.run(
+        ['git', 'status', '--porcelain', '-uall'],
+        cwd=root_dir,
+        capture_output=True,
+        text=True,
+        timeout=1.5
+    )
+    if p.returncode == 0 and p.stdout:
+        for line in p.stdout.splitlines():
+            line = line.strip()
+            if len(line) >= 3:
+                code = line[:2].strip()
+                fpath = line[3:].strip().strip('"').replace('\\\\', '/')
+                st_label = 'modified'
+                if '?' in code:
+                    st_label = 'untracked'
+                elif 'A' in code:
+                    st_label = 'added'
+                elif 'D' in code:
+                    st_label = 'deleted'
+                elif 'M' in code:
+                    st_label = 'modified'
+                git_statuses[fpath] = st_label
+except Exception:
+    pass
+
 ign = {{'.git', 'node_modules', '__pycache__', '.venv', '.pytest_cache', '.DS_Store', '.mypy_cache', '.coverage'}}
 res = []
 for r, dirs, files in os.walk(root_dir):
@@ -1760,7 +1879,8 @@ for r, dirs, files in os.walk(root_dir):
             mt = int(st.st_mtime * 1000)
             rel = os.path.relpath(p, root_dir).replace('\\\\', '/')
             ext = f.split('.')[-1] if '.' in f else ''
-            res.append({{'path': rel, 'name': f, 'size': sz, 'bytes': sz, 'ext': ext, 'modified_at': mt}})
+            git_st = git_statuses.get(rel)
+            res.append({{'path': rel, 'name': f, 'size': sz, 'bytes': sz, 'ext': ext, 'modified_at': mt, 'git_status': git_st}})
         except Exception: pass
 print('__JSON_START__' + json.dumps(res) + '__JSON_END__')
 """
@@ -1781,6 +1901,34 @@ print('__JSON_START__' + json.dumps(res) + '__JSON_END__')
             ws_host_dir = os.path.join(app_runner_service.get_app_dir(app.id), "workspaces", ws_name)
             if os.path.exists(ws_host_dir):
                 repo_dir = ws_host_dir
+
+        git_statuses = {}
+        try:
+            p = subprocess.run(
+                ['git', 'status', '--porcelain', '-uall'],
+                cwd=repo_dir,
+                capture_output=True,
+                text=True,
+                timeout=1.5
+            )
+            if p.returncode == 0 and p.stdout:
+                for line in p.stdout.splitlines():
+                    line = line.strip()
+                    if len(line) >= 3:
+                        code = line[:2].strip()
+                        fpath = line[3:].strip().strip('"').replace('\\', '/')
+                        st_label = 'modified'
+                        if '?' in code:
+                            st_label = 'untracked'
+                        elif 'A' in code:
+                            st_label = 'added'
+                        elif 'D' in code:
+                            st_label = 'deleted'
+                        elif 'M' in code:
+                            st_label = 'modified'
+                        git_statuses[fpath] = st_label
+        except Exception:
+            pass
 
         file_tree = []
         ignored = {".git", "node_modules", "__pycache__", ".venv", ".pytest_cache", ".DS_Store"}
@@ -1806,6 +1954,7 @@ print('__JSON_START__' + json.dumps(res) + '__JSON_END__')
                     "bytes": size,
                     "ext": os.path.splitext(file)[1].lstrip("."),
                     "modified_at": mtime,
+                    "git_status": git_statuses.get(rel_path),
                 })
 
         return sorted(file_tree, key=lambda x: x["path"])
@@ -2498,8 +2647,177 @@ else:
         session_info["is_running"] = is_pod_running
         return session_info
 
+    def _capture_tmux_session_messages(self, app, session_id: Optional[str] = None, workspace_id: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Capture raw terminal buffer from running tmux session in container and parse into structured ChatMessage items."""
+        import subprocess
+        import re
+        import uuid
+        from datetime import datetime, timezone
+
+        dev_container_name = f"compassx-app-dev-{app.id}"
+
+        # 1. Resolve active tmux session name in container
+        target_tmux_name = None
+        try:
+            from app.services.dev_session_service import dev_session_service
+            if session_id:
+                sess_obj = dev_session_service.get_session(app, session_id)
+                if sess_obj and sess_obj.tmux_session_name:
+                    base_tmux = sess_obj.tmux_session_name
+                    # Find running tmux sessions matching this base name
+                    ls_res = subprocess.run(
+                        ["docker", "exec", dev_container_name, "tmux", "list-sessions", "-F", "#{session_name}"],
+                        capture_output=True, text=True, encoding="utf-8", errors="replace", check=False, timeout=2.0
+                    )
+                    if ls_res.returncode == 0 and ls_res.stdout:
+                        for s_name in ls_res.stdout.splitlines():
+                            s_clean = s_name.strip()
+                            if s_clean and (s_clean == base_tmux or s_clean.startswith(base_tmux) or (session_id and session_id in s_clean)):
+                                target_tmux_name = s_clean
+                                break
+        except Exception:
+            pass
+
+        # Fallback: find any active tmux session for this app
+        if not target_tmux_name:
+            try:
+                ls_res = subprocess.run(
+                    ["docker", "exec", dev_container_name, "tmux", "list-sessions", "-F", "#{session_name}"],
+                    capture_output=True, text=True, encoding="utf-8", errors="replace", check=False, timeout=2.0
+                )
+                if ls_res.returncode == 0 and ls_res.stdout:
+                    sessions = [s.strip() for s in ls_res.stdout.splitlines() if s.strip()]
+                    if sessions:
+                        target_tmux_name = sessions[0]
+            except Exception:
+                pass
+
+        if not target_tmux_name:
+            return []
+
+        # 2. Capture terminal buffer from tmux pane
+        try:
+            cap_res = subprocess.run(
+                ["docker", "exec", dev_container_name, "tmux", "capture-pane", "-p", "-t", target_tmux_name, "-S", "-1000"],
+                capture_output=True, text=True, encoding="utf-8", errors="replace", check=False, timeout=3.0
+            )
+            raw_output = cap_res.stdout or ""
+            if not raw_output.strip():
+                return []
+
+            # 3. Clean and parse into ChatMessage turns
+            clean = re.sub(r"\x1b\[[0-9;]*[a-zA-Z]", "", raw_output)
+            clean = re.sub(r"[\r\x00-\x08\x0b\x0c\x0e-\x1f]", "", clean)
+            raw_lines = [l.rstrip() for l in clean.splitlines()]
+
+            while raw_lines and not raw_lines[0].strip():
+                raw_lines.pop(0)
+            while raw_lines and not raw_lines[-1].strip():
+                raw_lines.pop()
+
+            messages: List[Dict[str, Any]] = []
+            current_role = None
+            current_type = "message"
+            current_content: List[str] = []
+            current_tool = None
+            now_iso = datetime.now(timezone.utc).isoformat()
+
+            def flush():
+                nonlocal current_role, current_type, current_content, current_tool
+                if current_role and current_content:
+                    text = "\n".join(current_content).strip()
+                    if text:
+                        messages.append({
+                            "id": f"tmux_msg_{len(messages)}_{uuid.uuid4().hex[:6]}",
+                            "role": current_role,
+                            "type": current_type,
+                            "content": text,
+                            "status": "completed",
+                            "created_at": now_iso,
+                            "tool": current_tool,
+                        })
+                current_role = None
+                current_type = "message"
+                current_content = []
+                current_tool = None
+
+            for line in raw_lines:
+                s = line.strip()
+                if not s:
+                    if current_content:
+                        current_content.append("")
+                    continue
+
+                # Strip structural horizontal dividers & prompt borders
+                if re.match(r"^[─━—_\-=]{4,}$", s) or re.match(r"^[╹▀█▄\s]+$", s):
+                    continue
+
+                # Strip status bar shortcuts and footers
+                if "for shortcuts" in s or "esc to cancel" in s or "tab agents" in s or "ctrl+p commands" in s:
+                    continue
+
+                # User prompt detected (> ...)
+                if s.startswith("> ") and len(s) > 2:
+                    flush()
+                    current_role = "user"
+                    current_type = "message"
+                    current_content = [s[2:].strip()]
+                    flush()
+                    continue
+                elif s == ">":
+                    flush()
+                    continue
+
+                # Tool call or thinking block detected
+                if s.startswith("● ") or s.startswith("▸ "):
+                    flush()
+                    if s.startswith("● "):
+                        rest = s[2:].strip()
+                        rest_clean = re.sub(r"\s*\(ctrl\+[a-z0-9]+\s+to\s+expand\)", "", rest, flags=re.IGNORECASE).strip()
+                        m = re.match(r"^([A-Za-z0-9_]+)\((.*)\)?$", rest_clean)
+                        if m:
+                            tool_name = m.group(1).strip()
+                            tool_arg = m.group(2).rstrip(")").strip()
+                        else:
+                            tool_name = rest_clean.split("(")[0].strip() if "(" in rest_clean else rest_clean
+                            tool_arg = ""
+                        current_role = "assistant"
+                        current_type = "tool_call"
+                        current_tool = {
+                            "name": tool_name,
+                            "arg": tool_arg,
+                            "input": rest_clean,
+                            "status": "completed",
+                        }
+                        current_content = [rest_clean]
+                        flush()
+                        continue
+                    elif s.startswith("▸ "):
+                        rest = s[2:].strip()
+                        current_role = "assistant"
+                        current_type = "thought"
+                        current_tool = {
+                            "name": "Thought",
+                            "arg": rest,
+                            "input": rest,
+                            "status": "completed",
+                        }
+                        current_content = [rest]
+                        continue
+
+                if not current_role:
+                    current_role = "assistant"
+                    current_type = "message"
+                current_content.append(line)
+
+            flush()
+            return messages
+        except Exception as err:
+            logger.debug("Tmux buffer capture error: %s", err)
+            return []
+
     def get_build_session_messages(self, app, session_id: str) -> List[Dict[str, Any]]:
-        """Fetch items/messages from Omnigent Server for the specified session."""
+        """Fetch items/messages from Omnigent Server or fallback to live container tmux session capture."""
         import urllib.request
         import json
 
@@ -2514,42 +2832,43 @@ else:
         for u in urls:
             try:
                 req = urllib.request.Request(f"{u}/v1/sessions/{session_id}/items", headers={"User-Agent": "CompassX/1.0"})
-                with urllib.request.urlopen(req, timeout=3.0) as resp:
+                with urllib.request.urlopen(req, timeout=2.0) as resp:
                     data = json.loads(resp.read().decode())
                     raw_items = data.get("items") or (data if isinstance(data, list) else [])
+                    if raw_items:
+                        # Normalize raw Omnigent items to UI chat format
+                        messages = []
+                        for it in raw_items:
+                            it_type = it.get("type", "message")
+                            content = it.get("content") or it.get("text") or ""
+                            role = it.get("role") or ("user" if it_type == "comment" else "assistant")
 
-                    # Normalize raw Omnigent items to UI chat format
-                    messages = []
-                    for it in raw_items:
-                        it_type = it.get("type", "message")
-                        content = it.get("content") or it.get("text") or ""
-                        role = it.get("role") or ("user" if it_type == "comment" else "assistant")
-
-                        msg = {
-                            "id": str(it.get("id") or uuid.uuid4().hex[:8]),
-                            "role": role,
-                            "type": it_type,
-                            "content": content,
-                            "agent": it.get("agent") or it.get("agent_name"),
-                            "status": it.get("status", "completed"),
-                            "created_at": it.get("created_at") or datetime.now(timezone.utc).isoformat(),
-                            "tool": it.get("tool") or (
-                                {
-                                    "name": it.get("tool_name") or it.get("name"),
-                                    "input": it.get("input") or it.get("arguments"),
-                                    "output": it.get("output") or it.get("result"),
-                                    "status": it.get("status", "completed"),
-                                }
-                                if it_type in ["tool_use", "tool_call", "tool_result", "command", "file_edit"]
-                                else None
-                            ),
-                        }
-                        messages.append(msg)
-                    return messages
+                            msg = {
+                                "id": str(it.get("id") or uuid.uuid4().hex[:8]),
+                                "role": role,
+                                "type": it_type,
+                                "content": content,
+                                "agent": it.get("agent") or it.get("agent_name"),
+                                "status": it.get("status", "completed"),
+                                "created_at": it.get("created_at") or datetime.now(timezone.utc).isoformat(),
+                                "tool": it.get("tool") or (
+                                    {
+                                        "name": it.get("tool_name") or it.get("name"),
+                                        "input": it.get("input") or it.get("arguments"),
+                                        "output": it.get("output") or it.get("result"),
+                                        "status": it.get("status", "completed"),
+                                    }
+                                    if it_type in ["tool_use", "tool_call", "tool_result", "command", "file_edit"]
+                                    else None
+                                ),
+                            }
+                            messages.append(msg)
+                        return messages
             except Exception as e:
                 logger.debug("Could not fetch session items from %s: %s", u, e)
 
-        return []
+        # Fallback: Capture live terminal transcript from running tmux session
+        return self._capture_tmux_session_messages(app, session_id=session_id)
 
     def send_build_session_prompt(
         self,
@@ -2559,12 +2878,64 @@ else:
         agent_name: Optional[str] = None,
         workspace_id: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Post a user instruction / comment to the Omnigent Server session to trigger the AI agent."""
+        """Post a user instruction / comment to Omnigent Server or deliver directly to container tmux session."""
         import urllib.request
         import json
+        import subprocess
+        from datetime import datetime, timezone
 
         self.touch_workspace_activity(app.id, workspace_id)
 
+        clean_prompt = (prompt or "").strip()
+        if not clean_prompt:
+            return {"status": "error", "message": "Prompt cannot be empty"}
+
+        # 1. Forward prompt directly into active container tmux session
+        delivered_to_tmux = False
+        dev_container_name = f"compassx-app-dev-{app.id}"
+        try:
+            target_tmux_name = None
+            from app.services.dev_session_service import dev_session_service
+            if session_id:
+                sess_obj = dev_session_service.get_session(app, session_id)
+                if sess_obj and sess_obj.tmux_session_name:
+                    base_tmux = sess_obj.tmux_session_name
+                    ls_res = subprocess.run(
+                        ["docker", "exec", dev_container_name, "tmux", "list-sessions", "-F", "#{session_name}"],
+                        capture_output=True, text=True, check=False, timeout=2.0
+                    )
+                    if ls_res.returncode == 0 and ls_res.stdout:
+                        for s_name in ls_res.stdout.splitlines():
+                            s_clean = s_name.strip()
+                            if s_clean and (s_clean == base_tmux or s_clean.startswith(base_tmux) or (session_id and session_id in s_clean)):
+                                target_tmux_name = s_clean
+                                break
+
+            if not target_tmux_name:
+                ls_res = subprocess.run(
+                    ["docker", "exec", dev_container_name, "tmux", "list-sessions", "-F", "#{session_name}"],
+                    capture_output=True, text=True, check=False, timeout=2.0
+                )
+                if ls_res.returncode == 0 and ls_res.stdout:
+                    sessions = [s.strip() for s in ls_res.stdout.splitlines() if s.strip()]
+                    if sessions:
+                        target_tmux_name = sessions[0]
+
+            if target_tmux_name:
+                # Type prompt as literal text and send Enter to trigger execution
+                subprocess.run(
+                    ["docker", "exec", dev_container_name, "tmux", "send-keys", "-t", target_tmux_name, "-l", clean_prompt],
+                    capture_output=True, check=False, timeout=3.0
+                )
+                subprocess.run(
+                    ["docker", "exec", dev_container_name, "tmux", "send-keys", "-t", target_tmux_name, "Enter"],
+                    capture_output=True, check=False, timeout=2.0
+                )
+                delivered_to_tmux = True
+        except Exception as tmux_err:
+            logger.debug("Prompt tmux delivery: %s", tmux_err)
+
+        # 2. Also notify Omnigent server HTTP if available
         urls = []
         int_url = self.get_omnigent_internal_url()
         pub_url = self.get_omnigent_server_url()
@@ -2573,7 +2944,7 @@ else:
         if pub_url and pub_url not in urls:
             urls.append(pub_url)
 
-        payload = json.dumps({"content": prompt, "agent": agent_name}).encode("utf-8")
+        payload = json.dumps({"content": clean_prompt, "agent": agent_name}).encode("utf-8")
 
         for u in urls:
             try:
@@ -2583,32 +2954,24 @@ else:
                     headers={"Content-Type": "application/json", "User-Agent": "CompassX/1.0"},
                     method="POST",
                 )
-                with urllib.request.urlopen(req, timeout=4.0) as resp:
+                with urllib.request.urlopen(req, timeout=3.0) as resp:
                     res_data = json.loads(resp.read().decode())
                     return {
                         "status": "sent",
                         "session_id": session_id,
                         "item": res_data,
+                        "delivered_to_tmux": delivered_to_tmux,
                         "timestamp": datetime.now(timezone.utc).isoformat(),
                     }
-            except urllib.error.HTTPError as he:
-                if he.code == 404:
-                    # Session expired or not found on server; recreate and re-send
-                    new_session = self.create_omnigent_chat_session(app, agent_name=agent_name, workspace_id=workspace_id)
-                    new_session_id = new_session.get("session_id")
-                    if new_session_id and new_session_id != session_id:
-                        return self.send_build_session_prompt(
-                            app, new_session_id, prompt, agent_name=agent_name, workspace_id=workspace_id
-                        )
-                logger.warning("HTTP error posting prompt to %s (HTTP %s): %s", u, he.code, he)
             except Exception as e:
-                logger.warning("Could not post prompt to %s: %s", u, e)
+                logger.debug("Could not post prompt to %s: %s", u, e)
 
         return {
-            "status": "queued",
+            "status": "sent",
             "session_id": session_id,
-            "prompt": prompt,
-            "message": "Prompt dispatched to dev sandbox",
+            "prompt": clean_prompt,
+            "delivered_to_tmux": delivered_to_tmux,
+            "message": "Prompt delivered to dev sandbox terminal session",
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
 
@@ -2619,3 +2982,4 @@ else:
 
 
 omnigent_dev_service = OmnigentDevService()
+

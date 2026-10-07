@@ -959,11 +959,10 @@ class KubernetesDevDriver(BaseDevDriver):
         custom_img = (getattr(app, "config", None) or {}).get("dev_image") or (getattr(app, "config", None) or {}).get("image")
         if custom_img and ("/" in str(custom_img)):
             dev_host_image = str(custom_img)
-        elif host_type == "omnigent":
-            dev_host_image = "ghcr.io/omnigent-ai/omnigent-host:latest"
+        elif getattr(settings, "DEV_HOST_IMAGE", None) and ("/" in str(settings.DEV_HOST_IMAGE)):
+            dev_host_image = str(settings.DEV_HOST_IMAGE)
         else:
-            host_type = "compassx"
-            dev_host_image = getattr(settings, "DEV_HOST_IMAGE", None) or "compassx-host:latest"
+            dev_host_image = "ghcr.io/omnigent-ai/omnigent-host:latest"
 
         # If k8s client is available, provision Dev Pod, Service, and Ingress
         if k8s:
@@ -1233,6 +1232,7 @@ class KubernetesDevDriver(BaseDevDriver):
                     metadata=client.V1ObjectMeta(name=dev_name, namespace=ns, labels=labels),
                     spec=client.V1DeploymentSpec(
                         replicas=1,
+                        strategy=client.V1DeploymentStrategy(type="Recreate"),
                         selector=client.V1LabelSelector(match_labels={"compassx/app-id": clean_id, "compassx/dev": "true"}),
                         template=client.V1PodTemplateSpec(
                             metadata=client.V1ObjectMeta(labels=labels),

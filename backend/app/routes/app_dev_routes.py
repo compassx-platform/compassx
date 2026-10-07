@@ -577,36 +577,52 @@ def publish_dev_changes(
         return res
     except Exception as e:
         logger.exception("Failed to publish dev changes for app %s: %s", app.name, e)
-        raise HTTPException(status_code=500, detail=f"Publish failed: {str(e)}")
-
-
-@router.post("/workspaces/{workspace_id}/publish")
-def publish_workspace_changes(
+@router.get("/commits")
+def get_git_commits(
     app_id: str,
-    workspace_id: str,
-    body: Optional[PublishRequest] = None,
+    workspace_id: Optional[str] = Query(None),
+    workspace_name: Optional[str] = Query(None),
+    limit: Optional[int] = Query(50),
     db: Session = Depends(get_system_db),
     guard: Guard = Depends(get_guard),
 ):
-    """Commit and push changes for a specific workspace to its dedicated remote Git branch."""
+    """Retrieve Git commit history for the application workspace."""
     app = db.query(App).filter(App.id == app_id).first()
     if not app:
         raise HTTPException(status_code=404, detail=f"App '{app_id}' not found.")
+    if guard.workspace_id and app.workspace_id != guard.workspace_id:
+        raise HTTPException(status_code=403, detail="Cannot access app in another workspace.")
+    unified_reaper_service.touch_app_activity(app.id)
 
-    user_id = str(guard.principal.id) if guard.principal else "system"
-    commit_msg = body.commit_message if body else None
-    try:
-        unified_reaper_service.touch_app_activity(app.id)
-        res = omnigent_dev_service.publish_dev_changes(
-            app,
-            commit_message=commit_msg,
-            user_id=user_id,
-            workspace_id=workspace_id,
-        )
-        return res
-    except Exception as e:
-        logger.exception("Failed to publish workspace %s changes for app %s: %s", workspace_id, app.name, e)
-        raise HTTPException(status_code=500, detail=f"Publish failed: {str(e)}")
+    return omnigent_dev_service.get_git_commits(
+        app=app,
+        workspace_id=workspace_id,
+        workspace_name=workspace_name,
+        limit=limit or 50,
+    )
+
+
+@router.get("/workspaces/{workspace_id}/commits")
+def get_workspace_git_commits(
+    app_id: str,
+    workspace_id: str,
+    limit: Optional[int] = Query(50),
+    db: Session = Depends(get_system_db),
+    guard: Guard = Depends(get_guard),
+):
+    """Retrieve Git commit history for a specific workspace."""
+    app = db.query(App).filter(App.id == app_id).first()
+    if not app:
+        raise HTTPException(status_code=404, detail=f"App '{app_id}' not found.")
+    if guard.workspace_id and app.workspace_id != guard.workspace_id:
+        raise HTTPException(status_code=403, detail="Cannot access app in another workspace.")
+    unified_reaper_service.touch_app_activity(app.id)
+
+    return omnigent_dev_service.get_git_commits(
+        app=app,
+        workspace_id=workspace_id,
+        limit=limit or 50,
+    )
 
 
 @router.get("/omnigent/agents")

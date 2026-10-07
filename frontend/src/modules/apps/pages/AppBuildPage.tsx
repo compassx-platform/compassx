@@ -23,6 +23,8 @@ import {
   Sparkles,
   History,
   SquarePen,
+  Bot,
+  Check,
 } from 'lucide-react';
 import { useScopedNavigate } from '@/lib/appNavigation';
 import { useToast } from '@/lib/toast';
@@ -49,6 +51,7 @@ import {
   type DevWorkspace,
 } from '../hooks/useApps';
 import { DevTerminal } from '../components/DevTerminal';
+import { OmnigentChatPanel } from '../components/build/OmnigentChatPanel';
 import { SessionHistoryPopover } from '../components/build/SessionHistoryPopover';
 import { CompassXLogo } from '@/components/common/CompassXLogo';
 import { useNewShellHotkey } from '../hooks/useNewShellHotkey';
@@ -325,6 +328,7 @@ export default function AppBuildPage() {
 
   const [isNewSessionModalOpen, setIsNewSessionModalOpen] = useState(false);
   const [isSwitchingSession, setIsSwitchingSession] = useState(false);
+  const [leftPanelMode, setLeftPanelMode] = useState<'terminal' | 'chat' | 'split'>('terminal');
 
   // Auto-select first session if none selected or selected was deleted
   useEffect(() => {
@@ -1535,8 +1539,8 @@ export default function AppBuildPage() {
                   </div>
                 </div>
 
-                {/* Right: Quick Action Buttons (History, New Session, More Options) */}
-                <div style={{ display: 'flex', alignItems: 'center', gap: 2, flexShrink: 0 }}>
+                {/* Right: Quick Action Buttons & More Menu */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
                   {/* 1. Session History Popover Trigger */}
                   <div style={{ position: 'relative' }}>
                     <button
@@ -1688,17 +1692,130 @@ export default function AppBuildPage() {
                             top: '100%',
                             marginTop: 4,
                             zIndex: 50,
-                            width: 190,
+                            width: 200,
                             background: '#ffffff',
-                            borderRadius: 6,
+                            borderRadius: 8,
                             border: '1px solid #e2e8f0',
-                            boxShadow: '0 4px 12px rgba(0, 0, 0, 0.08)',
-                            padding: 4,
+                            boxShadow: '0 4px 16px rgba(0, 0, 0, 0.08)',
+                            padding: 5,
                             display: 'flex',
                             flexDirection: 'column',
-                            gap: 1,
+                            gap: 2,
                           }}
                         >
+                          {/* View Mode Section */}
+                          <div style={{ padding: '4px 8px 2px 8px', fontSize: '0.66rem', fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                            View Mode
+                          </div>
+
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setIsMoreMenuOpen(false);
+                              setLeftPanelMode('terminal');
+                            }}
+                            style={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'space-between',
+                              width: '100%',
+                              padding: '6px 8px',
+                              borderRadius: 5,
+                              border: 'none',
+                              background: leftPanelMode === 'terminal' ? '#f0fdf4' : 'transparent',
+                              color: leftPanelMode === 'terminal' ? '#166534' : '#1e293b',
+                              fontSize: '0.78rem',
+                              textAlign: 'left',
+                              cursor: 'pointer',
+                              transition: 'background 0.12s ease',
+                            }}
+                            onMouseEnter={(e) => {
+                              if (leftPanelMode !== 'terminal') e.currentTarget.style.background = '#f1f5f9';
+                            }}
+                            onMouseLeave={(e) => {
+                              if (leftPanelMode !== 'terminal') e.currentTarget.style.background = 'transparent';
+                            }}
+                          >
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                              <Terminal size={14} color={leftPanelMode === 'terminal' ? '#16a34a' : '#64748b'} />
+                              <span style={{ fontWeight: leftPanelMode === 'terminal' ? 600 : 500 }}>Terminal</span>
+                            </div>
+                            {leftPanelMode === 'terminal' && <Check size={14} color="#16a34a" />}
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setIsMoreMenuOpen(false);
+                              setLeftPanelMode('chat');
+                            }}
+                            style={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'space-between',
+                              width: '100%',
+                              padding: '6px 8px',
+                              borderRadius: 5,
+                              border: 'none',
+                              background: leftPanelMode === 'chat' ? '#eef2ff' : 'transparent',
+                              color: leftPanelMode === 'chat' ? '#4338ca' : '#1e293b',
+                              fontSize: '0.78rem',
+                              textAlign: 'left',
+                              cursor: 'pointer',
+                              transition: 'background 0.12s ease',
+                            }}
+                            onMouseEnter={(e) => {
+                              if (leftPanelMode !== 'chat') e.currentTarget.style.background = '#f1f5f9';
+                            }}
+                            onMouseLeave={(e) => {
+                              if (leftPanelMode !== 'chat') e.currentTarget.style.background = 'transparent';
+                            }}
+                          >
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                              <Bot size={14} color={leftPanelMode === 'chat' ? '#6366f1' : '#64748b'} />
+                              <span style={{ fontWeight: leftPanelMode === 'chat' ? 600 : 500 }}>Chat UI</span>
+                            </div>
+                            {leftPanelMode === 'chat' && <Check size={14} color="#6366f1" />}
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setIsMoreMenuOpen(false);
+                              setLeftPanelMode('split');
+                            }}
+                            style={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'space-between',
+                              width: '100%',
+                              padding: '6px 8px',
+                              borderRadius: 5,
+                              border: 'none',
+                              background: leftPanelMode === 'split' ? '#f5f3ff' : 'transparent',
+                              color: leftPanelMode === 'split' ? '#6d28d9' : '#1e293b',
+                              fontSize: '0.78rem',
+                              textAlign: 'left',
+                              cursor: 'pointer',
+                              transition: 'background 0.12s ease',
+                            }}
+                            onMouseEnter={(e) => {
+                              if (leftPanelMode !== 'split') e.currentTarget.style.background = '#f1f5f9';
+                            }}
+                            onMouseLeave={(e) => {
+                              if (leftPanelMode !== 'split') e.currentTarget.style.background = 'transparent';
+                            }}
+                          >
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                              <Layers size={14} color={leftPanelMode === 'split' ? '#8b5cf6' : '#64748b'} />
+                              <span style={{ fontWeight: leftPanelMode === 'split' ? 600 : 500 }}>Split (Dual)</span>
+                            </div>
+                            {leftPanelMode === 'split' && <Check size={14} color="#8b5cf6" />}
+                          </button>
+
+                          <div style={{ height: 1, background: '#e2e8f0', margin: '4px 0' }} />
+
+                          {/* Sandbox Actions */}
                           <button
                             type="button"
                             onClick={() => {
@@ -1711,8 +1828,8 @@ export default function AppBuildPage() {
                               alignItems: 'center',
                               gap: 8,
                               width: '100%',
-                              padding: '6px 10px',
-                              borderRadius: 4,
+                              padding: '6px 8px',
+                              borderRadius: 5,
                               border: 'none',
                               background: 'transparent',
                               color: '#1e293b',
@@ -1748,8 +1865,8 @@ export default function AppBuildPage() {
                               alignItems: 'center',
                               gap: 8,
                               width: '100%',
-                              padding: '6px 10px',
-                              borderRadius: 4,
+                              padding: '6px 8px',
+                              borderRadius: 5,
                               border: 'none',
                               background: 'transparent',
                               color: '#1e293b',
@@ -1776,7 +1893,7 @@ export default function AppBuildPage() {
                 </div>
               </div>
 
-              {/* Main Left Content: DevTerminal (occupies 100% of left column) */}
+              {/* Main Left Content: DevTerminal or OmnigentChatPanel depending on leftPanelMode */}
               <div
                 style={{
                   flex: 1,
@@ -1785,24 +1902,49 @@ export default function AppBuildPage() {
                   display: 'flex',
                   flexDirection: 'column',
                   overflow: 'hidden',
-                  background: '#000000',
+                  background: '#ffffff',
                 }}
               >
-                <div style={{ flex: 1, minHeight: 0, overflow: 'hidden', background: '#000000' }}>
-                  <DevTerminal
-                    appId={resolvedAppId!}
-                    appName={app?.name || 'app'}
-                    workspaceId={activeWorkspace?.id || devStatus?.workspace_id}
-                    workspaceName={activeWorkspace?.name || devStatus?.workspace_name}
-                    isDevPodRunning={isContainerRunning}
-                    agent={currentAgent}
-                    sessionId={activeSession?.id}
-                    sessionTitle={activeSession?.title}
-                    isSwitchingSession={isSwitchingSession || isSwitchingSandbox}
-                    onSessionReady={() => setIsSwitchingSession(false)}
-                    fullHeight={true}
-                  />
-                </div>
+                {leftPanelMode === 'terminal' ? (
+                  <div style={{ flex: 1, minHeight: 0, overflow: 'hidden', background: '#ffffff' }}>
+                    <DevTerminal
+                      appId={resolvedAppId!}
+                      appName={app?.name || 'app'}
+                      workspaceId={activeWorkspace?.id || devStatus?.workspace_id}
+                      workspaceName={activeWorkspace?.name || devStatus?.workspace_name}
+                      isDevPodRunning={isContainerRunning}
+                      agent={currentAgent}
+                      sessionId={activeSession?.id}
+                      sessionTitle={activeSession?.title}
+                      isSwitchingSession={isSwitchingSession || isSwitchingSandbox}
+                      onSessionReady={() => setIsSwitchingSession(false)}
+                      fullHeight={true}
+                    />
+                  </div>
+                ) : (
+                  <div style={{ flex: 1, minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+                    <OmnigentChatPanel
+                      app={app || ({ id: resolvedAppId, name: 'CompassX App' } as any)}
+                      resolvedAppId={resolvedAppId!}
+                      devStatus={devStatus}
+                      isDevPodRunning={isContainerRunning}
+                      showHeader={false}
+                      viewMode={leftPanelMode === 'split' ? 'split' : 'chat'}
+                      onViewModeChange={(m) => setLeftPanelMode(m === 'cli' ? 'terminal' : m)}
+                      agentName={currentAgent}
+                      sessionId={activeSession?.id}
+                      sessionTitle={activeSession?.title}
+                      workspaceId={activeWorkspace?.id || devStatus?.workspace_id}
+                      workspaceName={activeWorkspace?.name || devStatus?.workspace_name}
+                      onCodeUpdated={() => {
+                        qc.invalidateQueries({ queryKey: ['app-dev-files', resolvedAppId] });
+                        qc.invalidateQueries({ queryKey: ['app-dev-file-content', resolvedAppId] });
+                        qc.invalidateQueries({ queryKey: ['apps', resolvedAppId, 'dev', 'commits'] });
+                        setPreviewReloadKey(Date.now());
+                      }}
+                    />
+                  </div>
+                )}
               </div>
             </div>
 
@@ -1868,6 +2010,9 @@ export default function AppBuildPage() {
                 isOutputCollapsed={isOutputCollapsed}
                 onToggleOutputCollapsed={() => setIsOutputCollapsed((prev) => !prev)}
                 disabled={!isContainerRunning}
+                appId={resolvedAppId}
+                workspaceId={activeWorkspace?.id || devStatus?.workspace_id}
+                workspaceName={activeWorkspace?.name || devStatus?.workspace_name}
               />
 
               {/* Main Top Canvas (Preview or Code) */}

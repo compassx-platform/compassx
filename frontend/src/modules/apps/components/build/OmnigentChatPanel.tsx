@@ -8,6 +8,7 @@ import {
   Trash2,
   Terminal as TerminalIcon,
   FileCode,
+  FileText,
   CheckCircle2,
   XCircle,
   ChevronDown,
@@ -29,6 +30,8 @@ import {
   TerminalSquare,
   Flame,
   ShieldCheck,
+  Wrench,
+  MoreVertical,
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -45,16 +48,24 @@ import {
 import { DevTerminal } from '../DevTerminal';
 import { useToast } from '@/lib/toast';
 
-interface OmnigentChatPanelProps {
+export interface OmnigentChatPanelProps {
   app: AppItem;
   resolvedAppId: string;
   session?: OmnigentSession;
   devStatus?: DevSessionStatus;
   isDevPodRunning: boolean;
   onCodeUpdated?: () => void;
+  viewMode?: StudioViewMode;
+  onViewModeChange?: (mode: StudioViewMode) => void;
+  showHeader?: boolean;
+  agentName?: string;
+  sessionId?: string;
+  sessionTitle?: string;
+  workspaceId?: string;
+  workspaceName?: string;
 }
 
-type StudioViewMode = 'chat' | 'cli' | 'split';
+export type StudioViewMode = 'chat' | 'cli' | 'split';
 
 const DEFAULT_AGENTS: OmnigentAgent[] = [
   {
@@ -171,12 +182,28 @@ export function OmnigentChatPanel({
   devStatus,
   isDevPodRunning,
   onCodeUpdated,
+  viewMode: propViewMode,
+  onViewModeChange,
+  showHeader = true,
+  agentName,
+  sessionId: propSessionId,
+  sessionTitle,
+  workspaceId: propWorkspaceId,
+  workspaceName: propWorkspaceName,
 }: OmnigentChatPanelProps) {
   const toast = useToast();
   const [promptText, setPromptText] = useState('');
-  const [selectedAgentName, setSelectedAgentName] = useState('claude-code');
-  const [viewMode, setViewMode] = useState<StudioViewMode>('chat');
+  const [selectedAgentName, setSelectedAgentName] = useState(agentName || 'claude-code');
+  const [internalViewMode, setInternalViewMode] = useState<StudioViewMode>('chat');
+  const viewMode = propViewMode ?? internalViewMode;
+
+  const setViewMode = (m: StudioViewMode) => {
+    setInternalViewMode(m);
+    onViewModeChange?.(m);
+  };
+
   const [isAgentModalOpen, setIsAgentModalOpen] = useState(false);
+  const [isMoreMenuOpen, setIsMoreMenuOpen] = useState(false);
   const [agentSearchQuery, setAgentSearchQuery] = useState('');
 
   const [expandedTools, setExpandedTools] = useState<Record<string, boolean>>({});
@@ -186,6 +213,12 @@ export function OmnigentChatPanel({
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    if (agentName) {
+      setSelectedAgentName(agentName);
+    }
+  }, [agentName]);
 
   const { data: serverAgents = [] } = useOmnigentAgents(resolvedAppId);
   const allAgents: OmnigentAgent[] = useMemo(() => {
@@ -219,12 +252,14 @@ export function OmnigentChatPanel({
     );
   }, [allAgents, agentSearchQuery]);
 
-  const sessionId = session?.session_id;
+  const resolvedSessionId = propSessionId || session?.session_id;
+  const resolvedWorkspaceId = propWorkspaceId || session?.workspace_id || devStatus?.workspace_id;
+  const resolvedWorkspaceName = propWorkspaceName || session?.workspace_name || devStatus?.workspace_name;
 
   const {
     data: serverMessages = [],
     refetch: refetchMessages,
-  } = useOmnigentMessages(resolvedAppId, sessionId, isSending);
+  } = useOmnigentMessages(resolvedAppId, resolvedSessionId, isSending);
 
   const sendPromptMutation = useSendOmnigentPrompt();
   const clearSessionMutation = useClearOmnigentSession();
@@ -235,6 +270,15 @@ export function OmnigentChatPanel({
     }
     return serverMessages;
   }, [serverMessages, optimisticMessages]);
+
+  const prevToolCallCountRef = useRef<number>(0);
+  useEffect(() => {
+    const currentToolCalls = allMessages.filter((m) => m.type === 'tool_call' || !!m.tool).length;
+    if (currentToolCalls > prevToolCallCountRef.current) {
+      prevToolCallCountRef.current = currentToolCalls;
+      onCodeUpdated?.();
+    }
+  }, [allMessages, onCodeUpdated]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -266,9 +310,9 @@ export function OmnigentChatPanel({
       await sendPromptMutation.mutateAsync({
         appId: resolvedAppId,
         prompt: finalPrompt,
-        sessionId,
+        sessionId: resolvedSessionId,
         agentName: activeAgent.name,
-        workspaceId: session?.workspace_id,
+        workspaceId: resolvedWorkspaceId,
       });
 
       refetchMessages();
@@ -297,8 +341,8 @@ export function OmnigentChatPanel({
     try {
       await clearSessionMutation.mutateAsync({
         appId: resolvedAppId,
-        workspaceId: session?.workspace_id,
-        sessionId,
+        workspaceId: resolvedWorkspaceId,
+        sessionId: resolvedSessionId,
       });
       setOptimisticMessages([]);
       toast.success('Conversation history cleared.');
@@ -318,6 +362,66 @@ export function OmnigentChatPanel({
     toast.success('Code snippet copied to clipboard');
   }
 
+  function getToolBadge(toolName: string) {
+    const norm = (toolName || '').toLowerCase();
+    if (norm.includes('bash') || norm.includes('command') || norm.includes('exec') || norm.includes('terminal')) {
+      return { label: 'Bash', bg: '#eff6ff', color: '#0284c7', border: '#bfdbfe', icon: TerminalIcon };
+    }
+    if (norm.includes('edit') || norm.includes('patch') || norm.includes('write')) {
+      return { label: 'Edit', bg: '#fef3c7', color: '#d97706', border: '#fde68a', icon: FileCode };
+    }
+    if (norm.includes('read') || norm.includes('view') || norm.includes('cat')) {
+      return { label: 'Read', bg: '#f1f5f9', color: '#475569', border: '#e2e8f0', icon: FileText };
+    }
+    if (norm.includes('search') || norm.includes('grep') || norm.includes('find')) {
+      return { label: 'Search', bg: '#f5f3ff', color: '#7c3aed', border: '#ddd6fe', icon: Search };
+    }
+    if (norm.includes('thought') || norm.includes('think')) {
+      return { label: 'Thought', bg: '#fdf2f8', color: '#db2777', border: '#fbcfe8', icon: Sparkles };
+    }
+    return { label: toolName || 'Tool', bg: '#f1f5f9', color: '#0f172a', border: '#e2e8f0', icon: Wrench };
+  }
+
+  type RenderGroupItem =
+    | { type: 'user'; message: ChatMessage; id: string }
+    | { type: 'assistant'; message: ChatMessage; id: string }
+    | { type: 'tool_group'; tools: ChatMessage[]; id: string };
+
+  const groupedItems: RenderGroupItem[] = useMemo(() => {
+    const items: RenderGroupItem[] = [];
+    let currentToolBatch: ChatMessage[] = [];
+
+    const flushTools = () => {
+      if (currentToolBatch.length > 0) {
+        items.push({
+          type: 'tool_group',
+          tools: [...currentToolBatch],
+          id: `tool_group_${currentToolBatch[0].id || items.length}`,
+        });
+        currentToolBatch = [];
+      }
+    };
+
+    for (let i = 0; i < allMessages.length; i++) {
+      const msg = allMessages[i];
+      const isTool = msg.type === 'tool_call' || msg.type === 'tool_result' || msg.type === 'thought' || !!msg.tool;
+
+      if (isTool) {
+        currentToolBatch.push(msg);
+      } else {
+        flushTools();
+        if (msg.role === 'user') {
+          items.push({ type: 'user', message: msg, id: msg.id || `user_${i}` });
+        } else {
+          items.push({ type: 'assistant', message: msg, id: msg.id || `asst_${i}` });
+        }
+      }
+    }
+
+    flushTools();
+    return items;
+  }, [allMessages]);
+
   const quickPromptsForCurrentAgent =
     AGENT_PROMPTS[activeAgent.name] || AGENT_PROMPTS['polly'];
 
@@ -328,27 +432,28 @@ export function OmnigentChatPanel({
         flexDirection: 'column',
         height: '100%',
         width: '100%',
-        background: '#0b0f19',
-        color: '#f1f5f9',
+        background: '#ffffff',
+        color: '#0f172a',
         overflow: 'hidden',
         position: 'relative',
       }}
     >
       {/* Top Header Bar: Agent Selector & View Mode Switcher */}
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          padding: '8px 14px',
-          background: '#131c2e',
-          borderBottom: '1px solid #1e293b',
-          gap: 10,
-          minHeight: 46,
-          flexWrap: 'wrap',
-          zIndex: 20,
-        }}
-      >
+      {showHeader && (
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            padding: '8px 14px',
+            background: '#ffffff',
+            borderBottom: '1px solid #e2e8f0',
+            gap: 10,
+            minHeight: 46,
+            flexWrap: 'wrap',
+            zIndex: 20,
+          }}
+        >
         {/* Left: Active Agent Trigger Button */}
         <button
           onClick={() => setIsAgentModalOpen(true)}
@@ -359,9 +464,9 @@ export function OmnigentChatPanel({
             gap: 8,
             padding: '4px 10px',
             borderRadius: 8,
-            background: '#0f172a',
-            border: `1px solid ${activeAgent.color || '#6366f1'}50`,
-            color: '#f8fafc',
+            background: '#f8fafc',
+            border: `1px solid ${activeAgent.color || '#6366f1'}40`,
+            color: '#0f172a',
             cursor: 'pointer',
             transition: 'all 0.15s ease',
           }}
@@ -392,7 +497,7 @@ export function OmnigentChatPanel({
           </div>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            <span style={{ fontSize: '0.82rem', fontWeight: 700, color: '#f8fafc' }}>
+            <span style={{ fontSize: '0.82rem', fontWeight: 700, color: '#0f172a' }}>
               {activeAgent.display_name || activeAgent.name}
             </span>
             <span
@@ -400,8 +505,8 @@ export function OmnigentChatPanel({
                 fontSize: '0.66rem',
                 padding: '1px 6px',
                 borderRadius: 4,
-                background: 'rgba(255,255,255,0.08)',
-                color: '#94a3b8',
+                background: '#f1f5f9',
+                color: '#64748b',
                 fontWeight: 600,
               }}
             >
@@ -409,101 +514,177 @@ export function OmnigentChatPanel({
             </span>
           </div>
 
-          <ChevronDown size={14} color="#94a3b8" />
+          <ChevronDown size={14} color="#64748b" />
         </button>
 
-        {/* Center/Right: View Mode Switcher (Chat vs. CLI vs. Split) */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 2, background: '#090d16', padding: '2px', borderRadius: 8 }}>
+        {/* Right: Actions & Three Dot Dropdown Menu */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <div style={{ position: 'relative' }}>
             <button
-              onClick={() => setViewMode('chat')}
-              title="AI Conversational Chat UI"
+              onClick={() => setIsMoreMenuOpen((prev) => !prev)}
+              title="More options"
               style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: 4,
-                padding: '4px 8px',
+                width: 28,
+                height: 28,
                 borderRadius: 6,
-                border: 'none',
-                background: viewMode === 'chat' ? '#3b82f6' : 'transparent',
-                color: viewMode === 'chat' ? '#ffffff' : '#94a3b8',
-                fontSize: '0.72rem',
-                fontWeight: 600,
+                border: '1px solid #e2e8f0',
+                background: isMoreMenuOpen ? '#e0f2fe' : '#ffffff',
+                color: isMoreMenuOpen ? '#0284c7' : '#64748b',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
                 cursor: 'pointer',
                 transition: 'all 0.15s ease',
               }}
             >
-              <Bot size={13} />
-              <span>Chat AI</span>
+              <MoreVertical size={15} />
             </button>
 
-            <button
-              onClick={() => setViewMode('cli')}
-              title="Omnigent Terminal / CLI UI Mode"
-              style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: 4,
-                padding: '4px 8px',
-                borderRadius: 6,
-                border: 'none',
-                background: viewMode === 'cli' ? '#3b82f6' : 'transparent',
-                color: viewMode === 'cli' ? '#ffffff' : '#94a3b8',
-                fontSize: '0.72rem',
-                fontWeight: 600,
-                cursor: 'pointer',
-                transition: 'all 0.15s ease',
-              }}
-            >
-              <TerminalIcon size={13} />
-              <span>CLI UI</span>
-            </button>
+            {isMoreMenuOpen && (
+              <>
+                <div
+                  style={{ position: 'fixed', inset: 0, zIndex: 45 }}
+                  onClick={() => setIsMoreMenuOpen(false)}
+                />
+                <div
+                  style={{
+                    position: 'absolute',
+                    right: 0,
+                    top: '100%',
+                    marginTop: 4,
+                    zIndex: 50,
+                    width: 190,
+                    background: '#ffffff',
+                    borderRadius: 8,
+                    border: '1px solid #e2e8f0',
+                    boxShadow: '0 4px 16px rgba(0, 0, 0, 0.08)',
+                    padding: 5,
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 2,
+                  }}
+                >
+                  <div style={{ padding: '4px 8px 2px 8px', fontSize: '0.66rem', fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                    View Mode
+                  </div>
 
-            <button
-              onClick={() => setViewMode('split')}
-              title="Dual Stack: Chat + CLI Terminal Split"
-              style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: 4,
-                padding: '4px 8px',
-                borderRadius: 6,
-                border: 'none',
-                background: viewMode === 'split' ? '#3b82f6' : 'transparent',
-                color: viewMode === 'split' ? '#ffffff' : '#94a3b8',
-                fontSize: '0.72rem',
-                fontWeight: 600,
-                cursor: 'pointer',
-                transition: 'all 0.15s ease',
-              }}
-            >
-              <Layers size={13} />
-              <span>Dual</span>
-            </button>
+                  <button
+                    onClick={() => {
+                      setIsMoreMenuOpen(false);
+                      setViewMode('cli');
+                    }}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      width: '100%',
+                      padding: '6px 8px',
+                      borderRadius: 5,
+                      border: 'none',
+                      background: viewMode === 'cli' ? '#f0fdf4' : 'transparent',
+                      color: viewMode === 'cli' ? '#166534' : '#1e293b',
+                      fontSize: '0.78rem',
+                      textAlign: 'left',
+                      cursor: 'pointer',
+                      transition: 'background 0.12s ease',
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <TerminalIcon size={14} color={viewMode === 'cli' ? '#16a34a' : '#64748b'} />
+                      <span style={{ fontWeight: viewMode === 'cli' ? 600 : 500 }}>Terminal</span>
+                    </div>
+                    {viewMode === 'cli' && <Check size={14} color="#16a34a" />}
+                  </button>
+
+                  <button
+                    onClick={() => {
+                      setIsMoreMenuOpen(false);
+                      setViewMode('chat');
+                    }}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      width: '100%',
+                      padding: '6px 8px',
+                      borderRadius: 5,
+                      border: 'none',
+                      background: viewMode === 'chat' ? '#eef2ff' : 'transparent',
+                      color: viewMode === 'chat' ? '#4338ca' : '#1e293b',
+                      fontSize: '0.78rem',
+                      textAlign: 'left',
+                      cursor: 'pointer',
+                      transition: 'background 0.12s ease',
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <Bot size={14} color={viewMode === 'chat' ? '#6366f1' : '#64748b'} />
+                      <span style={{ fontWeight: viewMode === 'chat' ? 600 : 500 }}>Chat UI</span>
+                    </div>
+                    {viewMode === 'chat' && <Check size={14} color="#6366f1" />}
+                  </button>
+
+                  <button
+                    onClick={() => {
+                      setIsMoreMenuOpen(false);
+                      setViewMode('split');
+                    }}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      width: '100%',
+                      padding: '6px 8px',
+                      borderRadius: 5,
+                      border: 'none',
+                      background: viewMode === 'split' ? '#f5f3ff' : 'transparent',
+                      color: viewMode === 'split' ? '#6d28d9' : '#1e293b',
+                      fontSize: '0.78rem',
+                      textAlign: 'left',
+                      cursor: 'pointer',
+                      transition: 'background 0.12s ease',
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <Layers size={14} color={viewMode === 'split' ? '#8b5cf6' : '#64748b'} />
+                      <span style={{ fontWeight: viewMode === 'split' ? 600 : 500 }}>Split (Dual)</span>
+                    </div>
+                    {viewMode === 'split' && <Check size={14} color="#8b5cf6" />}
+                  </button>
+
+                  <div style={{ height: 1, background: '#e2e8f0', margin: '4px 0' }} />
+
+                  <button
+                    onClick={() => {
+                      setIsMoreMenuOpen(false);
+                      handleClearHistory();
+                    }}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 8,
+                      width: '100%',
+                      padding: '6px 8px',
+                      borderRadius: 5,
+                      border: 'none',
+                      background: 'transparent',
+                      color: '#dc2626',
+                      fontSize: '0.78rem',
+                      textAlign: 'left',
+                      cursor: 'pointer',
+                      transition: 'background 0.12s ease',
+                    }}
+                  >
+                    <Trash2 size={14} color="#dc2626" />
+                    <span style={{ fontWeight: 500 }}>Clear Chat History</span>
+                  </button>
+                </div>
+              </>
+            )}
           </div>
-
-          {/* Clear History Button */}
-          <button
-            onClick={handleClearHistory}
-            title="Clear Chat History"
-            style={{
-              background: '#0f172a',
-              border: '1px solid #1e293b',
-              borderRadius: 6,
-              color: '#94a3b8',
-              padding: '4px 8px',
-              display: 'flex',
-              alignItems: 'center',
-              gap: 4,
-              fontSize: '0.72rem',
-              cursor: 'pointer',
-            }}
-          >
-            <Trash2 size={12} />
-            <span>Clear</span>
-          </button>
         </div>
       </div>
+      )}
 
       {/* Main Studio Body (Chat / CLI / Split) */}
       <div
@@ -513,6 +694,7 @@ export function OmnigentChatPanel({
           flexDirection: 'column',
           overflow: 'hidden',
           position: 'relative',
+          background: '#ffffff',
         }}
       >
         {/* 1. CHAT UI MODE */}
@@ -523,7 +705,7 @@ export function OmnigentChatPanel({
               display: 'flex',
               flexDirection: 'column',
               overflow: 'hidden',
-              borderBottom: viewMode === 'split' ? '1px solid #334155' : 'none',
+              borderBottom: viewMode === 'split' ? '1px solid #e2e8f0' : 'none',
             }}
           >
             {/* Messages Transcript Scroll Area */}
@@ -535,6 +717,7 @@ export function OmnigentChatPanel({
                 display: 'flex',
                 flexDirection: 'column',
                 gap: 16,
+                background: '#f8fafc',
               }}
             >
               {allMessages.length === 0 ? (
@@ -557,8 +740,8 @@ export function OmnigentChatPanel({
                       width: 52,
                       height: 52,
                       borderRadius: 14,
-                      background: `linear-gradient(135deg, ${activeAgent.color || '#6366f1'}30 0%, ${activeAgent.color || '#6366f1'}15 100%)`,
-                      border: `1px solid ${activeAgent.color || '#6366f1'}60`,
+                      background: `linear-gradient(135deg, ${activeAgent.color || '#6366f1'}20 0%, ${activeAgent.color || '#6366f1'}10 100%)`,
+                      border: `1px solid ${activeAgent.color || '#6366f1'}40`,
                       display: 'flex',
                       alignItems: 'center',
                       justifyContent: 'center',
@@ -573,10 +756,10 @@ export function OmnigentChatPanel({
                   </div>
 
                   <div>
-                    <h4 style={{ margin: '0 0 6px', fontSize: '1.02rem', fontWeight: 700, color: '#f8fafc' }}>
+                    <h4 style={{ margin: '0 0 6px', fontSize: '1.02rem', fontWeight: 700, color: '#0f172a' }}>
                       {activeAgent.display_name} Active
                     </h4>
-                    <p style={{ margin: 0, fontSize: '0.8rem', color: '#94a3b8', lineHeight: 1.5 }}>
+                    <p style={{ margin: 0, fontSize: '0.8rem', color: '#64748b', lineHeight: 1.5 }}>
                       {activeAgent.description}
                     </p>
                   </div>
@@ -593,203 +776,335 @@ export function OmnigentChatPanel({
                           justifyContent: 'space-between',
                           padding: '8px 12px',
                           borderRadius: 8,
-                          background: '#131c2e',
-                          border: '1px solid #1e293b',
-                          color: '#cbd5e1',
+                          background: '#ffffff',
+                          border: '1px solid #e2e8f0',
+                          color: '#334155',
                           fontSize: '0.76rem',
                           textAlign: 'left',
                           cursor: 'pointer',
+                          boxShadow: '0 1px 2px rgba(0,0,0,0.03)',
                           transition: 'all 0.15s ease',
                         }}
                         onMouseEnter={(e) => {
-                          e.currentTarget.style.background = '#1e293b';
+                          e.currentTarget.style.background = '#f1f5f9';
                           e.currentTarget.style.borderColor = activeAgent.color || '#6366f1';
                         }}
                         onMouseLeave={(e) => {
-                          e.currentTarget.style.background = '#131c2e';
-                          e.currentTarget.style.borderColor = '#1e293b';
+                          e.currentTarget.style.background = '#ffffff';
+                          e.currentTarget.style.borderColor = '#e2e8f0';
                         }}
                       >
                         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                          <Wand2 size={13} color={activeAgent.color || '#818cf8'} />
+                          <Wand2 size={13} color={activeAgent.color || '#6366f1'} />
                           <span>{prompt}</span>
                         </div>
-                        <CornerDownLeft size={11} color="#64748b" />
+                        <CornerDownLeft size={11} color="#94a3b8" />
                       </button>
                     ))}
                   </div>
                 </div>
               ) : (
                 /* Message Stream */
-                allMessages.map((msg, index) => {
-                  const isUser = msg.role === 'user';
-                  const isTool = msg.type === 'tool_call' || msg.type === 'tool_result' || !!msg.tool;
+                groupedItems.map((item) => {
+                  if (item.type === 'tool_group') {
+                    const isGroupExpanded = !!expandedTools[item.id];
+                    const tools = item.tools;
+                    const count = tools.length;
 
-                  if (isTool && msg.tool) {
-                    const toolKey = msg.id || `tool_${index}`;
-                    const isExpanded = !!expandedTools[toolKey];
                     return (
                       <div
-                        key={toolKey}
+                        key={item.id}
                         style={{
-                          background: '#131c2e',
-                          border: '1px solid #1e293b',
+                          background: '#ffffff',
+                          border: '1px solid #e2e8f0',
                           borderRadius: 8,
                           overflow: 'hidden',
                           fontSize: '0.78rem',
+                          boxShadow: '0 1px 2px rgba(0,0,0,0.03)',
                         }}
                       >
+                        {/* Group Header Bar */}
                         <div
-                          onClick={() => toggleToolExpand(toolKey)}
+                          onClick={() => toggleToolExpand(item.id)}
                           style={{
                             display: 'flex',
                             alignItems: 'center',
                             justifyContent: 'space-between',
-                            padding: '7px 12px',
+                            padding: '8px 12px',
                             cursor: 'pointer',
-                            background: '#0f172a',
+                            background: '#f8fafc',
+                            userSelect: 'none',
                           }}
                         >
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                            <TerminalIcon size={13} color="#38bdf8" />
-                            <span style={{ fontWeight: 600, color: '#f8fafc' }}>
-                              {msg.tool.name || 'Tool Execution'}
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', minWidth: 0 }}>
+                            <div
+                              style={{
+                                width: 20,
+                                height: 20,
+                                borderRadius: 5,
+                                background: '#e0f2fe',
+                                color: '#0284c7',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                flexShrink: 0,
+                              }}
+                            >
+                              <TerminalIcon size={12} />
+                            </div>
+
+                            <span style={{ fontWeight: 600, color: '#0f172a', whiteSpace: 'nowrap' }}>
+                              {count === 1 ? 'Tool Call' : `Executed ${count} tools`}
                             </span>
-                            {msg.tool.status === 'completed' ? (
-                              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, color: '#22c55e', fontSize: '0.7rem' }}>
-                                <CheckCircle2 size={11} /> Completed
-                              </span>
-                            ) : msg.tool.status === 'error' ? (
-                              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, color: '#ef4444', fontSize: '0.7rem' }}>
-                                <XCircle size={11} /> Error
-                              </span>
-                            ) : (
-                              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, color: '#38bdf8', fontSize: '0.7rem' }}>
-                                <Loader2 size={11} className="spin" /> Executing
-                              </span>
-                            )}
+
+                            {/* Quick Preview Chips (first 3) */}
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 4, overflow: 'hidden' }}>
+                              {tools.slice(0, 3).map((t, idx) => {
+                                const tName = t.tool?.name || t.type || 'Tool';
+                                const tArg = (t.tool?.input ? (typeof t.tool.input === 'string' ? t.tool.input : JSON.stringify(t.tool.input)) : '') || (t.tool as any)?.arg || t.content || '';
+                                const badge = getToolBadge(tName);
+                                return (
+                                  <span
+                                    key={idx}
+                                    style={{
+                                      fontSize: '0.68rem',
+                                      padding: '1px 6px',
+                                      borderRadius: 4,
+                                      background: badge.bg,
+                                      color: badge.color,
+                                      border: `1px solid ${badge.border}`,
+                                      fontFamily: 'monospace',
+                                      maxWidth: 160,
+                                      whiteSpace: 'nowrap',
+                                      overflow: 'hidden',
+                                      textOverflow: 'ellipsis',
+                                    }}
+                                    title={tArg || tName}
+                                  >
+                                    {badge.label}
+                                    {tArg ? `: ${tArg.split('/').pop()?.split(' ')[0] || tArg}` : ''}
+                                  </span>
+                                );
+                              })}
+                              {count > 3 && (
+                                <span style={{ fontSize: '0.68rem', color: '#94a3b8' }}>
+                                  +{count - 3} more
+                                </span>
+                              )}
+                            </div>
                           </div>
-                          <div>
-                            {isExpanded ? <ChevronDown size={13} color="#94a3b8" /> : <ChevronRight size={13} color="#94a3b8" />}
+
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+                            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, color: '#16a34a', fontSize: '0.7rem', fontWeight: 500 }}>
+                              <CheckCircle2 size={12} /> Completed
+                            </span>
+                            {isGroupExpanded ? <ChevronDown size={14} color="#64748b" /> : <ChevronRight size={14} color="#64748b" />}
                           </div>
                         </div>
 
-                        {isExpanded && (
-                          <div style={{ padding: '9px 12px', background: '#090d16', borderTop: '1px solid #1e293b', fontFamily: 'monospace', fontSize: '0.74rem', color: '#94a3b8', whiteSpace: 'pre-wrap', maxHeight: 200, overflowY: 'auto' }}>
-                            {typeof msg.tool.input === 'object' ? JSON.stringify(msg.tool.input, null, 2) : msg.tool.input}
-                            {msg.tool.output && (
-                              <div style={{ marginTop: 8, color: '#e2e8f0', borderTop: '1px dashed #334155', paddingTop: 6 }}>
-                                {typeof msg.tool.output === 'object' ? JSON.stringify(msg.tool.output, null, 2) : msg.tool.output}
-                              </div>
-                            )}
+                        {/* Expanded Tools List */}
+                        {isGroupExpanded && (
+                          <div style={{ borderTop: '1px solid #e2e8f0', background: '#ffffff', display: 'flex', flexDirection: 'column' }}>
+                            {tools.map((t, idx) => {
+                              const tName = t.tool?.name || t.type || 'Tool';
+                              const tArg = (t.tool?.input ? (typeof t.tool.input === 'string' ? t.tool.input : JSON.stringify(t.tool.input)) : '') || (t.tool as any)?.arg || t.content || '';
+                              const badge = getToolBadge(tName);
+                              const Icon = badge.icon;
+                              const singleKey = `${item.id}_tool_${idx}`;
+                              const isSingleExpanded = !!expandedTools[singleKey];
+
+                              return (
+                                <div
+                                  key={singleKey}
+                                  style={{
+                                    borderBottom: idx < tools.length - 1 ? '1px solid #f1f5f9' : 'none',
+                                    padding: '7px 12px',
+                                    display: 'flex',
+                                    flexDirection: 'column',
+                                    gap: 4,
+                                  }}
+                                >
+                                  <div
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      toggleToolExpand(singleKey);
+                                    }}
+                                    style={{
+                                      display: 'flex',
+                                      alignItems: 'center',
+                                      justifyContent: 'space-between',
+                                      cursor: 'pointer',
+                                      gap: 8,
+                                    }}
+                                  >
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0, flex: 1 }}>
+                                      <Icon size={13} color={badge.color} />
+                                      <span
+                                        style={{
+                                          fontSize: '0.68rem',
+                                          fontWeight: 600,
+                                          padding: '1px 6px',
+                                          borderRadius: 4,
+                                          background: badge.bg,
+                                          color: badge.color,
+                                          border: `1px solid ${badge.border}`,
+                                        }}
+                                      >
+                                        {badge.label}
+                                      </span>
+                                      <span
+                                        style={{
+                                          fontFamily: 'monospace',
+                                          fontSize: '0.74rem',
+                                          color: '#0f172a',
+                                          overflow: 'hidden',
+                                          textOverflow: 'ellipsis',
+                                          whiteSpace: 'nowrap',
+                                        }}
+                                        title={tArg}
+                                      >
+                                        {tArg || tName}
+                                      </span>
+                                    </div>
+
+                                    <div style={{ color: '#94a3b8', fontSize: '0.7rem' }}>
+                                      {isSingleExpanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+                                    </div>
+                                  </div>
+
+                                  {isSingleExpanded && (
+                                    <div
+                                      style={{
+                                        marginTop: 4,
+                                        padding: '6px 10px',
+                                        background: '#f8fafc',
+                                        borderRadius: 6,
+                                        border: '1px solid #e2e8f0',
+                                        fontFamily: 'monospace',
+                                        fontSize: '0.72rem',
+                                        color: '#334155',
+                                        whiteSpace: 'pre-wrap',
+                                        maxHeight: 160,
+                                        overflowY: 'auto',
+                                      }}
+                                    >
+                                      {t.tool?.input || t.content}
+                                      {t.tool?.output && (
+                                        <div style={{ marginTop: 6, paddingTop: 4, borderTop: '1px dashed #cbd5e1', color: '#0f172a' }}>
+                                          {typeof t.tool.output === 'object' ? JSON.stringify(t.tool.output, null, 2) : t.tool.output}
+                                        </div>
+                                      )}
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })}
                           </div>
                         )}
                       </div>
                     );
                   }
 
+                  const isUser = item.type === 'user';
+                  const msg = item.message;
+
+                  if (isUser) {
+                    return (
+                      <div
+                        key={item.id}
+                        style={{
+                          display: 'flex',
+                          justifyContent: 'flex-end',
+                          width: '100%',
+                          margin: '4px 0',
+                        }}
+                      >
+                        <div
+                          style={{
+                            maxWidth: '82%',
+                            background: '#f1f5f9',
+                            color: '#0f172a',
+                            borderRadius: 14,
+                            padding: '8px 14px',
+                            fontSize: '0.84rem',
+                            lineHeight: 1.5,
+                            whiteSpace: 'pre-wrap',
+                            wordBreak: 'break-word',
+                          }}
+                        >
+                          {msg?.content}
+                        </div>
+                      </div>
+                    );
+                  }
+
                   return (
                     <div
-                      key={msg.id || index}
+                      key={item.id}
                       style={{
-                        display: 'flex',
-                        gap: 10,
-                        alignItems: 'flex-start',
-                        flexDirection: isUser ? 'row-reverse' : 'row',
+                        width: '100%',
+                        margin: '4px 0',
+                        color: '#0f172a',
+                        fontSize: '0.84rem',
+                        lineHeight: 1.6,
+                        wordBreak: 'break-word',
                       }}
                     >
-                      {/* Avatar */}
-                      <div
-                        style={{
-                          width: 30,
-                          height: 30,
-                          borderRadius: 8,
-                          background: isUser
-                            ? 'linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%)'
-                            : activeAgent.color || '#6366f1',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          color: '#ffffff',
-                          flexShrink: 0,
-                          boxShadow: '0 2px 6px rgba(0,0,0,0.3)',
+                      <ReactMarkdown
+                        remarkPlugins={[remarkGfm]}
+                        components={{
+                          code({ node, inline, className, children, ...props }: any) {
+                            const codeText = String(children).replace(/\n$/, '');
+                            if (inline) {
+                              return (
+                                <code
+                                  style={{
+                                    background: '#f1f5f9',
+                                    padding: '2px 6px',
+                                    borderRadius: 4,
+                                    color: '#0369a1',
+                                    fontSize: '0.84em',
+                                    fontFamily: 'monospace',
+                                    border: '1px solid #e2e8f0',
+                                  }}
+                                  {...props}
+                                >
+                                  {children}
+                                </code>
+                              );
+                            }
+                            const codeId = `code_${Math.random()}`;
+                            return (
+                              <div style={{ position: 'relative', margin: '8px 0', borderRadius: 6, overflow: 'hidden', background: '#f8fafc', border: '1px solid #e2e8f0' }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '4px 10px', background: '#f1f5f9', borderBottom: '1px solid #e2e8f0', fontSize: '0.7rem', color: '#64748b' }}>
+                                  <span style={{ fontWeight: 500 }}>Code</span>
+                                  <button
+                                    onClick={() => handleCopyCode(codeText, codeId)}
+                                    style={{ background: 'none', border: 'none', color: '#64748b', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4, fontSize: '0.7rem' }}
+                                  >
+                                    {copiedCodeId === codeId ? <Check size={12} color="#16a34a" /> : <Copy size={12} />}
+                                    <span>{copiedCodeId === codeId ? 'Copied' : 'Copy'}</span>
+                                  </button>
+                                </div>
+                                <pre style={{ padding: '10px 12px', margin: 0, overflowX: 'auto', fontSize: '0.76rem', color: '#0f172a', background: '#ffffff', fontFamily: 'monospace' }}>
+                                  <code>{children}</code>
+                                </pre>
+                              </div>
+                            );
+                          },
+                          p({ children }: any) {
+                            return <p style={{ margin: '0 0 6px 0', lineHeight: 1.6 }}>{children}</p>;
+                          },
+                          ul({ children }: any) {
+                            return <ul style={{ margin: '4px 0 6px 18px', padding: 0 }}>{children}</ul>;
+                          },
+                          ol({ children }: any) {
+                            return <ol style={{ margin: '4px 0 6px 18px', padding: 0 }}>{children}</ol>;
+                          },
                         }}
                       >
-                        {isUser ? <User size={15} /> : <Bot size={15} />}
-                      </div>
-
-                      {/* Bubble Container */}
-                      <div
-                        style={{
-                          maxWidth: '86%',
-                          background: isUser ? '#1e293b' : '#131c2e',
-                          border: isUser ? '1px solid #334155' : '1px solid #1e293b',
-                          borderRadius: isUser ? '12px 2px 12px 12px' : '2px 12px 12px 12px',
-                          padding: '10px 14px',
-                          color: '#f8fafc',
-                          fontSize: '0.82rem',
-                          lineHeight: 1.55,
-                        }}
-                      >
-                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 5, gap: 10 }}>
-                          <span style={{ fontSize: '0.72rem', fontWeight: 600, color: isUser ? '#93c5fd' : activeAgent.color || '#a5b4fc' }}>
-                            {isUser ? 'You' : msg.agent || activeAgent.display_name}
-                          </span>
-                          {msg.created_at && (
-                            <span style={{ fontSize: '0.66rem', color: '#64748b' }}>
-                              {new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                            </span>
-                          )}
-                        </div>
-
-                        <div className="prose prose-invert" style={{ fontSize: '0.82rem', color: '#e2e8f0' }}>
-                          <ReactMarkdown
-                            remarkPlugins={[remarkGfm]}
-                            components={{
-                              code({ node, inline, className, children, ...props }: any) {
-                                const codeText = String(children).replace(/\n$/, '');
-                                if (inline) {
-                                  return (
-                                    <code
-                                      style={{
-                                        background: '#090d16',
-                                        padding: '2px 6px',
-                                        borderRadius: 4,
-                                        color: '#38bdf8',
-                                        fontSize: '0.8em',
-                                        fontFamily: 'monospace',
-                                      }}
-                                      {...props}
-                                    >
-                                      {children}
-                                    </code>
-                                  );
-                                }
-                                const codeId = `code_${Math.random()}`;
-                                return (
-                                  <div style={{ position: 'relative', margin: '8px 0', borderRadius: 6, overflow: 'hidden', background: '#090d16', border: '1px solid #1e293b' }}>
-                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '4px 10px', background: '#0f172a', borderBottom: '1px solid #1e293b', fontSize: '0.7rem', color: '#94a3b8' }}>
-                                      <span>Code Snippet</span>
-                                      <button
-                                        onClick={() => handleCopyCode(codeText, codeId)}
-                                        style={{ background: 'none', border: 'none', color: '#94a3b8', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4 }}
-                                      >
-                                        {copiedCodeId === codeId ? <Check size={12} color="#22c55e" /> : <Copy size={12} />}
-                                        <span>{copiedCodeId === codeId ? 'Copied' : 'Copy'}</span>
-                                      </button>
-                                    </div>
-                                    <pre style={{ padding: '10px 12px', margin: 0, overflowX: 'auto', fontSize: '0.76rem', color: '#f8fafc', fontFamily: 'monospace' }}>
-                                      <code>{children}</code>
-                                    </pre>
-                                  </div>
-                                );
-                              },
-                            }}
-                          >
-                            {msg.content}
-                          </ReactMarkdown>
-                        </div>
-                      </div>
+                        {msg?.content}
+                      </ReactMarkdown>
                     </div>
                   );
                 })
@@ -797,39 +1112,9 @@ export function OmnigentChatPanel({
 
               {/* Thinking Indicator */}
               {isSending && (
-                <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
-                  <div
-                    style={{
-                      width: 30,
-                      height: 30,
-                      borderRadius: 8,
-                      background: activeAgent.color || '#6366f1',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      color: '#ffffff',
-                      flexShrink: 0,
-                    }}
-                  >
-                    <Bot size={15} />
-                  </div>
-
-                  <div
-                    style={{
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      gap: 8,
-                      padding: '8px 12px',
-                      borderRadius: 10,
-                      background: '#131c2e',
-                      border: '1px solid #1e293b',
-                      color: '#a5b4fc',
-                      fontSize: '0.78rem',
-                    }}
-                  >
-                    <Loader2 size={13} className="spin" />
-                    <span>{activeAgent.display_name} is analyzing and applying code changes...</span>
-                  </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: '#6366f1', fontSize: '0.8rem', padding: '4px 0', margin: '4px 0' }}>
+                  <Loader2 size={14} className="spin" />
+                  <span>{activeAgent.display_name} is thinking...</span>
                 </div>
               )}
 
@@ -840,8 +1125,8 @@ export function OmnigentChatPanel({
             <div
               style={{
                 padding: '10px 14px',
-                background: '#131c2e',
-                borderTop: '1px solid #1e293b',
+                background: '#ffffff',
+                borderTop: '1px solid #e2e8f0',
                 display: 'flex',
                 flexDirection: 'column',
                 gap: 6,
@@ -852,8 +1137,8 @@ export function OmnigentChatPanel({
                   display: 'flex',
                   alignItems: 'flex-end',
                   gap: 8,
-                  background: '#090d16',
-                  border: '1px solid #334155',
+                  background: '#f8fafc',
+                  border: '1px solid #cbd5e1',
                   borderRadius: 10,
                   padding: '7px 10px',
                 }}
@@ -870,7 +1155,7 @@ export function OmnigentChatPanel({
                     background: 'transparent',
                     border: 'none',
                     outline: 'none',
-                    color: '#f8fafc',
+                    color: '#0f172a',
                     fontSize: '0.84rem',
                     lineHeight: 1.4,
                     resize: 'none',
@@ -890,9 +1175,9 @@ export function OmnigentChatPanel({
                     width: 32,
                     height: 32,
                     borderRadius: 7,
-                    background: promptText.trim() && !isSending ? (activeAgent.color || '#6366f1') : '#334155',
+                    background: promptText.trim() && !isSending ? (activeAgent.color || '#6366f1') : '#e2e8f0',
                     border: 'none',
-                    color: '#ffffff',
+                    color: promptText.trim() && !isSending ? '#ffffff' : '#94a3b8',
                     cursor: promptText.trim() && !isSending ? 'pointer' : 'not-allowed',
                     flexShrink: 0,
                     boxShadow: promptText.trim() && !isSending ? `0 2px 8px ${activeAgent.color || '#6366f1'}50` : 'none',
@@ -905,15 +1190,15 @@ export function OmnigentChatPanel({
 
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.68rem', color: '#64748b' }}>
                 <span>
-                  <strong style={{ color: '#94a3b8' }}>Enter</strong> send • <strong style={{ color: '#94a3b8' }}>Shift+Enter</strong> newline
+                  <strong style={{ color: '#334155' }}>Enter</strong> send • <strong style={{ color: '#334155' }}>Shift+Enter</strong> newline
                 </span>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                   {isDevPodRunning ? (
-                    <span style={{ color: '#22c55e', display: 'flex', alignItems: 'center', gap: 4 }}>
-                      <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#22c55e' }} /> Pod connected
+                    <span style={{ color: '#16a34a', display: 'flex', alignItems: 'center', gap: 4 }}>
+                      <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#16a34a' }} /> Pod connected
                     </span>
                   ) : (
-                    <span style={{ color: '#f59e0b' }}>Pod offline</span>
+                    <span style={{ color: '#d97706' }}>Pod offline</span>
                   )}
                 </div>
               </div>
@@ -936,9 +1221,13 @@ export function OmnigentChatPanel({
             <DevTerminal
               appId={resolvedAppId}
               appName={app.name}
-              workspaceId={session?.workspace_id}
-              workspaceName={session?.workspace_name}
+              workspaceId={resolvedWorkspaceId}
+              workspaceName={resolvedWorkspaceName}
               isDevPodRunning={isDevPodRunning}
+              agent={activeAgent.name}
+              sessionId={resolvedSessionId}
+              sessionTitle={sessionTitle || session?.title}
+              fullHeight={true}
             />
           </div>
         )}
@@ -950,8 +1239,8 @@ export function OmnigentChatPanel({
           style={{
             position: 'absolute',
             inset: 0,
-            background: 'rgba(9, 13, 22, 0.85)',
-            backdropFilter: 'blur(6px)',
+            background: 'rgba(15, 23, 42, 0.45)',
+            backdropFilter: 'blur(4px)',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
@@ -964,10 +1253,10 @@ export function OmnigentChatPanel({
             style={{
               width: '100%',
               maxWidth: 580,
-              background: '#131c2e',
-              border: '1px solid #334155',
+              background: '#ffffff',
+              border: '1px solid #e2e8f0',
               borderRadius: 14,
-              boxShadow: '0 16px 40px rgba(0, 0, 0, 0.6)',
+              boxShadow: '0 16px 40px rgba(0, 0, 0, 0.15)',
               overflow: 'hidden',
               display: 'flex',
               flexDirection: 'column',
@@ -979,15 +1268,16 @@ export function OmnigentChatPanel({
             <div
               style={{
                 padding: '14px 18px',
-                borderBottom: '1px solid #1e293b',
+                borderBottom: '1px solid #e2e8f0',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'space-between',
+                background: '#ffffff',
               }}
             >
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <Sparkles size={18} color="#8b5cf6" />
-                <span style={{ fontSize: '1rem', fontWeight: 700, color: '#f8fafc' }}>
+                <Sparkles size={18} color="#6366f1" />
+                <span style={{ fontSize: '1rem', fontWeight: 700, color: '#0f172a' }}>
                   Select Omnigent AI Agent
                 </span>
               </div>
@@ -997,7 +1287,7 @@ export function OmnigentChatPanel({
                 style={{
                   background: 'none',
                   border: 'none',
-                  color: '#94a3b8',
+                  color: '#64748b',
                   cursor: 'pointer',
                   padding: 4,
                   display: 'flex',
@@ -1009,14 +1299,14 @@ export function OmnigentChatPanel({
             </div>
 
             {/* Search Filter Bar */}
-            <div style={{ padding: '12px 18px', borderBottom: '1px solid #1e293b', background: '#0f172a' }}>
+            <div style={{ padding: '12px 18px', borderBottom: '1px solid #e2e8f0', background: '#f8fafc' }}>
               <div
                 style={{
                   display: 'flex',
                   alignItems: 'center',
                   gap: 8,
-                  background: '#131c2e',
-                  border: '1px solid #334155',
+                  background: '#ffffff',
+                  border: '1px solid #cbd5e1',
                   borderRadius: 8,
                   padding: '6px 12px',
                 }}
@@ -1032,7 +1322,7 @@ export function OmnigentChatPanel({
                     background: 'transparent',
                     border: 'none',
                     outline: 'none',
-                    color: '#f8fafc',
+                    color: '#0f172a',
                     fontSize: '0.82rem',
                   }}
                   autoFocus
@@ -1041,7 +1331,7 @@ export function OmnigentChatPanel({
             </div>
 
             {/* Agent Grid */}
-            <div style={{ flex: 1, overflowY: 'auto', padding: '14px 18px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+            <div style={{ flex: 1, overflowY: 'auto', padding: '14px 18px', display: 'flex', flexDirection: 'column', gap: 10, background: '#ffffff' }}>
               {filteredAgents.map((agent) => {
                 const isSelected = activeAgent.name === agent.name;
                 return (
@@ -1055,8 +1345,8 @@ export function OmnigentChatPanel({
                     style={{
                       padding: '12px 14px',
                       borderRadius: 10,
-                      background: isSelected ? 'rgba(99, 102, 241, 0.15)' : '#0f172a',
-                      border: isSelected ? `2px solid ${agent.color || '#6366f1'}` : '1px solid #1e293b',
+                      background: isSelected ? 'rgba(99, 102, 241, 0.08)' : '#f8fafc',
+                      border: isSelected ? `2px solid ${agent.color || '#6366f1'}` : '1px solid #e2e8f0',
                       cursor: 'pointer',
                       display: 'flex',
                       alignItems: 'flex-start',
@@ -1065,14 +1355,14 @@ export function OmnigentChatPanel({
                     }}
                     onMouseEnter={(e) => {
                       if (!isSelected) {
-                        e.currentTarget.style.background = '#1a243b';
-                        e.currentTarget.style.borderColor = '#334155';
+                        e.currentTarget.style.background = '#f1f5f9';
+                        e.currentTarget.style.borderColor = '#cbd5e1';
                       }
                     }}
                     onMouseLeave={(e) => {
                       if (!isSelected) {
-                        e.currentTarget.style.background = '#0f172a';
-                        e.currentTarget.style.borderColor = '#1e293b';
+                        e.currentTarget.style.background = '#f8fafc';
+                        e.currentTarget.style.borderColor = '#e2e8f0';
                       }
                     }}
                   >
@@ -1108,7 +1398,7 @@ export function OmnigentChatPanel({
                     <div style={{ flex: 1 }}>
                       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                          <span style={{ fontSize: '0.9rem', fontWeight: 700, color: '#f8fafc' }}>
+                          <span style={{ fontSize: '0.9rem', fontWeight: 700, color: '#0f172a' }}>
                             {agent.display_name || agent.name}
                           </span>
                           <span
@@ -1116,8 +1406,8 @@ export function OmnigentChatPanel({
                               fontSize: '0.68rem',
                               padding: '1px 6px',
                               borderRadius: 4,
-                              background: 'rgba(255,255,255,0.08)',
-                              color: '#94a3b8',
+                              background: '#f1f5f9',
+                              color: '#64748b',
                               fontWeight: 600,
                             }}
                           >
@@ -1141,13 +1431,13 @@ export function OmnigentChatPanel({
                         )}
                       </div>
 
-                      <div style={{ fontSize: '0.76rem', color: '#94a3b8', lineHeight: 1.45 }}>
+                      <div style={{ fontSize: '0.76rem', color: '#64748b', lineHeight: 1.45 }}>
                         {agent.description}
                       </div>
 
                       <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 8 }}>
-                        <span style={{ fontSize: '0.68rem', color: '#64748b' }}>Role:</span>
-                        <span style={{ fontSize: '0.7rem', color: '#cbd5e1', fontWeight: 500 }}>
+                        <span style={{ fontSize: '0.68rem', color: '#94a3b8' }}>Role:</span>
+                        <span style={{ fontSize: '0.7rem', color: '#475569', fontWeight: 500 }}>
                           {agent.role || 'Developer'}
                         </span>
                       </div>

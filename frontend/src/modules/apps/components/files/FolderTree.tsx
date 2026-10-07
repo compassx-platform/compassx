@@ -2,14 +2,16 @@ import React, { memo, useCallback, useMemo, useState } from 'react';
 import {
   ChevronDown,
   ChevronRight,
-  Folder,
-  File,
-  FileCode,
-  FileText,
+  FileSpreadsheet,
+  FileArchive,
   Image as ImageIcon,
-  Braces,
-  Hash,
-  Code2,
+  Database,
+  Lock,
+  Settings,
+  GitBranch,
+  Boxes,
+  KeyRound,
+  BookOpen,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { WorkspaceFile } from '../../hooks/useApps';
@@ -24,42 +26,239 @@ const BASE_PAD = 8;
 const GUIDE_OFFSET = 6;
 const indentFor = (depth: number) => depth * INDENT_STEP + BASE_PAD;
 
+// VS Code Seti Theme Python Icon (Crisp vector interlocking snakes)
+function PythonIcon({ className = 'size-3.5 shrink-0' }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 16 16" className={className} fill="none" xmlns="http://www.w3.org/2000/svg">
+      <path
+        d="M7.92 1C5.6 1 4.75 1.95 4.75 3.12v1.28h3.2v.45H3.5C2.18 4.85 1 5.75 1 7.22c0 1.62.97 2.45 2.27 2.45h1.16v-1.4c0-1.42 1.25-2.67 2.67-2.67h3.19c1.17 0 2.14-.97 2.14-2.14V2.14C12.43 1.02 11.23 1 7.92 1zm-1.83 1.02a.65.65 0 1 1 0 1.3.65.65 0 0 1 0-1.3z"
+        fill="#519aba"
+      />
+      <path
+        d="M8.08 15c2.32 0 3.17-.95 3.17-2.12v-1.28h-3.2v-.45h4.45c1.32 0 2.5-.9 2.5-2.37 0-1.62-.97-2.45-2.27-2.45h-1.16v1.4c0 1.42-1.25 2.67-2.67 2.67H5.7c-1.17 0-2.14.97-2.14 2.14v1.32C3.57 14.98 4.77 15 8.08 15zm1.83-1.02a.65.65 0 1 1 0-1.3.65.65 0 0 1 0 1.3z"
+        fill="#519aba"
+      />
+    </svg>
+  );
+}
+
+// VS Code Seti Theme 3-Line Document Icon (for backup, temp, log, and text files)
+function LinesDocumentIcon({ className = 'size-3.5 shrink-0' }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 16 16" className={className} fill="none" xmlns="http://www.w3.org/2000/svg">
+      <rect x="2" y="3.5" width="12" height="1.4" rx="0.4" fill="#94a3b8" />
+      <rect x="2" y="7.3" width="12" height="1.4" rx="0.4" fill="#94a3b8" />
+      <rect x="2" y="11.1" width="8" height="1.4" rx="0.4" fill="#94a3b8" />
+    </svg>
+  );
+}
+
+function ReactIcon({ className = 'size-3.5 shrink-0' }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" className={className} fill="none" xmlns="http://www.w3.org/2000/svg">
+      <ellipse cx="12" cy="12" rx="10" ry="4.2" stroke="#519aba" strokeWidth="1.6" />
+      <ellipse cx="12" cy="12" rx="10" ry="4.2" stroke="#519aba" strokeWidth="1.6" transform="rotate(60 12 12)" />
+      <ellipse cx="12" cy="12" rx="10" ry="4.2" stroke="#519aba" strokeWidth="1.6" transform="rotate(120 12 12)" />
+      <circle cx="12" cy="12" r="2" fill="#519aba" />
+    </svg>
+  );
+}
+
 export function getFileIcon(name: string) {
-  const ext = fileExtension(name);
-  if (['png', 'jpg', 'jpeg', 'svg', 'gif', 'webp', 'ico'].includes(ext)) {
-    return <ImageIcon className="size-3.5 text-emerald-600/90 shrink-0" strokeWidth={1.5} />;
+  const lower = name.toLowerCase();
+
+  // 1. Exact special file names
+  if (lower === '.gitignore' || lower === '.gitattributes' || lower === '.gitmodules') {
+    return <GitBranch className="size-3.5 text-[#f34f29] shrink-0" strokeWidth={1.75} />;
   }
+
+  if (lower.startsWith('.env')) {
+    return <KeyRound className="size-3.5 text-[#eab308] shrink-0" strokeWidth={1.75} />;
+  }
+
+  if (
+    lower === 'dockerfile' ||
+    lower.startsWith('dockerfile.') ||
+    lower === '.dockerignore' ||
+    lower.startsWith('docker-compose')
+  ) {
+    return <Boxes className="size-3.5 text-[#0db7ed] shrink-0" strokeWidth={1.75} />;
+  }
+
+  if (
+    lower === 'package-lock.json' ||
+    lower === 'pnpm-lock.yaml' ||
+    lower === 'yarn.lock' ||
+    lower === 'poetry.lock' ||
+    lower === 'gemfile.lock'
+  ) {
+    return <Lock className="size-3.5 text-[#64748b] shrink-0" strokeWidth={1.75} />;
+  }
+
+  if (
+    lower.includes('.config.') ||
+    lower === 'tsconfig.json' ||
+    lower === 'jsconfig.json' ||
+    lower === '.eslintrc' ||
+    lower === '.prettierrc' ||
+    lower.startsWith('.eslintrc.') ||
+    lower.startsWith('.prettierrc.')
+  ) {
+    return <Settings className="size-3.5 text-[#6366f1] shrink-0" strokeWidth={1.75} />;
+  }
+
+  if (lower === 'package.json') {
+    return (
+      <span className="font-mono text-[9px] font-bold text-[#cb3837] leading-none shrink-0 w-3.5 text-center select-none">
+        JS
+      </span>
+    );
+  }
+
+  if (lower === 'requirements.txt' || lower === 'pyproject.toml' || lower === 'pipfile' || lower === 'setup.py') {
+    return <PythonIcon className="size-3.5 shrink-0" />;
+  }
+
+  if (lower.startsWith('readme') || lower === 'license' || lower.startsWith('changelog')) {
+    return <BookOpen className="size-3.5 text-[#519aba] shrink-0" strokeWidth={1.75} />;
+  }
+
+  // 2. Backup, swap, temp, and multi-dot backup files (matches VS Code Seti ≡ document icon)
+  if (
+    lower.endsWith('.bak') ||
+    lower.includes('.bak.') ||
+    lower.includes('.presteer') ||
+    lower.includes('.prephase') ||
+    lower.endsWith('.old') ||
+    lower.endsWith('.orig') ||
+    lower.endsWith('.tmp') ||
+    lower.endsWith('.swp') ||
+    lower.endsWith('~')
+  ) {
+    return <LinesDocumentIcon className="size-3.5 shrink-0" />;
+  }
+
+  // 3. Shell scripts: VS Code Seti bold green $
+  if (
+    lower.endsWith('.sh') ||
+    lower.endsWith('.bash') ||
+    lower.endsWith('.zsh') ||
+    lower.endsWith('.fish') ||
+    lower.endsWith('.ksh') ||
+    lower.endsWith('.csh') ||
+    lower.endsWith('.ps1') ||
+    lower.endsWith('.cmd') ||
+    lower.endsWith('.bat') ||
+    lower.startsWith('.bashrc') ||
+    lower.startsWith('.zshrc')
+  ) {
+    return (
+      <span className="font-mono text-[13px] font-bold text-[#22c55e] leading-none shrink-0 w-3.5 text-center select-none">
+        $
+      </span>
+    );
+  }
+
+  // 4. Extension-based matching
+  const ext = fileExtension(lower);
+
+  if (ext === 'tsx') {
+    return <ReactIcon className="size-3.5 shrink-0" />;
+  }
+
+  if (ext === 'ts') {
+    return (
+      <span className="font-mono text-[9px] font-bold text-[#519aba] leading-none shrink-0 w-3.5 text-center select-none">
+        TS
+      </span>
+    );
+  }
+
+  if (ext === 'jsx') {
+    return <ReactIcon className="size-3.5 shrink-0" />;
+  }
+
+  if (['js', 'mjs', 'cjs'].includes(ext)) {
+    return (
+      <span className="font-mono text-[9px] font-bold text-[#cbcb41] leading-none shrink-0 w-3.5 text-center select-none">
+        JS
+      </span>
+    );
+  }
+
+  if (['py', 'pyw', 'pyc', 'pyd', 'ipynb'].includes(ext)) {
+    return <PythonIcon className="size-3.5 shrink-0" />;
+  }
+
+  if (['html', 'htm'].includes(ext)) {
+    return (
+      <span className="font-mono text-[10px] font-bold text-[#e34c26] leading-none shrink-0 w-3.5 text-center select-none">
+        &lt;&gt;
+      </span>
+    );
+  }
+
+  if (ext === 'css') {
+    return (
+      <span className="font-mono text-[11px] font-bold text-[#563d7c] leading-none shrink-0 w-3.5 text-center select-none">
+        #
+      </span>
+    );
+  }
+
+  if (['scss', 'sass', 'less'].includes(ext)) {
+    return (
+      <span className="font-mono text-[11px] font-bold text-[#c6538c] leading-none shrink-0 w-3.5 text-center select-none">
+        #
+      </span>
+    );
+  }
+
   if (ext === 'json') {
     return (
-      <span className="font-mono text-[10.5px] font-semibold text-sky-600/90 leading-none shrink-0 w-3.5 text-center">
+      <span className="font-mono text-[11px] font-bold text-[#cbcb41] leading-none shrink-0 w-3.5 text-center select-none">
         &#123;&#125;
       </span>
     );
   }
-  if (['ts', 'tsx', 'js', 'jsx'].includes(ext)) {
-    return <FileCode className="size-3.5 text-sky-600/90 shrink-0" strokeWidth={1.5} />;
-  }
-  if (['html', 'htm'].includes(ext)) {
-    return <Code2 className="size-3.5 text-sky-600/90 shrink-0" strokeWidth={1.5} />;
-  }
-  if (['css', 'scss', 'less'].includes(ext)) {
-    return <Hash className="size-3.5 text-slate-500 shrink-0" strokeWidth={1.5} />;
-  }
-  if (['md', 'markdown'].includes(ext)) {
+
+  if (['yaml', 'yml'].includes(ext)) {
     return (
-      <span className="font-mono text-[9.5px] font-semibold text-slate-500 leading-none shrink-0 w-3.5 text-center">
+      <span className="font-mono text-[8.5px] font-bold text-[#cb171e] leading-none shrink-0 w-3.5 text-center select-none">
+        YML
+      </span>
+    );
+  }
+
+  if (['md', 'mdx', 'markdown'].includes(ext)) {
+    return (
+      <span className="font-mono text-[9px] font-bold text-[#519aba] leading-none shrink-0 w-3.5 text-center select-none">
         M↓
       </span>
     );
   }
-  if (['yaml', 'yml'].includes(ext)) {
-    return (
-      <span className="font-mono text-[9.5px] font-semibold text-slate-500 leading-none shrink-0 w-3.5 text-center">
-        [ ]
-      </span>
-    );
+
+  if (['sql', 'sqlite', 'db', 'duckdb', 'prisma'].includes(ext)) {
+    return <Database className="size-3.5 text-[#e38c00] shrink-0" strokeWidth={1.75} />;
   }
-  return <File className="size-3.5 text-neutral-400 shrink-0" strokeWidth={1.5} />;
+
+  if (['png', 'jpg', 'jpeg', 'gif', 'webp', 'ico', 'bmp', 'svg'].includes(ext)) {
+    return <ImageIcon className="size-3.5 text-[#a074c4] shrink-0" strokeWidth={1.75} />;
+  }
+
+  if (['csv', 'tsv', 'xlsx', 'xls'].includes(ext)) {
+    return <FileSpreadsheet className="size-3.5 text-[#207245] shrink-0" strokeWidth={1.75} />;
+  }
+
+  if (['zip', 'tar', 'gz', 'tgz', '7z', 'rar'].includes(ext)) {
+    return <FileArchive className="size-3.5 text-[#cc3e44] shrink-0" strokeWidth={1.75} />;
+  }
+
+  if (['txt', 'log'].includes(ext)) {
+    return <LinesDocumentIcon className="size-3.5 shrink-0" />;
+  }
+
+  return <LinesDocumentIcon className="size-3.5 shrink-0" />;
 }
 
 function IndentGuides(_: { depth: number }) {
@@ -193,6 +392,44 @@ const TreeItem = memo(function TreeItem({
           >
             {node.name}
           </span>
+          {node.file.git_status && (
+            <span
+              style={{
+                fontSize: '0.66rem',
+                fontWeight: 700,
+                fontFamily: 'monospace',
+                padding: '0 4px',
+                borderRadius: 3,
+                marginLeft: 4,
+                flexShrink: 0,
+                background:
+                  node.file.git_status === 'modified'
+                    ? '#fef3c7'
+                    : node.file.git_status === 'untracked'
+                    ? '#dcfce7'
+                    : node.file.git_status === 'added'
+                    ? '#e0f2fe'
+                    : '#f1f5f9',
+                color:
+                  node.file.git_status === 'modified'
+                    ? '#d97706'
+                    : node.file.git_status === 'untracked'
+                    ? '#16a34a'
+                    : node.file.git_status === 'added'
+                    ? '#0284c7'
+                    : '#64748b',
+              }}
+              title={`Git status: ${node.file.git_status}`}
+            >
+              {node.file.git_status === 'modified'
+                ? 'M'
+                : node.file.git_status === 'untracked'
+                ? 'U'
+                : node.file.git_status === 'added'
+                ? 'A'
+                : node.file.git_status.slice(0, 1).toUpperCase()}
+            </span>
+          )}
         </div>
       </li>
     );
@@ -221,7 +458,6 @@ const TreeItem = memo(function TreeItem({
         ) : (
           <ChevronRight className="size-3 text-neutral-500 shrink-0" strokeWidth={1.75} />
         )}
-        <Folder className="size-3.5 text-[#d97706] fill-[#fef3c7] shrink-0" strokeWidth={1.5} />
         <span className="min-w-0 flex-1 truncate text-[12.5px] leading-normal font-sans">
           {node.name}
         </span>

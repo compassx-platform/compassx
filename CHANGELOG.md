@@ -5,6 +5,27 @@ All notable changes to the CompassX Platform will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.6] - 2026-10-07
+
+### 🚀 Highlights
+
+CompassX `0.12.6` delivers **Git Commit History Popover**, **Rich Omnigent Tool Streaming & Diffs**, **Contextual Folder Tree File Operations**, and **Enhanced Workspace Dev Drivers**.
+
+### ✨ Features & Enhancements
+
+#### Git Commit History & Sandbox Versioning
+- **Interactive Git Commit History (`GitCommitHistoryPopover.tsx`, `AppBuildPage.tsx`, `useApps.ts`, `app_dev_routes.py`)**: Added dedicated popover component and API endpoint to inspect recent workspace git commits, commit authors, relative timestamps, and short hashes directly from the Build Studio header.
+
+#### Omnigent Chat & Tool Streaming Enhancements
+- **Rich Tool Call Execution & Structured Diffs (`OmnigentChatPanel.tsx`)**: Upgraded Omnigent Chat panel with grouped tool call badges, collapsible tool outputs, structured diff preview chips, thought blocks, and interactive user prompts.
+- **Resilient Tool Input Fallbacks (`OmnigentChatPanel.tsx`)**: Robust parsing and formatting of heterogeneous tool argument schemas across all agent providers.
+
+#### Workspace File Operations & Folder Tree Actions
+- **Contextual File Management (`FolderTree.tsx`, `FilesPanel.tsx`, `FileExplorerSidepanel.tsx`, `omnigent_dev_service.py`)**: Added context actions for creating files/folders, inline renaming, deletion, real-time expansion tracking, and active file highlights.
+- **Cross-Profile Dev Driver Extensions (`kubernetes_driver.py`, `omnigent_dev_service.py`, `test_cross_profile_dev_drivers.py`)**: Improved command execution and container file path binding across local Docker and Kubernetes dev pods.
+
+---
+
 ## [0.12.5] - 2026-10-06
 
 ### 🚀 Highlights

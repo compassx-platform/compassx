@@ -1,11 +1,13 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   RotateCw,
   ExternalLink,
   Loader2,
   Square,
   SquareTerminal,
+  GitCommit,
 } from 'lucide-react';
+import { GitCommitHistoryPopover } from './GitCommitHistoryPopover';
 
 export type CanvasViewMode = 'preview' | 'code';
 
@@ -24,6 +26,9 @@ interface BrowserToolbarProps {
   onToggleOutputCollapsed?: () => void;
   isOutputCollapsed?: boolean;
   disabled?: boolean;
+  appId?: string;
+  workspaceId?: string;
+  workspaceName?: string;
 }
 
 export function BrowserToolbar({
@@ -41,7 +46,11 @@ export function BrowserToolbar({
   onToggleOutputCollapsed,
   isOutputCollapsed = false,
   disabled = false,
+  appId,
+  workspaceId,
+  workspaceName,
 }: BrowserToolbarProps) {
+  const [isGitHistoryOpen, setIsGitHistoryOpen] = useState(false);
   const fullPreviewUrl = previewUrl ? `${previewUrl}${route.startsWith('/') ? route : `/${route}`}` : '';
 
   return (
@@ -210,8 +219,55 @@ export function BrowserToolbar({
         </div>
       )}
 
-      {/* Right: Output Drawer toggle & Primary Deploy Button */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+      {/* Right: Git History, Output Drawer toggle & Primary Deploy Button */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+        {/* Git Commit History Popover Trigger */}
+        <div style={{ position: 'relative' }}>
+          <button
+            type="button"
+            onClick={() => setIsGitHistoryOpen((prev) => !prev)}
+            disabled={disabled}
+            title="Git Commit History"
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              background: isGitHistoryOpen ? '#e0f2fe' : 'transparent',
+              border: 'none',
+              borderRadius: 4,
+              width: 28,
+              height: 28,
+              color: isGitHistoryOpen ? '#0284c7' : '#52525b',
+              cursor: disabled ? 'not-allowed' : 'pointer',
+              opacity: disabled ? 0.5 : 1,
+              transition: 'all 0.15s ease',
+            }}
+            onMouseEnter={(e) => {
+              if (!isGitHistoryOpen && !disabled) {
+                e.currentTarget.style.background = '#f4f4f5';
+                e.currentTarget.style.color = '#18181b';
+              }
+            }}
+            onMouseLeave={(e) => {
+              if (!isGitHistoryOpen && !disabled) {
+                e.currentTarget.style.background = 'transparent';
+                e.currentTarget.style.color = '#52525b';
+              }
+            }}
+          >
+            <GitCommit size={16} strokeWidth={1.75} />
+          </button>
+
+          <GitCommitHistoryPopover
+            isOpen={isGitHistoryOpen}
+            onClose={() => setIsGitHistoryOpen(false)}
+            appId={appId}
+            workspaceId={workspaceId}
+            workspaceName={workspaceName}
+            disabled={disabled}
+          />
+        </div>
+
         {/* Toggle Output Drawer with hover tooltip (Clean ghost button) */}
         {onToggleOutputCollapsed && (
           <div className="relative group">

@@ -151,7 +151,7 @@ class TestCrossProfileDevDrivers(unittest.TestCase):
         # Test CompassX host
         res_compassx = driver.start_dev(self.app, repo_dir="/tmp/repo", omnigent_internal_url="http://localhost:8000", host_type="compassx")
         self.assertEqual(res_compassx["host_type"], "compassx")
-        self.assertEqual(res_compassx["host_image"], "compassx-host:latest")
+        self.assertEqual(res_compassx["host_image"], "ghcr.io/omnigent-ai/omnigent-host:latest")
 
         # Test Omnigent host
         res_omnigent = driver.start_dev(self.app, repo_dir="/tmp/repo", omnigent_internal_url="http://localhost:8000", host_type="omnigent")

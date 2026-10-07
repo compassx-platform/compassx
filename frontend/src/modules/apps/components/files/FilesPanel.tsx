@@ -198,22 +198,6 @@ export function FilesPanel({
     return dirs;
   }, [visibleFiles]);
 
-  // Auto-expand top-level directories on initial load
-  useEffect(() => {
-    if (openPaths.size === 0 && visibleFiles.length > 0) {
-      const topDirs = new Set<string>();
-      for (const file of visibleFiles) {
-        const clean = (file.path || '').replace(/\\/g, '/').replace(/^\.\//, '').replace(/^\/+/, '');
-        const parts = clean.split('/').filter(Boolean);
-        if (parts.length > 1) {
-          topDirs.add(parts[0]);
-        }
-      }
-      if (topDirs.size > 0) {
-        setOpenPaths(topDirs);
-      }
-    }
-  }, [visibleFiles, openPaths.size]);
 
   const handleTogglePath = useCallback((path: string) => {
     setOpenPaths((prev) => {

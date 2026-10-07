@@ -638,6 +638,47 @@ export function useVerifyGitWorkspace() {
   });
 }
 
+export interface GitCommitItem {
+  short_hash: string;
+  hash: string;
+  author: string;
+  email: string;
+  date: string;
+  relative_date: string;
+  message: string;
+}
+
+export interface GitCommitsResponse {
+  success: boolean;
+  is_git: boolean;
+  branch: string;
+  commits: GitCommitItem[];
+  count: number;
+  message?: string;
+}
+
+export function useGitCommits(
+  appId?: string,
+  workspaceId?: string,
+  workspaceName?: string,
+  enabled: boolean = true
+) {
+  return useQuery({
+    queryKey: ['apps', appId, 'dev', 'commits', workspaceId, workspaceName],
+    queryFn: async (): Promise<GitCommitsResponse> => {
+      const res = await api.get(`/apps/${appId}/dev/commits`, {
+        params: {
+          workspace_id: workspaceId || undefined,
+          workspace_name: workspaceName || undefined,
+        },
+      });
+      return res.data;
+    },
+    enabled: !!appId && enabled,
+    staleTime: 10_000,
+  });
+}
+
 export interface InstallDepsResult {
   success: boolean;
   cached?: boolean;
@@ -814,6 +855,7 @@ export interface WorkspaceFile {
   ext?: string;
   modified_at?: number | null;
   type?: 'file' | 'directory';
+  git_status?: 'modified' | 'added' | 'untracked' | 'deleted' | string | null;
 }
 
 export interface WorkspaceFileContent {

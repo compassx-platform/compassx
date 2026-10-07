@@ -172,7 +172,7 @@ export function DevTerminal({
           height: '100%',
           flex: 1,
           width: '100%',
-          background: '#000000',
+          background: '#ffffff',
           border: 'none',
           borderRadius: 0,
           overflow: 'hidden',
@@ -192,7 +192,7 @@ export function DevTerminal({
               flexDirection: 'column',
               alignItems: 'center',
               justifyContent: 'center',
-              background: 'rgba(0, 0, 0, 0.85)',
+              background: 'rgba(255, 255, 255, 0.88)',
               backdropFilter: 'blur(3px)',
               gap: 10,
             }}
@@ -201,7 +201,7 @@ export function DevTerminal({
             <span
               style={{
                 fontSize: '0.82rem',
-                color: '#94a3b8',
+                color: '#64748b',
                 fontWeight: 500,
               }}
             >
@@ -218,7 +218,7 @@ export function DevTerminal({
             onStateChange={setConnState}
             onActivity={handleTerminalActivity}
             adaptCodexPalette={true}
-            isDark={true}
+            isDark={false}
             className="w-full h-full"
           />
         )}

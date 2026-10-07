@@ -1,6 +1,5 @@
 import React, { useEffect, useState } from 'react';
 import {
-  File,
   Maximize2,
   Minimize2,
   Plus,
@@ -10,6 +9,7 @@ import { cn } from '@/lib/utils';
 import type { WorkspaceFile } from '../../hooks/useApps';
 import { FilesPanel } from './FilesPanel';
 import { FileViewer } from './FileViewer';
+import { getFileIcon } from './FolderTree';
 
 export interface FileExplorerSidepanelProps {
   appId: string;
@@ -91,8 +91,8 @@ export function FileExplorerSidepanel({
                 )}
                 title={path}
               >
-                <File className="size-3.5 text-neutral-600 shrink-0" strokeWidth={1.5} />
-                <span className="truncate max-w-[140px]">{name}</span>
+                {getFileIcon(name)}
+                <span className="whitespace-nowrap">{name}</span>
                 <button
                   type="button"
                   onClick={(e) => handleCloseTab(path, e)}
