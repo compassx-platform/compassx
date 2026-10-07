@@ -794,6 +794,7 @@ export function LivePreviewCanvas({
       {/* Main Iframe */}
       {targetUrl ? (
         <iframe
+          key={`${targetUrl}-${reloadKey}`}
           ref={iframeRef}
           src={targetUrl}
           title="Live Application Preview"

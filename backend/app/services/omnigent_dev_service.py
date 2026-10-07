@@ -1680,52 +1680,24 @@ class OmnigentDevService:
                 "echo '[SUCCESS] Application dev runtime is running and ready.'"
             )
             run_script = " ".join(run_script_parts)
-        else:
-            run_script = (
-                "echo '=== Application Runtime Initialization ==='; "
-                "BACKEND_FILE=$(find . -maxdepth 3 -not -path '*/.*' -not -path '*/node_modules/*' -not -path '*/.venv/*' \\( -name 'main.py' -o -name 'app.py' \\) 2>/dev/null | head -n 1 | sed 's|^\\./||'); "
-                "FRONTEND_FILE=$(find . -maxdepth 3 -not -path '*/.*' -not -path '*/node_modules/*' -not -path '*/.venv/*' -name 'package.json' 2>/dev/null | head -n 1 | sed 's|^\\./||'); "
-                # 1. Start Python backend if detected
-                "if [ -n \"$BACKEND_FILE\" ]; then "
-                "  B_DIR=$(dirname \"$BACKEND_FILE\"); "
-                "  B_BASE=$(basename \"$BACKEND_FILE\" .py); "
-                "  if (ss -tln 2>/dev/null || netstat -an 2>/dev/null) | grep -qE '[:.]8000[[:space:]]'; then "
-                "    echo \"[backend] Uvicorn service active on port 8000 ($BACKEND_FILE)\"; "
-                "  else "
-                "    echo \"[backend] Starting Uvicorn backend on port 8000 ($BACKEND_FILE)...\"; "
-                "    (cd \"$B_DIR\" && nohup uvicorn \"$B_BASE:app\" --host 0.0.0.0 --port 8000 --reload --reload-delay 2.0 > /tmp/app_backend.log 2>&1 &); "
-                "  fi; "
-                "fi; "
-                # 2. Start Frontend / Vite dev server if detected
-                "if [ -n \"$FRONTEND_FILE\" ]; then "
-                "  F_DIR=$(dirname \"$FRONTEND_FILE\"); "
-                "  if (ss -tln 2>/dev/null || netstat -an 2>/dev/null) | grep -qE '[:.]8080[[:space:]]'; then "
-                "    echo \"[frontend] Frontend service active on port 8080 ($FRONTEND_FILE)\"; "
-                "  else "
-                "    echo \"[frontend] Starting Vite dev server on port 8080 ($FRONTEND_FILE)...\"; "
-                "    (cd \"$F_DIR\" && nohup npx vite --host 0.0.0.0 --port 8080 --cors > /tmp/app_frontend.log 2>&1 &); "
-                "  fi; "
-                "elif [ -n \"$BACKEND_FILE\" ] && [ -z \"$FRONTEND_FILE\" ]; then "
-                "  B_DIR=$(dirname \"$BACKEND_FILE\"); "
-                "  B_BASE=$(basename \"$BACKEND_FILE\" .py); "
-                "  if ! (ss -tln 2>/dev/null || netstat -an 2>/dev/null) | grep -qE '[:.]8080[[:space:]]'; then "
-                "    (cd \"$B_DIR\" && nohup uvicorn \"$B_BASE:app\" --host 0.0.0.0 --port 8080 --reload --reload-delay 2.0 > /tmp/app_backend_8080.log 2>&1 &); "
-                "  fi; "
-                "fi; "
-                # 3. Health check probe
-                "sleep 2; "
-                "echo '=== Health Verification ==='; "
-                "if (curl -fsSL --connect-timeout 2 http://localhost:8080 >/dev/null 2>&1 || wget -q -O - http://localhost:8080 >/dev/null 2>&1); then "
-                "  echo '[health] Web frontend responding on port 8080'; "
-                "elif (curl -fsSL --connect-timeout 2 http://localhost:8000 >/dev/null 2>&1 || wget -q -O - http://localhost:8000 >/dev/null 2>&1); then "
-                "  echo '[health] Backend API responding on port 8000'; "
-                "else "
-                "  echo '[health] Application processes launched and listening.'; "
-                "fi; "
-                "echo '[SUCCESS] Application dev runtime is running and ready.'"
-            )
+        # Delegate to driver's unified supervisor (switch_active_sandbox / dev-runner.sh)
+        if hasattr(dev_driver, "switch_active_sandbox"):
+            dev_driver.switch_active_sandbox(app, folder_path)
 
-        exec_res = dev_driver.exec_command_in_dev(app, command=run_script, workspace_folder=folder_path)
+        health_check_script = (
+            "sleep 1.5; "
+            "echo '=== Health Verification ==='; "
+            "if (curl -fsSL --connect-timeout 2 http://localhost:8080 >/dev/null 2>&1 || wget -q -O - http://localhost:8080 >/dev/null 2>&1); then "
+            "  echo '[health] Application responding on port 8080'; "
+            "elif (curl -fsSL --connect-timeout 2 http://localhost:8000 >/dev/null 2>&1 || wget -q -O - http://localhost:8000 >/dev/null 2>&1); then "
+            "  echo '[health] Application responding on port 8000'; "
+            "else "
+            "  echo '[health] Application processes launched and listening.'; "
+            "fi; "
+            "echo '[SUCCESS] Application dev runtime is running and ready.'"
+        )
+
+        exec_res = dev_driver.exec_command_in_dev(app, command=health_check_script, workspace_folder=folder_path)
         output = (exec_res.get("output") or "").strip()
         success = exec_res.get("success", False) or ("Application dev runtime is running and ready" in output)
 

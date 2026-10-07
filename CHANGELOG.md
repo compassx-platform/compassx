@@ -5,6 +5,24 @@ All notable changes to the CompassX Platform will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.8] - 2026-10-07
+
+### 🚀 Highlights
+
+CompassX `0.12.8` introduces a **Unified Dev-Runner Process Supervisor**, **Instant Dev Sandbox Switching**, and **React Query Cache Synchronization for Live Preview**.
+
+### ✨ Features & Enhancements
+
+#### Unified Dev-Runner Process Supervisor
+- **Robust In-Container Supervisor (`docker_driver.py`, `kubernetes_driver.py`)**: Introduced `/usr/local/bin/dev-runner.sh` script dynamically provisioned in dev containers and Kubernetes dev pods with `start`, `stop`, and `reload` lifecycle controls, clean PID tracking and signal dispatching, automated `requirements.txt` installation, and separate logging to `/tmp/backend.log` and `/tmp/frontend.log`.
+- **Streamlined Dev Service Switching (`omnigent_dev_service.py`)**: Delegated sandbox switching directly to dev drivers, unifying runtime health checks across local and cloud environments.
+
+#### Live Preview & Sandbox State React Invalidation
+- **Live Preview Canvas Reload Key (`LivePreviewCanvas.tsx`)**: Added combined target URL and reload timestamp key to iframe rendering, ensuring instantaneous DOM rebuilds upon active workspace switches.
+- **Cache Invalidation & Query Refetches (`AppBuildPage.tsx`)**: Automated invalidation and refetching of `app-dev-files`, `app-dev-status`, and `app-dev-workspaces` when switching active sandboxes.
+
+---
+
 ## [0.12.7] - 2026-10-07
 
 ### 🚀 Highlights

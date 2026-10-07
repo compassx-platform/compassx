@@ -2,6 +2,7 @@
 import os
 import re
 import json
+import base64
 import socket
 import logging
 import subprocess
@@ -1142,6 +1143,12 @@ class DockerDevDriver(BaseDevDriver):
             logger.warning("Failed to remove git worktree %s: %s", target_dir, e)
             return False
 
+    @staticmethod
+    def _get_dev_runner_script() -> str:
+        """Returns the unified dev runner bash supervisor script for development pods/containers."""
+        from app.services.drivers.kubernetes_driver import KubernetesDevDriver
+        return KubernetesDevDriver._get_dev_runner_script()
+
     def switch_active_sandbox(
         self,
         app: Any,
@@ -1161,44 +1168,11 @@ class DockerDevDriver(BaseDevDriver):
         if chk.returncode != 0 or chk.stdout.strip() != "true":
             return {"success": False, "error": f"Dev container {dev_container_name} is not running"}
 
-        app_type = getattr(app, "app_type", "custom_web") or "custom_web"
-
+        runner_script_b64 = base64.b64encode(self._get_dev_runner_script().encode("utf-8")).decode("ascii")
         switch_script = (
-            f"TARGET=\"{target_dir}\"; "
-            f"if [ ! -d \"$TARGET\" ]; then TARGET=\"/app\"; fi; "
-            f"ln -sfn \"$TARGET\" /current 2>/dev/null || true; "
-            f"echo \"[SWITCH] Switched active sandbox to $TARGET\"; "
-            f"for p in $(pgrep -f uvicorn 2>/dev/null); do if [ \"$p\" != \"$$\" ]; then kill \"$p\" 2>/dev/null || true; fi; done; "
-            f"for p in $(pgrep -f vite 2>/dev/null); do if [ \"$p\" != \"$$\" ]; then kill \"$p\" 2>/dev/null || true; fi; done; "
-            f"for p in $(pgrep -f streamlit 2>/dev/null); do if [ \"$p\" != \"$$\" ]; then kill \"$p\" 2>/dev/null || true; fi; done; "
-            f"sleep 0.2; "
-            f"BACKEND_DIR=\"\"; "
-            f"if [ -d \"$TARGET/backend\" ] && ( [ -f \"$TARGET/backend/app.py\" ] || [ -f \"$TARGET/backend/main.py\" ] ); then BACKEND_DIR=\"$TARGET/backend\"; "
-            f"elif [ -d \"$TARGET/api\" ] && ( [ -f \"$TARGET/api/app.py\" ] || [ -f \"$TARGET/api/main.py\" ] ); then BACKEND_DIR=\"$TARGET/api\"; "
-            f"elif [ -d \"$TARGET/server\" ] && ( [ -f \"$TARGET/server/app.py\" ] || [ -f \"$TARGET/server/main.py\" ] ); then BACKEND_DIR=\"$TARGET/server\"; "
-            f"elif [ -f \"$TARGET/app.py\" ] || [ -f \"$TARGET/main.py\" ]; then BACKEND_DIR=\"$TARGET\"; "
-            f"fi; "
-            f"if [ -n \"$BACKEND_DIR\" ]; then "
-            f"  if [ -f \"$BACKEND_DIR/app.py\" ]; then "
-            f"    (cd \"$BACKEND_DIR\" && (uvicorn app:app --host 0.0.0.0 --port 8000 --reload --reload-delay 2.0 --reload-exclude '**/node_modules/**' --reload-exclude '**/.git/**' >/tmp/backend.log 2>&1 || python app.py >/tmp/backend.log 2>&1) &); "
-            f"  elif [ -f \"$BACKEND_DIR/main.py\" ]; then "
-            f"    (cd \"$BACKEND_DIR\" && (uvicorn main:app --host 0.0.0.0 --port 8000 --reload --reload-delay 2.0 --reload-exclude '**/node_modules/**' --reload-exclude '**/.git/**' >/tmp/backend.log 2>&1 || python main.py >/tmp/backend.log 2>&1) &); "
-            f"  fi; "
-            f"fi; "
-            f"FRONTEND_DIR=\"\"; "
-            f"if [ -d \"$TARGET/frontend\" ] && [ -f \"$TARGET/frontend/package.json\" ]; then FRONTEND_DIR=\"$TARGET/frontend\"; "
-            f"elif [ -d \"$TARGET/client\" ] && [ -f \"$TARGET/client/package.json\" ]; then FRONTEND_DIR=\"$TARGET/client\"; "
-            f"elif [ -d \"$TARGET/web\" ] && [ -f \"$TARGET/web/package.json\" ]; then FRONTEND_DIR=\"$TARGET/web\"; "
-            f"elif [ -f \"$TARGET/package.json\" ]; then FRONTEND_DIR=\"$TARGET\"; "
-            f"fi; "
-            f"if [ -n \"$FRONTEND_DIR\" ]; then "
-            f"  (cd \"$FRONTEND_DIR\" && (npx --yes vite --host 0.0.0.0 --port 8080 --cors >/tmp/frontend.log 2>&1 || npm run dev -- --host 0.0.0.0 --port 8080 >/tmp/frontend.log 2>&1 || npx --yes serve -l 8080 . >/tmp/frontend.log 2>&1) &); "
-            f"elif [ -n \"$BACKEND_DIR\" ]; then "
-            f"  (cd \"$BACKEND_DIR\" && "
-            f"   if grep -q 'streamlit' app.py 2>/dev/null || [ '{app_type}' = 'streamlit' ]; then "
-            f"     (streamlit run app.py --server.port 8080 --server.address 0.0.0.0 --server.headless true --server.enableCORS false >/tmp/backend.log 2>&1 || true) & "
-            f"   fi); "
-            f"fi; "
+            f"echo '{runner_script_b64}' | base64 -d > /usr/local/bin/dev-runner.sh && "
+            f"chmod +x /usr/local/bin/dev-runner.sh && "
+            f"/usr/local/bin/dev-runner.sh reload '{target_dir}' && "
             f"echo '__SWITCH_SUCCESS__'"
         )
         res = subprocess.run(

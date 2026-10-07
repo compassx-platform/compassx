@@ -196,8 +196,14 @@ export default function AppBuildPage() {
         workspaceId,
       });
       toast.success('Switched active sandbox.');
+      setPreviewReloadKey(Date.now());
+      qc.invalidateQueries({ queryKey: ['app-dev-files', resolvedAppId] });
+      qc.invalidateQueries({ queryKey: ['app-dev-status', resolvedAppId] });
+      qc.invalidateQueries({ queryKey: ['app-dev-workspaces', resolvedAppId] });
       refetchDevStatus();
       refetchDevWorkspaces();
+      refetchDevFiles();
+      refetchDevLogs();
     } catch (err: any) {
       toast.error(err?.response?.data?.detail || err?.message || 'Failed to switch sandbox');
     } finally {

@@ -2,6 +2,7 @@
 import os
 import re
 import uuid
+import base64
 import logging
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Any, Callable
@@ -1023,6 +1024,7 @@ class KubernetesDevDriver(BaseDevDriver):
                     clean_app_id = re.sub(r"[^a-z0-9]", "", str(app.id).lower())
                     workload_identity_id = f"id_app_{clean_app_id[:12]}"
 
+                runner_script_b64 = base64.b64encode(self._get_dev_runner_script().encode("utf-8")).decode("ascii")
                 dev_cmd = (
                     f"mkdir -p /workspaces/.shared_auth/.gemini/antigravity-cli && "
                     f"if [ ! -f /workspaces/.shared_auth/.gemini/antigravity-cli/antigravity-oauth-token ]; then "
@@ -1059,94 +1061,11 @@ class KubernetesDevDriver(BaseDevDriver):
                     f"{clone_snippet}"
                     # Sync AI Gateway MCP servers to all harness configs (Claude, OpenCode, Antigravity, Codex)
                     f"({mcp_sync_snippet}) && "
-                    # 1. Resolve Project Root considering Source Code Path (git_subdir) or auto-detect
-                    f"APP_SUBDIR=\"{git_subdir}\"; "
-                    f"BASE_DIR=\"{workdir}\"; "
-                    f"if [ -n \"$APP_SUBDIR\" ] && [ -d \"{workdir}/$APP_SUBDIR\" ]; then BASE_DIR=\"{workdir}/$APP_SUBDIR\"; "
-                    f"else "
-                    f"  for d in {workdir}/*; do "
-                    f"    if [ -d \"$d\" ] && ( [ -d \"$d/frontend\" ] || [ -d \"$d/backend\" ] || [ -f \"$d/package.json\" ] ); then BASE_DIR=\"$d\"; break; fi; "
-                    f"  done; "
-                    f"fi; "
-                    # 2. Detect and start Python FastAPI Backend in background (live reload on port 8000 or DASHBOARD_PORT)
-                    f"BACKEND_DIR=\"\"; "
-                    f"if [ -d \"$BASE_DIR/backend\" ] && ( [ -f \"$BASE_DIR/backend/app.py\" ] || [ -f \"$BASE_DIR/backend/main.py\" ] || [ -f \"$BASE_DIR/backend/requirements.txt\" ] ); then BACKEND_DIR=\"$BASE_DIR/backend\"; "
-                    f"elif [ -d \"$BASE_DIR/api\" ] && ( [ -f \"$BASE_DIR/api/app.py\" ] || [ -f \"$BASE_DIR/api/main.py\" ] ); then BACKEND_DIR=\"$BASE_DIR/api\"; "
-                    f"elif [ -d \"$BASE_DIR/server\" ] && ( [ -f \"$BASE_DIR/server/app.py\" ] || [ -f \"$BASE_DIR/server/main.py\" ] ); then BACKEND_DIR=\"$BASE_DIR/server\"; "
-                    f"elif [ -f \"$BASE_DIR/app.py\" ] || [ -f \"$BASE_DIR/main.py\" ]; then BACKEND_DIR=\"$BASE_DIR\"; "
-                    f"elif [ -d {workdir}/backend ] && ( [ -f {workdir}/backend/app.py ] || [ -f {workdir}/backend/main.py ] || [ -f {workdir}/backend/requirements.txt ] ); then BACKEND_DIR=\"{workdir}/backend\"; "
-                    f"elif [ -d {workdir}/api ] && ( [ -f {workdir}/api/app.py ] || [ -f {workdir}/api/main.py ] ); then BACKEND_DIR=\"{workdir}/api\"; "
-                    f"elif [ -d {workdir}/server ] && ( [ -f {workdir}/server/app.py ] || [ -f {workdir}/server/main.py ] ); then BACKEND_DIR=\"{workdir}/server\"; "
-                    f"elif [ -f {workdir}/app.py ] || [ -f {workdir}/main.py ]; then BACKEND_DIR=\"{workdir}\"; "
-                    f"fi; "
-                    f"if [ -n \"$BACKEND_DIR\" ]; then "
-                    f"  (cd \"$BACKEND_DIR\" && "
-                    f"   export PYTHONPATH=\"{workdir}:$BASE_DIR:$BASE_DIR/backend:$BASE_DIR/api:$BASE_DIR/server:{workdir}/backend:{workdir}/api:{workdir}/server:$PYTHONPATH\" && "
-                    f"   export DASHBOARD_PORT=8000 PORT=8000 DATABASE_URL=\"${{DATABASE_URL:-sqlite:////tmp/app.db}}\" POSTGRES_DSN=\"${{POSTGRES_DSN:-postgresql://postgres:postgres@compassx-postgres:5432/autonomic}}\" REDIS_URL=\"${{REDIS_URL:-redis://compassx-redis:6379/0}}\" JWT_SECRET=\"${{JWT_SECRET:-dev-jwt-secret-change-me-for-production-use-min-32-chars}}\" && "
-                    f"   (if [ -f requirements.txt ]; then pip install --no-cache-dir -r requirements.txt; fi) && "
-                    f"   (pip install --no-cache-dir uvicorn fastapi asyncpg || true) && "
-                    f"   (python3 -c '\n"
-                    f"import os, asyncpg, asyncio, glob\n"
-                    f"async def init_schema():\n"
-                    f"    dsn = os.environ.get(\"POSTGRES_DSN\")\n"
-                    f"    if not dsn: return\n"
-                    f"    try:\n"
-                    f"        conn = await asyncpg.connect(dsn)\n"
-                    f"        has_events = await conn.fetchval(\"SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = \\x27events\\x27)\")\n"
-                    f"        if not has_events:\n"
-                    f"            for p in glob.glob(\"{workdir}/**/schema.sql\", recursive=True):\n"
-                    f"                try:\n"
-                    f"                    sql = open(p).read()\n"
-                    f"                    await conn.execute(sql)\n"
-                    f"                    break\n"
-                    f"                except Exception:\n"
-                    f"                    pass\n"
-                    f"        await conn.close()\n"
-                    f"    except Exception:\n"
-                    f"        pass\n"
-                    f"asyncio.run(init_schema())\n"
-                    f"' 2>/dev/null || true) && "
-                    f"   if [ -f app.py ]; then "
-                    f"     (while true; do uvicorn app:app --host 0.0.0.0 --port 8000 --reload --reload-delay 2.0 --reload-exclude '**/node_modules/**' --reload-exclude '**/.git/**' || python app.py || true; sleep 2; done) & "
-                    f"   elif [ -f main.py ]; then "
-                    f"     (while true; do uvicorn main:app --host 0.0.0.0 --port 8000 --reload --reload-delay 2.0 --reload-exclude '**/node_modules/**' --reload-exclude '**/.git/**' || python main.py || true; sleep 2; done) & "
-                    f"   fi) & "
-                    f"fi; "
-                    # 3. Detect and start React / Vite Frontend in background (npm run dev on port 8080)
-                    f"FRONTEND_DIR=\"\"; "
-                    f"if [ -d \"$BASE_DIR/frontend\" ] && [ -f \"$BASE_DIR/frontend/package.json\" ]; then FRONTEND_DIR=\"$BASE_DIR/frontend\"; "
-                    f"elif [ -d \"$BASE_DIR/client\" ] && [ -f \"$BASE_DIR/client/package.json\" ]; then FRONTEND_DIR=\"$BASE_DIR/client\"; "
-                    f"elif [ -d \"$BASE_DIR/web\" ] && [ -f \"$BASE_DIR/web/package.json\" ]; then FRONTEND_DIR=\"$BASE_DIR/web\"; "
-                    f"elif [ -f \"$BASE_DIR/package.json\" ]; then FRONTEND_DIR=\"$BASE_DIR\"; "
-                    f"elif [ -d {workdir}/frontend ] && [ -f {workdir}/frontend/package.json ]; then FRONTEND_DIR=\"{workdir}/frontend\"; "
-                    f"elif [ -d {workdir}/client ] && [ -f {workdir}/client/package.json ]; then FRONTEND_DIR=\"{workdir}/client\"; "
-                    f"elif [ -d {workdir}/web ] && [ -f {workdir}/web/package.json ]; then FRONTEND_DIR=\"{workdir}/web\"; "
-                    f"elif [ -f {workdir}/package.json ]; then FRONTEND_DIR=\"{workdir}\"; "
-                    f"fi; "
-                    f"if [ -n \"$FRONTEND_DIR\" ]; then "
-                    f"  (cd \"$FRONTEND_DIR\" && "
-                    f"   export DASHBOARD_PORT=8000 DASHBOARD_UI_PORT=8080 && "
-                    f"   (python3 -c \"import os, re\\nfor f in ['vite.config.ts', 'vite.config.js']:\\n if os.path.exists(f):\\n  c = open(f, 'r').read()\\n  if 'usePolling' not in c: c = re.sub(r'(server:\\\\s*\\\\{{)', r'\\\\\\\\1\\\\\\\\n    allowedHosts: true,\\\\\\\\n    watch: {{ usePolling: true, interval: 2000, ignored: [\\\\\\\"**/node_modules/**\\\\\\\", \\\\\\\"**/.git/**\\\\\\\", \\\\\\\"**/dist/**\\\\\\\", \\\\\\\"**/.cache/**\\\\\\\"] }},\\\\\\\\n    hmr: {{ clientPort: 443 }},', c)\\n  else: c = re.sub(r'watch:\\\\s*\\\\{{[^}}]*\\\\}}', 'watch: {{ usePolling: true, interval: 2000, ignored: [\\\\\\\"**/node_modules/**\\\\\\\", \\\\\\\"**/.git/**\\\\\\\", \\\\\\\"**/dist/**\\\\\\\", \\\\\\\"**/.cache/**\\\\\\\"] }}', c)\\n  c = c.replace('http://localhost:8080', 'http://localhost:8000')\\n  c = c.replace('http://127.0.0.1:8085', 'http://localhost:8000')\\n  open(f, 'w').write(c)\" 2>/dev/null || true) && "
-                    f"   (if [ ! -d node_modules ]; then npm install --legacy-peer-deps --prefer-offline --no-audit || npm install --legacy-peer-deps || true; fi) && "
-                    f"   (while true; do npx --yes vite --host 0.0.0.0 --port 8080 --cors || npm run dev -- --host 0.0.0.0 --port 8080 || npm start -- -p 8080 || npx --yes serve -l 8080 . || true; sleep 2; done)) & "
-                    f"elif [ -n \"$BACKEND_DIR\" ]; then "
-                    # Pure Python app (Streamlit or FastAPI on port 8080)
-                    f"  (cd \"$BACKEND_DIR\" && "
-                    f"   export PYTHONPATH=\"{workdir}:$BASE_DIR:$BASE_DIR/backend:$BASE_DIR/api:$BASE_DIR/server:{workdir}/backend:{workdir}/api:{workdir}/server:$PYTHONPATH\" && "
-                    f"   export DATABASE_URL=\"${{DATABASE_URL:-sqlite:////tmp/app.db}}\" && "
-                    f"   if grep -q 'streamlit' app.py 2>/dev/null || [ '{app_type}' = 'streamlit' ]; then "
-                    f"     pip install --no-cache-dir streamlit && exec streamlit run app.py --server.port=8080 --server.address=0.0.0.0 --server.headless=true; "
-                    f"   elif [ -f app.py ]; then "
-                    f"     exec uvicorn app:app --host 0.0.0.0 --port 8080 --reload --reload-delay 2.0 --reload-exclude '**/node_modules/**' --reload-exclude '**/.git/**'; "
-                    f"   elif [ -f main.py ]; then "
-                    f"     exec uvicorn main:app --host 0.0.0.0 --port 8080 --reload --reload-delay 2.0 --reload-exclude '**/node_modules/**' --reload-exclude '**/.git/**'; "
-                    f"   fi) & "
-                    f"else "
-                    # Fallback default web page
-                    f"  if [ ! -f {workdir}/index.html ]; then echo '<!DOCTYPE html><html><head><title>Dev Sandbox for {app.name}</title></head><body style=\"font-family:sans-serif;padding:2rem;\"><h1>Dev Sandbox for {app.name}</h1><p style=\"color:green;font-weight:bold;\">Connected to Omnigent Dev Studio</p></body></html>' > {workdir}/index.html; fi; "
-                    f"  (python3 -m http.server 8080 --directory {workdir} || npx --yes serve -l 8080 {workdir}) & "
-                    f"fi; "
-                    # 3. Start Omnigent Host Runner in foreground
+                    # Install and start Dev Server Supervisor for active sandbox
+                    f"echo '{runner_script_b64}' | base64 -d > /usr/local/bin/dev-runner.sh && "
+                    f"chmod +x /usr/local/bin/dev-runner.sh && "
+                    f"/usr/local/bin/dev-runner.sh reload '{workdir}' && "
+                    # Start Omnigent Host Runner in foreground
                     f"exec omnigent host --server {omnigent_internal_url} --non-interactive"
                 )
                 # 1b. Dev Deployment Spec (resilient self-healing; /workspaces backed by shared PVC)
@@ -2234,51 +2153,203 @@ class KubernetesDevDriver(BaseDevDriver):
         res = self.exec_command_in_dev(app, cmd)
         return res.get("exit_code") == 0
 
+    @staticmethod
+    def _get_dev_runner_script() -> str:
+        """Returns the unified dev runner bash supervisor script for development pods/containers."""
+        return (
+            '#!/usr/bin/env bash\n'
+            '# CompassX Unified Dev Server Supervisor\n'
+            'ACTION="${1:-reload}"\n'
+            'TARGET_DIR="${2:-}"\n'
+            'APP_ID_VAL="${APP_ID:-}"\n'
+            'CLEAN_APP=$(echo "$APP_ID_VAL" | tr -cd \'[:alnum:]-\' | tr \'[:upper:]\' \'[:lower:]\')\n'
+            '\n'
+            'if [ -n "$TARGET_DIR" ] && [ -d "$TARGET_DIR" ]; then\n'
+            '  echo "$TARGET_DIR" > /tmp/cx_active_workdir.txt\n'
+            'elif [ -n "$TARGET_DIR" ] && [ "$TARGET_DIR" != "reload" ] && [ "$TARGET_DIR" != "start" ] && [ "$TARGET_DIR" != "stop" ]; then\n'
+            '  echo "$TARGET_DIR" > /tmp/cx_active_workdir.txt\n'
+            'fi\n'
+            '\n'
+            'ACTIVE_DIR=""\n'
+            'if [ -f /tmp/cx_active_workdir.txt ]; then\n'
+            '  ACTIVE_DIR=$(cat /tmp/cx_active_workdir.txt 2>/dev/null | tr -d "\\r\\n")\n'
+            'fi\n'
+            '\n'
+            'if [ -z "$ACTIVE_DIR" ] || [ ! -d "$ACTIVE_DIR" ]; then\n'
+            '  for d in "/workspaces/${CLEAN_APP}/default" "/workspaces/${CLEAN_APP}"/* /workspaces/* /app; do\n'
+            '    if [ -d "$d" ] && [ "$d" != "/workspaces" ] && [ "$d" != "/workspaces/.shared_auth" ]; then\n'
+            '      ACTIVE_DIR="$d"\n'
+            '      break\n'
+            '    fi\n'
+            '  done\n'
+            'fi\n'
+            '\n'
+            'if [ -z "$ACTIVE_DIR" ] || [ ! -d "$ACTIVE_DIR" ]; then\n'
+            '  ACTIVE_DIR="/workspaces"\n'
+            'fi\n'
+            '\n'
+            'echo "$ACTIVE_DIR" > /tmp/cx_active_workdir.txt\n'
+            'ln -sfn "$ACTIVE_DIR" /current 2>/dev/null || true\n'
+            'export DEV_WORKSPACE_DIR="$ACTIVE_DIR"\n'
+            'cd "$ACTIVE_DIR" 2>/dev/null || true\n'
+            '\n'
+            'echo "[DEV-RUNNER] Active sandbox: $ACTIVE_DIR"\n'
+            '\n'
+            '# Kill any old dev servers and free ports 8080 & 8000\n'
+            'python3 -c "\n'
+            'import os, signal, subprocess\n'
+            'my_pid = os.getpid()\n'
+            'parent_pid = os.getppid()\n'
+            'try:\n'
+            '    for line in subprocess.check_output([\'ps\', \'-eo\', \'pid,args\']).decode(\'utf-8\', errors=\'ignore\').splitlines():\n'
+            '        parts = line.split()\n'
+            '        if len(parts) > 1 and parts[0].isdigit():\n'
+            '            pid = int(parts[0])\n'
+            '            if pid not in (my_pid, parent_pid, 1):\n'
+            '                cmdline = \' \'.join(parts[1:])\n'
+            '                if any(k in cmdline for k in [\'uvicorn\', \'vite\', \'streamlit\', \'http.server\', \'dev-runner.sh\']) and \'python3 -c\' not in cmdline and \'omnigent host\' not in cmdline:\n'
+            '                    try: os.kill(pid, signal.SIGKILL)\n'
+            '                    except Exception: pass\n'
+            'except Exception: pass\n'
+            '" 2>/dev/null || true\n'
+            '\n'
+            '(fuser -k -9 8080/tcp 8000/tcp 2>/dev/null || true)\n'
+            'pkill -9 -f "vite" 2>/dev/null || true\n'
+            'pkill -9 -f "uvicorn" 2>/dev/null || true\n'
+            'pkill -9 -f "streamlit" 2>/dev/null || true\n'
+            'pkill -9 -f "http.server" 2>/dev/null || true\n'
+            'sleep 0.3\n'
+            '\n'
+            'if [ "$ACTION" = "stop" ]; then\n'
+            '  echo "[DEV-RUNNER] Dev servers stopped."\n'
+            '  exit 0\n'
+            'fi\n'
+            '\n'
+            '# Detect Backend Directory\n'
+            'BACKEND_DIR=""\n'
+            'if [ -d "$ACTIVE_DIR/backend" ] && ( [ -f "$ACTIVE_DIR/backend/app.py" ] || [ -f "$ACTIVE_DIR/backend/main.py" ] || [ -f "$ACTIVE_DIR/backend/requirements.txt" ] ); then\n'
+            '  BACKEND_DIR="$ACTIVE_DIR/backend"\n'
+            'elif [ -d "$ACTIVE_DIR/api" ] && ( [ -f "$ACTIVE_DIR/api/app.py" ] || [ -f "$ACTIVE_DIR/api/main.py" ] || [ -f "$ACTIVE_DIR/api/requirements.txt" ] ); then\n'
+            '  BACKEND_DIR="$ACTIVE_DIR/api"\n'
+            'elif [ -d "$ACTIVE_DIR/server" ] && ( [ -f "$ACTIVE_DIR/server/app.py" ] || [ -f "$ACTIVE_DIR/server/main.py" ] || [ -f "$ACTIVE_DIR/server/requirements.txt" ] ); then\n'
+            '  BACKEND_DIR="$ACTIVE_DIR/server"\n'
+            'elif [ -f "$ACTIVE_DIR/app.py" ] || [ -f "$ACTIVE_DIR/main.py" ]; then\n'
+            '  BACKEND_DIR="$ACTIVE_DIR"\n'
+            'fi\n'
+            '\n'
+            '# Detect Frontend Directory\n'
+            'FRONTEND_DIR=""\n'
+            'if [ -d "$ACTIVE_DIR/frontend" ] && [ -f "$ACTIVE_DIR/frontend/package.json" ]; then\n'
+            '  FRONTEND_DIR="$ACTIVE_DIR/frontend"\n'
+            'elif [ -d "$ACTIVE_DIR/client" ] && [ -f "$ACTIVE_DIR/client/package.json" ]; then\n'
+            '  FRONTEND_DIR="$ACTIVE_DIR/client"\n'
+            'elif [ -d "$ACTIVE_DIR/web" ] && [ -f "$ACTIVE_DIR/web/package.json" ]; then\n'
+            '  FRONTEND_DIR="$ACTIVE_DIR/web"\n'
+            'elif [ -f "$ACTIVE_DIR/package.json" ]; then\n'
+            '  FRONTEND_DIR="$ACTIVE_DIR"\n'
+            'fi\n'
+            '\n'
+            '# Setup Frontend Dependencies and Configuration\n'
+            'if [ -n "$FRONTEND_DIR" ]; then\n'
+            '  cd "$FRONTEND_DIR" || true\n'
+            '  if [ ! -d "node_modules" ]; then\n'
+            '    FOUND_NM=""\n'
+            '    for nm in "/workspaces/${CLEAN_APP}/default/frontend/node_modules" "/workspaces/${CLEAN_APP}/default/node_modules" "/workspaces"/*"/frontend/node_modules" "/workspaces"/*"/node_modules" "/app/frontend/node_modules" "/app/node_modules"; do\n'
+            '      if [ -d "$nm" ] && [ "$nm" != "$FRONTEND_DIR/node_modules" ]; then\n'
+            '        FOUND_NM="$nm"\n'
+            '        break\n'
+            '      fi\n'
+            '    done\n'
+            '    if [ -n "$FOUND_NM" ]; then\n'
+            '      echo "[DEV-RUNNER] Linking node_modules from $FOUND_NM"\n'
+            '      ln -s "$FOUND_NM" node_modules 2>/dev/null || cp -rs "$FOUND_NM" . 2>/dev/null || true\n'
+            '    fi\n'
+            '    if [ ! -d "node_modules" ]; then\n'
+            '      echo "[DEV-RUNNER] Installing frontend dependencies..."\n'
+            '      (npm install --prefer-offline --no-audit --legacy-peer-deps 2>&1 | tail -n 20 >> /tmp/frontend.log || true)\n'
+            '    fi\n'
+            '  fi\n'
+            '  python3 -c "\n'
+            'import os, re\n'
+            'for f in [\'vite.config.ts\', \'vite.config.js\', \'vite.config.mjs\']:\n'
+            '    if os.path.exists(f):\n'
+            '        try:\n'
+            '            c = open(f, \'r\').read()\n'
+            '            if \'allowedHosts\' not in c:\n'
+            '                if \'server:\' in c:\n'
+            '                    c = re.sub(r\'server:\\s*\\{\', \'server: {\\n    allowedHosts: true,\\n    host: \\"0.0.0.0\\",\\n    port: 8080,\\n    cors: true,\\n    watch: { usePolling: true, interval: 1000 },\\n    hmr: { clientPort: 443 },\', c, count=1)\n'
+            '                else:\n'
+            '                    c = re.sub(r\'defineConfig\\(\\{\', \'defineConfig({\\n  server: { host: \\"0.0.0.0\\", port: 8080, allowedHosts: true, cors: true, watch: { usePolling: true, interval: 1000 }, hmr: { clientPort: 443 } },\', c, count=1)\n'
+            '            c = c.replace(\'http://localhost:8080\', \'http://localhost:8000\')\n'
+            '            c = c.replace(\'http://127.0.0.1:8085\', \'http://localhost:8000\')\n'
+            '            open(f, \'w\').write(c)\n'
+            '        except Exception: pass\n'
+            '" 2>/dev/null || true\n'
+            'fi\n'
+            '\n'
+            '# Start Backend\n'
+            'if [ -n "$BACKEND_DIR" ]; then\n'
+            '  (\n'
+            '    cd "$BACKEND_DIR" || exit 1\n'
+            '    export PYTHONPATH="$ACTIVE_DIR:$BACKEND_DIR:$ACTIVE_DIR/backend:$ACTIVE_DIR/api:$ACTIVE_DIR/server:$PYTHONPATH"\n'
+            '    export PORT=8000 DASHBOARD_PORT=8000 DATABASE_URL="${DATABASE_URL:-sqlite:////tmp/app.db}"\n'
+            '    echo "[DEV-RUNNER] Starting backend on port 8000 ($BACKEND_DIR)..." >> /tmp/backend.log\n'
+            '    if [ -f requirements.txt ] && [ ! -f /tmp/.reqs_installed ]; then\n'
+            '      pip install --no-cache-dir -r requirements.txt >> /tmp/backend.log 2>&1 || true\n'
+            '      touch /tmp/.reqs_installed\n'
+            '    fi\n'
+            '    if [ -f app.py ]; then\n'
+            '      exec uvicorn app:app --host 0.0.0.0 --port 8000 --reload --reload-delay 1.0 --reload-exclude \'**/node_modules/**\' --reload-exclude \'**/.git/**\' >> /tmp/backend.log 2>&1\n'
+            '    elif [ -f main.py ]; then\n'
+            '      exec uvicorn main:app --host 0.0.0.0 --port 8000 --reload --reload-delay 1.0 --reload-exclude \'**/node_modules/**\' --reload-exclude \'**/.git/**\' >> /tmp/backend.log 2>&1\n'
+            '    fi\n'
+            '  ) &\n'
+            'fi\n'
+            '\n'
+            '# Start Frontend\n'
+            'if [ -n "$FRONTEND_DIR" ]; then\n'
+            '  (\n'
+            '    cd "$FRONTEND_DIR" || exit 1\n'
+            '    export DASHBOARD_PORT=8000 DASHBOARD_UI_PORT=8080\n'
+            '    echo "[DEV-RUNNER] Starting frontend on port 8080 ($FRONTEND_DIR)..." >> /tmp/frontend.log\n'
+            '    exec npx --yes vite --host 0.0.0.0 --port 8080 --strictPort --cors >> /tmp/frontend.log 2>&1\n'
+            '  ) &\n'
+            'elif [ -n "$BACKEND_DIR" ]; then\n'
+            '  (\n'
+            '    cd "$BACKEND_DIR" || exit 1\n'
+            '    export PYTHONPATH="$ACTIVE_DIR:$BACKEND_DIR:$ACTIVE_DIR/backend:$ACTIVE_DIR/api:$ACTIVE_DIR/server:$PYTHONPATH"\n'
+            '    if grep -q "streamlit" app.py 2>/dev/null || [ "${APP_TYPE:-}" = "streamlit" ]; then\n'
+            '      echo "[DEV-RUNNER] Starting Streamlit on port 8080..." >> /tmp/backend.log\n'
+            '      exec streamlit run app.py --server.port 8080 --server.address 0.0.0.0 --server.headless true --server.enableCORS false >> /tmp/backend.log 2>&1\n'
+            '    elif [ -f app.py ]; then\n'
+            '      exec uvicorn app:app --host 0.0.0.0 --port 8080 --reload --reload-delay 1.0 >> /tmp/backend.log 2>&1\n'
+            '    elif [ -f main.py ]; then\n'
+            '      exec uvicorn main:app --host 0.0.0.0 --port 8080 --reload --reload-delay 1.0 >> /tmp/backend.log 2>&1\n'
+            '    fi\n'
+            '  ) &\n'
+            'else\n'
+            '  (\n'
+            '    if [ ! -f "$ACTIVE_DIR/index.html" ]; then\n'
+            '      echo \'<!DOCTYPE html><html><head><title>Dev Sandbox</title></head><body style="font-family:sans-serif;padding:2rem;"><h2>Live Sandbox Active</h2><p style="color:#0284c7;">Connected to CompassX Dev Studio</p></body></html>\' > "$ACTIVE_DIR/index.html"\n'
+            '    fi\n'
+            '    exec python3 -m http.server 8080 --directory "$ACTIVE_DIR" >> /tmp/frontend.log 2>&1\n'
+            '  ) &\n'
+            'fi\n'
+            '\n'
+            'echo "[DEV-RUNNER] Dev server startup initiated for $ACTIVE_DIR"\n'
+        )
+
     def switch_active_sandbox(self, app: Any, folder_path: str) -> Dict[str, Any]:
         """Instantly switch active sandbox in kubernetes dev pod and reload dev servers."""
         clean_folder = folder_path.strip("/")
         clean_app = re.sub(r'[^a-z0-9-]', '-', app.id.lower()).strip('-')
         target_dir = f"/workspaces/{clean_folder}" if clean_folder else f"/workspaces/{clean_app}/default"
-        app_type = getattr(app, "app_type", "custom_web") or "custom_web"
 
+        runner_script_b64 = base64.b64encode(self._get_dev_runner_script().encode("utf-8")).decode("ascii")
         cmd = (
-            f"TARGET=\"{target_dir}\"; "
-            f"if [ ! -d \"$TARGET\" ]; then TARGET=\"/workspaces/{clean_app}/default\"; fi; "
-            f"ln -sfn \"$TARGET\" /current 2>/dev/null || true; "
-            f"echo \"[SWITCH] Switched active sandbox to $TARGET\"; "
-            f"python3 -c \""
-            f"import os, signal, subprocess; "
-            f"my_pid = os.getpid(); parent_pid = os.getppid(); "
-            f"[os.kill(int(l.split()[0]), signal.SIGTERM) for l in subprocess.check_output(['ps', '-eo', 'pid,args']).decode().splitlines() "
-            f"if len(l.split()) > 1 and l.split()[0].isdigit() and int(l.split()[0]) not in (my_pid, parent_pid) and any(x in l for x in ['uvicorn', 'vite', 'streamlit']) and 'python3 -c' not in l]\" 2>/dev/null || true; "
-            f"sleep 0.2; "
-            f"BACKEND_DIR=\"\"; "
-            f"if [ -d \"$TARGET/backend\" ] && ( [ -f \"$TARGET/backend/app.py\" ] || [ -f \"$TARGET/backend/main.py\" ] ); then BACKEND_DIR=\"$TARGET/backend\"; "
-            f"elif [ -d \"$TARGET/api\" ] && ( [ -f \"$TARGET/api/app.py\" ] || [ -f \"$TARGET/api/main.py\" ] ); then BACKEND_DIR=\"$TARGET/api\"; "
-            f"elif [ -d \"$TARGET/server\" ] && ( [ -f \"$TARGET/server/app.py\" ] || [ -f \"$TARGET/server/main.py\" ] ); then BACKEND_DIR=\"$TARGET/server\"; "
-            f"elif [ -f \"$TARGET/app.py\" ] || [ -f \"$TARGET/main.py\" ]; then BACKEND_DIR=\"$TARGET\"; "
-            f"fi; "
-            f"if [ -n \"$BACKEND_DIR\" ]; then "
-            f"  if [ -f \"$BACKEND_DIR/app.py\" ]; then "
-            f"    (cd \"$BACKEND_DIR\" && export PYTHONPATH=\"$TARGET:$TARGET/backend:$TARGET/api:$TARGET/server:$PYTHONPATH\" && (uvicorn app:app --host 0.0.0.0 --port 8000 --reload --reload-delay 2.0 --reload-exclude '**/node_modules/**' --reload-exclude '**/.git/**' >/tmp/backend.log 2>&1 || python app.py >/tmp/backend.log 2>&1) &); "
-            f"  elif [ -f \"$BACKEND_DIR/main.py\" ]; then "
-            f"    (cd \"$BACKEND_DIR\" && export PYTHONPATH=\"$TARGET:$TARGET/backend:$TARGET/api:$TARGET/server:$PYTHONPATH\" && (uvicorn main:app --host 0.0.0.0 --port 8000 --reload --reload-delay 2.0 --reload-exclude '**/node_modules/**' --reload-exclude '**/.git/**' >/tmp/backend.log 2>&1 || python main.py >/tmp/backend.log 2>&1) &); "
-            f"  fi; "
-            f"fi; "
-            f"FRONTEND_DIR=\"\"; "
-            f"if [ -d \"$TARGET/frontend\" ] && [ -f \"$TARGET/frontend/package.json\" ]; then FRONTEND_DIR=\"$TARGET/frontend\"; "
-            f"elif [ -d \"$TARGET/client\" ] && [ -f \"$TARGET/client/package.json\" ]; then FRONTEND_DIR=\"$TARGET/client\"; "
-            f"elif [ -d \"$TARGET/web\" ] && [ -f \"$TARGET/web/package.json\" ]; then FRONTEND_DIR=\"$TARGET/web\"; "
-            f"elif [ -f \"$TARGET/package.json\" ]; then FRONTEND_DIR=\"$TARGET\"; "
-            f"fi; "
-            f"if [ -n \"$FRONTEND_DIR\" ]; then "
-            f"  (cd \"$FRONTEND_DIR\" && (npx --yes vite --host 0.0.0.0 --port 8080 --cors >/tmp/frontend.log 2>&1 || npm run dev -- --host 0.0.0.0 --port 8080 >/tmp/frontend.log 2>&1 || npx --yes serve -l 8080 . >/tmp/frontend.log 2>&1) &); "
-            f"elif [ -n \"$BACKEND_DIR\" ]; then "
-            f"  (cd \"$BACKEND_DIR\" && "
-            f"   if grep -q 'streamlit' app.py 2>/dev/null || [ '{app_type}' = 'streamlit' ]; then "
-            f"     (streamlit run app.py --server.port 8080 --server.address 0.0.0.0 --server.headless true --server.enableCORS false >/tmp/backend.log 2>&1 || true) & "
-            f"   fi); "
-            f"fi; "
+            f"echo '{runner_script_b64}' | base64 -d > /usr/local/bin/dev-runner.sh && "
+            f"chmod +x /usr/local/bin/dev-runner.sh && "
+            f"/usr/local/bin/dev-runner.sh reload '{target_dir}' && "
             f"echo '__SWITCH_SUCCESS__'"
         )
         res = self.exec_command_in_dev(app, cmd)
