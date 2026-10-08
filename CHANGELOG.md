@@ -5,6 +5,28 @@ All notable changes to the CompassX Platform will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.16] - 2026-10-08
+
+### 🚀 Highlights
+
+CompassX `0.12.16` delivers **Compute Sandbox Environment Management**, **App Dev Sandbox Lifecycle Hardening**, and **Dedicated Compute Pool Node Routing**.
+
+### ✨ Features & Enhancements
+
+#### Unified Compute Sandboxes
+- **Multi-Driver Sandbox Framework (`backend/app/sandbox/`)**: Added complete architecture for self-contained, isolated development sandboxes supporting Docker, Kubernetes, and Local execution drivers with automated port routing and lifecycle controls.
+- **Compute Sandboxes UI (`ComputePage.tsx`, `ComputeSandboxesTable.jsx`, `CreateSandboxModal.jsx`)**: Integrated sandboxes tab into the Compute Management hub to inspect, launch, suspend, and configure compute sandboxes with customizable CPU/memory profiles and image specifications.
+
+#### App Dev Sandbox Lifecycle & Live Preview
+- **Targeted Sandbox Creation & Ensure Routes (`app_dev_routes.py`, `useApps.ts`)**: Added dedicated `ensure_dev_environment` and branch-scoped sandbox provisioning endpoints with optimistic state updates in `AppBuildPage.tsx`.
+- **Live Preview Canvas Resilience (`LivePreviewCanvas.tsx`)**: Enhanced frame reloading and fallback error handling during sandbox branch switching.
+
+#### Infrastructure & Node Pool Scheduling
+- **Compute Pool Node Routing (`kubernetes_driver.py`)**: Dev sandboxes and compute workloads now explicitly schedule onto the dedicated autoscaling `computepool` (`aks-computepool-*`) nodes.
+- **Standardized DB Port Default (`config.py`)**: Unified default PostgreSQL port to standard `5432`.
+
+---
+
 ## [0.12.15] - 2026-10-07
 
 ### 🚀 Highlights

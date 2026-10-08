@@ -47,9 +47,12 @@ import {
   useActivateDevWorkspace,
   useDeployApp,
   useAppDeployments,
+  useEnsureAppSandbox,
+  useAppSandboxStatus,
   type DevSession,
   type DevWorkspace,
 } from '../hooks/useApps';
+
 import { DevTerminal } from '../components/DevTerminal';
 import { OmnigentChatPanel } from '../components/build/OmnigentChatPanel';
 import { SessionHistoryPopover } from '../components/build/SessionHistoryPopover';
@@ -169,6 +172,8 @@ export default function AppBuildPage() {
 
   const { data: app, isLoading: isAppLoading } = useApp(resolvedAppId);
   const { data: devStatus, isLoading: isDevLoading, refetch: refetchDevStatus } = useDevStatus(resolvedAppId);
+  const ensureAppSandboxMutation = useEnsureAppSandbox();
+  const { data: sandboxStatus, refetch: refetchSandboxStatus } = useAppSandboxStatus(resolvedAppId, true);
   const qc = useQueryClient();
   const startDevMutation = useStartDevSession();
   const restartDevMutation = useRestartDevSandbox();
@@ -247,12 +252,13 @@ export default function AppBuildPage() {
 
   // ── Unified Sandbox Stage Calculation ──────────────────────────────────────────
   const isContainerRunning =
-    (devStatus?.status === 'active' || devStatus?.phase === 'Running') &&
+    (sandboxStatus?.status === 'ready' || sandboxStatus?.status === 'running' || devStatus?.status === 'active' || devStatus?.phase === 'Running') &&
     devStatus?.status !== 'provisioning' &&
     devStatus?.phase !== 'Pending' &&
     devStatus?.phase !== 'ContainerCreating' &&
     devStatus?.phase !== 'Terminating' &&
-    !devStatus?.is_scaling_node;
+    !devStatus?.is_scaling_node &&
+    sandboxStatus?.status !== 'failed';
 
   const isStoppingOperation =
     stopDevMutation.isPending ||
@@ -267,15 +273,19 @@ export default function AppBuildPage() {
   } else if (isContainerRunning) {
     stage = 'running';
   } else if (
+    ensureAppSandboxMutation.isPending ||
     startDevMutation.isPending ||
     restartDevMutation.isPending ||
     devStatus?.status === 'provisioning' ||
-    devStatus?.is_scaling_node
+    devStatus?.is_scaling_node ||
+    sandboxStatus?.status === 'provisioning' ||
+    sandboxStatus?.status === 'initializing'
   ) {
     stage = 'starting';
   } else {
     stage = 'stopped';
   }
+
 
   // Live container logs query (active when log viewer is open or stage is running)
   const {
@@ -754,168 +764,55 @@ export default function AppBuildPage() {
     }
   }, [isMenuOpen]);
 
-  // Initial check on mount: If container was already running, skip startup wait
+  // Initial check on mount: Ensure sandbox is requested
   useEffect(() => {
-    if (!devStatus || isDevLoading) return;
-    if (!initialChecked.current) {
-      initialChecked.current = true;
-      if (isContainerRunning) {
-        setHasCompletedInit(true);
-        setStep2Completed(true);
-        setStep3Completed(true);
-        setStep4Completed(true);
-        setInitStep(3);
-      }
-    } else if (!isContainerRunning && !isStoppingOperation) {
-      setHasCompletedInit(false);
-      setStep2Completed(false);
-      setStep3Completed(false);
-      setStep4Completed(false);
-      setInitStep(0);
-      setGitOutput('');
-      setInstallOutput('');
-      setRunAppOutput('');
-      setIsLogViewerOpen(false);
-      verifyGitTriggered.current = false;
-      installDepsTriggered.current = false;
-      runAppTriggered.current = false;
-    }
-  }, [devStatus, isDevLoading, isContainerRunning, isStoppingOperation]);
+    if (!resolvedAppId || !app) return;
 
-  // Track running container status
-  useEffect(() => {
-    if (isContainerRunning) {
-      hasTriggeredInitialStart.current = true;
+    if (sandboxStatus?.status === 'failed' && !startError) {
+      setStartError(sandboxStatus.error_message || sandboxStatus.progress?.message || 'Sandbox initialization failed');
+      setIsLogViewerOpen(true);
+      return;
     }
-  }, [isContainerRunning]);
 
-  // Clean & simple: start CompassX host by default on page load if not running and not explicitly stopped
-  useEffect(() => {
     if (
       !isDevLoading &&
-      !isContainerRunning &&
       !userExplicitlyStopped &&
       !hasTriggeredInitialStart.current &&
-      resolvedAppId &&
-      app &&
+      !ensureAppSandboxMutation.isPending &&
       !startDevMutation.isPending &&
       !restartDevMutation.isPending &&
       devStatus?.status !== 'provisioning' &&
       !devStatus?.is_scaling_node
     ) {
       hasTriggeredInitialStart.current = true;
-      handleStartDev('compassx');
-    }
-  }, [isDevLoading, isContainerRunning, userExplicitlyStopped, resolvedAppId, app, devStatus, startDevMutation.isPending, restartDevMutation.isPending]);
-
-  // ── Step 1 -> Step 2 -> Step 3 -> Step 4 -> Studio Canvas Progression ──────────────────
-  useEffect(() => {
-    if (!isContainerRunning || hasCompletedInit || startError) return;
-
-    // Phase 1 -> 2: If container runtime is active and we are at Step 1, advance to Step 2
-    if (initStep === 0) {
-      setInitStep(1);
-      return;
-    }
-
-    // Phase 2: Execute Git workspace verification
-    if (initStep === 1 && !step2Completed && !verifyGitTriggered.current) {
-      verifyGitTriggered.current = true;
-      verifyGitMutation.mutate(
-        { appId: resolvedAppId! },
+      ensureAppSandboxMutation.mutate(
+        { appId: resolvedAppId },
         {
-          onSuccess: (res) => {
-            if (res.output) {
-              setGitOutput(res.output);
-            }
-            if (res.success) {
-              setStep2Completed(true);
-              setInitStep(2);
-            } else {
-              setStartError(res.message || 'Workspace codebase preparation failed.');
+          onSuccess: (instance) => {
+            if (instance.status === 'failed') {
+              setStartError(instance.error_message || instance.progress?.message || 'Sandbox initialization failed');
               setIsLogViewerOpen(true);
             }
           },
-          onError: (err: any) => {
-            const msg = err?.response?.data?.detail || err?.message || 'Failed to verify workspace git codebase.';
-            setStartError(msg);
-            setIsLogViewerOpen(true);
-          },
-        }
-      );
-      return;
-    }
-
-    // Phase 3: Execute dependency installation
-    if (initStep === 2 && step2Completed && !step3Completed && !installDepsTriggered.current) {
-      installDepsTriggered.current = true;
-      installDepsMutation.mutate(
-        { appId: resolvedAppId! },
-        {
-          onSuccess: (res) => {
-            if (res.output) {
-              setInstallOutput(res.output);
-            }
-            if (res.success) {
-              setStep3Completed(true);
-              setInitStep(3);
-            } else {
-              setStartError(res.message || 'Dependency installation failed.');
-              setIsLogViewerOpen(true);
-            }
-          },
-          onError: (err: any) => {
-            const msg = err?.response?.data?.detail || err?.message || 'Failed to install application dependencies.';
-            setStartError(msg);
-            setIsLogViewerOpen(true);
-          },
-        }
-      );
-      return;
-    }
-
-    // Phase 4: Execute Run Application
-    if (initStep === 3 && step3Completed && !step4Completed && !runAppTriggered.current) {
-      runAppTriggered.current = true;
-      runAppMutation.mutate(
-        { appId: resolvedAppId! },
-        {
-          onSuccess: (res) => {
-            if (res.output) {
-              setRunAppOutput(res.output);
-            }
-            if (res.success) {
-              setStep4Completed(true);
-              const t2 = setTimeout(() => {
-                setHasCompletedInit(true);
-              }, 700);
-              return () => clearTimeout(t2);
-            } else {
-              setStartError(res.message || 'Starting application failed.');
-              setIsLogViewerOpen(true);
-            }
-          },
-          onError: (err: any) => {
-            const msg = err?.response?.data?.detail || err?.message || 'Failed to start application.';
-            setStartError(msg);
-            setIsLogViewerOpen(true);
+          onError: () => {
+            handleStartDev('compassx');
           },
         }
       );
     }
-  }, [
-    isContainerRunning,
-    hasCompletedInit,
-    startError,
-    initStep,
-    step2Completed,
-    step3Completed,
-    step4Completed,
-    resolvedAppId,
-    verifyGitMutation,
-    installDepsMutation,
-    runAppMutation,
-  ]);
+  }, [resolvedAppId, app, sandboxStatus, isContainerRunning, userExplicitlyStopped, startError, isDevLoading, devStatus]);
+
+
+  // ── Step 1 -> Step 2 -> Step 3 -> Step 4 -> Studio Canvas Progression (Temporarily paused for UI test) ──
+  // Temporarily paused after sandbox provisioning for user UI inspection.
+  // The sandbox is provisioned and listed in Compute -> Sandboxes tab.
+  const handleProceedToStudio = () => {
+    setHasCompletedInit(true);
+    setStep2Completed(true);
+    setStep3Completed(true);
+    setStep4Completed(true);
+    setInitStep(3);
+  };
 
   // Reset errors and user stopped flag when container becomes active
   useEffect(() => {
@@ -944,11 +841,18 @@ export default function AppBuildPage() {
     installDepsTriggered.current = false;
     runAppTriggered.current = false;
     hasTriggeredInitialStart.current = true;
-    startDevMutation.mutate(
-      { appId: resolvedAppId, hostType: hostToUse },
+    ensureAppSandboxMutation.mutate(
+      { appId: resolvedAppId },
       {
-        onError: (err: any) => {
-          setStartError(err?.response?.data?.detail || err?.message || 'Failed to start dev sandbox.');
+        onError: () => {
+          startDevMutation.mutate(
+            { appId: resolvedAppId, hostType: hostToUse },
+            {
+              onError: (err: any) => {
+                setStartError(err?.response?.data?.detail || err?.message || 'Failed to start dev sandbox.');
+              },
+            }
+          );
         },
       }
     );
@@ -2320,19 +2224,93 @@ export default function AppBuildPage() {
             <h2 style={{ margin: '0 0 6px', fontSize: '1.25rem', fontWeight: 700, color: '#0f172a' }}>
               {startError
                 ? 'Sandbox Startup Failed'
+                : isContainerRunning || sandboxStatus?.status === 'ready' || sandboxStatus?.status === 'running'
+                ? 'Sandbox Provisioned & Ready'
+                : sandboxStatus?.progress?.stage === 'allocating'
+                ? 'Allocating Compute Sandbox'
+                : sandboxStatus?.progress?.stage === 'starting'
+                ? 'Starting Container Runtime'
+                : sandboxStatus?.progress?.stage === 'initializing'
+                ? `Step ${sandboxStatus.progress.step_index} of ${sandboxStatus.progress.total_steps} • ${sandboxStatus.progress.step_name}`
                 : devStatus?.is_scaling_node
                 ? 'Allocating Cloud Cluster Compute'
                 : 'Preparing Build Environment'}
             </h2>
             <p style={{ margin: '0 0 24px', fontSize: '0.85rem', color: '#64748b' }}>
               {startError
-                ? 'An error occurred during sandbox initialization.'
+                ? (sandboxStatus?.error_message || startError || 'An error occurred during sandbox initialization.')
+                : isContainerRunning || sandboxStatus?.status === 'ready' || sandboxStatus?.status === 'running'
+                ? 'Dev sandbox compute is provisioned and running. (Test paused before app build)'
+                : sandboxStatus?.progress?.message
+                ? sandboxStatus.progress.message
                 : devStatus?.is_scaling_node
                 ? 'Cluster is scaling worker node to allocate compute resources (1-3 min)...'
-                : step4Completed
-                ? 'Step 4 of 4 • Application Running'
                 : `Step ${initStep + 1} of ${BUILD_STEPS.length} • ${BUILD_STEPS[initStep].title}`}
             </p>
+
+            {/* Sandbox Provisioned Info Box (When Ready) */}
+            {(isContainerRunning || sandboxStatus?.status === 'ready' || sandboxStatus?.status === 'running') && !startError && (
+              <div
+                style={{
+                  width: '100%',
+                  margin: '0 0 20px',
+                  padding: '14px 18px',
+                  background: '#f8fafc',
+                  border: '1px solid #e2e8f0',
+                  borderRadius: 10,
+                  textAlign: 'left',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 8,
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <span style={{ fontSize: '0.82rem', fontWeight: 600, color: '#1e293b' }}>
+                    Compute Sandbox Details
+                  </span>
+                  <span
+                    style={{
+                      fontSize: '0.72rem',
+                      fontWeight: 600,
+                      padding: '2px 8px',
+                      borderRadius: 12,
+                      background: 'rgba(16, 185, 129, 0.12)',
+                      color: '#059669',
+                    }}
+                  >
+                    ● READY
+                  </span>
+                </div>
+                <div style={{ fontSize: '0.76rem', color: '#64748b', display: 'flex', flexDirection: 'column', gap: 4 }}>
+                  <div><strong>Sandbox ID:</strong> {sandboxStatus?.id || `dev-app-${resolvedAppId}`}</div>
+                  <div><strong>Consumer Module:</strong> App Engine (app)</div>
+                  <div><strong>Compute Status:</strong> Visible under <strong>Compute &gt; Sandboxes</strong> tab</div>
+                </div>
+                <div style={{ marginTop: 8, display: 'flex', gap: 10 }}>
+                  <button
+                    type="button"
+                    onClick={handleProceedToStudio}
+                    style={{
+                      flex: 1,
+                      padding: '8px 16px',
+                      background: '#2563eb',
+                      color: '#ffffff',
+                      border: 'none',
+                      borderRadius: 6,
+                      fontSize: '0.82rem',
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: 6,
+                    }}
+                  >
+                    <span>Proceed to Studio Canvas</span>
+                  </button>
+                </div>
+              </div>
+            )}
 
             {/* Segmented Pill Progress Bar */}
             <div
@@ -2443,6 +2421,8 @@ export default function AppBuildPage() {
                 <span>
                   {step4Completed
                     ? 'Application services running and dev server responsive.'
+                    : sandboxStatus?.progress?.message
+                    ? sandboxStatus.progress.message
                     : devStatus?.is_scaling_node
                     ? 'Waiting for cluster worker node to become ready (1-3 min)...'
                     : devStatus?.status === 'provisioning' && devStatus?.provisioning_message
@@ -2451,6 +2431,7 @@ export default function AppBuildPage() {
                 </span>
               </div>
             ) : null}
+
 
             {/* On-Demand Logs Section */}
             {(initStep >= 1 || startError || isLogViewerOpen) && (

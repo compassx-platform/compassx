@@ -972,4 +972,9 @@ def start_kernel_for_resource(
         return _error("EGError", str(exc), 500)
 
 
+from app.sandbox.routes import router as sandbox_router  # noqa: E402
+router.include_router(sandbox_router)
+
+
+
 

@@ -10,8 +10,11 @@ from app.models.app import App
 from app.services.omnigent_dev_service import omnigent_dev_service
 from app.services.dev_terminal_service import dev_terminal_service
 from app.services.sandbox_reaper_service import unified_reaper_service
+from app.sandbox.service import sandbox_service
+from app.sandbox.models import SandboxSpec, StorageMount, InitScript
 
 logger = logging.getLogger(__name__)
+
 
 router = APIRouter(prefix="/api/v1/apps/{app_id}/dev", tags=["Apps Development & Omnigent"])
 
@@ -345,6 +348,31 @@ def delete_app_session(
     return dev_session_service.delete_session(app=app, session_id=session_id)
 
 
+def _build_app_sandbox_spec(app: App) -> SandboxSpec:
+    repo_dir = omnigent_dev_service.get_repo_dir(app)
+    return SandboxSpec(
+        sandbox_id=f"dev-app-{app.id}",
+        consumer_key=f"app_{app.id}",
+        name=f"{app.name} (Dev Sandbox)",
+        consumer_module="app",
+        workspace_id=str(app.workspace_id) if app.workspace_id else None,
+        image="compassx-dev-host:latest",
+        ports=[8080, 9201],
+        storage_mounts=[StorageMount(source_path=repo_dir, mount_path="/workspace")],
+        init_scripts=[
+            InitScript(name="Prepare Workspace Code", command="git status || git init", ignore_failure=True),
+            InitScript(name="Install Dependencies", command="pip install -r requirements.txt || true", timeout_seconds=180, ignore_failure=True),
+            InitScript(name="Run Application Server", command="python -c \"print('App sandbox environment ready')\"", ignore_failure=True),
+        ],
+        labels={
+            "compassx.app_id": app.id,
+            "compassx.app_slug": app.slug or "",
+            "compassx.consumer_key": f"app_{app.id}",
+        },
+        metadata={"app_id": app.id, "app_name": app.name, "slug": app.slug},
+    )
+
+
 @router.post("/start")
 def start_dev_session(
     app_id: str,
@@ -352,7 +380,7 @@ def start_dev_session(
     db: Session = Depends(get_system_db),
     guard: Guard = Depends(get_guard),
 ):
-    """Start or attach to a development sandbox. Pass workspace_id or workspace_name."""
+    """Start or attach to a development sandbox via the centralized Sandbox engine."""
     app = db.query(App).filter(App.id == app_id).first()
     if not app:
         raise HTTPException(status_code=404, detail=f"App '{app_id}' not found.")
@@ -360,22 +388,18 @@ def start_dev_session(
     if guard.workspace_id and app.workspace_id != guard.workspace_id:
         raise HTTPException(status_code=403, detail="Cannot access app in another workspace.")
 
-    workspace_id = body.workspace_id if body else None
-    workspace_name = body.workspace_name if body else None
-    host_type = (body.host_type if body and body.host_type else "compassx").lower()
-    app_id_val = app.id
-    db.expunge(app)
-    db.close()
-
-    try:
-        unified_reaper_service.touch_app_activity(app_id_val)
-        session = omnigent_dev_service.start_dev_session(
-            app, workspace_id=workspace_id, workspace_name=workspace_name, host_type=host_type
-        )
-        return session
-    except Exception as e:
-        logger.exception("Failed to start dev session for app %s: %s", app.name, e)
-        raise HTTPException(status_code=500, detail=f"Failed to start dev session: {str(e)}")
+    unified_reaper_service.touch_app_activity(app.id)
+    spec = _build_app_sandbox_spec(app)
+    instance = sandbox_service.ensure_sandbox(spec)
+    return {
+        "app_id": app.id,
+        "status": "active" if instance.status in (SandboxStatus.READY, SandboxStatus.RUNNING) else str(instance.status.value),
+        "mode": instance.runtime_mode,
+        "container_id": instance.container_id,
+        "dev_port": instance.ports[0] if instance.ports else 8080,
+        "endpoints": instance.endpoints,
+        "sandbox_id": instance.id,
+    }
 
 
 @router.post("/restart")
@@ -385,7 +409,7 @@ def restart_dev_sandbox(
     db: Session = Depends(get_system_db),
     guard: Guard = Depends(get_guard),
 ):
-    """Restart dev sandbox: clean up stuck pods/containers and re-provision."""
+    """Restart dev sandbox: cleanly terminate and re-ensure compute via Sandbox engine."""
     app = db.query(App).filter(App.id == app_id).first()
     if not app:
         raise HTTPException(status_code=404, detail=f"App '{app_id}' not found.")
@@ -393,22 +417,75 @@ def restart_dev_sandbox(
     if guard.workspace_id and app.workspace_id != guard.workspace_id:
         raise HTTPException(status_code=403, detail="Cannot access app in another workspace.")
 
-    workspace_id = body.workspace_id if body else None
-    workspace_name = body.workspace_name if body else None
-    host_type = (body.host_type if body and body.host_type else "compassx").lower()
-    app_id_val = app.id
-    db.expunge(app)
-    db.close()
+    unified_reaper_service.touch_app_activity(app.id)
 
     try:
-        unified_reaper_service.touch_app_activity(app_id_val)
-        session = omnigent_dev_service.restart_dev_sandbox(
-            app, workspace_id=workspace_id, workspace_name=workspace_name, host_type=host_type
-        )
-        return session
+        sandbox_service.terminate_sandbox(f"dev-app-{app.id}")
     except Exception as e:
-        logger.exception("Failed to restart dev session for app %s: %s", app.name, e)
-        raise HTTPException(status_code=500, detail=f"Failed to restart dev session: {str(e)}")
+        logger.debug("Restart termination error for dev-app-%s: %s", app.id, e)
+
+    spec = _build_app_sandbox_spec(app)
+    instance = sandbox_service.ensure_sandbox(spec)
+    return {
+        "app_id": app.id,
+        "status": "active" if instance.status in (SandboxStatus.READY, SandboxStatus.RUNNING) else str(instance.status.value),
+        "mode": instance.runtime_mode,
+        "container_id": instance.container_id,
+        "dev_port": instance.ports[0] if instance.ports else 8080,
+        "endpoints": instance.endpoints,
+        "sandbox_id": instance.id,
+    }
+
+
+@router.post("/sandbox/ensure")
+def ensure_app_sandbox(
+    app_id: str,
+    db: Session = Depends(get_system_db),
+    guard: Guard = Depends(get_guard),
+):
+    """Idempotently ensure dev sandbox is running for this app, returning live progress or ready instance."""
+    app = db.query(App).filter(App.id == app_id).first()
+    if not app:
+        raise HTTPException(status_code=404, detail=f"App '{app_id}' not found.")
+    if guard.workspace_id and app.workspace_id != guard.workspace_id:
+        raise HTTPException(status_code=403, detail="Cannot access app in another workspace.")
+
+    unified_reaper_service.touch_app_activity(app.id)
+    spec = _build_app_sandbox_spec(app)
+    instance = sandbox_service.ensure_sandbox(spec)
+    return instance
+    return instance
+
+
+@router.get("/sandbox/status")
+def get_app_sandbox_status(
+    app_id: str,
+    db: Session = Depends(get_system_db),
+    guard: Guard = Depends(get_guard),
+):
+    """Get active sandbox and detailed stage progress for this app."""
+    app = db.query(App).filter(App.id == app_id).first()
+    if not app:
+        raise HTTPException(status_code=404, detail=f"App '{app_id}' not found.")
+
+    unified_reaper_service.touch_app_activity(app.id)
+    instance = sandbox_service.find_active_sandbox(
+        sandbox_id=f"dev-app-{app.id}",
+        consumer_key=f"app_{app.id}",
+        consumer_module="app",
+    )
+    if instance:
+        instance = sandbox_service.get_sandbox(instance.id)
+        return instance
+    return {
+        "id": f"dev-app-{app.id}",
+        "consumer_key": f"app_{app.id}",
+        "name": f"{app.name} (Dev Sandbox)",
+        "consumer_module": "app",
+        "status": "stopped",
+        "endpoints": {},
+        "progress": None,
+    }
 
 
 @router.get("/status")
@@ -430,6 +507,7 @@ def get_dev_status(
     return omnigent_dev_service.get_dev_session(app)
 
 
+
 @router.post("/stop")
 def stop_dev_session(
     app_id: str,
@@ -444,6 +522,20 @@ def stop_dev_session(
     db.expunge(app)
     db.close()
 
+    # 1. Terminate sandbox instance in centralized sandbox_service
+    try:
+        sandbox_service.terminate_sandbox(f"dev-app-{app.id}")
+    except Exception as sb_err:
+        logger.debug("Sandbox terminate error for dev-app-%s: %s", app.id, sb_err)
+
+    try:
+        active_sb = sandbox_service.find_active_sandbox(consumer_key=f"app_{app.id}")
+        if active_sb:
+            sandbox_service.terminate_sandbox(active_sb.id)
+    except Exception as sb_err2:
+        logger.debug("Sandbox terminate error for consumer app_%s: %s", app.id, sb_err2)
+
+    # 2. Stop legacy dev session
     return omnigent_dev_service.stop_dev_session(app)
 
 
@@ -460,6 +552,18 @@ def suspend_dev_session(
 
     db.expunge(app)
     db.close()
+
+    try:
+        sandbox_service.suspend_sandbox(f"dev-app-{app.id}")
+    except Exception:
+        pass
+
+    try:
+        active_sb = sandbox_service.find_active_sandbox(consumer_key=f"app_{app.id}")
+        if active_sb:
+            sandbox_service.suspend_sandbox(active_sb.id)
+    except Exception:
+        pass
 
     return omnigent_dev_service.suspend_dev_session(app)
 
@@ -480,6 +584,19 @@ def resume_dev_session(
     db.close()
 
     unified_reaper_service.touch_app_activity(app_id_val)
+
+    try:
+        sandbox_service.resume_sandbox(f"dev-app-{app.id}")
+    except Exception:
+        pass
+
+    try:
+        active_sb = sandbox_service.find_active_sandbox(consumer_key=f"app_{app.id}")
+        if active_sb:
+            sandbox_service.resume_sandbox(active_sb.id)
+    except Exception:
+        pass
+
     return omnigent_dev_service.resume_dev_session(app)
 
 

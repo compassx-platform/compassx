@@ -180,6 +180,54 @@ export const computeApi = {
     const res = await api.post('/compute/services/port-forwards/recover');
     return res.data;
   },
+
+  // ── Sandbox Management API ────────────────────────────────────────────────
+  listSandboxes: async (params) => {
+    const res = await api.get('/compute/sandboxes', { params });
+    return res.data;
+  },
+
+  getSandbox: async (sandboxId) => {
+    const res = await api.get(`/compute/sandboxes/${sandboxId}`);
+    return res.data;
+  },
+
+  provisionSandbox: async (spec) => {
+    const res = await api.post('/compute/sandboxes', spec);
+    return res.data;
+  },
+
+  terminateSandbox: async (sandboxId) => {
+    const res = await api.delete(`/compute/sandboxes/${sandboxId}`);
+    return res.data;
+  },
+
+  suspendSandbox: async (sandboxId) => {
+    const res = await api.post(`/compute/sandboxes/${sandboxId}/suspend`);
+    return res.data;
+  },
+
+  resumeSandbox: async (sandboxId) => {
+    const res = await api.post(`/compute/sandboxes/${sandboxId}/resume`);
+    return res.data;
+  },
+
+  getSandboxLogs: async (sandboxId, maxLines = 300) => {
+    const res = await api.get(`/compute/sandboxes/${sandboxId}/logs`, {
+      params: { max_lines: maxLines },
+    });
+    return res.data;
+  },
+
+  execSandboxCommand: async (sandboxId, { command, workingDir, timeout = 60 }) => {
+    const res = await api.post(`/compute/sandboxes/${sandboxId}/exec`, {
+      command,
+      working_dir: workingDir ?? null,
+      timeout,
+    });
+    return res.data;
+  },
 };
+
 
 

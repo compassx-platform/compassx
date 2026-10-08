@@ -374,7 +374,32 @@ async def lifespan(app: FastAPI):
                 ))
                 _conn.commit()
             SystemBase.metadata.create_all(bind=system_engine, checkfirst=True)
-            logger.info("User Manager: system_db tables verified/created")
+            try:
+                with system_engine.connect() as _conn:
+                    _conn.execute(_text("""
+                        ALTER TABLE um_object_grants ADD COLUMN IF NOT EXISTS securable_type VARCHAR(32) DEFAULT 'workspace';
+                        ALTER TABLE um_object_grants ALTER COLUMN securable_type DROP DEFAULT;
+                        ALTER TABLE um_object_grants ADD COLUMN IF NOT EXISTS privilege VARCHAR(32);
+                        ALTER TABLE um_object_grants ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ;
+                        ALTER TABLE um_object_grants ALTER COLUMN object_role_id DROP NOT NULL;
+                        ALTER TABLE um_object_grants ALTER COLUMN principal_type TYPE VARCHAR(20) USING principal_type::varchar;
+                        
+                        DO $$ BEGIN
+                            IF NOT EXISTS (
+                                SELECT 1 FROM pg_constraint WHERE conname = 'uq_um_object_grants_identity'
+                            ) THEN
+                                ALTER TABLE um_object_grants ADD CONSTRAINT uq_um_object_grants_identity 
+                                UNIQUE (workspace_id, principal_id, securable_type, catalog_name, schema_name, asset_name, privilege);
+                            END IF;
+                        END $$;
+                        
+                        CREATE INDEX IF NOT EXISTS ix_um_object_grants_principal ON um_object_grants (workspace_id, principal_id);
+                        CREATE INDEX IF NOT EXISTS ix_um_object_grants_securable ON um_object_grants (workspace_id, catalog_name, schema_name, asset_name);
+                    """))
+                    _conn.commit()
+            except Exception as _gov_mig_err:
+                logger.debug("governance schema migration check non-fatal: %s", _gov_mig_err)
+            logger.info("User Manager & Governance: system_db tables verified/created")
 
         if account_engine is not None and system_engine is not None:
             from app.database import AccountSessionLocal, SystemSessionLocal
@@ -471,7 +496,7 @@ app = FastAPI(
     lifespan=lifespan,
     title="CompassX API",
     description="CompassX Platform API",
-    version="0.12.15",
+    version="0.12.16",
     docs_url="/api/swagger/docs",
     openapi_url="/api/swagger.json",
 )
@@ -605,6 +630,11 @@ app.include_router(eg_router, prefix="/api/v1/services/enterprise-gateway")
 app.include_router(airflow_router, prefix="/api/v1/services/airflow")
 app.include_router(js_router, prefix="/api/v1/services/jupyter-server")
 app.include_router(omnigent_router, prefix="/api/v1/services/omnigent")
+
+from app.sandbox.routes import router as sandbox_router  # noqa: E402
+app.include_router(sandbox_router, prefix="/api/v1")
+app.include_router(sandbox_router, prefix="/api/v1/compute")
+
 
 
 

@@ -121,9 +121,11 @@ export function LivePreviewCanvas({
   }, [isInlineLogsOpen, autoScrollInlineLogs, devLogs]);
 
   // Probe target dev server endpoint using fetch (mode: 'no-cors')
+  // Only probe when the application server step is active or completed to prevent premature connection refused errors.
   useEffect(() => {
-    if (!isContainerRunning || !targetUrl) {
+    if (!isContainerRunning || !targetUrl || (!hasCompletedInit && !step4Completed)) {
       setIsServerReachable(false);
+      setIsProbing(false);
       return;
     }
 
@@ -144,8 +146,8 @@ export function LivePreviewCanvas({
         if (!isCancelled) {
           setIsServerReachable(false);
           setIsProbing(false);
-          // Poll every 1.5s until reachable
-          pollTimeout = setTimeout(probeServer, 1500);
+          // Poll every 3s until reachable
+          pollTimeout = setTimeout(probeServer, 3000);
         }
       }
     };

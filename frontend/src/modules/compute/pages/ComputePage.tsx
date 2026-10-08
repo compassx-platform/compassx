@@ -3,7 +3,9 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { Search } from 'lucide-react';
 import ComputeResourcesTable from '@/modules/compute/components/ComputeResourcesTable';
 import ComputeServicesPanel from '@/modules/compute/components/ComputeServicesPanel';
+import ComputeSandboxesTable from '@/modules/compute/components/ComputeSandboxesTable';
 import CreateResourceModal from '@/modules/compute/components/CreateResourceModal';
+import CreateSandboxModal from '@/modules/compute/components/CreateSandboxModal';
 import { computeApi } from '@/modules/compute/computeApi';
 import { useScopedNavigate } from '@/lib/appNavigation';
 import { PageTabs } from '@/components/common/PageTabs';
@@ -11,7 +13,7 @@ import { getPrincipalInfo } from '@/lib/auth';
 import './compute-page.css';
 
 const POLL_INTERVAL = 10000;
-const COMPUTE_TAB_VALUES = ['resources', 'services'] as const;
+const COMPUTE_TAB_VALUES = ['resources', 'services', 'sandboxes'] as const;
 
 export default function ComputePage() {
   const navigate = useScopedNavigate();
@@ -20,11 +22,14 @@ export default function ComputePage() {
   const [tab, setTab] = useState('resources');
   const [resources, setResources] = useState([]);
   const [services, setServices] = useState([]);
+  const [sandboxes, setSandboxes] = useState([]);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [runtimeFilter, setRuntimeFilter] = useState('');
+  const [consumerFilter, setConsumerFilter] = useState('');
   const [k8sWarning, setK8sWarning] = useState(null);
   const [showCreateModal, setShowCreateModal] = useState(false);
+  const [showCreateSandboxModal, setShowCreateSandboxModal] = useState(false);
   const [profiles, setProfiles] = useState([]);
   const [loadingId, setLoadingId] = useState(null);
   const [serviceLoadingKey, setServiceLoadingKey] = useState(null);
@@ -69,10 +74,8 @@ export default function ComputePage() {
 
   const fetchResources = useCallback(async () => {
     try {
-
       const list = await computeApi.listResources();
       setResources(list);
-
     } catch (e) {
       console.error('[ComputePage] poll resources error:', e);
     }
@@ -87,6 +90,15 @@ export default function ComputePage() {
     }
   }, [stabilizeServiceOrder]);
 
+  const fetchSandboxes = useCallback(async () => {
+    try {
+      const list = await computeApi.listSandboxes();
+      setSandboxes(list || []);
+    } catch (e) {
+      console.error('[ComputePage] poll sandboxes error:', e);
+    }
+  }, []);
+
   const fetchPortForwardStatus = useCallback(async () => {
     try {
       const status = await computeApi.getPortForwardStatus();
@@ -99,14 +111,16 @@ export default function ComputePage() {
   useEffect(() => {
     fetchResources();
     fetchServices();
+    fetchSandboxes();
     fetchPortForwardStatus();
     pollRef.current = setInterval(() => {
       fetchResources();
       fetchServices();
+      fetchSandboxes();
       fetchPortForwardStatus();
     }, POLL_INTERVAL);
     return () => clearInterval(pollRef.current);
-  }, [fetchResources, fetchServices, fetchPortForwardStatus]);
+  }, [fetchResources, fetchServices, fetchSandboxes, fetchPortForwardStatus]);
 
   const handleCreateResource = useCallback(async (data) => {
     try {
@@ -155,6 +169,53 @@ export default function ComputePage() {
     }
   }, [fetchResources, currentUserId]);
 
+  // ── Sandbox Handlers ───────────────────────────────────────────────────────
+  const handleProvisionSandbox = useCallback(async (spec) => {
+    try {
+      setLoadingId('provisioning-sandbox');
+      await computeApi.provisionSandbox(spec);
+      await fetchSandboxes();
+    } finally {
+      setLoadingId(null);
+    }
+  }, [fetchSandboxes]);
+
+  const handleTerminateSandbox = useCallback(async (sandboxId) => {
+    try {
+      setLoadingId(sandboxId);
+      await computeApi.terminateSandbox(sandboxId);
+      await fetchSandboxes();
+    } catch (e) {
+      console.error('[ComputePage] terminate sandbox error:', e);
+    } finally {
+      setLoadingId(null);
+    }
+  }, [fetchSandboxes]);
+
+  const handleSuspendSandbox = useCallback(async (sandboxId) => {
+    try {
+      setLoadingId(sandboxId);
+      await computeApi.suspendSandbox(sandboxId);
+      await fetchSandboxes();
+    } catch (e) {
+      console.error('[ComputePage] suspend sandbox error:', e);
+    } finally {
+      setLoadingId(null);
+    }
+  }, [fetchSandboxes]);
+
+  const handleResumeSandbox = useCallback(async (sandboxId) => {
+    try {
+      setLoadingId(sandboxId);
+      await computeApi.resumeSandbox(sandboxId);
+      await fetchSandboxes();
+    } catch (e) {
+      console.error('[ComputePage] resume sandbox error:', e);
+    } finally {
+      setLoadingId(null);
+    }
+  }, [fetchSandboxes]);
+
   const handleServiceAction = useCallback(async (serviceId, action) => {
     const key = `${serviceId}:${action}`;
     try {
@@ -193,10 +254,14 @@ export default function ComputePage() {
   const computeTabs = [
     { value: COMPUTE_TAB_VALUES[0], label: `All-purpose Compute (${resources.length})` },
     { value: COMPUTE_TAB_VALUES[1], label: `Services (${services.length})` },
+    { value: COMPUTE_TAB_VALUES[2], label: `Sandboxes (${sandboxes.length})` },
   ];
 
   const runtimeOptions = Array.from(new Set(resources.map((resource) => resource.runtime).filter(Boolean)));
   const statusOptions = Array.from(new Set(resources.map((resource) => resource.phase).filter(Boolean)));
+  const sandboxStatusOptions = Array.from(new Set(sandboxes.map((sb) => sb.status).filter(Boolean)));
+  const consumerOptions = Array.from(new Set(sandboxes.map((sb) => sb.consumer_module).filter(Boolean)));
+
   const filteredResources = resources.filter((resource) => {
     const query = search.trim().toLowerCase();
     const matchesSearch = !query || [resource.name, resource.profile, resource.runtime, resource.created_by]
@@ -206,6 +271,7 @@ export default function ComputePage() {
     const matchesRuntime = !runtimeFilter || resource.runtime === runtimeFilter;
     return matchesSearch && matchesStatus && matchesRuntime;
   });
+
   const filteredServices = services.filter((service) => {
     const query = search.trim().toLowerCase();
     if (!query) return true;
@@ -214,11 +280,26 @@ export default function ComputePage() {
       .some((value) => String(value).toLowerCase().includes(query));
   });
 
+  const filteredSandboxes = sandboxes.filter((sb) => {
+    const query = search.trim().toLowerCase();
+    const matchesSearch = !query || [sb.name, sb.id, sb.consumer_module, sb.image, sb.runtime_mode]
+      .filter(Boolean)
+      .some((value) => String(value).toLowerCase().includes(query));
+    const matchesStatus = !statusFilter || String(sb.status).toLowerCase() === statusFilter.toLowerCase();
+    const matchesConsumer = !consumerFilter || String(sb.consumer_module).toLowerCase() === consumerFilter.toLowerCase();
+    return matchesSearch && matchesStatus && matchesConsumer;
+  });
+
   return (
     <div className="compute-page">
       <h1 className="compute-title">Compute</h1>
 
-      <PageTabs tabs={computeTabs} value={tab} onChange={setTab} className="compute-tabs" />
+      <PageTabs tabs={computeTabs} value={tab} onChange={(newTab) => {
+        setTab(newTab);
+        setStatusFilter('');
+        setRuntimeFilter('');
+        setConsumerFilter('');
+      }} className="compute-tabs" />
 
       {k8sWarning && (
         <div className="compute-warning">
@@ -232,9 +313,16 @@ export default function ComputePage() {
           <input
             value={search}
             onChange={(event) => setSearch(event.target.value)}
-            placeholder={tab === 'resources' ? 'Filter compute resources' : 'Filter services'}
+            placeholder={
+              tab === 'resources'
+                ? 'Filter compute resources'
+                : tab === 'sandboxes'
+                ? 'Filter sandboxes'
+                : 'Filter services'
+            }
           />
         </div>
+
         {tab === 'resources' && (
           <>
             <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
@@ -247,10 +335,31 @@ export default function ComputePage() {
             </select>
           </>
         )}
+
+        {tab === 'sandboxes' && (
+          <>
+            <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
+              <option value="">All Statuses</option>
+              {sandboxStatusOptions.map((st) => <option key={st} value={st}>{st}</option>)}
+            </select>
+            <select value={consumerFilter} onChange={(event) => setConsumerFilter(event.target.value)}>
+              <option value="">All Consumers</option>
+              {consumerOptions.map((mod) => <option key={mod} value={mod}>{mod}</option>)}
+            </select>
+          </>
+        )}
+
         <div className="compute-toolbar-spacer" />
+
         {tab === 'resources' && (
           <button className="compute-primary-btn" onClick={() => setShowCreateModal(true)}>
             Create Compute
+          </button>
+        )}
+
+        {tab === 'sandboxes' && (
+          <button className="compute-primary-btn" onClick={() => setShowCreateSandboxModal(true)}>
+            Provision Sandbox
           </button>
         )}
       </div>
@@ -282,12 +391,32 @@ export default function ComputePage() {
         </section>
       )}
 
+      {tab === 'sandboxes' && (
+        <section className="compute-content">
+          <ComputeSandboxesTable
+            sandboxes={filteredSandboxes}
+            onTerminate={handleTerminateSandbox}
+            onSuspend={handleSuspendSandbox}
+            onResume={handleResumeSandbox}
+            loadingId={loadingId}
+            onRefresh={fetchSandboxes}
+          />
+        </section>
+      )}
+
       <CreateResourceModal
         isOpen={showCreateModal}
         profiles={profiles}
         onClose={() => setShowCreateModal(false)}
         onCreate={handleCreateResource}
       />
+
+      <CreateSandboxModal
+        isOpen={showCreateSandboxModal}
+        onClose={() => setShowCreateSandboxModal(false)}
+        onProvision={handleProvisionSandbox}
+      />
     </div>
   );
 }
+

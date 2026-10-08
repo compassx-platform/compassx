@@ -343,6 +343,64 @@ export interface DevSessionStatus {
   provisioning_message?: string;
 }
 
+export interface AppSandboxProgress {
+  stage: 'checking' | 'allocating' | 'starting' | 'initializing' | 'ready' | 'failed' | string;
+  step_index: number;
+  total_steps: number;
+  step_name: string;
+  message: string;
+  percent: number;
+  elapsed_seconds: number;
+  details?: Record<string, any>;
+}
+
+export interface AppSandboxInstance {
+  id: string;
+  consumer_key?: string;
+  name: string;
+  consumer_module: string;
+  workspace_id?: string;
+  status: 'pending' | 'provisioning' | 'initializing' | 'ready' | 'running' | 'stopped' | 'suspended' | 'failed' | 'terminated' | string;
+  runtime_mode: string;
+  image?: string;
+  endpoints: Record<string, string>;
+  ports: number[];
+  progress?: AppSandboxProgress | null;
+  error_message?: string | null;
+}
+
+export function useEnsureAppSandbox() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ appId }: { appId: string }) => {
+      const res = await api.post<AppSandboxInstance>(`/apps/${appId}/dev/sandbox/ensure`);
+      return res.data;
+    },
+    onSuccess: (_data, vars) => {
+      qc.invalidateQueries({ queryKey: ['app-sandbox-status', vars.appId] });
+      qc.invalidateQueries({ queryKey: ['app-dev-status', vars.appId] });
+    },
+  });
+}
+
+export function useAppSandboxStatus(appId?: string, enabled = true) {
+  return useQuery({
+    queryKey: ['app-sandbox-status', appId],
+    queryFn: async () => {
+      if (!appId) throw new Error('App ID required');
+      const res = await api.get<AppSandboxInstance>(`/apps/${appId}/dev/sandbox/status`);
+      return res.data;
+    },
+    enabled: !!appId && enabled,
+    staleTime: 0,
+    refetchInterval: (query) => {
+      const st = query.state.data?.status;
+      if (st === 'provisioning' || st === 'initializing' || st === 'pending') return 1200;
+      return st === 'ready' || st === 'running' ? 5000 : 8000;
+    },
+  });
+}
+
 export function useDevWorkspaces(appId?: string) {
   return useQuery({
     queryKey: ['app-dev-workspaces', appId],
@@ -355,6 +413,7 @@ export function useDevWorkspaces(appId?: string) {
     staleTime: 10_000,
   });
 }
+
 
 export function useDevStatus(appId?: string, enabled = true) {
   return useQuery({
@@ -491,7 +550,9 @@ export function useStopDevSession() {
         phase: 'Stopped',
       });
       qc.invalidateQueries({ queryKey: ['app-dev-status', appId] });
+      qc.invalidateQueries({ queryKey: ['app-sandbox-status', appId] });
       qc.invalidateQueries({ queryKey: ['app-dev-workspaces', appId] });
+      qc.invalidateQueries({ queryKey: ['sandboxes'] });
     },
   });
 }
