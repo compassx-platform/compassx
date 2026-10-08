@@ -14,9 +14,9 @@ class Settings(BaseSettings):
     )
 
 
-    # PostgreSQL connection settings (defaults configured for Docker Postgres mapping)
+    # PostgreSQL connection settings
     PG_HOST: str = "localhost"
-    PG_PORT: int = 5433
+    PG_PORT: int = 5432
     PG_USER: str = "postgres"
     PG_PASSWORD: str = "postgres"
 

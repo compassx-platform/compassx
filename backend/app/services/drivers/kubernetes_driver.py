@@ -1249,9 +1249,9 @@ class KubernetesDevDriver(BaseDevDriver):
 
                 try:
                     from app.services.node_pool_manager import node_pool_manager
-                    app_node_selector = node_pool_manager.get_app_node_selector()
+                    dev_node_selector = node_pool_manager.get_compute_node_selector()
                 except Exception:
-                    app_node_selector = None
+                    dev_node_selector = {"kubernetes.azure.com/agentpool": "computepool"}
 
                 dev_deployment = client.V1Deployment(
                     api_version="apps/v1",
@@ -1266,7 +1266,7 @@ class KubernetesDevDriver(BaseDevDriver):
                             spec=client.V1PodSpec(
                                 containers=[dev_container],
                                 affinity=dev_affinity,
-                                node_selector=app_node_selector or None,
+                                node_selector=dev_node_selector or {"kubernetes.azure.com/agentpool": "computepool"},
                                 restart_policy="Always",
                                 volumes=[
                                     client.V1Volume(
