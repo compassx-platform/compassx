@@ -1,3 +1,4 @@
+import os
 import logging
 from typing import Optional, List, Dict, Any
 from pydantic import BaseModel
@@ -11,7 +12,7 @@ from app.services.omnigent_dev_service import omnigent_dev_service
 from app.services.dev_terminal_service import dev_terminal_service
 from app.services.sandbox_reaper_service import unified_reaper_service
 from app.sandbox.service import sandbox_service
-from app.sandbox.models import SandboxSpec, StorageMount, InitScript
+from app.sandbox.models import SandboxSpec, StorageMount, InitScript, SandboxStatus
 
 logger = logging.getLogger(__name__)
 

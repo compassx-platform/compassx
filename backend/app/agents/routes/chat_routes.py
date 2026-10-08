@@ -15,7 +15,7 @@ from app.agents.routes._authz import authorized_agent, authorized_session
 from app.database import SystemSessionLocal as SessionLocal, get_system_db as get_db
 from app.governance.dependencies import Guard, get_guard
 from app.governance.privileges import Privilege
-from app.models.agents import Agent, ChatMessage, ChatSession
+from app.models.agents import Agent, ChatMessage, ChatSession, MessageRole
 from app.schemas.agents import (
     ChatMessageResponse,
     ChatSessionCreate,

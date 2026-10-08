@@ -1,4 +1,4 @@
-﻿"""Dashboard model â€” stores full dashboard as JSONB blobs (pages, widgets, datasets, settings)."""
+"""Dashboard model â€” stores full dashboard as JSONB blobs (pages, widgets, datasets, settings)."""
 
 from datetime import datetime, timezone
 

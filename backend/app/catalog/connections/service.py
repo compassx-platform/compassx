@@ -6,7 +6,7 @@ import json
 import logging
 import uuid
 from typing import Any, List, Optional
-from sqlalchemy import or_
+from sqlalchemy import or_, text
 from sqlalchemy.orm import Session
 
 from app.catalog.models import (

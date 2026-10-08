@@ -500,6 +500,7 @@ async def proxy_kernels_start(
         except Exception:
             pass
 
+    catalog_api_url = _kernel_catalog_api_url()
     payload["env"].setdefault("KERNEL_NOTEBOOK_SESSION_TOKEN", session_token)
     payload["env"].setdefault("KERNEL_CATALOG_API_URL", catalog_api_url)
     payload["env"].setdefault("NOTEBOOK_SESSION_TOKEN", session_token)

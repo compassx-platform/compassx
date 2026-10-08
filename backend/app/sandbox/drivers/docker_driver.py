@@ -318,6 +318,9 @@ class DockerSandboxDriver(BaseSandboxDriver):
             for c in containers:
                 labels = c.labels or {}
                 sb_id = labels.get("compassx.sandbox_id") or c.name.replace("compassx-sandbox-", "")
+                sb_name = labels.get("compassx.name") or sb_id
+                consumer = labels.get("compassx.consumer_module") or "app"
+                ws_id = labels.get("compassx.workspace_id")
                 state = c.attrs.get("State", {}).get("Status", "").lower()
                 if state == "running":
                     status = SandboxStatus.RUNNING

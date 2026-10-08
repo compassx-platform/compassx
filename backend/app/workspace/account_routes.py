@@ -32,6 +32,7 @@ from app.workspace.schemas import (
     WorkspacePatch,
 )
 from app.workspace.storage_validator import validate_storage_config, encrypt_storage_config
+from app.config import settings
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/account", tags=["account-admin"])

@@ -11,6 +11,11 @@ from app.config import settings
 from app.services.drivers.base import BaseAppDriver, BaseDevDriver
 from app.services.ingress_service import ingress_service
 
+try:
+    from kubernetes.client.exceptions import ApiException
+except ImportError:
+    ApiException = Exception  # type: ignore
+
 logger = logging.getLogger(__name__)
 
 
@@ -1869,10 +1874,18 @@ class KubernetesDevDriver(BaseDevDriver):
         except Exception:
             pass
 
+        sb_name = f"compassx-sb-dev-app-{clean_id}"
+        underscore_id = clean_id.replace("-", "_")
+
         deadline = time.time() + max(0, wait_seconds)
         while True:
-            # 1. Try label selectors
+            # 1. Try label selectors (both unified sandbox and legacy dev pod labels)
             for selector in [
+                f"compassx.sandbox-id=dev-app-{clean_id}",
+                f"compassx.consumer-key=app_{clean_id}",
+                f"compassx.consumer-key=app_{underscore_id}",
+                f"compassx.app_id={clean_id}",
+                f"compassx.app_id={underscore_id}",
                 f"compassx/app-id={clean_id},compassx/dev=true",
                 f"app.kubernetes.io/name={dev_name}",
                 f"compassx/app-id={clean_id}",
@@ -1892,15 +1905,38 @@ class KubernetesDevDriver(BaseDevDriver):
                 except Exception as e:
                     logger.debug("Error listing pods with selector %s: %s", selector, e)
 
-            # 2. Try matching by pod name prefix
+            # 2. Try matching by pod name prefix and annotations
             try:
                 pods = k8s.core().list_namespaced_pod(namespace=ns)
-                matched = [
-                    p for p in (pods.items or [])
-                    if p.metadata and p.metadata.name and (
-                        p.metadata.name.startswith(f"{dev_name}-") or p.metadata.name == dev_name
-                    ) and p.status and p.status.phase == "Running" and not p.metadata.deletion_timestamp
-                ]
+                matched = []
+                for p in (pods.items or []):
+                    if not p.metadata or not p.status or p.status.phase != "Running" or p.metadata.deletion_timestamp:
+                        continue
+                    pname = p.metadata.name or ""
+                    annos = p.metadata.annotations or {}
+                    labels = p.metadata.labels or {}
+
+                    # Match by name prefix
+                    if (
+                        pname.startswith(f"{sb_name}-")
+                        or pname == sb_name
+                        or pname.startswith(f"{dev_name}-")
+                        or pname == dev_name
+                        or f"dev-app-{clean_id}" in pname
+                    ):
+                        matched.append(p)
+                        continue
+
+                    # Match by annotations or labels
+                    sb_id = annos.get("compassx.sandbox.id") or labels.get("compassx.sandbox-id")
+                    ckey = annos.get("compassx.sandbox.consumer_key") or labels.get("compassx.consumer-key")
+                    if sb_id and (clean_id in sb_id or underscore_id in sb_id):
+                        matched.append(p)
+                        continue
+                    if ckey and (clean_id in ckey or underscore_id in ckey):
+                        matched.append(p)
+                        continue
+
                 if matched:
                     matched.sort(
                         key=lambda p: p.metadata.creation_timestamp or datetime.min.replace(tzinfo=timezone.utc),

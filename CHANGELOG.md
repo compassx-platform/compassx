@@ -5,6 +5,23 @@ All notable changes to the CompassX Platform will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.18] - 2026-10-08
+
+### 🚀 Highlights
+
+CompassX `0.12.18` introduces **Unified Sandbox Pod Resolution**, **Dynamic Phase Lifecycle Tracking**, and **Platform-Wide Typing & Route Cleanups**.
+
+### ✨ Features & Enhancements
+
+#### Unified Sandbox Pod & Annotation Resolution
+- **Multi-Selector Kubernetes Resolution (`kubernetes_driver.py`)**: `_get_dev_pod_name` resolves active pods across both unified sandbox label selectors (`compassx.sandbox-id`, `compassx.consumer-key`, `compassx.app_id`) and legacy deployment names, including annotation matching (`compassx.sandbox.id`, `compassx.sandbox.consumer_key`).
+- **Dynamic Phase Tracking (`k8s_driver.py`, `docker_driver.py`)**: Tracks pod lifecycle transitions (`Running`, `Provisioning`, `Failed`) accurately during creation and discovery rather than assuming immediate running state.
+
+#### Codebase & Type Cleanup
+- **SQLAlchemy & Pydantic Cleanups**: Cleaned up schema imports and typing annotations across chat, catalog connections, dashboards, dataset, notebooks jupyter proxy, dev routes, omnigent dev service, and workspace account routes.
+
+---
+
 ## [0.12.17] - 2026-10-08
 
 ### 🚀 Highlights

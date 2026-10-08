@@ -294,15 +294,26 @@ class KubernetesSandboxDriver(BaseSandboxDriver):
                 logger.debug("Could not create K8s service %s: %s", svc_name, svc_err)
 
         # Wait up to 10s for pod to reach Running phase
+        pod_phase = "Pending"
         for _ in range(10):
             try:
                 live_pod = k8s.core().read_namespaced_pod(name=pod_name, namespace=self.namespace)
                 phase = (live_pod.status.phase or "") if live_pod.status else ""
+                if phase:
+                    pod_phase = phase
                 if phase == "Running":
                     break
             except Exception:
                 pass
             time.sleep(1)
+
+        # Resolve status
+        if pod_phase == "Running":
+            sb_status = SandboxStatus.RUNNING
+        elif pod_phase in ("Failed", "Unknown"):
+            sb_status = SandboxStatus.FAILED
+        else:
+            sb_status = SandboxStatus.PROVISIONING
 
         # Resolve endpoints
         endpoints = {}
@@ -316,7 +327,7 @@ class KubernetesSandboxDriver(BaseSandboxDriver):
             consumer_key=spec.consumer_key,
             consumer_module=spec.consumer_module,
             workspace_id=spec.workspace_id,
-            status=SandboxStatus.RUNNING,
+            status=sb_status,
             runtime_mode="kubernetes",
             image=image_name,
             pod_name=pod_name,
