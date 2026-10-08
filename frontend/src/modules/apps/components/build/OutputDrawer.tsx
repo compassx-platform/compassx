@@ -11,10 +11,12 @@ import {
   X,
   AlertCircle,
   CheckCircle2,
+  Plus,
 } from 'lucide-react';
 import { useToast } from '@/lib/toast';
+import { DevTerminal } from '../DevTerminal';
 
-export type OutputTab = 'devServer' | 'console';
+export type OutputTab = 'devServer' | 'console' | 'terminal';
 
 interface OutputDrawerProps {
   devLogs: string;
@@ -26,6 +28,12 @@ interface OutputDrawerProps {
   height: number;
   onHeightChange?: (height: number) => void;
   onClose?: () => void;
+  appId?: string;
+  appName?: string;
+  workspaceId?: string;
+  workspaceName?: string;
+  isDevPodRunning?: boolean;
+  initialTab?: OutputTab;
 }
 
 export function OutputDrawer({
@@ -38,9 +46,15 @@ export function OutputDrawer({
   height,
   onHeightChange,
   onClose,
+  appId,
+  appName,
+  workspaceId,
+  workspaceName,
+  isDevPodRunning,
+  initialTab = 'devServer',
 }: OutputDrawerProps) {
   const toast = useToast();
-  const [activeTab, setActiveTab] = useState<OutputTab>('devServer');
+  const [activeTab, setActiveTab] = useState<OutputTab>(initialTab);
   const [autoScroll, setAutoScroll] = useState<boolean>(true);
   const [isMaximized, setIsMaximized] = useState<boolean>(false);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -178,6 +192,32 @@ export function OutputDrawer({
               <Terminal size={12} />
               <span>Console</span>
             </button>
+
+            {/* Terminal (Shell) Tab */}
+            <button
+              type="button"
+              onClick={() => {
+                setActiveTab('terminal');
+                if (isCollapsed) onToggleCollapsed();
+              }}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 5,
+                padding: '3px 8px',
+                borderRadius: 4,
+                border: activeTab === 'terminal' && !isCollapsed ? '1px solid #e2e8f0' : '1px solid transparent',
+                background: activeTab === 'terminal' && !isCollapsed ? '#ffffff' : 'transparent',
+                color: activeTab === 'terminal' && !isCollapsed ? '#0f172a' : '#64748b',
+                fontWeight: activeTab === 'terminal' && !isCollapsed ? 600 : 500,
+                fontSize: '0.72rem',
+                cursor: 'pointer',
+                boxShadow: activeTab === 'terminal' && !isCollapsed ? '0 1px 2px rgba(0,0,0,0.05)' : 'none',
+              }}
+            >
+              <Terminal size={12} style={{ color: activeTab === 'terminal' && !isCollapsed ? '#16a34a' : '#64748b' }} />
+              <span>Terminal</span>
+            </button>
           </div>
         </div>
 
@@ -185,26 +225,28 @@ export function OutputDrawer({
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           {!isCollapsed && (
             <>
-              {/* Auto Scroll toggle */}
-              <button
-                type="button"
-                onClick={() => setAutoScroll((prev) => !prev)}
-                title="Toggle Auto-scroll"
-                style={{
-                  background: 'transparent',
-                  border: 'none',
-                  color: autoScroll ? '#2563eb' : '#64748b',
-                  fontSize: '0.7rem',
-                  cursor: 'pointer',
-                  fontWeight: 500,
-                  marginRight: 4,
-                }}
-              >
-                Auto-scroll: {autoScroll ? 'ON' : 'OFF'}
-              </button>
+              {/* Auto Scroll toggle (for log tabs) */}
+              {activeTab !== 'terminal' && (
+                <button
+                  type="button"
+                  onClick={() => setAutoScroll((prev) => !prev)}
+                  title="Toggle Auto-scroll"
+                  style={{
+                    background: 'transparent',
+                    border: 'none',
+                    color: autoScroll ? '#2563eb' : '#64748b',
+                    fontSize: '0.7rem',
+                    cursor: 'pointer',
+                    fontWeight: 500,
+                    marginRight: 4,
+                  }}
+                >
+                  Auto-scroll: {autoScroll ? 'ON' : 'OFF'}
+                </button>
+              )}
 
               {/* Refresh Logs */}
-              {onRefreshLogs && (
+              {activeTab !== 'terminal' && onRefreshLogs && (
                 <button
                   type="button"
                   onClick={onRefreshLogs}
@@ -226,23 +268,25 @@ export function OutputDrawer({
               )}
 
               {/* Copy Logs */}
-              <button
-                type="button"
-                onClick={handleCopyLogs}
-                title="Copy output logs"
-                style={{
-                  background: 'transparent',
-                  border: 'none',
-                  color: '#64748b',
-                  cursor: 'pointer',
-                  padding: 3,
-                  borderRadius: 4,
-                  display: 'flex',
-                  alignItems: 'center',
-                }}
-              >
-                <Copy size={12} />
-              </button>
+              {activeTab !== 'terminal' && (
+                <button
+                  type="button"
+                  onClick={handleCopyLogs}
+                  title="Copy output logs"
+                  style={{
+                    background: 'transparent',
+                    border: 'none',
+                    color: '#64748b',
+                    cursor: 'pointer',
+                    padding: 3,
+                    borderRadius: 4,
+                    display: 'flex',
+                    alignItems: 'center',
+                  }}
+                >
+                  <Copy size={12} />
+                </button>
+              )}
             </>
           )}
 
@@ -311,27 +355,43 @@ export function OutputDrawer({
 
       {/* ── Output Body ── */}
       {!isCollapsed && (
-        <div
-          ref={scrollRef}
-          style={{
-            flex: 1,
-            minHeight: 0,
-            padding: '8px 14px',
-            overflowY: 'auto',
-            background: '#ffffff',
-            fontFamily:
-              'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
-            fontSize: '0.74rem',
-            lineHeight: 1.6,
-            color: activeTab === 'console' ? '#b45309' : '#334155',
-            whiteSpace: 'pre-wrap',
-            wordBreak: 'break-all',
-          }}
-        >
-          {activeTab === 'devServer' ? (
-            devLogs || 'Starting dev server output stream...'
+        <div style={{ flex: 1, minHeight: 0, height: '100%', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+          {activeTab === 'terminal' ? (
+            <div style={{ flex: 1, minHeight: 0, height: '100%', overflow: 'hidden', background: '#090d16' }}>
+              <DevTerminal
+                appId={appId || ''}
+                appName={appName || 'app'}
+                workspaceId={workspaceId}
+                workspaceName={workspaceName}
+                isDevPodRunning={isDevPodRunning ?? isDevRunning}
+                agent="bash"
+                fullHeight={true}
+              />
+            </div>
           ) : (
-            consoleLogs
+            <div
+              ref={scrollRef}
+              style={{
+                flex: 1,
+                minHeight: 0,
+                padding: '8px 14px',
+                overflowY: 'auto',
+                background: '#ffffff',
+                fontFamily:
+                  'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
+                fontSize: '0.74rem',
+                lineHeight: 1.6,
+                color: activeTab === 'console' ? '#b45309' : '#334155',
+                whiteSpace: 'pre-wrap',
+                wordBreak: 'break-all',
+              }}
+            >
+              {activeTab === 'devServer' ? (
+                devLogs || 'Starting dev server output stream...'
+              ) : (
+                consoleLogs
+              )}
+            </div>
           )}
         </div>
       )}

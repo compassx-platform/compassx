@@ -328,11 +328,60 @@ class DockerDevDriver(BaseDevDriver):
         res = subprocess.run(["docker", "image", "inspect", tag], capture_output=True, text=True, check=False)
         return res.returncode == 0
 
+    def _get_dev_container_name(self, app: Any) -> str:
+        """Resolve the active running or existing Docker container name for the given app."""
+        app_id = str(getattr(app, "id", app) or "").strip()
+        if not app_id:
+            return ""
+
+        candidates = [
+            f"compassx-sandbox-dev-app-{app_id}",
+            f"compassx-app-dev-{app_id}",
+        ]
+
+        try:
+            # 1. First check running containers
+            res_running = subprocess.run(
+                ["docker", "ps", "--filter", f"name={app_id}", "--format", "{{.Names}}"],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=3.0,
+            )
+            running_names = [line.strip() for line in (res_running.stdout or "").splitlines() if line.strip()]
+            for cand in candidates:
+                if cand in running_names:
+                    return cand
+            for fn in running_names:
+                if f"dev-app-{app_id}" in fn or f"dev-{app_id}" in fn or app_id in fn:
+                    return fn
+
+            # 2. Check all containers (including stopped/starting)
+            res_all = subprocess.run(
+                ["docker", "ps", "-a", "--filter", f"name={app_id}", "--format", "{{.Names}}"],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=3.0,
+            )
+            all_names = [line.strip() for line in (res_all.stdout or "").splitlines() if line.strip()]
+            for cand in candidates:
+                if cand in all_names:
+                    return cand
+            for fn in all_names:
+                if f"dev-app-{app_id}" in fn or f"dev-{app_id}" in fn or app_id in fn:
+                    return fn
+        except Exception as e:
+            logger.debug("Error finding container for app %s: %s", app_id, e)
+
+        # Default fallback
+        return candidates[0]
+
     def start_dev(self, app, repo_dir: str, omnigent_internal_url: str, workspace_folder: str = "", workspace_branch: str = "", host_type: str = "compassx", **kwargs) -> Dict[str, Any]:
         import uuid
-        dev_container_name = f"compassx-app-dev-{app.id}"
+        dev_container_name = f"compassx-sandbox-dev-app-{app.id}"
         # Stop existing dev container for this app first so its port is released
-        subprocess.run(["docker", "rm", "-f", dev_container_name], capture_output=True, text=True, check=False)
+        subprocess.run(["docker", "rm", "-f", f"compassx-sandbox-dev-app-{app.id}", f"compassx-app-dev-{app.id}"], capture_output=True, text=True, check=False)
 
         dev_port = find_free_tcp_port(9201, 9400)
         network = get_docker_network()
@@ -620,19 +669,22 @@ class DockerDevDriver(BaseDevDriver):
         }
 
     def stop_dev(self, app) -> bool:
-        dev_container_name = f"compassx-app-dev-{app.id}"
+        dev_container_name = self._get_dev_container_name(app)
         res = subprocess.run(["docker", "rm", "-f", dev_container_name], capture_output=True, text=True, check=False)
+        legacy_name = f"compassx-app-dev-{getattr(app, 'id', app)}"
+        if legacy_name != dev_container_name:
+            subprocess.run(["docker", "rm", "-f", legacy_name], capture_output=True, text=True, check=False)
         return res.returncode == 0
 
     def suspend_dev(self, app) -> bool:
         """Suspend dev container by stopping it."""
-        dev_container_name = f"compassx-app-dev-{app.id}"
+        dev_container_name = self._get_dev_container_name(app)
         res = subprocess.run(["docker", "stop", dev_container_name], capture_output=True, text=True, check=False)
         return res.returncode == 0
 
     def resume_dev(self, app) -> bool:
         """Resume suspended dev container."""
-        dev_container_name = f"compassx-app-dev-{app.id}"
+        dev_container_name = self._get_dev_container_name(app)
         res = subprocess.run(["docker", "start", dev_container_name], capture_output=True, text=True, check=False)
         return res.returncode == 0
 
@@ -640,33 +692,39 @@ class DockerDevDriver(BaseDevDriver):
         """List app IDs of all running dev containers."""
         try:
             res = subprocess.run(
-                ["docker", "ps", "--filter", "name=compassx-app-dev-", "--format", "{{.Names}}"],
+                ["docker", "ps", "--format", "{{.Names}}"],
                 capture_output=True,
                 text=True,
                 check=False,
             )
             if res.returncode != 0:
                 return []
-            app_ids: List[str] = []
-            prefix = "compassx-app-dev-"
+            app_ids: set[str] = set()
             for line in (res.stdout or "").splitlines():
                 line = line.strip()
-                if line.startswith(prefix):
-                    app_id = line[len(prefix):]
+                if line.startswith("compassx-sandbox-dev-app-"):
+                    app_id = line[len("compassx-sandbox-dev-app-"):]
                     if app_id:
-                        app_ids.append(app_id)
-            return app_ids
+                        app_ids.add(app_id)
+                elif line.startswith("compassx-app-dev-"):
+                    app_id = line[len("compassx-app-dev-"):]
+                    if app_id:
+                        app_ids.add(app_id)
+            return list(app_ids)
         except Exception as e:
             logger.debug("Failed listing running dev containers: %s", e)
             return []
 
     def restart_dev(self, app) -> bool:
-        dev_container_name = f"compassx-app-dev-{app.id}"
+        dev_container_name = self._get_dev_container_name(app)
         subprocess.run(["docker", "rm", "-f", dev_container_name], capture_output=True, text=True, check=False)
+        legacy_name = f"compassx-app-dev-{getattr(app, 'id', app)}"
+        if legacy_name != dev_container_name:
+            subprocess.run(["docker", "rm", "-f", legacy_name], capture_output=True, text=True, check=False)
         return True
 
     def get_dev_status(self, app) -> Dict[str, Any]:
-        dev_container_name = f"compassx-app-dev-{app.id}"
+        dev_container_name = self._get_dev_container_name(app)
         res = subprocess.run(["docker", "inspect", "-f", "{{.State.Status}}|{{.Config.Image}}", dev_container_name], capture_output=True, text=True, check=False)
         output = (res.stdout or "").strip()
         state_status = ""
@@ -699,9 +757,26 @@ class DockerDevDriver(BaseDevDriver):
         return ingress_service.get_app_dev_url(app)
 
     def get_dev_logs(self, app, max_lines: int = 250) -> str:
-        dev_container_name = f"compassx-app-dev-{app.id}"
+        dev_container_name = self._get_dev_container_name(app)
+        setup_logs = ""
+        try:
+            setup_res = subprocess.run(
+                ["docker", "exec", dev_container_name, "cat", "/tmp/workspace_setup.log"],
+                capture_output=True, text=True, check=False, timeout=2.0
+            )
+            if setup_res.returncode == 0 and setup_res.stdout:
+                setup_logs = setup_res.stdout.strip()
+        except Exception:
+            pass
+
         res = subprocess.run(["docker", "logs", "--tail", str(max_lines), dev_container_name], capture_output=True, text=True, check=False)
-        return (res.stdout or "") + (res.stderr or "")
+        container_logs = ((res.stdout or "") + (res.stderr or "")).strip()
+
+        if setup_logs and container_logs:
+            return f"{setup_logs}\n\n{container_logs}"
+        elif setup_logs:
+            return setup_logs
+        return container_logs
 
     def exec_git_in_workspace(
         self,
@@ -712,7 +787,7 @@ class DockerDevDriver(BaseDevDriver):
         auth_url: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Execute git operations in docker dev container."""
-        dev_container_name = f"compassx-app-dev-{app.id}"
+        dev_container_name = self._get_dev_container_name(app)
         workdir = f"/workspaces/{workspace_folder}" if workspace_folder else "/app"
         safe_msg = commit_message.replace('"', '\\"').replace("'", "\\'")
         remote_snippet = f"git remote set-url origin '{auth_url}' 2>/dev/null || true; " if auth_url else ""
@@ -747,7 +822,7 @@ class DockerDevDriver(BaseDevDriver):
         command: str,
         workspace_folder: str = "",
     ) -> Dict[str, Any]:
-        dev_container_name = f"compassx-app-dev-{app.id}"
+        dev_container_name = self._get_dev_container_name(app)
         # Verify if workspace folder exists in container, otherwise default to /app
         target_ws = f"/workspaces/{workspace_folder}" if workspace_folder else ""
         workdir = "/app"
@@ -804,7 +879,7 @@ class DockerDevDriver(BaseDevDriver):
 
     def get_live_branch(self, app, workspace_folder: str = "") -> Optional[str]:
         """Fetch active Git branch from inside the running Docker dev container."""
-        dev_container_name = f"compassx-app-dev-{app.id}"
+        dev_container_name = self._get_dev_container_name(app)
         workdir = f"/workspaces/{workspace_folder}" if workspace_folder else "/app"
         try:
             res = subprocess.run(
@@ -822,7 +897,7 @@ class DockerDevDriver(BaseDevDriver):
 
     def ensure_agent_configs(self, app, active_model: Optional[str] = None) -> None:
         """Seed or update agent configuration files (OpenCode, Pi) and root CA certificates inside the dev container."""
-        dev_container_name = f"compassx-app-dev-{app.id}"
+        dev_container_name = self._get_dev_container_name(app)
 
         # 0. Ensure corporate / host root CA certificates are installed so Go (agy) and TLS work behind corporate proxies
         try:
@@ -996,7 +1071,7 @@ class DockerDevDriver(BaseDevDriver):
         **kwargs: Any,
     ) -> Any:
         """Start a subprocess for Docker interactive exec."""
-        dev_container_name = f"compassx-app-dev-{app.id}"
+        dev_container_name = self._get_dev_container_name(app)
         # Ensure agent configuration files (opencode.json, models.json) are seeded with gateway auth and models
         self.ensure_agent_configs(app, active_model=model)
 
@@ -1114,7 +1189,7 @@ class DockerDevDriver(BaseDevDriver):
         **kwargs: Any,
     ) -> None:
         """Dynamically resize tmux window and attached client PTYs inside container."""
-        dev_container_name = f"compassx-app-dev-{app.id}"
+        dev_container_name = self._get_dev_container_name(app)
         target = (session_name or "").replace("'", "")
         py_resize_script = (
             "import subprocess, fcntl, termios, struct, os\n"
@@ -1159,42 +1234,58 @@ class DockerDevDriver(BaseDevDriver):
         base_branch: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Create a new Git worktree sandbox inside the running dev container."""
-        dev_container_name = f"compassx-app-dev-{app.id}"
+        dev_container_name = self._get_dev_container_name(app)
         clean_folder = folder_path.strip("/")
         target_dir = f"/workspaces/{clean_folder}"
         base = (base_branch or "main").strip() or "main"
 
         script = (
-            f"mkdir -p /workspaces && "
+            f"LOG_FILE='/tmp/workspace_setup.log'; "
+            f"mkdir -p /workspaces /tmp; "
+            f"log() {{ echo \"[$(date +'%H:%M:%S')] $1\" | tee -a \"$LOG_FILE\"; }}; "
+            f"log '──────────────────────────────────────────────────────────'; "
+            f"log '[Phase 2: Workspace Provisioning] Setting up workspace for branch: {branch}'; "
+            f"log '  [1/4] Checking workspace directory: {target_dir}...'; "
             f"if [ -d '{target_dir}' ] && [ -e '{target_dir}/.git' ] && [ -n \"$(find '{target_dir}' -maxdepth 2 -not -name '.git*' -not -name 'index.html' 2>/dev/null)\" ]; then "
+            f"  log '  ✓ Workspace worktree already exists and is populated.'; "
             f"  echo '__WORKTREE_EXISTS__'; "
             f"else "
             f"  BASE_REPO=\"\"; "
-            f"  for d in /app /workspaces/*/default /workspaces/*/* /workspaces/*; do "
+            f"  for d in /workspace /app /workspaces/*/default /workspaces/*/* /workspaces/*; do "
             f"    if [ -e \"$d/.git\" ] && [ \"$d\" != \"{target_dir}\" ] && [ -n \"$(ls -A \"$d\" 2>/dev/null)\" ]; then BASE_REPO=\"$d\"; break; fi; "
             f"  done; "
             f"  if [ -n \"$BASE_REPO\" ]; then "
+            f"    log \"  → Found base repository at $BASE_REPO\"; "
+            f"    log '  [2/4] Fetching latest remote commits (git fetch origin)...'; "
             f"    (cd \"$BASE_REPO\" && git worktree prune 2>/dev/null || true); "
-            f"    (cd \"$BASE_REPO\" && git fetch origin 2>/dev/null || true); "
+            f"    (cd \"$BASE_REPO\" && git fetch origin 2>&1 | tee -a \"$LOG_FILE\" || true); "
             f"    rm -rf '{target_dir}'; "
-            f"    if (cd \"$BASE_REPO\" && (git worktree add -f -B '{branch}' '{target_dir}' '{base}' 2>&1 || git worktree add -f -B '{branch}' '{target_dir}' 'origin/{base}' 2>&1 || git worktree add -f --detach '{target_dir}' '{base}' 2>&1 || git worktree add -f -B '{branch}' '{target_dir}' HEAD 2>&1)); then "
+            f"    log '  [3/4] Creating isolated Git worktree on branch: {branch}...'; "
+            f"    if (cd \"$BASE_REPO\" && (git worktree add -f -B '{branch}' '{target_dir}' '{base}' 2>&1 || git worktree add -f -B '{branch}' '{target_dir}' 'origin/{base}' 2>&1 || git worktree add -f --detach '{target_dir}' '{base}' 2>&1 || git worktree add -f -B '{branch}' '{target_dir}' HEAD 2>&1)) | tee -a \"$LOG_FILE\"; then "
+            f"      log '  ✓ Worktree creation successful.'; "
             f"      echo '__WORKTREE_CREATED__'; "
             f"    else "
+            f"      log '  → Falling back to shared repository clone...'; "
             f"      mkdir -p '{target_dir}' && (git clone --shared \"$BASE_REPO\" '{target_dir}' 2>&1 || cp -a \"$BASE_REPO/.\" '{target_dir}/') && (cd '{target_dir}' && git checkout -B '{branch}' 2>/dev/null || true) && echo '__WORKTREE_CREATED__'; "
             f"    fi; "
+            f"    log '  [4/4] Linking shared dependencies (node_modules)...'; "
             f"    for src_nm in \"$BASE_REPO/frontend/node_modules\" \"$BASE_REPO\"/*\"/frontend/node_modules\" \"$BASE_REPO/node_modules\" \"$BASE_REPO\"/*\"/node_modules\"; do "
             f"      if [ -d \"$src_nm\" ]; then "
             f"        rel_nm=\"${{src_nm#$BASE_REPO/}}\"; "
             f"        dest_dir=\"{target_dir}/${{rel_nm%/node_modules}}\"; "
             f"        if [ -d \"$dest_dir\" ] && [ ! -d \"$dest_dir/node_modules\" ]; then "
             f"          ln -sfn \"$src_nm\" \"$dest_dir/node_modules\" 2>/dev/null || true; "
+            f"          log \"    → Linked $rel_nm to $dest_dir/node_modules\"; "
             f"        fi; "
             f"      fi; "
             f"    done; "
+            f"    log '✓ Phase 2 Complete: Workspace ready for development.'; "
             f"  else "
+            f"    log '  → No base repo found; creating standalone workspace directory.'; "
             f"    mkdir -p '{target_dir}' && echo '__WORKTREE_CREATED__'; "
             f"  fi; "
-            f"fi"
+            f"fi; "
+            f"log '──────────────────────────────────────────────────────────'"
         )
         res = subprocess.run(
             ["docker", "exec", dev_container_name, "bash", "-c", script],
@@ -1219,7 +1310,7 @@ class DockerDevDriver(BaseDevDriver):
         folder_path: str,
     ) -> bool:
         """Remove a Git worktree sandbox from the dev container."""
-        dev_container_name = f"compassx-app-dev-{app.id}"
+        dev_container_name = self._get_dev_container_name(app)
         clean_folder = folder_path.strip("/")
         target_dir = f"/workspaces/{clean_folder}"
         script = (
@@ -1251,7 +1342,7 @@ class DockerDevDriver(BaseDevDriver):
         folder_path: str,
     ) -> Dict[str, Any]:
         """Instantly switch active sandbox: repoint /current symlink and restart dev servers in target sandbox."""
-        dev_container_name = f"compassx-app-dev-{app.id}"
+        dev_container_name = self._get_dev_container_name(app)
         clean_folder = folder_path.strip("/")
         target_dir = f"/workspaces/{clean_folder}" if clean_folder else "/app"
 
@@ -1288,5 +1379,10 @@ class DockerDevDriver(BaseDevDriver):
             "output": output,
             "error": None if success else (output or "Failed to switch active sandbox"),
         }
+
+
+docker_app_driver = DockerAppDriver()
+docker_dev_driver = DockerDevDriver()
+
 
 

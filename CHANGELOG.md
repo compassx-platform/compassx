@@ -5,6 +5,25 @@ All notable changes to the CompassX Platform will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.19] - 2026-10-08
+
+### 🚀 Highlights
+
+CompassX `0.12.19` introduces **AI Agent Studio Workspace Refactoring**, **Isolated Interactive Shell & Dev Terminal Output Drawer**, **Multi-Branch Base Selection in Browser Toolbar**, and **Hardened Driver Session Management**.
+
+### ✨ Features & Enhancements
+
+#### AI Agent Studio & Workspace Architecture
+- **Dedicated Left Studio Layout (`AppBuildPage.tsx`, `OmnigentChatPanel.tsx`)**: Refactored the left panel exclusively for AI Agent Studio chat, code editing, and split view workflows with streamlined tab navigation.
+- **Dedicated Shell & Terminal Drawer (`OutputDrawer.tsx`)**: Replaced cramped side-panel terminal switches with a bottom collapsible output drawer supporting full interactive Dev Terminals, live runtime container logs, and diagnostic tracing.
+- **Dynamic Branch & Base Target Switching (`BrowserToolbar.tsx`)**: Added support for base branch resolution (`git_branch` / `main`) and direct branch context display in the live preview toolbar.
+
+#### Hardened Driver Session & Process Management
+- **Tmux Session Isolation (`omnigent_dev_service.py`)**: Filtered out shell sessions (`cx_shell_`, `shell_`) from AI agent prompt forwarding and terminal buffer capture, preventing session collisions between user interactive terminals and background AI coding agents.
+- **Timestamped Setup Diagnostics (`omnigent_dev_service.py`)**: Added phase logging with timestamps to `/tmp/workspace_setup.log` for deterministic visibility into workspace repository cloning, dependency installs, and service health probes.
+
+---
+
 ## [0.12.18] - 2026-10-08
 
 ### 🚀 Highlights

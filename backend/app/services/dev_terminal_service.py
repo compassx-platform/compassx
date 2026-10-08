@@ -90,33 +90,32 @@ class DevTerminalService:
         # Resolve DevSession if session_id is provided or resolve active session for app
         session_name = None
         cli_cmd = None
-        resolved_agent = agent
+        resolved_agent = agent or "bash"
+        clean_ws = re.sub(r"[^a-zA-Z0-9_-]", "_", leaf_ws).strip("_") or "default"
+        is_shell = resolved_agent in ("bash", "shell", "sh")
 
         from app.services.dev_session_service import dev_session_service
         session_obj = None
         if session_id:
             session_obj = dev_session_service.get_session(app, session_id)
-        elif agent:
+        elif not is_shell and agent:
             # Match existing session for this app or create default
             sessions = dev_session_service.list_sessions(app)
             matching = next((s for s in sessions if s.get("agent") == agent), None)
             if matching:
                 session_obj = dev_session_service.get_session(app, matching["id"])
 
-        if not session_obj:
-            # Fallback to default session for app
-            sessions = dev_session_service.list_sessions(app)
-            if sessions:
-                session_obj = dev_session_service.get_session(app, sessions[0]["id"])
-
         if session_obj:
             resolved_agent = session_obj.agent
             base_tmux_name = session_obj.tmux_session_name
             # Scope tmux target to include active workspace folder so agent works in that worktree
-            clean_ws = re.sub(r"[^a-zA-Z0-9_-]", "_", leaf_ws).strip("_") or "default"
             session_name = f"{base_tmux_name}_{clean_ws}"[:60]
             cli_cmd = dev_session_service.get_session_cli_command(session_obj)
             dev_session_service.touch_session(app.id, session_obj.id)
+        elif is_shell:
+            resolved_agent = "bash"
+            session_name = f"cx_shell_{app.id}_{clean_ws}"[:60]
+            cli_cmd = "exec /bin/bash -l"
 
         # Send greeting banner (suppress for native agent CLIs and bash shell to preserve clean startup)
         if resolved_agent not in ("pi", "opencode", "antigravity", "agy", "bash", "shell", "sh"):

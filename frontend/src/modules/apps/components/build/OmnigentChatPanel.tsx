@@ -45,8 +45,10 @@ import {
   useSendOmnigentPrompt,
   useClearOmnigentSession,
 } from '../../hooks/useOmnigentChat';
-import { DevTerminal } from '../DevTerminal';
 import { useToast } from '@/lib/toast';
+import { DevTerminal } from '../DevTerminal';
+
+export type StudioViewMode = 'chat' | 'cli' | 'split';
 
 export interface OmnigentChatPanelProps {
   app: AppItem;
@@ -64,8 +66,6 @@ export interface OmnigentChatPanelProps {
   workspaceId?: string;
   workspaceName?: string;
 }
-
-export type StudioViewMode = 'chat' | 'cli' | 'split';
 
 const DEFAULT_AGENTS: OmnigentAgent[] = [
   {
@@ -591,7 +591,7 @@ export function OmnigentChatPanel({
                   >
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                       <TerminalIcon size={14} color={viewMode === 'cli' ? '#16a34a' : '#64748b'} />
-                      <span style={{ fontWeight: viewMode === 'cli' ? 600 : 500 }}>Terminal</span>
+                      <span style={{ fontWeight: viewMode === 'cli' ? 600 : 500 }}>Terminal (CLI)</span>
                     </div>
                     {viewMode === 'cli' && <Check size={14} color="#16a34a" />}
                   </button>
@@ -709,17 +709,17 @@ export function OmnigentChatPanel({
             }}
           >
             {/* Messages Transcript Scroll Area */}
-            <div
-              style={{
-                flex: 1,
-                overflowY: 'auto',
-                padding: '16px 16px 10px',
-                display: 'flex',
-                flexDirection: 'column',
-                gap: 16,
-                background: '#f8fafc',
-              }}
-            >
+        <div
+          style={{
+            flex: 1,
+            overflowY: 'auto',
+            padding: '16px 16px 10px',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 16,
+            background: '#f8fafc',
+          }}
+        >
               {allMessages.length === 0 ? (
                 /* Empty Welcome State */
                 <div
@@ -1232,8 +1232,6 @@ export function OmnigentChatPanel({
           </div>
         )}
       </div>
-
-      {/* ── AGENT SELECTOR MODAL ────────────────────────────────────────────── */}
       {isAgentModalOpen && (
         <div
           style={{

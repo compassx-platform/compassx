@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   RotateCw,
   ExternalLink,
@@ -6,7 +6,12 @@ import {
   Square,
   SquareTerminal,
   GitCommit,
+  MoreVertical,
+  GitMerge,
+  RefreshCw,
 } from 'lucide-react';
+import { useToast } from '@/lib/toast';
+import { useSyncWorkspaceWithMain } from '../../hooks/useApps';
 import { GitCommitHistoryPopover } from './GitCommitHistoryPopover';
 
 export type CanvasViewMode = 'preview' | 'code';
@@ -29,6 +34,7 @@ interface BrowserToolbarProps {
   appId?: string;
   workspaceId?: string;
   workspaceName?: string;
+  baseBranch?: string;
 }
 
 export function BrowserToolbar({
@@ -49,9 +55,58 @@ export function BrowserToolbar({
   appId,
   workspaceId,
   workspaceName,
+  baseBranch = 'main',
 }: BrowserToolbarProps) {
+  const toast = useToast();
+  const syncMutation = useSyncWorkspaceWithMain();
   const [isGitHistoryOpen, setIsGitHistoryOpen] = useState(false);
+  const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
   const fullPreviewUrl = previewUrl ? `${previewUrl}${route.startsWith('/') ? route : `/${route}`}` : '';
+
+  // Close 3-dot menu on outside click
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setIsMenuOpen(false);
+      }
+    }
+    if (isMenuOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [isMenuOpen]);
+
+  const handleSyncWithMain = async () => {
+    if (!appId || !workspaceId || syncMutation.isPending) return;
+    setIsMenuOpen(false);
+
+    try {
+      const res = await syncMutation.mutateAsync({
+        appId,
+        workspaceId,
+        baseBranch: baseBranch || 'main',
+      });
+
+      if (res.already_up_to_date) {
+        toast.info(res.message || `Sandbox is already up to date with remote ${baseBranch || 'main'}.`);
+      } else if (res.conflict) {
+        toast.error(
+          res.message || `Merge conflict in: ${(res.conflicting_files || []).join(', ')}. Please resolve in editor.`
+        );
+      } else if (res.success) {
+        toast.success(
+          res.message || `Successfully merged latest commits from remote ${baseBranch || 'main'}.`
+        );
+      } else {
+        toast.error(res.error || res.message || 'Failed to sync with remote main.');
+      }
+    } catch (err: any) {
+      toast.error(err?.response?.data?.detail || err?.message || 'Sync failed.');
+    }
+  };
 
   return (
     <div
@@ -67,6 +122,8 @@ export function BrowserToolbar({
         gap: 10,
         flexShrink: 0,
         userSelect: 'none',
+        position: 'relative',
+        zIndex: 30,
       }}
     >
       {/* Left: View Mode Segmented Box ([ Preview | Code ]) */}
@@ -346,6 +403,157 @@ export function BrowserToolbar({
             <span>Deploy</span>
           )}
         </button>
+
+        {/* 3-Dot Options Menu */}
+        <div ref={menuRef} style={{ position: 'relative' }}>
+          <button
+            type="button"
+            onClick={() => setIsMenuOpen((prev) => !prev)}
+            title="More Options"
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              background: isMenuOpen ? '#f4f4f5' : 'transparent',
+              border: 'none',
+              borderRadius: 4,
+              width: 28,
+              height: 28,
+              color: isMenuOpen ? '#18181b' : '#52525b',
+              cursor: 'pointer',
+              transition: 'all 0.15s ease',
+            }}
+            onMouseEnter={(e) => {
+              if (!isMenuOpen) {
+                e.currentTarget.style.background = '#f4f4f5';
+                e.currentTarget.style.color = '#18181b';
+              }
+            }}
+            onMouseLeave={(e) => {
+              if (!isMenuOpen) {
+                e.currentTarget.style.background = 'transparent';
+                e.currentTarget.style.color = '#52525b';
+              }
+            }}
+          >
+            <MoreVertical size={16} strokeWidth={1.75} />
+          </button>
+
+          {isMenuOpen && (
+            <div
+              className="bg-white"
+              style={{
+                position: 'absolute',
+                top: 'calc(100% + 6px)',
+                right: 0,
+                zIndex: 9999,
+                minWidth: 260,
+                backgroundColor: '#ffffff',
+                border: '1px solid #d1d5db',
+                borderRadius: 8,
+                boxShadow: '0 10px 30px -4px rgba(0, 0, 0, 0.16), 0 4px 10px -2px rgba(0, 0, 0, 0.08)',
+                padding: '4px',
+                opacity: 1,
+              }}
+            >
+              <div
+                style={{
+                  padding: '4px 8px 6px',
+                  fontSize: '0.7rem',
+                  fontWeight: 600,
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.05em',
+                  color: '#94a3b8',
+                  userSelect: 'none',
+                }}
+              >
+                Options
+              </div>
+
+              {/* Action: Sync active sandbox with remote main */}
+              <div
+                onClick={handleSyncWithMain}
+                title={`Fetch and merge remote origin/${baseBranch || 'main'} into active sandbox`}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  padding: '7px 8px',
+                  borderRadius: 6,
+                  cursor: syncMutation.isPending || !workspaceId ? 'not-allowed' : 'pointer',
+                  color: '#0f172a',
+                  fontSize: '0.78rem',
+                  fontWeight: 500,
+                  transition: 'background 0.12s ease',
+                  opacity: syncMutation.isPending || !workspaceId ? 0.6 : 1,
+                  gap: 8,
+                }}
+                onMouseEnter={(e) => {
+                  if (!syncMutation.isPending && workspaceId) e.currentTarget.style.background = '#f8fafc';
+                }}
+                onMouseLeave={(e) => {
+                  if (!syncMutation.isPending && workspaceId) e.currentTarget.style.background = 'transparent';
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  {syncMutation.isPending ? (
+                    <Loader2 size={14} className="spin text-sky-600" />
+                  ) : (
+                    <GitMerge size={14} className="text-sky-600" />
+                  )}
+                  <span>
+                    {syncMutation.isPending
+                      ? `Merging origin/${baseBranch || 'main'}...`
+                      : `Sync with remote ${baseBranch || 'main'}`}
+                  </span>
+                </div>
+                <span
+                  style={{
+                    fontSize: '0.66rem',
+                    color: '#64748b',
+                    background: '#f1f5f9',
+                    padding: '1px 6px',
+                    borderRadius: 4,
+                    fontFamily: 'ui-monospace, SFMono-Regular, monospace',
+                  }}
+                >
+                  merge origin/{baseBranch || 'main'}
+                </span>
+              </div>
+
+              {/* Action: Reload Preview */}
+              {previewUrl && (
+                <div
+                  onClick={() => {
+                    setIsMenuOpen(false);
+                    onReload();
+                  }}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 8,
+                    padding: '7px 8px',
+                    borderRadius: 6,
+                    cursor: 'pointer',
+                    color: '#0f172a',
+                    fontSize: '0.78rem',
+                    fontWeight: 500,
+                    transition: 'background 0.12s ease',
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.background = '#f8fafc';
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.background = 'transparent';
+                  }}
+                >
+                  <RefreshCw size={14} className="text-neutral-500" />
+                  <span>Reload Preview</span>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

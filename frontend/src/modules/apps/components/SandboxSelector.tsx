@@ -2,14 +2,12 @@ import React, { useState, useRef, useEffect } from 'react';
 import {
   ChevronDown,
   FolderGit2,
-  Folder,
   FolderPlus,
   Loader2,
   GitBranch,
-  GitMerge,
+  Check,
 } from 'lucide-react';
-import { useToast } from '@/lib/toast';
-import { useSyncWorkspaceWithMain, type DevWorkspace } from '../hooks/useApps';
+import type { DevWorkspace } from '../hooks/useApps';
 
 export interface SandboxSelectorProps {
   appId: string;
@@ -32,8 +30,6 @@ export function SandboxSelector({
   isSwitching = false,
   disabled = false,
 }: SandboxSelectorProps) {
-  const toast = useToast();
-  const syncMutation = useSyncWorkspaceWithMain();
   const [isOpen, setIsOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -60,35 +56,6 @@ export function SandboxSelector({
 
   const activeName = activeWs?.name || 'default';
   const activeBranch = activeWs?.git_branch || `dev/${activeName}`;
-
-  const handleSyncWithMain = async (e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (!activeWs?.id || syncMutation.isPending) return;
-
-    try {
-      const res = await syncMutation.mutateAsync({
-        appId,
-        workspaceId: activeWs.id,
-        baseBranch: baseBranch || 'main',
-      });
-
-      if (res.already_up_to_date) {
-        toast.info(res.message || `Sandbox "${activeName}" is already up to date with remote ${baseBranch || 'main'}.`);
-      } else if (res.conflict) {
-        toast.error(
-          res.message || `Merge conflict in: ${(res.conflicting_files || []).join(', ')}. Please resolve in editor.`
-        );
-      } else if (res.success) {
-        toast.success(
-          res.message || `Successfully merged latest commits from remote ${baseBranch || 'main'} into "${activeName}".`
-        );
-      } else {
-        toast.error(res.error || res.message || 'Failed to sync with remote main.');
-      }
-    } catch (err: any) {
-      toast.error(err?.response?.data?.detail || err?.message || 'Sync failed.');
-    }
-  };
 
   return (
     <div ref={containerRef} style={{ position: 'relative', display: 'inline-block' }}>
@@ -172,51 +139,85 @@ export function SandboxSelector({
         />
       </button>
 
-      {/* ── Dropdown Menu (Exact Match to User Reference Screenshot) ── */}
+      {/* ── Dropdown Menu (Clean Minimalist Theme) ── */}
       {isOpen && (
         <div
+          className="bg-white"
           style={{
             position: 'absolute',
             top: 'calc(100% + 6px)',
             left: 0,
-            zIndex: 1000,
+            zIndex: 9999,
             width: 'max-content',
-            minWidth: 420,
-            maxWidth: 640,
-            background: '#ffffff',
-            border: '1px solid #e5e7eb',
-            borderRadius: 10,
-            boxShadow: '0 10px 25px -5px rgba(0, 0, 0, 0.08), 0 8px 10px -6px rgba(0, 0, 0, 0.04)',
+            minWidth: 300,
+            maxWidth: 440,
+            backgroundColor: '#ffffff',
+            border: '1px solid #d1d5db',
+            borderRadius: 8,
+            boxShadow: '0 10px 30px -4px rgba(0, 0, 0, 0.16), 0 4px 10px -2px rgba(0, 0, 0, 0.08)',
             overflow: 'hidden',
-            animation: 'fadeIn 0.12s ease-out',
             padding: '6px',
+            opacity: 1,
           }}
         >
-          {/* Section Header: Recents */}
+          {/* Top Action Row: Open / New Sandbox */}
+          <div
+            onClick={() => {
+              setIsOpen(false);
+              onOpenNewSandboxModal();
+            }}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              padding: '7px 8px',
+              borderRadius: 6,
+              cursor: 'pointer',
+              color: '#0f172a',
+              fontSize: '0.78rem',
+              fontWeight: 500,
+              transition: 'background 0.12s ease',
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.background = '#f1f5f9';
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.background = 'transparent';
+            }}
+          >
+            <FolderPlus size={14} style={{ color: '#0284c7' }} />
+            <span>New Sandbox</span>
+          </div>
+
+          {/* Divider */}
+          <div style={{ height: 1, background: '#f1f5f9', margin: '4px 0' }} />
+
+          {/* Section Header: Sandboxes */}
           <div
             style={{
               padding: '4px 8px 6px',
-              fontSize: '0.74rem',
-              fontWeight: 500,
-              color: '#6b7280',
+              fontSize: '0.7rem',
+              fontWeight: 600,
+              textTransform: 'uppercase',
+              letterSpacing: '0.05em',
+              color: '#94a3b8',
               userSelect: 'none',
             }}
           >
-            Recents
+            Sandboxes
           </div>
 
           {/* Sandboxes List */}
-          <div style={{ maxHeight: 280, overflowY: 'auto', overflowX: 'auto', display: 'flex', flexDirection: 'column', gap: 2 }}>
+          <div style={{ maxHeight: 260, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 2 }}>
             {workspaces.length === 0 ? (
               <div style={{ padding: '12px 8px', textAlign: 'center', color: '#9ca3af', fontSize: '0.75rem' }}>
-                No feature sandboxes yet.
+                No sandboxes found.
               </div>
             ) : (
               workspaces.map((ws) => {
-                const isActive = ws.id === activeWs?.id;
-                const pathDisplay = ws.folder_path
-                  ? (ws.folder_path.startsWith('/workspaces') ? ws.folder_path : `/workspaces/${ws.folder_path}`)
-                  : `/workspaces/${appId}/${ws.name}`;
+                const isActive = ws.id === activeWs?.id || (ws.status === 'active' && !activeWorkspaceId);
+                const wsName = ws.name || 'default';
+                const branchName = ws.git_branch || (ws.name === 'default' ? (baseBranch || 'main') : `dev/${ws.name}`);
 
                 return (
                   <div
@@ -231,10 +232,10 @@ export function SandboxSelector({
                       display: 'flex',
                       alignItems: 'center',
                       justifyContent: 'space-between',
-                      padding: '6px 8px',
+                      padding: '7px 10px',
                       borderRadius: 6,
-                      border: isActive ? '1.5px solid #111827' : '1.5px solid transparent',
-                      background: isActive ? '#f3f4f6' : 'transparent',
+                      border: isActive ? '1px solid #e2e8f0' : '1px solid transparent',
+                      background: isActive ? '#f8fafc' : 'transparent',
                       cursor: isActive ? 'default' : 'pointer',
                       transition: 'all 0.12s ease',
                       gap: 8,
@@ -257,126 +258,56 @@ export function SandboxSelector({
                         gap: 8,
                         minWidth: 0,
                         flex: 1,
-                        overflowX: 'auto',
                       }}
                     >
                       <FolderGit2
                         size={14}
                         style={{
-                          color: isActive ? '#111827' : '#6b7280',
+                          color: isActive ? '#1B6EF3' : '#6b7280',
                           flexShrink: 0,
                         }}
                       />
                       <span
-                        title={pathDisplay}
                         style={{
-                          fontSize: '0.77rem',
-                          fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
-                          fontWeight: isActive ? 600 : 400,
-                          color: isActive ? '#111827' : '#374151',
+                          fontSize: '0.82rem',
+                          fontWeight: isActive ? 600 : 500,
+                          color: isActive ? '#0f172a' : '#374151',
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
                           whiteSpace: 'nowrap',
-                          userSelect: 'text',
                         }}
                       >
-                        {pathDisplay}
+                        {wsName}
+                      </span>
+                      <span
+                        style={{
+                          fontSize: '0.68rem',
+                          color: '#64748b',
+                          background: '#f1f5f9',
+                          padding: '1px 6px',
+                          borderRadius: 4,
+                          fontFamily: 'ui-monospace, SFMono-Regular, monospace',
+                          flexShrink: 0,
+                        }}
+                      >
+                        {branchName}
                       </span>
                     </div>
 
-                    {/* Right active indicator / folder icon */}
-                    <Folder
-                      size={13}
-                      style={{
-                        color: isActive ? '#111827' : '#9ca3af',
-                        flexShrink: 0,
-                        opacity: isActive ? 1 : 0.4,
-                      }}
-                    />
+                    {/* Right active indicator */}
+                    {isActive && (
+                      <Check
+                        size={14}
+                        style={{
+                          color: '#1B6EF3',
+                          flexShrink: 0,
+                        }}
+                      />
+                    )}
                   </div>
                 );
               })
             )}
-          </div>
-
-          {/* Divider */}
-          <div style={{ height: 1, background: '#f3f4f6', margin: '4px 0' }} />
-
-          {/* Action Row: Sync active sandbox with remote main */}
-          <div
-            onClick={handleSyncWithMain}
-            title={`Fetch and merge remote origin/${baseBranch || 'main'} into active sandbox '${activeName}'`}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              padding: '6px 8px',
-              borderRadius: 6,
-              cursor: syncMutation.isPending ? 'not-allowed' : 'pointer',
-              color: '#111827',
-              fontSize: '0.78rem',
-              fontWeight: 500,
-              transition: 'background 0.12s ease',
-              opacity: syncMutation.isPending ? 0.75 : 1,
-            }}
-            onMouseEnter={(e) => {
-              if (!syncMutation.isPending) e.currentTarget.style.background = '#f9fafb';
-            }}
-            onMouseLeave={(e) => {
-              if (!syncMutation.isPending) e.currentTarget.style.background = 'transparent';
-            }}
-          >
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              {syncMutation.isPending ? (
-                <Loader2 size={14} className="spin" style={{ color: '#1B6EF3' }} />
-              ) : (
-                <GitMerge size={14} style={{ color: '#1B6EF3' }} />
-              )}
-              <span>
-                {syncMutation.isPending
-                  ? `Merging origin/${baseBranch || 'main'} into ${activeName}...`
-                  : `Sync active sandbox with remote ${baseBranch || 'main'}`}
-              </span>
-            </div>
-            <span
-              style={{
-                fontSize: '0.67rem',
-                color: '#64748b',
-                background: '#f1f5f9',
-                padding: '1px 6px',
-                borderRadius: 4,
-                fontFamily: 'ui-monospace, SFMono-Regular, monospace',
-              }}
-            >
-              merge origin/{baseBranch || 'main'}
-            </span>
-          </div>
-
-          {/* Action Row: Open / New Sandbox */}
-          <div
-            onClick={() => {
-              setIsOpen(false);
-              onOpenNewSandboxModal();
-            }}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 8,
-              padding: '6px 8px',
-              borderRadius: 6,
-              cursor: 'pointer',
-              color: '#111827',
-              fontSize: '0.78rem',
-              fontWeight: 500,
-              transition: 'background 0.12s ease',
-            }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.background = '#f9fafb';
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.background = 'transparent';
-            }}
-          >
-            <FolderPlus size={14} style={{ color: '#4b5563' }} />
-            <span>Open new sandbox</span>
           </div>
         </div>
       )}

@@ -1361,11 +1361,6 @@ export function AppDevelopmentTab({ app, resolvedAppId }: AppDevelopmentTabProps
                 {newWorkspaceName.trim() && (
                   <div style={{ fontSize: '0.72rem', color: 'var(--color-text-muted)', marginTop: 4 }}>
                     Assigned Branch: <strong style={{ color: '#16a34a' }}>dev/{newWorkspaceName.trim().toLowerCase().replace(/[^a-z0-9-_]/g, '-')}</strong>
-                    <br />
-                    Pod path:{' '}
-                    <code style={{ color: 'var(--color-primary)' }}>
-                      /workspaces/app-{app.id.replace(/[^a-zA-Z0-9_-]/g, '')}/{newWorkspaceName.trim().toLowerCase().replace(/[^a-z0-9-_]/g, '-')}
-                    </code>
                   </div>
                 )}
               </div>

@@ -1775,13 +1775,25 @@ class KubernetesDevDriver(BaseDevDriver):
             return ""
         ns = settings.K8S_NAMESPACE
         clean_id = re.sub(r"[^a-z0-9-]", "-", app.id.lower()).strip("-")
+        setup_logs = ""
+        try:
+            res = self.exec_command_in_dev(app, "cat /tmp/workspace_setup.log 2>/dev/null || true")
+            if res.get("success") and res.get("output"):
+                setup_logs = res["output"].strip()
+        except Exception:
+            pass
+
+        pod_logs = ""
         try:
             pod_name = self._find_running_pod_name(clean_id, ns)
             if pod_name:
-                return k8s.core().read_namespaced_pod_log(name=pod_name, namespace=ns, tail_lines=max_lines)
-            return ""
+                pod_logs = (k8s.core().read_namespaced_pod_log(name=pod_name, namespace=ns, tail_lines=max_lines) or "").strip()
         except Exception:
-            return ""
+            pass
+
+        if setup_logs and pod_logs:
+            return f"{setup_logs}\n\n{pod_logs}"
+        return setup_logs or pod_logs
 
     def exec_git_in_workspace(
         self,
@@ -2278,38 +2290,55 @@ class KubernetesDevDriver(BaseDevDriver):
             auth_url = git_url.replace("https://", f"https://oauth2:{git_token}@")
 
         cmd = (
-            f"mkdir -p /workspaces/{clean_app} && "
-            f"if [ -d '{target_dir}' ] && [ -e '{target_dir}/.git' ] && [ -n \"$(find '{target_dir}' -maxdepth 2 -not -name '.git*' -not -name 'index.html' 2>/dev/null)\" ]; then "
-            f"  echo '__WORKTREE_EXISTS__'; "
-            f"else "
-            f"  BASE_REPO=\"\"; "
-            f"  for d in /workspaces/{clean_app}/default /workspaces/{clean_app}/main /workspaces/{clean_app}/* /workspaces/* /app; do "
-            f"    if [ -e \"$d/.git\" ] && [ \"$d\" != \"{target_dir}\" ] && [ -n \"$(ls -A \"$d\" 2>/dev/null)\" ]; then BASE_REPO=\"$d\"; break; fi; "
-            f"  done; "
-            f"  if [ -n \"$BASE_REPO\" ]; then "
-            f"    (cd \"$BASE_REPO\" && git worktree prune 2>/dev/null || true); "
-            f"    (cd \"$BASE_REPO\" && git fetch origin 2>/dev/null || true); "
-            f"    rm -rf '{target_dir}'; "
-            f"    if (cd \"$BASE_REPO\" && (git worktree add -f -B '{branch}' '{target_dir}' '{base}' 2>&1 || git worktree add -f -B '{branch}' '{target_dir}' 'origin/{base}' 2>&1 || git worktree add -f --detach '{target_dir}' '{base}' 2>&1 || git worktree add -f -B '{branch}' '{target_dir}' HEAD 2>&1)); then "
-            f"      echo '__WORKTREE_CREATED__'; "
-            f"    else "
-            f"      mkdir -p '{target_dir}' && (git clone --shared \"$BASE_REPO\" '{target_dir}' 2>&1 || cp -a \"$BASE_REPO/.\" '{target_dir}/') && (cd '{target_dir}' && git checkout -B '{branch}' 2>/dev/null || true) && echo '__WORKTREE_CREATED__'; "
-            f"    fi; "
-            f"    for src_nm in \"$BASE_REPO/frontend/node_modules\" \"$BASE_REPO\"/*\"/frontend/node_modules\" \"$BASE_REPO/node_modules\" \"$BASE_REPO\"/*\"/node_modules\"; do "
-            f"      if [ -d \"$src_nm\" ]; then "
-            f"        rel_nm=\"${{src_nm#$BASE_REPO/}}\"; "
-            f"        dest_dir=\"{target_dir}/${{rel_nm%/node_modules}}\"; "
-            f"        if [ -d \"$dest_dir\" ] && [ ! -d \"$dest_dir/node_modules\" ]; then "
-            f"          ln -sfn \"$src_nm\" \"$dest_dir/node_modules\" 2>/dev/null || true; "
-            f"        fi; "
-            f"      fi; "
-            f"    done; "
-            f"  elif [ -n '{auth_url}' ]; then "
-            f"    rm -rf '{target_dir}' && mkdir -p '{target_dir}' && cd '{target_dir}' && (git clone --branch '{base}' '{auth_url}' . 2>&1 || git clone '{auth_url}' . 2>&1) && (git checkout -B '{branch}' 2>/dev/null || true) && echo '__WORKTREE_CREATED__'; "
-            f"  else "
-            f"    mkdir -p '{target_dir}' && echo '__WORKTREE_CREATED__'; "
-            f"  fi; "
-            f"fi"
+            'LOG_FILE="/tmp/workspace_setup.log"; '
+            'log() { echo "[$(date +\'%H:%M:%S\')] $1" | tee -a "$LOG_FILE"; }; '
+            'log "──────────────────────────────────────────────────────────"; '
+            f'log "=== Phase 2: Workspace Setup ({target_dir}) ==="; '
+            f'mkdir -p /workspaces/{clean_app} && '
+            f'if [ -d \'{target_dir}\' ] && [ -e \'{target_dir}/.git\' ] && [ -n "$(find \'{target_dir}\' -maxdepth 2 -not -name \'.git*\' -not -name \'index.html\' 2>/dev/null)" ]; then '
+            '  log "  ✓ Workspace worktree already exists and is populated."; '
+            '  echo "__WORKTREE_EXISTS__"; '
+            'else '
+            '  BASE_REPO=""; '
+            f'  for d in /workspace /workspaces/{clean_app}/default /workspaces/{clean_app}/main /workspaces/{clean_app}/* /workspaces/* /app; do '
+            f'    if [ -e "$d/.git" ] && [ "$d" != "{target_dir}" ] && [ -n "$(ls -A "$d" 2>/dev/null)" ]; then BASE_REPO="$d"; break; fi; '
+            '  done; '
+            '  if [ -n "$BASE_REPO" ]; then '
+            '    log "  → Found base repository at $BASE_REPO"; '
+            '    log "  [2/4] Fetching latest remote commits (git fetch origin)..."; '
+            '    (cd "$BASE_REPO" && git worktree prune 2>/dev/null || true); '
+            '    (cd "$BASE_REPO" && git fetch origin 2>&1 | tee -a "$LOG_FILE" || true); '
+            f'    rm -rf \'{target_dir}\'; '
+            f'    log "  [3/4] Creating isolated Git worktree on branch: {branch}..."; '
+            f'    if (cd "$BASE_REPO" && (git worktree add -f -B \'{branch}\' \'{target_dir}\' \'{base}\' 2>&1 || git worktree add -f -B \'{branch}\' \'{target_dir}\' \'origin/{base}\' 2>&1 || git worktree add -f --detach \'{target_dir}\' \'{base}\' 2>&1 || git worktree add -f -B \'{branch}\' \'{target_dir}\' HEAD 2>&1)) | tee -a "$LOG_FILE"; then '
+            '      log "  ✓ Worktree creation successful."; '
+            '      echo "__WORKTREE_CREATED__"; '
+            '    else '
+            '      log "  → Falling back to shared repository clone..."; '
+            f'      mkdir -p \'{target_dir}\' && (git clone --shared "$BASE_REPO" \'{target_dir}\' 2>&1 || cp -a "$BASE_REPO/." \'{target_dir}/\') && (cd \'{target_dir}\' && git checkout -B \'{branch}\' 2>/dev/null || true) && echo "__WORKTREE_CREATED__"; '
+            '    fi; '
+            '    log "  [4/4] Linking shared dependencies (node_modules)..."; '
+            '    for src_nm in "$BASE_REPO/frontend/node_modules" "$BASE_REPO"/*"/frontend/node_modules" "$BASE_REPO/node_modules" "$BASE_REPO"/*"/node_modules"; do '
+            '      if [ -d "$src_nm" ]; then '
+            '        rel_nm="${src_nm#$BASE_REPO/}"; '
+            f'        dest_dir="{target_dir}/${{rel_nm%/node_modules}}"; '
+            '        if [ -d "$dest_dir" ] && [ ! -d "$dest_dir/node_modules" ]; then '
+            '          ln -sfn "$src_nm" "$dest_dir/node_modules" 2>/dev/null || true; '
+            '          log "    → Linked $rel_nm to $dest_dir/node_modules"; '
+            '        fi; '
+            '      fi; '
+            '    done; '
+            '    log "✓ Phase 2 Complete: Workspace ready for development."; '
+            f'  elif [ -n \'{auth_url}\' ]; then '
+            f'    log "  → Cloning repository from remote for branch: {branch}..."; '
+            f'    rm -rf \'{target_dir}\' && mkdir -p \'{target_dir}\' && cd \'{target_dir}\' && (git clone --branch \'{base}\' \'{auth_url}\' . 2>&1 | tee -a "$LOG_FILE" || git clone \'{auth_url}\' . 2>&1 | tee -a "$LOG_FILE") && (git checkout -B \'{branch}\' 2>/dev/null || true) && echo "__WORKTREE_CREATED__"; '
+            '    log "✓ Phase 2 Complete: Remote repository cloned successfully."; '
+            '  else '
+            '    log "  → No base repository or remote URL found; creating standalone directory."; '
+            f'    mkdir -p \'{target_dir}\' && echo "__WORKTREE_CREATED__"; '
+            '  fi; '
+            'fi; '
+            'log "──────────────────────────────────────────────────────────"'
         )
         res = self.exec_command_in_dev(app, cmd)
         output = res.get("output", "")
@@ -2329,7 +2358,7 @@ class KubernetesDevDriver(BaseDevDriver):
         clean_app = re.sub(r'[^a-z0-9-]', '-', app.id.lower()).strip('-')
         cmd = (
             f"BASE_REPO=\"\"; "
-            f"for d in /workspaces/{clean_app}/default /workspaces/{clean_app}/main /workspaces/{clean_app}/* /workspaces/* /app; do "
+            f"for d in /workspace /workspaces/{clean_app}/default /workspaces/{clean_app}/main /workspaces/{clean_app}/* /workspaces/* /app; do "
             f"  if [ -e \"$d/.git\" ]; then BASE_REPO=\"$d\"; break; fi; "
             f"done; "
             f"if [ -n \"$BASE_REPO\" ]; then cd \"$BASE_REPO\" && git worktree remove --force '{target_dir}' 2>/dev/null || true; cd \"$BASE_REPO\" && git worktree prune 2>/dev/null || true; fi; "
@@ -2399,6 +2428,11 @@ class KubernetesDevDriver(BaseDevDriver):
             'export DEV_WORKSPACE_DIR="$ACTIVE_DIR"\n'
             'cd "$ACTIVE_DIR" 2>/dev/null || true\n'
             '\n'
+            'LOG_FILE="/tmp/workspace_setup.log"\n'
+            'log() { echo "[$(date +\'%H:%M:%S\')] $1" | tee -a "$LOG_FILE"; }\n'
+            'log "──────────────────────────────────────────────────────────"\n'
+            'log "=== Phase 4: Application Runtime & Dev Server ==="\n'
+            'log "  [1/3] Activating workspace directory: $ACTIVE_DIR"\n'
             'echo "[DEV-RUNNER] Active sandbox: $ACTIVE_DIR"\n'
             '\n'
             '# Kill any old dev servers and free ports 8080 & 8000\n'
@@ -2602,6 +2636,7 @@ class KubernetesDevDriver(BaseDevDriver):
             '    cd "$BACKEND_DIR" || exit 1\n'
             '    export PYTHONPATH="$ACTIVE_DIR:$BASE_DIR:$BACKEND_DIR:$BASE_DIR/backend:$BASE_DIR/api:$BASE_DIR/server:$PYTHONPATH"\n'
             '    export PORT=$BACKEND_PORT DASHBOARD_PORT=$BACKEND_PORT DATABASE_URL="${DATABASE_URL:-sqlite:////tmp/app.db}"\n'
+            '    log "  [2/3] Launching backend service on port $BACKEND_PORT ($BACKEND_DIR)..."\n'
             '    echo "[DEV-RUNNER] Starting backend on port $BACKEND_PORT ($BACKEND_DIR)..." >> /tmp/backend.log\n'
             '    if [ -f requirements.txt ] && [ ! -f /tmp/.reqs_installed ]; then\n'
             '      pip install --no-cache-dir -r requirements.txt >> /tmp/backend.log 2>&1 || true\n'
@@ -2633,6 +2668,7 @@ class KubernetesDevDriver(BaseDevDriver):
             '    cd "$FRONTEND_DIR" || exit 1\n'
             '    export PATH="$PWD/node_modules/.bin:$PATH"\n'
             '    export DASHBOARD_PORT=8000 DASHBOARD_UI_PORT=8080 PORT=8080 HOST=0.0.0.0 DANGEROUSLY_DISABLE_HOST_CHECK=true WDS_SOCKET_PORT=443\n'
+            '    log "    → Starting frontend server on port 8080 ($FRONTEND_DIR)..."\n'
             '    echo "[DEV-RUNNER] Handing over port 8080 to frontend ($FRONTEND_DIR)..." >> /tmp/frontend.log\n'
             '    kill -9 $SPLASH_PID 2>/dev/null || true\n'
             '    fuser -k -9 8080/tcp 2>/dev/null || true\n'

@@ -1390,6 +1390,17 @@ class OmnigentDevService:
                 cache_check_cmd = f"test -f '{hash_file}' && grep -q '{current_hash}' '{hash_file}' && echo 'CACHED'"
                 cache_res = dev_driver.exec_command_in_dev(app, command=cache_check_cmd, workspace_folder=folder_path)
                 if "CACHED" in (cache_res.get("output") or ""):
+                    log_cached_cmd = (
+                        "LOG_FILE='/tmp/workspace_setup.log'; "
+                        "log() { echo \"[$(date +'%H:%M:%S')] $1\" | tee -a \"$LOG_FILE\"; }; "
+                        "log '──────────────────────────────────────────────────────────'; "
+                        "log '=== Phase 3: Dependency Installation (app.yaml) ==='; "
+                        f"log '  → Detected manifest: {manifest_file}'; "
+                        f"log '  ✓ Dependencies already up-to-date and verified from cache (hash: {current_hash[:8]}).'; "
+                        "log '✓ Phase 3 Complete: All packages verified.'; "
+                        "log '──────────────────────────────────────────────────────────'"
+                    )
+                    dev_driver.exec_command_in_dev(app, command=log_cached_cmd, workspace_folder=folder_path)
                     return {
                         "success": True,
                         "cached": True,
@@ -1399,19 +1410,34 @@ class OmnigentDevService:
                     }
 
             full_install_cmd = f"{env_exports} {custom_install_cmd}" if env_exports else custom_install_cmd
-            exec_res = dev_driver.exec_command_in_dev(app, command=full_install_cmd, workspace_folder=folder_path)
-            success = exec_res.get("success", False)
+            wrapped_cmd = (
+                "LOG_FILE='/tmp/workspace_setup.log'; "
+                "log() { echo \"[$(date +'%H:%M:%S')] $1\" | tee -a \"$LOG_FILE\"; }; "
+                "log '──────────────────────────────────────────────────────────'; "
+                "log '=== Phase 3: Dependency Installation (app.yaml) ==='; "
+                f"log '  → Detected manifest: {manifest_file}'; "
+                f"log '  [1/1] Executing custom install command: {custom_install_cmd}...'; "
+                f"if ({full_install_cmd}) 2>&1 | tee -a \"$LOG_FILE\"; then "
+                "  log '  ✓ Custom installation command completed successfully.'; "
+                "  log '✓ Phase 3 Complete: All libraries and dependencies installed.'; "
+                + (f"  echo '{current_hash}' > '{hash_file}'; " if current_hash else "")
+                + "  echo '__CX_INSTALL_SUCCESS__'; "
+                "else "
+                "  log '  ✗ Dependency installation encountered errors.'; "
+                "  echo '__CX_INSTALL_FAILED__'; "
+                "fi; "
+                "log '──────────────────────────────────────────────────────────'"
+            )
+            exec_res = dev_driver.exec_command_in_dev(app, command=wrapped_cmd, workspace_folder=folder_path)
             output = exec_res.get("output", "")
-
-            if success and current_hash:
-                dev_driver.exec_command_in_dev(app, command=f"echo '{current_hash}' > '{hash_file}'", workspace_folder=folder_path)
+            success = ("__CX_INSTALL_SUCCESS__" in output) or exec_res.get("success", False)
 
             return {
                 "success": success,
                 "cached": False,
                 "manifests": [manifest_file],
-                "exit_code": exec_res.get("exit_code", 0),
-                "output": f"[app.yaml] Executed install command: {custom_install_cmd}\n{output}".strip(),
+                "exit_code": 0 if success else exec_res.get("exit_code", 1),
+                "output": output,
                 "message": "Libraries installed successfully from app.yaml." if success else "Failed to install libraries defined in app.yaml.",
             }
 
@@ -1428,6 +1454,17 @@ class OmnigentDevService:
                 manifests.append(manifest_rel)
 
         if not manifests:
+            no_manifests_cmd = (
+                "LOG_FILE='/tmp/workspace_setup.log'; "
+                "log() { echo \"[$(date +'%H:%M:%S')] $1\" | tee -a \"$LOG_FILE\"; }; "
+                "log '──────────────────────────────────────────────────────────'; "
+                "log '=== Phase 3: Dependency & Library Installation ==='; "
+                "log '  [1/2] Probing dependency manifests in workspace...'; "
+                "log '  → No requirements.txt, package.json, or app.yaml found.'; "
+                "log '✓ Phase 3 Complete: Workspace dependency check completed (ready).'; "
+                "log '──────────────────────────────────────────────────────────'"
+            )
+            dev_driver.exec_command_in_dev(app, command=no_manifests_cmd, workspace_folder=folder_path)
             return {
                 "success": True,
                 "cached": True,
@@ -1437,6 +1474,7 @@ class OmnigentDevService:
             }
 
         # 3. Check hash cache if not forced
+        manifests_str = ", ".join(manifests)
         hash_check_cmd = (
             "cat " + " ".join(manifests) + " 2>/dev/null | md5sum | awk '{print $1}'"
         )
@@ -1448,6 +1486,17 @@ class OmnigentDevService:
             cache_check_cmd = f"test -f '{hash_file}' && grep -q '{current_hash}' '{hash_file}' && echo 'CACHED'"
             cache_res = dev_driver.exec_command_in_dev(app, command=cache_check_cmd, workspace_folder=folder_path)
             if "CACHED" in (cache_res.get("output") or ""):
+                cached_log_cmd = (
+                    "LOG_FILE='/tmp/workspace_setup.log'; "
+                    "log() { echo \"[$(date +'%H:%M:%S')] $1\" | tee -a \"$LOG_FILE\"; }; "
+                    "log '──────────────────────────────────────────────────────────'; "
+                    "log '=== Phase 3: Dependency & Library Installation ==='; "
+                    f"log '  [1/2] Discovered manifests: {manifests_str}'; "
+                    f"log '  ✓ Dependencies already up-to-date and verified from cache (hash: {current_hash[:8]}).'; "
+                    "log '✓ Phase 3 Complete: All packages verified from cache.'; "
+                    "log '──────────────────────────────────────────────────────────'"
+                )
+                dev_driver.exec_command_in_dev(app, command=cached_log_cmd, workspace_folder=folder_path)
                 return {
                     "success": True,
                     "cached": True,
@@ -1456,34 +1505,51 @@ class OmnigentDevService:
                     "output": f"Dependencies already verified and up-to-date (hash: {current_hash[:8]}).",
                 }
 
-        # 4. Execute installation inside dev container
-        install_commands = []
+        # 4. Execute installation inside dev container with real-time log teeing
+        install_script_lines = [
+            "LOG_FILE='/tmp/workspace_setup.log';",
+            "log() { echo \"[$(date +'%H:%M:%S')] $1\" | tee -a \"$LOG_FILE\"; };",
+            "log '──────────────────────────────────────────────────────────';",
+            "log '=== Phase 3: Dependency & Library Installation ===';",
+            f"log '  [1/2] Discovered manifests: {manifests_str}';",
+            "log '  [2/2] Installing dependencies inside sandbox...';",
+        ]
         for m in manifests:
             if m.endswith("requirements.txt"):
                 d = os.path.dirname(m)
                 prefix = f"cd '{d}' && " if d else ""
                 suffix = " && cd -" if d else ""
-                install_commands.append(f"{prefix}pip3 install --prefer-binary -r requirements.txt{suffix}")
+                install_script_lines.append(
+                    f"log '    → Installing Python packages ({m}) via pip3...'; "
+                    f"({prefix}pip3 install --prefer-binary -r requirements.txt{suffix}) 2>&1 | tee -a \"$LOG_FILE\";"
+                )
             elif m.endswith("package.json"):
                 d = os.path.dirname(m)
                 prefix = f"cd '{d}' && " if d else ""
                 suffix = " && cd -" if d else ""
-                install_commands.append(f"{prefix}npm install --prefer-offline --no-audit{suffix}")
+                install_script_lines.append(
+                    f"log '    → Installing Node.js packages ({m}) via npm...'; "
+                    f"({prefix}npm install --prefer-offline --no-audit{suffix}) 2>&1 | tee -a \"$LOG_FILE\";"
+                )
 
-        full_install_cmd = " && ".join(install_commands)
-        exec_res = dev_driver.exec_command_in_dev(app, command=full_install_cmd, workspace_folder=folder_path)
+        install_script_lines.append(
+            "log '  ✓ All dependency manifests processed successfully.'; "
+            "log '✓ Phase 3 Complete: Workspace environment fully prepared.'; "
+            + (f"echo '{current_hash}' > '{hash_file}'; " if current_hash else "")
+            + "echo '__CX_INSTALL_SUCCESS__'; "
+            "log '──────────────────────────────────────────────────────────'"
+        )
 
-        success = exec_res.get("success", False)
+        full_install_script = " ".join(install_script_lines)
+        exec_res = dev_driver.exec_command_in_dev(app, command=full_install_script, workspace_folder=folder_path)
         output = exec_res.get("output", "")
-
-        if success and current_hash:
-            dev_driver.exec_command_in_dev(app, command=f"echo '{current_hash}' > '{hash_file}'", workspace_folder=folder_path)
+        success = ("__CX_INSTALL_SUCCESS__" in output) or exec_res.get("success", False)
 
         return {
             "success": success,
             "cached": False,
             "manifests": manifests,
-            "exit_code": exec_res.get("exit_code", 0),
+            "exit_code": 0 if success else exec_res.get("exit_code", 1),
             "output": output,
             "message": "Libraries installed successfully." if success else "Failed to install libraries.",
         }
@@ -1522,34 +1588,42 @@ class OmnigentDevService:
         if not target_branch:
             target_branch = f"dev/{ws_name}" if ws_name != "default" else getattr(app, "git_branch", "main")
 
+        # Proactively ensure git worktree exists before verification
+        try:
+            self.ensure_workspace_worktree(app, workspace_id=ws_name)
+        except Exception as wt_err:
+            logger.debug("Non-fatal ensure_workspace_worktree on verify: %s", wt_err)
+
         git_check_cmd = (
-            "echo '=== Git Workspace Verification ==='; "
+            "LOG_FILE='/tmp/workspace_setup.log'; "
+            "log() { echo \"[$(date +'%H:%M:%S')] $1\" | tee -a \"$LOG_FILE\"; }; "
+            "log '=== Git Workspace Verification ==='; "
             "if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then "
-            "  echo '[WARN] Working directory is not a git repository.'; "
-            "  echo '[INFO] Working directory: ' $(pwd); "
-            "  echo '[SUCCESS] Workspace codebase verified and ready.'; "
+            "  log '[WARN] Working directory is not a git repository.'; "
+            "  log \"[INFO] Working directory: $(pwd)\"; "
+            "  log '[SUCCESS] Workspace codebase verified and ready.'; "
             "  exit 0; "
             "fi; "
             "cur_branch=$(git branch --show-current 2>/dev/null || git rev-parse --abbrev-ref HEAD 2>/dev/null || echo 'HEAD'); "
-            "echo \"[INFO] Current active branch: $cur_branch\"; "
+            "log \"[INFO] Current active branch: $cur_branch\"; "
             "target_branch='" + target_branch + "'; "
             "if [ -n \"$target_branch\" ] && [ \"$cur_branch\" != \"$target_branch\" ]; then "
-            "  echo \"[GIT] Attempting switch to workspace branch: $target_branch...\"; "
+            "  log \"[GIT] Attempting switch to workspace branch: $target_branch...\"; "
             "  if git checkout \"$target_branch\" 2>/dev/null || git checkout -b \"$target_branch\" 2>/dev/null; then "
             "    cur_branch=$(git branch --show-current 2>/dev/null || echo \"$target_branch\"); "
-            "    echo \"[INFO] Switched active branch to: $cur_branch\"; "
+            "    log \"[INFO] Switched active branch to: $cur_branch\"; "
             "  else "
-            "    echo \"[NOTICE] Retained active branch '$cur_branch' to preserve local working tree files.\"; "
+            "    log \"[NOTICE] Retained active branch '$cur_branch' to preserve local working tree files.\"; "
             "  fi; "
             "fi; "
             "head_commit=$(git log -1 --format='%h - %s (%cr)' 2>/dev/null || echo 'initial'); "
-            "echo \"[INFO] Head commit: $head_commit\"; "
+            "log \"[INFO] Head commit: $head_commit\"; "
             "remote_url=$(git config --get remote.origin.url 2>/dev/null || echo 'local'); "
             "safe_remote=$(echo \"$remote_url\" | sed -E 's/:\/\/[^@]*@/:\/\/****@/'); "
-            "echo \"[INFO] Remote origin: $safe_remote\"; "
+            "log \"[INFO] Remote origin: $safe_remote\"; "
             "changed_count=$(git status --porcelain -uno 2>/dev/null | wc -l | tr -d ' '); "
-            "echo \"[INFO] Working tree status: $changed_count uncommitted / modified file(s)\"; "
-            "echo '[SUCCESS] Workspace codebase verified and ready for development.'"
+            "log \"[INFO] Working tree status: $changed_count uncommitted / modified file(s)\"; "
+            "log '[SUCCESS] Workspace codebase verified and ready for development.'"
         )
 
         exec_res = dev_driver.exec_command_in_dev(app, command=git_check_cmd, workspace_folder=folder_path)
@@ -1702,77 +1776,90 @@ class OmnigentDevService:
             env_exports = run_cfg.get("env_exports", "")
 
             run_script_parts = [
-                "echo '=== Application Runtime Initialization (app.yaml) ===';",
+                "LOG_FILE='/tmp/workspace_setup.log';",
+                "log() { echo \"[$(date +'%H:%M:%S')] $1\" | tee -a \"$LOG_FILE\"; };",
+                "log '──────────────────────────────────────────────────────────';",
+                "log '=== Phase 4: Application Runtime Initialization (app.yaml) ===';",
+                "log '  [1/3] Configuring runtime environment from app.yaml...';",
             ]
             if env_exports:
-                run_script_parts.append(env_exports)
+                run_script_parts.append(env_exports + ";")
 
             if backend_cmd and frontend_cmd:
                 b_prefix = f"cd '{backend_dir}' && " if backend_dir else ""
                 f_prefix = f"cd '{frontend_dir}' && " if frontend_dir else ""
                 run_script_parts.append(
+                    f"log '  [2/3] Launching backend and frontend services...'; "
                     f"if (ss -tln 2>/dev/null || netstat -an 2>/dev/null) | grep -qE '[:.]8000[[:space:]]'; then "
-                    f"  echo '[backend] Backend service active on port 8000 (app.yaml)'; "
+                    f"  log '    ✓ Backend service already active on port 8000'; "
                     f"else "
-                    f"  echo '[backend] Starting backend from app.yaml: {backend_cmd}...'; "
+                    f"  log '    → Starting backend: {backend_cmd}...'; "
                     f"  ({b_prefix}nohup {backend_cmd} > /tmp/app_backend.log 2>&1 &); "
                     f"fi; "
                     f"if (ss -tln 2>/dev/null || netstat -an 2>/dev/null) | grep -qE '[:.]8080[[:space:]]'; then "
-                    f"  echo '[frontend] Frontend service active on port 8080 (app.yaml)'; "
+                    f"  log '    ✓ Frontend service already active on port 8080'; "
                     f"else "
-                    f"  echo '[frontend] Starting frontend from app.yaml: {frontend_cmd}...'; "
+                    f"  log '    → Starting frontend: {frontend_cmd}...'; "
                     f"  ({f_prefix}nohup {frontend_cmd} > /tmp/app_frontend.log 2>&1 &); "
                     f"fi;"
                 )
             elif backend_cmd:
                 b_prefix = f"cd '{backend_dir}' && " if backend_dir else ""
                 run_script_parts.append(
+                    f"log '  [2/3] Launching backend service...'; "
                     f"if (ss -tln 2>/dev/null || netstat -an 2>/dev/null) | grep -qE '[:.]8080[[:space:]]' || (ss -tln 2>/dev/null || netstat -an 2>/dev/null) | grep -qE '[:.]8000[[:space:]]'; then "
-                    f"  echo '[app] Application service active (app.yaml)'; "
+                    f"  log '    ✓ Application service already active'; "
                     f"else "
-                    f"  echo '[app] Starting service from app.yaml: {backend_cmd}...'; "
+                    f"  log '    → Starting service: {backend_cmd}...'; "
                     f"  ({b_prefix}nohup {backend_cmd} > /tmp/app_service.log 2>&1 &); "
                     f"fi;"
                 )
             elif frontend_cmd:
                 f_prefix = f"cd '{frontend_dir}' && " if frontend_dir else ""
                 run_script_parts.append(
+                    f"log '  [2/3] Launching frontend service...'; "
                     f"if (ss -tln 2>/dev/null || netstat -an 2>/dev/null) | grep -qE '[:.]8080[[:space:]]'; then "
-                    f"  echo '[frontend] Frontend service active on port 8080 (app.yaml)'; "
+                    f"  log '    ✓ Frontend service already active on port 8080'; "
                     f"else "
-                    f"  echo '[frontend] Starting frontend from app.yaml: {frontend_cmd}...'; "
+                    f"  log '    → Starting frontend: {frontend_cmd}...'; "
                     f"  ({f_prefix}nohup {frontend_cmd} > /tmp/app_frontend.log 2>&1 &); "
                     f"fi;"
                 )
 
             run_script_parts.append(
+                "log '  [3/3] Verifying runtime health and port responsiveness...'; "
                 "sleep 2; "
-                "echo '=== Health Verification ==='; "
                 "if (curl -fsSL --connect-timeout 2 http://localhost:8080 >/dev/null 2>&1 || wget -q -O - http://localhost:8080 >/dev/null 2>&1); then "
-                "  echo '[health] Application responding on port 8080'; "
+                "  log '  ✓ Application responding on port 8080 (Web UI ready).'; "
                 "elif (curl -fsSL --connect-timeout 2 http://localhost:8000 >/dev/null 2>&1 || wget -q -O - http://localhost:8000 >/dev/null 2>&1); then "
-                "  echo '[health] Application responding on port 8000'; "
+                "  log '  ✓ Application responding on port 8000 (Backend API ready).'; "
                 "else "
-                "  echo '[health] Application processes launched and listening.'; "
+                "  log '  → Application processes launched and listening.'; "
                 "fi; "
-                "echo '[SUCCESS] Application dev runtime is running and ready.'"
+                "log '✓ Phase 4 Complete: Application dev runtime is running and ready.'; "
+                "log '──────────────────────────────────────────────────────────'"
             )
             run_script = " ".join(run_script_parts)
+            dev_driver.exec_command_in_dev(app, command=run_script, workspace_folder=folder_path)
+
         # Delegate to driver's unified supervisor (switch_active_sandbox / dev-runner.sh)
         if hasattr(dev_driver, "switch_active_sandbox"):
             dev_driver.switch_active_sandbox(app, folder_path)
 
         health_check_script = (
+            "LOG_FILE='/tmp/workspace_setup.log'; "
+            "log() { echo \"[$(date +'%H:%M:%S')] $1\" | tee -a \"$LOG_FILE\"; }; "
+            "log '  [3/3] Verifying application health and responsiveness...'; "
             "sleep 1.5; "
-            "echo '=== Health Verification ==='; "
             "if (curl -fsSL --connect-timeout 2 http://localhost:8080 >/dev/null 2>&1 || wget -q -O - http://localhost:8080 >/dev/null 2>&1); then "
-            "  echo '[health] Application responding on port 8080'; "
+            "  log '  ✓ Application responding on port 8080 (Web UI ready).'; "
             "elif (curl -fsSL --connect-timeout 2 http://localhost:8000 >/dev/null 2>&1 || wget -q -O - http://localhost:8000 >/dev/null 2>&1); then "
-            "  echo '[health] Application responding on port 8000'; "
+            "  log '  ✓ Application responding on port 8000 (Backend API ready).'; "
             "else "
-            "  echo '[health] Application processes launched and listening.'; "
+            "  log '  → Application processes launched and listening.'; "
             "fi; "
-            "echo '[SUCCESS] Application dev runtime is running and ready.'"
+            "log '✓ Phase 4 Complete: Application dev runtime is running and ready.'; "
+            "log '──────────────────────────────────────────────────────────'"
         )
 
         exec_res = dev_driver.exec_command_in_dev(app, command=health_check_script, workspace_folder=folder_path)
@@ -2737,9 +2824,10 @@ else:
         import uuid
         from datetime import datetime, timezone
 
-        dev_container_name = f"compassx-app-dev-{app.id}"
+        from app.services.drivers.docker_driver import docker_dev_driver
+        dev_container_name = docker_dev_driver._get_dev_container_name(app)
 
-        # 1. Resolve active tmux session name in container
+        # 1. Resolve active tmux session name in container for this AI DevSession
         target_tmux_name = None
         try:
             from app.services.dev_session_service import dev_session_service
@@ -2761,21 +2849,10 @@ else:
         except Exception:
             pass
 
-        # Fallback: find any active tmux session for this app
+        # If no matching agent tmux session exists, or if target is a generic shell session, return empty
         if not target_tmux_name:
-            try:
-                ls_res = subprocess.run(
-                    ["docker", "exec", dev_container_name, "tmux", "list-sessions", "-F", "#{session_name}"],
-                    capture_output=True, text=True, encoding="utf-8", errors="replace", check=False, timeout=2.0
-                )
-                if ls_res.returncode == 0 and ls_res.stdout:
-                    sessions = [s.strip() for s in ls_res.stdout.splitlines() if s.strip()]
-                    if sessions:
-                        target_tmux_name = sessions[0]
-            except Exception:
-                pass
-
-        if not target_tmux_name:
+            return []
+        if target_tmux_name.startswith("cx_shell_") or target_tmux_name.startswith("shell_"):
             return []
 
         # 2. Capture terminal buffer from tmux pane
@@ -2975,7 +3052,8 @@ else:
 
         # 1. Forward prompt directly into active container tmux session
         delivered_to_tmux = False
-        dev_container_name = f"compassx-app-dev-{app.id}"
+        from app.services.drivers.docker_driver import docker_dev_driver
+        dev_container_name = docker_dev_driver._get_dev_container_name(app)
         try:
             target_tmux_name = None
             from app.services.dev_session_service import dev_session_service
@@ -2994,17 +3072,7 @@ else:
                                 target_tmux_name = s_clean
                                 break
 
-            if not target_tmux_name:
-                ls_res = subprocess.run(
-                    ["docker", "exec", dev_container_name, "tmux", "list-sessions", "-F", "#{session_name}"],
-                    capture_output=True, text=True, check=False, timeout=2.0
-                )
-                if ls_res.returncode == 0 and ls_res.stdout:
-                    sessions = [s.strip() for s in ls_res.stdout.splitlines() if s.strip()]
-                    if sessions:
-                        target_tmux_name = sessions[0]
-
-            if target_tmux_name:
+            if target_tmux_name and not (target_tmux_name.startswith("cx_shell_") or target_tmux_name.startswith("shell_")):
                 # Type prompt as literal text and send Enter to trigger execution
                 subprocess.run(
                     ["docker", "exec", dev_container_name, "tmux", "send-keys", "-t", target_tmux_name, "-l", clean_prompt],

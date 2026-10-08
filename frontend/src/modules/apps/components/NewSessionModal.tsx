@@ -31,7 +31,6 @@ export function NewSessionModal({
   const { data: models = [], isLoading: isLoadingModels } = useAppDevModels(appId);
 
   const getDefaultTitleForAgent = (agentId: SupportedAgent) => {
-    if (agentId === 'bash') return 'Bash Shell';
     const agentObj = AGENT_OPTIONS.find((a) => a.id === agentId);
     return `Session with ${agentObj?.name || 'Agent'}`;
   };
@@ -66,7 +65,7 @@ export function NewSessionModal({
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     const cleanTitle = title.trim() || getDefaultTitleForAgent(selectedAgent);
-    onSubmit(cleanTitle, selectedAgent, selectedAgent === 'bash' ? undefined : (selectedModel || undefined));
+    onSubmit(cleanTitle, selectedAgent, selectedModel || undefined);
   };
 
   return (
@@ -285,30 +284,8 @@ export function NewSessionModal({
               </select>
             </div>
 
-            {/* AI Model Selection or Shell Info */}
-            {selectedAgent === 'bash' ? (
-              <div
-                style={{
-                  display: 'flex',
-                  alignItems: 'flex-start',
-                  gap: 10,
-                  padding: '12px 14px',
-                  borderRadius: 8,
-                  background: 'rgba(245, 158, 11, 0.08)',
-                  border: '1px solid rgba(245, 158, 11, 0.25)',
-                  color: '#92400e',
-                  fontSize: '0.8rem',
-                  lineHeight: '1.45',
-                }}
-              >
-                <Terminal size={16} color="#d97706" style={{ marginTop: 2, flexShrink: 0 }} />
-                <div>
-                  <div style={{ fontWeight: 650, color: '#b45309', marginBottom: 2 }}>Interactive Linux Shell</div>
-                  Launches a direct Bash shell inside the active container sandbox with full PTY support, tmux persistence, and workspace filesystem access.
-                </div>
-              </div>
-            ) : (
-              <div>
+            {/* AI Model Selection */}
+            <div>
                 <div
                   style={{
                     display: 'flex',
@@ -400,7 +377,6 @@ export function NewSessionModal({
                   </div>
                 )}
               </div>
-            )}
 
           </div>
 

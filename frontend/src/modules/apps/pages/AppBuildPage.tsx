@@ -100,7 +100,7 @@ const BUILD_STEPS: BuildStep[] = [
 
 type SandboxStage = 'running' | 'starting' | 'stopping' | 'stopped';
 
-export type SupportedAgent = 'pi' | 'opencode' | 'antigravity' | 'bash';
+export type SupportedAgent = 'pi' | 'opencode' | 'antigravity';
 
 export interface AgentOption {
   id: SupportedAgent;
@@ -148,17 +148,7 @@ export const AGENT_OPTIONS: AgentOption[] = [
     accentBg: 'rgba(74, 222, 128, 0.12)',
     borderColor: 'rgba(74, 222, 128, 0.35)',
   },
-  {
-    id: 'bash',
-    name: 'Bash Shell',
-    binary: 'bash',
-    tagline: 'Interactive System Shell',
-    badge: 'SHELL',
-    description: 'Interactive Linux Bash shell inside the active workspace container with full PTY and toolchain access.',
-    color: '#f59e0b',
-    accentBg: 'rgba(245, 158, 11, 0.12)',
-    borderColor: 'rgba(245, 158, 11, 0.35)',
-  },
+
 ];
 
 export default function AppBuildPage() {
@@ -227,6 +217,7 @@ export default function AppBuildPage() {
 
   const [startError, setStartError] = useState<string | null>(null);
   const [isMenuOpen, setIsMenuOpen] = useState<boolean>(false);
+  const [leftPanelMode, setLeftPanelMode] = useState<'chat' | 'cli' | 'split'>('chat');
   const [userExplicitlyStopped, setUserExplicitlyStopped] = useState<boolean>(false);
   const selectedHost: 'compassx' | 'omnigent' = 'compassx';
   const selectedAgent: SupportedAgent = 'opencode';
@@ -287,12 +278,12 @@ export default function AppBuildPage() {
   }
 
 
-  // Live container logs query (active when log viewer is open or stage is running)
+  // Live container logs query (active when log viewer is open, starting/running, or initializing)
   const {
     data: devLogsData,
     refetch: refetchDevLogs,
     isLoading: isDevLogsLoading,
-  } = useDevLogs(resolvedAppId, stage === 'running' || (isLogViewerOpen && stage === 'starting'));
+  } = useDevLogs(resolvedAppId, stage === 'running' || stage === 'starting' || isLogViewerOpen || initStep >= 1 || !hasCompletedInit);
 
   // ── Deployment State & Handler ───────────────────────────────────────────────
   const deployMutation = useDeployApp();
@@ -353,7 +344,6 @@ export default function AppBuildPage() {
 
   const [isNewSessionModalOpen, setIsNewSessionModalOpen] = useState(false);
   const [isSwitchingSession, setIsSwitchingSession] = useState(false);
-  const [leftPanelMode, setLeftPanelMode] = useState<'terminal' | 'chat' | 'split'>('terminal');
 
   // Auto-select first session if none selected or selected was deleted
   useEffect(() => {
@@ -428,29 +418,12 @@ export default function AppBuildPage() {
     }
   };
 
-  const handleCreateShellSession = async () => {
-    try {
-      setIsSwitchingSession(true);
-      const shellCount = (allSessions || []).filter((s) => s.agent === 'bash').length + 1;
-      const created = await createDevSessionMutation.mutateAsync({
-        title: `Shell ${shellCount}`,
-        agent: 'bash',
-        workspace_id: activeWorkspace?.id || devStatus?.workspace_id,
-      });
-      setJustCreatedSession(created);
-      setActiveSessionId(created.id);
-      try {
-        localStorage.setItem(`compassx_active_session_${resolvedAppId}`, created.id);
-      } catch (_) {}
-      setIsNewSessionModalOpen(false);
-      toast.success(`Started new Bash Shell #${shellCount}`);
-    } catch (err: any) {
-      setIsSwitchingSession(false);
-      toast.error(err?.response?.data?.detail || err?.message || 'Failed to start shell session');
-    }
+  // Hotkey opens the bottom terminal drawer
+  const handleOpenBottomTerminal = () => {
+    setIsOutputCollapsed(false);
   };
 
-  useNewShellHotkey(handleCreateShellSession, isContainerRunning);
+  useNewShellHotkey(handleOpenBottomTerminal, isContainerRunning);
 
   // ── Session History Popover & More Menu State ──────────────────────────────
   const [isHistoryPopoverOpen, setIsHistoryPopoverOpen] = useState<boolean>(false);
@@ -1148,7 +1121,8 @@ export default function AppBuildPage() {
           alignItems: 'center',
           justifyContent: 'space-between',
           flexShrink: 0,
-          zIndex: 10,
+          position: 'relative',
+          zIndex: 100,
         }}
       >
         {/* Left: Brand, Apps Breadcrumb, App Name & Controls */}
@@ -1600,7 +1574,7 @@ export default function AppBuildPage() {
                     <SessionHistoryPopover
                       isOpen={isHistoryPopoverOpen}
                       onClose={() => setIsHistoryPopoverOpen(false)}
-                      sessions={allSessions}
+                      sessions={(allSessions || []).filter((s: DevSession) => s.agent !== 'bash')}
                       activeSessionId={activeSession?.id || activeSessionId}
                       onSelectSession={(sid) => {
                         handleSelectSession(sid);
@@ -1609,10 +1583,6 @@ export default function AppBuildPage() {
                       onOpenNewSession={() => {
                         setIsHistoryPopoverOpen(false);
                         setIsNewSessionModalOpen(true);
-                      }}
-                      onOpenNewShell={() => {
-                        setIsHistoryPopoverOpen(false);
-                        handleCreateShellSession();
                       }}
                       onDeleteSession={handleDeleteSession}
                       disabled={!isContainerRunning}
@@ -1710,7 +1680,7 @@ export default function AppBuildPage() {
                             top: '100%',
                             marginTop: 4,
                             zIndex: 50,
-                            width: 200,
+                            width: 190,
                             background: '#ffffff',
                             borderRadius: 8,
                             border: '1px solid #e2e8f0',
@@ -1730,7 +1700,7 @@ export default function AppBuildPage() {
                             type="button"
                             onClick={() => {
                               setIsMoreMenuOpen(false);
-                              setLeftPanelMode('terminal');
+                              setLeftPanelMode('cli');
                             }}
                             style={{
                               display: 'flex',
@@ -1740,25 +1710,19 @@ export default function AppBuildPage() {
                               padding: '6px 8px',
                               borderRadius: 5,
                               border: 'none',
-                              background: leftPanelMode === 'terminal' ? '#f0fdf4' : 'transparent',
-                              color: leftPanelMode === 'terminal' ? '#166534' : '#1e293b',
+                              background: leftPanelMode === 'cli' ? '#f0fdf4' : 'transparent',
+                              color: leftPanelMode === 'cli' ? '#166534' : '#1e293b',
                               fontSize: '0.78rem',
                               textAlign: 'left',
                               cursor: 'pointer',
                               transition: 'background 0.12s ease',
                             }}
-                            onMouseEnter={(e) => {
-                              if (leftPanelMode !== 'terminal') e.currentTarget.style.background = '#f1f5f9';
-                            }}
-                            onMouseLeave={(e) => {
-                              if (leftPanelMode !== 'terminal') e.currentTarget.style.background = 'transparent';
-                            }}
                           >
                             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                              <Terminal size={14} color={leftPanelMode === 'terminal' ? '#16a34a' : '#64748b'} />
-                              <span style={{ fontWeight: leftPanelMode === 'terminal' ? 600 : 500 }}>Terminal</span>
+                              <Terminal size={14} color={leftPanelMode === 'cli' ? '#16a34a' : '#64748b'} />
+                              <span style={{ fontWeight: leftPanelMode === 'cli' ? 600 : 500 }}>Terminal (CLI)</span>
                             </div>
-                            {leftPanelMode === 'terminal' && <Check size={14} color="#16a34a" />}
+                            {leftPanelMode === 'cli' && <Check size={14} color="#16a34a" />}
                           </button>
 
                           <button
@@ -1781,12 +1745,6 @@ export default function AppBuildPage() {
                               textAlign: 'left',
                               cursor: 'pointer',
                               transition: 'background 0.12s ease',
-                            }}
-                            onMouseEnter={(e) => {
-                              if (leftPanelMode !== 'chat') e.currentTarget.style.background = '#f1f5f9';
-                            }}
-                            onMouseLeave={(e) => {
-                              if (leftPanelMode !== 'chat') e.currentTarget.style.background = 'transparent';
                             }}
                           >
                             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -1817,12 +1775,6 @@ export default function AppBuildPage() {
                               cursor: 'pointer',
                               transition: 'background 0.12s ease',
                             }}
-                            onMouseEnter={(e) => {
-                              if (leftPanelMode !== 'split') e.currentTarget.style.background = '#f1f5f9';
-                            }}
-                            onMouseLeave={(e) => {
-                              if (leftPanelMode !== 'split') e.currentTarget.style.background = 'transparent';
-                            }}
                           >
                             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                               <Layers size={14} color={leftPanelMode === 'split' ? '#8b5cf6' : '#64748b'} />
@@ -1834,43 +1786,6 @@ export default function AppBuildPage() {
                           <div style={{ height: 1, background: '#e2e8f0', margin: '4px 0' }} />
 
                           {/* Sandbox Actions */}
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setIsMoreMenuOpen(false);
-                              handleCreateShellSession();
-                            }}
-                            disabled={!isContainerRunning}
-                            style={{
-                              display: 'flex',
-                              alignItems: 'center',
-                              gap: 8,
-                              width: '100%',
-                              padding: '6px 8px',
-                              borderRadius: 5,
-                              border: 'none',
-                              background: 'transparent',
-                              color: '#1e293b',
-                              fontSize: '0.78rem',
-                              textAlign: 'left',
-                              cursor: isContainerRunning ? 'pointer' : 'not-allowed',
-                              opacity: isContainerRunning ? 1 : 0.5,
-                              transition: 'background 0.12s ease',
-                            }}
-                            onMouseEnter={(e) => {
-                              if (isContainerRunning) e.currentTarget.style.background = '#f1f5f9';
-                            }}
-                            onMouseLeave={(e) => {
-                              e.currentTarget.style.background = 'transparent';
-                            }}
-                          >
-                            <Terminal size={14} color="#f59e0b" />
-                            <div style={{ display: 'flex', flexDirection: 'column' }}>
-                              <span style={{ fontWeight: 500 }}>New Bash Shell</span>
-                              <span style={{ fontSize: '0.68rem', color: '#64748b' }}>Ctrl+Shift+T</span>
-                            </div>
-                          </button>
-
                           <button
                             type="button"
                             onClick={() => {
@@ -1911,7 +1826,7 @@ export default function AppBuildPage() {
                 </div>
               </div>
 
-              {/* Main Left Content: DevTerminal or OmnigentChatPanel depending on leftPanelMode */}
+              {/* Main Left Content: OmnigentChatPanel exclusively for AI Agent Studio */}
               <div
                 style={{
                   flex: 1,
@@ -1923,46 +1838,26 @@ export default function AppBuildPage() {
                   background: '#ffffff',
                 }}
               >
-                {leftPanelMode === 'terminal' ? (
-                  <div style={{ flex: 1, minHeight: 0, overflow: 'hidden', background: '#ffffff' }}>
-                    <DevTerminal
-                      appId={resolvedAppId!}
-                      appName={app?.name || 'app'}
-                      workspaceId={activeWorkspace?.id || devStatus?.workspace_id}
-                      workspaceName={activeWorkspace?.name || devStatus?.workspace_name}
-                      isDevPodRunning={isContainerRunning}
-                      agent={currentAgent}
-                      sessionId={activeSession?.id}
-                      sessionTitle={activeSession?.title}
-                      isSwitchingSession={isSwitchingSession || isSwitchingSandbox}
-                      onSessionReady={() => setIsSwitchingSession(false)}
-                      fullHeight={true}
-                    />
-                  </div>
-                ) : (
-                  <div style={{ flex: 1, minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-                    <OmnigentChatPanel
-                      app={app || ({ id: resolvedAppId, name: 'CompassX App' } as any)}
-                      resolvedAppId={resolvedAppId!}
-                      devStatus={devStatus}
-                      isDevPodRunning={isContainerRunning}
-                      showHeader={false}
-                      viewMode={leftPanelMode === 'split' ? 'split' : 'chat'}
-                      onViewModeChange={(m) => setLeftPanelMode(m === 'cli' ? 'terminal' : m)}
-                      agentName={currentAgent}
-                      sessionId={activeSession?.id}
-                      sessionTitle={activeSession?.title}
-                      workspaceId={activeWorkspace?.id || devStatus?.workspace_id}
-                      workspaceName={activeWorkspace?.name || devStatus?.workspace_name}
-                      onCodeUpdated={() => {
-                        qc.invalidateQueries({ queryKey: ['app-dev-files', resolvedAppId] });
-                        qc.invalidateQueries({ queryKey: ['app-dev-file-content', resolvedAppId] });
-                        qc.invalidateQueries({ queryKey: ['apps', resolvedAppId, 'dev', 'commits'] });
-                        setPreviewReloadKey(Date.now());
-                      }}
-                    />
-                  </div>
-                )}
+                <OmnigentChatPanel
+                  app={app || ({ id: resolvedAppId, name: 'CompassX App' } as any)}
+                  resolvedAppId={resolvedAppId!}
+                  devStatus={devStatus}
+                  isDevPodRunning={isContainerRunning}
+                  viewMode={leftPanelMode}
+                  onViewModeChange={setLeftPanelMode}
+                  showHeader={false}
+                  agentName={currentAgent}
+                  sessionId={activeSession?.id}
+                  sessionTitle={activeSession?.title}
+                  workspaceId={activeWorkspace?.id || devStatus?.workspace_id}
+                  workspaceName={activeWorkspace?.name || devStatus?.workspace_name}
+                  onCodeUpdated={() => {
+                    qc.invalidateQueries({ queryKey: ['app-dev-files', resolvedAppId] });
+                    qc.invalidateQueries({ queryKey: ['app-dev-file-content', resolvedAppId] });
+                    qc.invalidateQueries({ queryKey: ['apps', resolvedAppId, 'dev', 'commits'] });
+                    setPreviewReloadKey(Date.now());
+                  }}
+                />
               </div>
             </div>
 
@@ -2031,6 +1926,7 @@ export default function AppBuildPage() {
                 appId={resolvedAppId}
                 workspaceId={activeWorkspace?.id || devStatus?.workspace_id}
                 workspaceName={activeWorkspace?.name || devStatus?.workspace_name}
+                baseBranch={app?.git_branch || 'main'}
               />
 
               {/* Main Top Canvas (Preview or Code) */}
@@ -2137,6 +2033,11 @@ export default function AppBuildPage() {
                     onClose={() => setIsOutputCollapsed(true)}
                     height={outputHeight}
                     onHeightChange={setOutputHeight}
+                    appId={resolvedAppId}
+                    appName={app?.name || 'app'}
+                    workspaceId={activeWorkspace?.id || devStatus?.workspace_id}
+                    workspaceName={activeWorkspace?.name || devStatus?.workspace_name}
+                    isDevPodRunning={isContainerRunning}
                   />
                 </>
               )}
@@ -2679,31 +2580,24 @@ export default function AppBuildPage() {
                       }}
                     >
                       {(() => {
-                        if (initStep === 1) {
-                          return gitOutput || 'Verifying git repository, branch, and working tree...';
-                        }
-                        if (initStep === 2) {
-                          if (gitOutput && installOutput) {
-                            return `${gitOutput}\n\n${installOutput}`;
-                          }
-                          return installOutput || gitOutput || 'Checking dependency manifests and running package installer inside sandbox...';
-                        }
-                        if (initStep === 3) {
-                          const parts = [gitOutput, installOutput, runAppOutput].filter(Boolean);
-                          if (parts.length > 0) {
-                            return parts.join('\n\n');
-                          }
-                          return runAppOutput || 'Starting application processes and verifying dev server...';
-                        }
+                        const rawLogs = (Array.isArray(devLogsData) && devLogsData.length > 0 ? devLogsData.join('\n') : (typeof devLogsData === 'string' && devLogsData ? devLogsData : '')).trim();
                         const parts = [gitOutput, installOutput, runAppOutput].filter(Boolean);
+                        if (rawLogs) {
+                          return rawLogs;
+                        }
                         if (parts.length > 0) {
                           return parts.join('\n\n');
                         }
-                        return (
-                          (Array.isArray(devLogsData) && devLogsData.length > 0 ? devLogsData.join('\n') : '') ||
-                          (typeof devLogsData === 'string' && devLogsData ? devLogsData : '') ||
-                          'Initializing dev environment...'
-                        );
+                        if (initStep === 1) {
+                          return 'Verifying git repository, branch, and working tree...';
+                        }
+                        if (initStep === 2) {
+                          return 'Checking dependency manifests and running package installer inside sandbox...';
+                        }
+                        if (initStep === 3) {
+                          return 'Starting application processes and verifying dev server...';
+                        }
+                        return 'Initializing dev environment...';
                       })()}
                     </div>
                   </div>

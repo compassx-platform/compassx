@@ -216,8 +216,9 @@ class DevSessionService:
             db.commit()
 
             # Attempt to kill the tmux session in the running container
-            dev_container_name = f"compassx-app-dev-{app.id}"
             try:
+                from app.services.drivers.docker_driver import docker_dev_driver
+                dev_container_name = docker_dev_driver._get_dev_container_name(app)
                 base_name = session.tmux_session_name
                 subprocess.run(
                     [

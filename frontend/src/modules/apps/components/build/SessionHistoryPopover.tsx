@@ -19,7 +19,6 @@ export interface SessionHistoryPopoverProps {
   activeSessionId: string | null;
   onSelectSession: (sessionId: string) => void;
   onOpenNewSession: () => void;
-  onOpenNewShell?: () => void;
   onDeleteSession?: (sessionId: string) => void;
   disabled?: boolean;
 }
@@ -41,7 +40,6 @@ const AGENT_LABELS: Record<string, string> = {
   opencode: 'OpenCode',
   pi: 'Pi CLI',
   antigravity: 'Antigravity',
-  bash: 'Bash Shell',
 };
 
 export function SessionHistoryPopover({
@@ -51,7 +49,6 @@ export function SessionHistoryPopover({
   activeSessionId,
   onSelectSession,
   onOpenNewSession,
-  onOpenNewShell,
   onDeleteSession,
   disabled = false,
 }: SessionHistoryPopoverProps) {
@@ -461,54 +458,6 @@ export function SessionHistoryPopover({
           OpenCode / Pi / AGY
         </span>
       </div>
-
-      {/* 2. New Bash Shell */}
-      {onOpenNewShell && (
-        <div
-          onClick={() => {
-            if (!disabled) {
-              onClose();
-              onOpenNewShell();
-            }
-          }}
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            padding: '6px 8px',
-            borderRadius: 6,
-            cursor: disabled ? 'not-allowed' : 'pointer',
-            color: '#111827',
-            fontSize: '0.78rem',
-            fontWeight: 500,
-            transition: 'background 0.12s ease',
-            opacity: disabled ? 0.6 : 1,
-          }}
-          onMouseEnter={(e) => {
-            if (!disabled) e.currentTarget.style.background = '#f9fafb';
-          }}
-          onMouseLeave={(e) => {
-            if (!disabled) e.currentTarget.style.background = 'transparent';
-          }}
-        >
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <Terminal size={14} style={{ color: '#4b5563' }} />
-            <span>New bash shell</span>
-          </div>
-          <span
-            style={{
-              fontSize: '0.67rem',
-              color: '#6b7280',
-              background: '#f1f5f9',
-              padding: '1px 6px',
-              borderRadius: 4,
-              fontFamily: 'ui-monospace, SFMono-Regular, monospace',
-            }}
-          >
-            Alt+N
-          </span>
-        </div>
-      )}
     </div>
   );
 }
