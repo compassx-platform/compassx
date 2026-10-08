@@ -5,6 +5,23 @@ All notable changes to the CompassX Platform will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.17] - 2026-10-08
+
+### 🚀 Highlights
+
+CompassX `0.12.17` introduces **Fuzzy & Normalized Sandbox Discovery**, **Accurate Kubernetes Endpoint Resolution**, and **Enhanced Live Preview Controls**.
+
+### ✨ Features & Enhancements
+
+#### Fuzzy & Normalized Sandbox Discovery
+- **Cross-Identifier Reconciliation (`backend/app/sandbox/service.py`)**: Added `_normalize_key` matching across sandbox IDs, consumer keys (`app_<id>`), pod labels (`compassx.consumer-key`, `compassx.sandbox-id`), and app metadata to resolve existing instances accurately without duplicate provisioning.
+- **Dynamic Kubernetes Driver Discovery (`backend/app/sandbox/drivers/k8s_driver.py`)**: Directly discovers and updates running dev sandboxes, pod names, and port endpoints across cluster namespaces.
+
+#### Enhanced Live Preview Canvas & Embedded Controls
+- **Top Navigation Bar (`LivePreviewCanvas.tsx`, `AppBuildPage.tsx`)**: Added integrated top-bar preview controls with address bar, refresh button, open-in-new-tab action, responsive viewport modes (Desktop, Tablet, Mobile), and in-flight health probing indicators.
+
+---
+
 ## [0.12.16] - 2026-10-08
 
 ### 🚀 Highlights

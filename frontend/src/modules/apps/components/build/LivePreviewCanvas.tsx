@@ -14,6 +14,8 @@ import {
   ChevronDown,
   ChevronUp,
   Copy,
+  ArrowRight,
+  Code2,
 } from 'lucide-react';
 import { useToast } from '@/lib/toast';
 
@@ -39,6 +41,9 @@ interface LivePreviewCanvasProps {
   onToggleLogs?: () => void;
   isOutputCollapsed?: boolean;
   devLogs?: string;
+  onSwitchToCode?: () => void;
+  onProceedToStep3?: () => void;
+  isProceedingToStep3?: boolean;
 }
 
 const STEP_DEFINITIONS = [
@@ -93,6 +98,9 @@ export function LivePreviewCanvas({
   onToggleLogs,
   isOutputCollapsed = true,
   devLogs,
+  onSwitchToCode,
+  onProceedToStep3,
+  isProceedingToStep3 = false,
 }: LivePreviewCanvasProps) {
   const toast = useToast();
   const [isIframeLoading, setIsIframeLoading] = useState<boolean>(true);
@@ -255,6 +263,7 @@ export function LivePreviewCanvas({
     const isStep2Done = step2Completed;
     const isStep3Done = step3Completed;
     const isStep4Done = step4Completed;
+    const isWaitingAfterStep2 = isStep2Done && !isStep3Done && !startError;
 
     return (
       <div
@@ -273,7 +282,7 @@ export function LivePreviewCanvas({
       >
         <div
           style={{
-            maxWidth: 500,
+            maxWidth: 520,
             width: '100%',
             background: '#ffffff',
             border: '1px solid #e2e8f0',
@@ -294,17 +303,27 @@ export function LivePreviewCanvas({
                 borderRadius: 10,
                 background: startError
                   ? '#fef2f2'
+                  : isWaitingAfterStep2
+                  ? 'rgba(16, 185, 129, 0.1)'
                   : 'rgba(2, 132, 199, 0.1)',
-                border: `1px solid ${startError ? '#fecaca' : 'rgba(2, 132, 199, 0.25)'}`,
+                border: `1px solid ${
+                  startError
+                    ? '#fecaca'
+                    : isWaitingAfterStep2
+                    ? 'rgba(16, 185, 129, 0.25)'
+                    : 'rgba(2, 132, 199, 0.25)'
+                }`,
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
-                color: startError ? '#ef4444' : '#0284c7',
+                color: startError ? '#ef4444' : isWaitingAfterStep2 ? '#10b981' : '#0284c7',
                 flexShrink: 0,
               }}
             >
               {startError ? (
                 <AlertCircle size={20} />
+              ) : isWaitingAfterStep2 ? (
+                <Check size={20} strokeWidth={2.5} />
               ) : (
                 <Loader2 size={20} className="animate-spin" />
               )}
@@ -323,6 +342,8 @@ export function LivePreviewCanvas({
                   ? 'Startup Paused • Error Detected'
                   : isStep4Done
                   ? 'Waiting for Application Server...'
+                  : isWaitingAfterStep2
+                  ? 'Step 2 Complete • Workspace Code Prepared'
                   : 'Initializing Application Preview'}
               </h3>
               <p
@@ -337,6 +358,8 @@ export function LivePreviewCanvas({
                   ? 'An issue occurred during initialization. Review below to retry.'
                   : isStep4Done
                   ? 'Dev server process is starting up. Checking connection...'
+                  : isWaitingAfterStep2
+                  ? 'Codebase has been fetched and verified. Files are ready in the Code view.'
                   : `Step ${currentStepIndex + 1} of 4 • ${STEP_DEFINITIONS[currentStepIndex].title}`}
               </p>
             </div>
@@ -394,6 +417,7 @@ export function LivePreviewCanvas({
                 (idx === 3 && isStep4Done);
               const isActive = idx === currentStepIndex && !isDone;
               const isFailed = idx === currentStepIndex && !!startError;
+              const isNextAfterStep2 = isWaitingAfterStep2 && idx === 2;
               const Icon = s.icon;
 
               return (
@@ -474,17 +498,124 @@ export function LivePreviewCanvas({
                         ? '#16a34a'
                         : isFailed
                         ? '#dc2626'
+                        : isNextAfterStep2
+                        ? '#0284c7'
                         : isActive
                         ? '#0284c7'
                         : '#94a3b8',
                     }}
                   >
-                    {isDone ? 'Ready' : isFailed ? 'Failed' : isActive ? 'Running...' : 'Pending'}
+                    {isDone ? 'Ready' : isFailed ? 'Failed' : isNextAfterStep2 ? 'Next (Pending)' : isActive ? 'Running...' : 'Pending'}
                   </span>
                 </div>
               );
             })}
           </div>
+
+          {/* Step 2 Verified Informative Box */}
+          {isWaitingAfterStep2 && (
+            <div
+              style={{
+                background: 'rgba(2, 132, 199, 0.04)',
+                border: '1px solid rgba(2, 132, 199, 0.18)',
+                borderRadius: 8,
+                padding: '12px 14px',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 10,
+                textAlign: 'left',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <span style={{ fontSize: '0.8rem', fontWeight: 600, color: '#0369a1', display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <Code2 size={14} color="#0284c7" />
+                  <span>Code Panel Ready for Testing</span>
+                </span>
+                <span
+                  style={{
+                    fontSize: '0.7rem',
+                    fontWeight: 600,
+                    padding: '2px 8px',
+                    borderRadius: 10,
+                    background: 'rgba(16, 185, 129, 0.12)',
+                    color: '#059669',
+                  }}
+                >
+                  ● STEP 2 VERIFIED
+                </span>
+              </div>
+              <p style={{ margin: 0, fontSize: '0.76rem', color: '#475569', lineHeight: 1.45 }}>
+                Repository codebase has been fetched and verified in your sandbox. Switch to the <strong>Code</strong> view to inspect the File Explorer and code editor, or proceed when ready.
+              </p>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', paddingTop: 2 }}>
+                {onSwitchToCode && (
+                  <button
+                    type="button"
+                    onClick={onSwitchToCode}
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: 6,
+                      background: '#ffffff',
+                      border: '1px solid #cbd5e1',
+                      borderRadius: 6,
+                      padding: '6px 12px',
+                      fontSize: '0.78rem',
+                      fontWeight: 600,
+                      color: '#0f172a',
+                      cursor: 'pointer',
+                      transition: 'all 0.15s ease',
+                    }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.background = '#f8fafc';
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.background = '#ffffff';
+                    }}
+                  >
+                    <Code2 size={13} color="#0284c7" />
+                    <span>Switch to Code View</span>
+                  </button>
+                )}
+                {onProceedToStep3 && (
+                  <button
+                    type="button"
+                    onClick={onProceedToStep3}
+                    disabled={isProceedingToStep3}
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: 6,
+                      background: '#0284c7',
+                      color: '#ffffff',
+                      border: 'none',
+                      borderRadius: 6,
+                      padding: '6px 14px',
+                      fontSize: '0.78rem',
+                      fontWeight: 600,
+                      cursor: isProceedingToStep3 ? 'not-allowed' : 'pointer',
+                      opacity: isProceedingToStep3 ? 0.7 : 1,
+                      transition: 'all 0.15s ease',
+                      marginLeft: 'auto',
+                    }}
+                  >
+                    {isProceedingToStep3 ? (
+                      <>
+                        <Loader2 size={13} className="animate-spin" />
+                        <span>Installing Dependencies...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Package size={13} />
+                        <span>Proceed to Step 3</span>
+                        <ArrowRight size={13} />
+                      </>
+                    )}
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
 
           {/* Error Message Box */}
           {startError && (

@@ -16,7 +16,7 @@ from compute.k8s_client import get_k8s_client
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_SANDBOX_IMAGE = "compassx-dev-host:latest"
+DEFAULT_SANDBOX_IMAGE = "ghcr.io/omnigent-ai/omnigent-host:latest"
 
 
 def _sanitize_k8s_name(name: str) -> str:
@@ -64,10 +64,10 @@ class KubernetesSandboxDriver(BaseSandboxDriver):
                 logger.debug("Error checking namespace %s: %s", self.namespace, exc)
 
     def _resolve_image(self, requested_image: Optional[str]) -> str:
-        """Resolve container image with fallback chain."""
-        if requested_image and requested_image.strip():
+        """Resolve container image with fallback chain for Kubernetes."""
+        if requested_image and requested_image.strip() and requested_image.strip() not in ("compassx-dev-host:latest", "compassx-dev-sandbox"):
             return requested_image.strip()
-        return DEFAULT_SANDBOX_IMAGE
+        return os.environ.get("COMPASSX_SANDBOX_IMAGE") or DEFAULT_SANDBOX_IMAGE
 
     def provision(self, spec: SandboxSpec) -> SandboxInstance:
         """Create and deploy a Kubernetes Pod and Service according to SandboxSpec."""
@@ -167,6 +167,18 @@ class KubernetesSandboxDriver(BaseSandboxDriver):
                 clean_k = _sanitize_k8s_name(k)
                 labels[clean_k] = _sanitize_k8s_label_value(v)
 
+        annotations = {
+            "compassx.sandbox.id": spec.sandbox_id or sandbox_id,
+            "compassx.sandbox.name": spec.name or sandbox_id,
+            "compassx.sandbox.consumer_key": spec.consumer_key or "",
+            "compassx.sandbox.consumer_module": spec.consumer_module or "",
+            "compassx.sandbox.workspace_id": str(spec.workspace_id or ""),
+        }
+        if spec.metadata:
+            for mk, mv in spec.metadata.items():
+                if mk and mv is not None:
+                    annotations[f"compassx.metadata.{mk}"] = str(mv)
+
         # 6. Container definition
         container = V1Container(
             name="sandbox",
@@ -185,7 +197,7 @@ class KubernetesSandboxDriver(BaseSandboxDriver):
                 name=pod_name,
                 namespace=self.namespace,
                 labels=labels,
-                annotations={"compassx.sandbox.name": spec.name or sandbox_id},
+                annotations=annotations,
             ),
             spec=V1PodSpec(
                 containers=[container],
@@ -210,7 +222,7 @@ class KubernetesSandboxDriver(BaseSandboxDriver):
                     name=svc_name,
                     namespace=self.namespace,
                     labels=labels,
-                    annotations={"compassx.sandbox.name": spec.name or sandbox_id},
+                    annotations=annotations,
                 ),
                 spec=V1ServiceSpec(
                     selector={"compassx.sandbox-id": clean_sb_id},
@@ -219,7 +231,48 @@ class KubernetesSandboxDriver(BaseSandboxDriver):
                 ),
             )
 
-        # Delete existing Pod & Service if present
+        # Check if existing Pod is already Running / Pending (reuse compute without recreating)
+        try:
+            existing_pod = k8s.core().read_namespaced_pod(name=pod_name, namespace=self.namespace)
+            if existing_pod and existing_pod.status:
+                phase = (existing_pod.status.phase or "").lower()
+                deletion = existing_pod.metadata and existing_pod.metadata.deletion_timestamp
+                if phase in ("running", "pending") and not deletion:
+                    logger.info("K8s sandbox pod %s already exists in phase %s, reusing.", pod_name, phase)
+                    if service:
+                        try:
+                            k8s.core().read_namespaced_service(name=svc_name, namespace=self.namespace)
+                        except Exception:
+                            try:
+                                k8s.core().create_namespaced_service(namespace=self.namespace, body=service)
+                            except Exception:
+                                pass
+                    endpoints = {
+                        str(port): f"http://{svc_name}.{self.namespace}.svc.cluster.local:{port}"
+                        for port in spec.ports
+                    }
+                    return SandboxInstance(
+                        id=spec.sandbox_id or sandbox_id,
+                        name=spec.name,
+                        consumer_key=spec.consumer_key,
+                        consumer_module=spec.consumer_module,
+                        workspace_id=spec.workspace_id,
+                        status=SandboxStatus.RUNNING if phase == "running" else SandboxStatus.PROVISIONING,
+                        runtime_mode="kubernetes",
+                        image=image_name,
+                        pod_name=pod_name,
+                        endpoints=endpoints,
+                        ports=spec.ports,
+                        working_dir=spec.working_dir or "/workspace",
+                        created_at=existing_pod.metadata.creation_timestamp.isoformat() if existing_pod.metadata and existing_pod.metadata.creation_timestamp else datetime.now(timezone.utc).isoformat(),
+                        started_at=datetime.now(timezone.utc).isoformat(),
+                        labels=labels,
+                        metadata=spec.metadata,
+                    )
+        except Exception:
+            pass
+
+        # Delete stale/failed Pod & Service if present
         try:
             k8s.core().delete_namespaced_pod(name=pod_name, namespace=self.namespace, grace_period_seconds=0)
             time.sleep(0.5)
@@ -240,8 +293,8 @@ class KubernetesSandboxDriver(BaseSandboxDriver):
             except Exception as svc_err:
                 logger.debug("Could not create K8s service %s: %s", svc_name, svc_err)
 
-        # Wait up to 30s for pod to reach Running phase
-        for _ in range(30):
+        # Wait up to 10s for pod to reach Running phase
+        for _ in range(10):
             try:
                 live_pod = k8s.core().read_namespaced_pod(name=pod_name, namespace=self.namespace)
                 phase = (live_pod.status.phase or "") if live_pod.status else ""
@@ -258,7 +311,7 @@ class KubernetesSandboxDriver(BaseSandboxDriver):
             endpoints[str(port)] = f"http://{svc_name}.{self.namespace}.svc.cluster.local:{port}"
 
         instance = SandboxInstance(
-            id=sandbox_id,
+            id=spec.sandbox_id or sandbox_id,
             name=spec.name,
             consumer_key=spec.consumer_key,
             consumer_module=spec.consumer_module,
@@ -530,11 +583,19 @@ class KubernetesSandboxDriver(BaseSandboxDriver):
 
                 labels = pod.metadata.labels or {}
                 annotations = pod.metadata.annotations or {}
-                sb_id = labels.get("compassx.sandbox-id") or pod.metadata.name.replace("compassx-sb-", "")
+                sb_id = (
+                    annotations.get("compassx.sandbox.id")
+                    or labels.get("compassx.sandbox-id")
+                    or pod.metadata.name.replace("compassx-sb-", "")
+                )
                 sb_name = annotations.get("compassx.sandbox.name") or pod.metadata.name
-                consumer = labels.get("compassx.consumer-module") or "generic"
-                consumer_key = labels.get("compassx.consumer-key")
-                ws_id = labels.get("compassx.workspace-id")
+                consumer = (
+                    annotations.get("compassx.sandbox.consumer_module")
+                    or labels.get("compassx.consumer-module")
+                    or "generic"
+                )
+                consumer_key = annotations.get("compassx.sandbox.consumer_key") or labels.get("compassx.consumer-key")
+                ws_id = annotations.get("compassx.sandbox.workspace_id") or labels.get("compassx.workspace-id")
                 phase = (pod.status.phase or "").lower() if pod.status else "unknown"
                 status = SandboxStatus.RUNNING if phase == "running" else (
                     SandboxStatus.PROVISIONING if phase == "pending" else SandboxStatus.FAILED

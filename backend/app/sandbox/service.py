@@ -23,6 +23,12 @@ from app.sandbox.models import (
 logger = logging.getLogger(__name__)
 
 
+def _normalize_key(val: Optional[str]) -> str:
+    if not val:
+        return ""
+    return str(val).strip().lower().replace("_", "-")
+
+
 class SandboxService:
     """Centralized management service for isolated compute sandboxes across platform profiles."""
 
@@ -38,34 +44,54 @@ class SandboxService:
         consumer_key: Optional[str] = None,
         consumer_module: Optional[str] = None,
     ) -> Optional[SandboxInstance]:
-        """Find an existing sandbox matching ID or consumer key."""
+        """Find an existing sandbox matching ID or consumer key (exact or normalized)."""
+        norm_sb_id = _normalize_key(sandbox_id)
+        norm_c_key = _normalize_key(consumer_key)
+
         # 1. Check in-memory instances
         for sb in self._instances.values():
-            if sandbox_id and sb.id == sandbox_id:
+            if norm_sb_id and (
+                _normalize_key(sb.id) == norm_sb_id
+                or _normalize_key(sb.labels.get("compassx.sandbox-id") if sb.labels else None) == norm_sb_id
+            ):
                 return sb
-            if consumer_key:
-                if sb.consumer_key == consumer_key:
+            if norm_c_key:
+                if _normalize_key(sb.consumer_key) == norm_c_key:
                     return sb
-                if sb.labels and sb.labels.get("compassx.consumer_key") == consumer_key:
+                if sb.labels and (
+                    _normalize_key(sb.labels.get("compassx.consumer_key")) == norm_c_key
+                    or _normalize_key(sb.labels.get("compassx.consumer-key")) == norm_c_key
+                ):
+                    return sb
+                if sb.metadata and _normalize_key(sb.metadata.get("app_id")) == norm_c_key:
                     return sb
 
         # 2. Check discovered infrastructure instances
         try:
             discovered = self.list_sandboxes(consumer_module=consumer_module)
             for sb in discovered:
-                if sandbox_id and sb.id == sandbox_id:
-                    self._instances[sb.id] = sb
+                matched = False
+                if norm_sb_id and (
+                    _normalize_key(sb.id) == norm_sb_id
+                    or _normalize_key(sb.labels.get("compassx.sandbox-id") if sb.labels else None) == norm_sb_id
+                ):
+                    matched = True
+                elif norm_c_key:
+                    if _normalize_key(sb.consumer_key) == norm_c_key:
+                        matched = True
+                    elif sb.labels and (
+                        _normalize_key(sb.labels.get("compassx.consumer_key")) == norm_c_key
+                        or _normalize_key(sb.labels.get("compassx.consumer-key")) == norm_c_key
+                    ):
+                        matched = True
+                    elif sb.metadata and _normalize_key(sb.metadata.get("app_id")) == norm_c_key:
+                        matched = True
+
+                if matched:
+                    target_id = sandbox_id or sb.id
+                    sb.id = target_id
+                    self._instances[target_id] = sb
                     return sb
-                if consumer_key:
-                    if sb.consumer_key == consumer_key:
-                        self._instances[sb.id] = sb
-                        return sb
-                    if sb.labels and sb.labels.get("compassx.consumer_key") == consumer_key:
-                        self._instances[sb.id] = sb
-                        return sb
-                    if sb.metadata and sb.metadata.get("app_id") == consumer_key:
-                        self._instances[sb.id] = sb
-                        return sb
         except Exception as exc:
             logger.debug("Error during sandbox lookup: %s", exc)
 
@@ -270,17 +296,38 @@ class SandboxService:
         """List all currently known and discovered sandboxes across drivers."""
         combined: Dict[str, SandboxInstance] = dict(self._instances)
 
+        def _find_matching_key(item_id: str, c_key: Optional[str] = None) -> Optional[str]:
+            norm_item = _normalize_key(item_id)
+            norm_c = _normalize_key(c_key) if c_key else None
+            for k, existing in list(combined.items()):
+                if _normalize_key(k) == norm_item or _normalize_key(existing.id) == norm_item:
+                    return k
+                if norm_c and (
+                    _normalize_key(existing.consumer_key) == norm_c
+                    or _normalize_key(existing.labels.get("compassx.consumer-key") if existing.labels else None) == norm_c
+                    or _normalize_key(existing.labels.get("compassx.consumer_key") if existing.labels else None) == norm_c
+                    or _normalize_key(existing.metadata.get("app_id") if existing.metadata else None) == norm_c
+                ):
+                    return k
+            return None
+
         # 1. Discover active sandboxes from driver
         driver = self._get_driver_for_mode()
         try:
             discovered = driver.discover_active_instances()
             for item in discovered:
-                if item.id not in combined:
+                matched_key = _find_matching_key(item.id, item.consumer_key)
+                if not matched_key:
                     combined[item.id] = item
                 else:
-                    combined[item.id].status = item.status
+                    existing_entry = combined[matched_key]
+                    existing_entry.status = item.status
                     if item.endpoints:
-                        combined[item.id].endpoints = item.endpoints
+                        existing_entry.endpoints = item.endpoints
+                    if item.pod_name:
+                        existing_entry.pod_name = item.pod_name
+                    if item.image:
+                        existing_entry.image = item.image
         except Exception as exc:
             logger.debug("Sandbox driver discovery error: %s", exc)
 
@@ -294,18 +341,20 @@ class SandboxService:
                 dev_workspaces = db.query(DevWorkspace).filter(DevWorkspace.status == "active").all()
                 for ws in dev_workspaces:
                     app = db.query(App).filter(App.id == ws.app_id).first()
-                    dev_sb_id = f"dev-{ws.app_id}"
-                    if dev_sb_id not in combined:
+                    dev_sb_id = f"dev-app-{ws.app_id}"
+                    c_key = f"app_{ws.app_id}"
+                    matched_key = _find_matching_key(dev_sb_id, c_key)
+                    if not matched_key:
                         app_name = app.name if app else ws.app_id
                         combined[dev_sb_id] = SandboxInstance(
                             id=dev_sb_id,
-                            consumer_key=f"app_{ws.app_id}",
-                            name=f"{app_name} (Dev Studio)",
-                            consumer_module="omnigent_dev",
+                            consumer_key=c_key,
+                            name=f"{app_name} (Dev Sandbox)",
+                            consumer_module="app",
                             workspace_id=app.workspace_id if app else None,
                             status=SandboxStatus.RUNNING,
                             runtime_mode=driver.__class__.__name__.replace("SandboxDriver", "").lower(),
-                            image="compassx-dev-sandbox",
+                            image="compassx-dev-host:latest",
                             created_at=ws.created_at.isoformat() if ws.created_at else datetime.now(timezone.utc).isoformat(),
                             started_at=ws.updated_at.isoformat() if ws.updated_at else None,
                             metadata={"app_id": ws.app_id, "folder_path": ws.folder_path},

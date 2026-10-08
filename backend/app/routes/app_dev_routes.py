@@ -356,7 +356,7 @@ def _build_app_sandbox_spec(app: App) -> SandboxSpec:
         name=f"{app.name} (Dev Sandbox)",
         consumer_module="app",
         workspace_id=str(app.workspace_id) if app.workspace_id else None,
-        image="compassx-dev-host:latest",
+        image=os.environ.get("COMPASSX_SANDBOX_IMAGE") or "ghcr.io/omnigent-ai/omnigent-host:latest",
         ports=[8080, 9201],
         storage_mounts=[StorageMount(source_path=repo_dir, mount_path="/workspace")],
         init_scripts=[
@@ -453,7 +453,6 @@ def ensure_app_sandbox(
     unified_reaper_service.touch_app_activity(app.id)
     spec = _build_app_sandbox_spec(app)
     instance = sandbox_service.ensure_sandbox(spec)
-    return instance
     return instance
 
 

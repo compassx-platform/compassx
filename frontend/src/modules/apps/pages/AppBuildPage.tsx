@@ -794,8 +794,9 @@ export default function AppBuildPage() {
               setIsLogViewerOpen(true);
             }
           },
-          onError: () => {
-            handleStartDev('compassx');
+          onError: (err: any) => {
+            const msg = err?.response?.data?.detail || err?.message || 'Failed to start dev sandbox.';
+            setStartError(msg);
           },
         }
       );
@@ -803,9 +804,107 @@ export default function AppBuildPage() {
   }, [resolvedAppId, app, sandboxStatus, isContainerRunning, userExplicitlyStopped, startError, isDevLoading, devStatus]);
 
 
-  // ── Step 1 -> Step 2 -> Step 3 -> Step 4 -> Studio Canvas Progression (Temporarily paused for UI test) ──
-  // Temporarily paused after sandbox provisioning for user UI inspection.
-  // The sandbox is provisioned and listed in Compute -> Sandboxes tab.
+  // ── Step 1 -> Step 2 Auto-Progression (Paused after Step 2 for code verification) ──
+  // Step 1 is complete when stage === 'running' (Dev sandbox compute is ready).
+  // Step 2 automatically prepares workspace code and fetches codebase files.
+  useEffect(() => {
+    if (
+      stage === 'running' &&
+      resolvedAppId &&
+      !step2Completed &&
+      !verifyGitTriggered.current &&
+      !startError &&
+      !verifyGitMutation.isPending
+    ) {
+      verifyGitTriggered.current = true;
+      setInitStep(1);
+      verifyGitMutation.mutate(
+        {
+          appId: resolvedAppId,
+          workspaceId: activeWorkspace?.id || devStatus?.workspace_id,
+          workspaceName: activeWorkspace?.name || devStatus?.workspace_name,
+        },
+        {
+          onSuccess: (data) => {
+            const out = data?.output || data?.message || 'Workspace codebase verified and ready.';
+            setGitOutput(out);
+            setStep2Completed(true);
+            setHasCompletedInit(true);
+            setStartError(null);
+            // Invalidate files and git commits queries to populate Code panel
+            qc.invalidateQueries({ queryKey: ['app-dev-files', resolvedAppId] });
+            qc.invalidateQueries({ queryKey: ['apps', resolvedAppId, 'dev', 'commits'] });
+            refetchDevFiles();
+            toast.success('Step 2 Complete: Workspace code prepared & ready.');
+          },
+          onError: (err: any) => {
+            const msg = err?.response?.data?.detail || err?.message || 'Failed to prepare workspace codebase.';
+            setStartError(msg);
+            setIsLogViewerOpen(true);
+            toast.error(msg);
+          },
+        }
+      );
+    }
+  }, [
+    stage,
+    resolvedAppId,
+    step2Completed,
+    startError,
+    activeWorkspace?.id,
+    activeWorkspace?.name,
+    devStatus?.workspace_id,
+    devStatus?.workspace_name,
+  ]);
+
+  // Staged Progression: Step 3 (Dependencies)
+  const handleProceedToStep3 = async () => {
+    if (!resolvedAppId) return;
+    try {
+      setStartError(null);
+      setInitStep(2);
+      toast.info('Step 3: Installing dependencies...');
+      const res = await installDepsMutation.mutateAsync({
+        appId: resolvedAppId,
+        workspaceId: activeWorkspace?.id || devStatus?.workspace_id,
+        workspaceName: activeWorkspace?.name || devStatus?.workspace_name,
+      });
+      const out = res?.output || res?.message || 'Dependencies installed successfully.';
+      setInstallOutput(out);
+      setStep3Completed(true);
+      toast.success('Step 3 Complete: Dependencies installed.');
+    } catch (err: any) {
+      const msg = err?.response?.data?.detail || err?.message || 'Failed to install dependencies.';
+      setStartError(msg);
+      toast.error(msg);
+    }
+  };
+
+  // Staged Progression: Step 4 (Run App)
+  const handleProceedToStep4 = async () => {
+    if (!resolvedAppId) return;
+    try {
+      setStartError(null);
+      setInitStep(3);
+      toast.info('Step 4: Starting application server...');
+      const res = await runAppMutation.mutateAsync({
+        appId: resolvedAppId,
+        workspaceId: activeWorkspace?.id || devStatus?.workspace_id,
+        workspaceName: activeWorkspace?.name || devStatus?.workspace_name,
+      });
+      const out = res?.output || res?.message || 'Application running.';
+      setRunAppOutput(out);
+      setStep4Completed(true);
+      setHasCompletedInit(true);
+      setPreviewReloadKey(Date.now());
+      toast.success('Step 4 Complete: Application running.');
+    } catch (err: any) {
+      const msg = err?.response?.data?.detail || err?.message || 'Failed to start application processes.';
+      setStartError(msg);
+      toast.error(msg);
+    }
+  };
+
   const handleProceedToStudio = () => {
     setHasCompletedInit(true);
     setStep2Completed(true);
@@ -1971,6 +2070,9 @@ export default function AppBuildPage() {
                     onToggleLogs={() => setIsOutputCollapsed((prev) => !prev)}
                     isOutputCollapsed={isOutputCollapsed}
                     devLogs={combinedLogs}
+                    onSwitchToCode={() => setCanvasViewMode('code')}
+                    onProceedToStep3={handleProceedToStep3}
+                    isProceedingToStep3={installDepsMutation.isPending}
                   />
                 ) : (
                   <CodeEditorCanvas
