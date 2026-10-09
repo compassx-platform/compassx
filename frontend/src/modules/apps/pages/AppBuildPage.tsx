@@ -791,6 +791,14 @@ export default function AppBuildPage() {
       });
       const out = res?.output || res?.message || 'Application running.';
       setRunAppOutput(out);
+      if (res && res.success === false) {
+        const errorMsg = res.output || res.message || (res as any)?.error || 'Failed to start application processes.';
+        setStartError(errorMsg);
+        setStep4Completed(false);
+        setIsLogViewerOpen(true);
+        toast.error(errorMsg);
+        return;
+      }
       setStep4Completed(true);
       setHasCompletedInit(true);
       setPreviewReloadKey(Date.now());
@@ -798,6 +806,8 @@ export default function AppBuildPage() {
     } catch (err: any) {
       const msg = err?.response?.data?.detail || err?.message || 'Failed to start application processes.';
       setStartError(msg);
+      setStep4Completed(false);
+      setIsLogViewerOpen(true);
       toast.error(msg);
     }
   }, [resolvedAppId, activeWorkspace?.id, activeWorkspace?.name, devStatus?.workspace_id, devStatus?.workspace_name, runAppMutation, toast]);
@@ -816,6 +826,14 @@ export default function AppBuildPage() {
       });
       const out = res?.output || res?.message || 'Dependencies installed successfully.';
       setInstallOutput(out);
+      if (res && res.success === false) {
+        const errorMsg = res.output || res.message || (res as any)?.error || 'Failed to install dependencies.';
+        setStartError(errorMsg);
+        setStep3Completed(false);
+        setIsLogViewerOpen(true);
+        toast.error(errorMsg);
+        return;
+      }
       setStep3Completed(true);
       toast.success('Step 3 Complete: Dependencies installed.');
 
@@ -824,6 +842,8 @@ export default function AppBuildPage() {
     } catch (err: any) {
       const msg = err?.response?.data?.detail || err?.message || 'Failed to install dependencies.';
       setStartError(msg);
+      setStep3Completed(false);
+      setIsLogViewerOpen(true);
       toast.error(msg);
     }
   }, [resolvedAppId, activeWorkspace?.id, activeWorkspace?.name, devStatus?.workspace_id, devStatus?.workspace_name, installDepsMutation, handleProceedToStep4, toast]);
@@ -852,6 +872,14 @@ export default function AppBuildPage() {
           onSuccess: (data) => {
             const out = data?.output || data?.message || 'Workspace codebase verified and ready.';
             setGitOutput(out);
+            if (data && data.success === false) {
+              const errorMsg = data.output || data.message || (data as any)?.error || 'Failed to prepare workspace codebase.';
+              setStartError(errorMsg);
+              setStep2Completed(false);
+              setIsLogViewerOpen(true);
+              toast.error(errorMsg);
+              return;
+            }
             setStep2Completed(true);
             setStartError(null);
             // Invalidate files and git commits queries to populate Code panel

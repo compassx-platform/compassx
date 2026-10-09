@@ -5,6 +5,20 @@ All notable changes to the CompassX Platform will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.30] - 2026-10-09
+
+### 🚀 Highlights
+
+CompassX `0.12.30` introduces **Automated Error Inspection & Interactive Log Drawer Auto-Open** and **Resilient Multi-Stage Failure Recovery in App Studio**.
+
+### ✨ Features & Enhancements
+
+#### Automated Error Inspection & Log Drawer Auto-Open
+- **Automatic Log Expansion on Failure (`AppBuildPage.tsx`, `LivePreviewCanvas.tsx`)**: Whenever any pipeline phase (Code Verification, Dependency Installation, or Application Startup) fails or returns an error, the build error message is captured, the step is halted, and the interactive terminal log viewer is automatically opened and expanded.
+- **Fail-Fast Stage Gating (`AppBuildPage.tsx`)**: Explicitly checks `res.success === false` across all build mutations, preventing accidental progression into subsequent phases when pre-requisite build tasks encounter non-zero exits or errors.
+
+---
+
 ## [0.12.29] - 2026-10-09
 
 ### 🚀 Highlights

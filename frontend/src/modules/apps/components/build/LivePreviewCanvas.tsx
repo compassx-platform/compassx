@@ -128,6 +128,13 @@ export function LivePreviewCanvas({
     }
   }, [isInlineLogsOpen, autoScrollInlineLogs, devLogs]);
 
+  // Auto-expand logs terminal when an error occurs so error details are immediately visible
+  useEffect(() => {
+    if (startError) {
+      setIsInlineLogsOpen(true);
+    }
+  }, [startError]);
+
   // Probe target dev server endpoint using fetch (mode: 'no-cors')
   // Only probe when the application server step is active or completed to prevent premature connection refused errors.
   useEffect(() => {
