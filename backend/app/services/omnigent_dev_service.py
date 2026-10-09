@@ -2020,25 +2020,46 @@ class OmnigentDevService:
         if is_running:
             try:
                 target_dir = self.ensure_workspace_worktree(app, workspace_id)
+                ws_id, ws_name, folder_path, _ = self._resolve_workspace_info(app, workspace_id)
                 clean_app_id = _clean_id(app.id)
                 py_code = f"""
 import os, json, subprocess
 root_dir = '{target_dir}'
-if not os.path.exists(root_dir) or not os.path.isdir(root_dir) or not os.listdir(root_dir):
+if not os.path.exists(root_dir) or not os.path.isdir(root_dir) or not any(f for f in os.listdir(root_dir) if f != '.git'):
     candidates = [
         '{target_dir}',
+        '/workspaces/{clean_app_id}/{ws_name}',
         '/workspaces/{clean_app_id}/default',
         '/workspaces/{clean_app_id}/main',
         '/workspaces/{clean_app_id}',
         '/workspaces/default',
+        '/workspace/app',
+        '/workspaces/app',
+        '/workspace/default',
+        '/workspace/main',
+        '/workspace',
         '/app',
     ]
+    for base in ['/workspaces', '/workspace']:
+        if os.path.exists(base) and os.path.isdir(base):
+            try:
+                for sub in sorted(os.listdir(base)):
+                    p = os.path.join(base, sub)
+                    if os.path.isdir(p) and any(f for f in os.listdir(p) if f != '.git'):
+                        candidates.append(p)
+                        try:
+                            for sub2 in sorted(os.listdir(p)):
+                                p2 = os.path.join(p, sub2)
+                                if os.path.isdir(p2) and any(f for f in os.listdir(p2) if f != '.git'):
+                                    candidates.append(p2)
+                        except Exception: pass
+            except Exception: pass
     for c in candidates:
         if os.path.exists(c) and os.path.isdir(c) and any(f for f in os.listdir(c) if f != '.git'):
             root_dir = c
             break
 if not os.path.exists(root_dir):
-    root_dir = '/workspaces'
+    root_dir = '/workspaces' if os.path.exists('/workspaces') else '/workspace'
 
 git_statuses = {{}}
 try:
@@ -2180,19 +2201,40 @@ print('__JSON_START__' + json.dumps(res) + '__JSON_END__')
         if is_running:
             try:
                 target_dir = self.ensure_workspace_worktree(app, workspace_id)
+                ws_id, ws_name, folder_path, _ = self._resolve_workspace_info(app, workspace_id)
                 clean_app_id = _clean_id(app.id)
                 py_code = f"""
 import os, base64
 root_dir = '{target_dir}'
-if not os.path.exists(root_dir) or not os.path.isdir(root_dir):
+if not os.path.exists(root_dir) or not os.path.isdir(root_dir) or not any(f for f in os.listdir(root_dir) if f != '.git'):
     candidates = [
         '{target_dir}',
+        '/workspaces/{clean_app_id}/{ws_name}',
         '/workspaces/{clean_app_id}/default',
         '/workspaces/{clean_app_id}/main',
         '/workspaces/{clean_app_id}',
         '/workspaces/default',
+        '/workspace/app',
+        '/workspaces/app',
+        '/workspace/default',
+        '/workspace/main',
+        '/workspace',
         '/app',
     ]
+    for base in ['/workspaces', '/workspace']:
+        if os.path.exists(base) and os.path.isdir(base):
+            try:
+                for sub in sorted(os.listdir(base)):
+                    p = os.path.join(base, sub)
+                    if os.path.isdir(p) and any(f for f in os.listdir(p) if f != '.git'):
+                        candidates.append(p)
+                        try:
+                            for sub2 in sorted(os.listdir(p)):
+                                p2 = os.path.join(p, sub2)
+                                if os.path.isdir(p2) and any(f for f in os.listdir(p2) if f != '.git'):
+                                    candidates.append(p2)
+                        except Exception: pass
+            except Exception: pass
     for c in candidates:
         if os.path.exists(c) and os.path.isdir(c) and any(f for f in os.listdir(c) if f != '.git'):
             root_dir = c
@@ -2266,21 +2308,42 @@ else:
         if is_running:
             try:
                 target_dir = self.ensure_workspace_worktree(app, workspace_id)
+                ws_id, ws_name, folder_path, _ = self._resolve_workspace_info(app, workspace_id)
                 clean_app_id = _clean_id(app.id)
                 content_bytes = content.encode("utf-8")
                 b64_content = base64.b64encode(content_bytes).decode("ascii")
                 py_code = f"""
 import os, base64
 root_dir = '{target_dir}'
-if not os.path.exists(root_dir) or not os.path.isdir(root_dir):
+if not os.path.exists(root_dir) or not os.path.isdir(root_dir) or not any(f for f in os.listdir(root_dir) if f != '.git'):
     candidates = [
         '{target_dir}',
+        '/workspaces/{clean_app_id}/{ws_name}',
         '/workspaces/{clean_app_id}/default',
         '/workspaces/{clean_app_id}/main',
         '/workspaces/{clean_app_id}',
         '/workspaces/default',
+        '/workspace/app',
+        '/workspaces/app',
+        '/workspace/default',
+        '/workspace/main',
+        '/workspace',
         '/app',
     ]
+    for base in ['/workspaces', '/workspace']:
+        if os.path.exists(base) and os.path.isdir(base):
+            try:
+                for sub in sorted(os.listdir(base)):
+                    p = os.path.join(base, sub)
+                    if os.path.isdir(p) and any(f for f in os.listdir(p) if f != '.git'):
+                        candidates.append(p)
+                        try:
+                            for sub2 in sorted(os.listdir(p)):
+                                p2 = os.path.join(p, sub2)
+                                if os.path.isdir(p2) and any(f for f in os.listdir(p2) if f != '.git'):
+                                    candidates.append(p2)
+                        except Exception: pass
+            except Exception: pass
     for c in candidates:
         if os.path.exists(c) and os.path.isdir(c) and any(f for f in os.listdir(c) if f != '.git'):
             root_dir = c

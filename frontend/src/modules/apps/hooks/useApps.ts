@@ -1115,3 +1115,48 @@ export function useDeleteDevSession(appId?: string) {
   });
 }
 
+export interface AppManifestData {
+  app_id: string;
+  has_manifest: boolean;
+  manifest?: Record<string, any>;
+  run_config?: {
+    gateway_port?: number;
+    frontend_command?: string;
+    frontend_dir?: string;
+    frontend_port?: number;
+    frontend_path?: string;
+    backend_command?: string;
+    backend_dir?: string;
+    backend_port?: number;
+    backend_path?: string;
+    manifest_path?: string;
+    env_exports?: string;
+  };
+}
+
+export function useAppManifest(appId: string | undefined) {
+  return useQuery<AppManifestData>({
+    queryKey: ['app-manifest', appId],
+    queryFn: async () => {
+      if (!appId) throw new Error('No appId');
+      const res = await api.get(`/api/v1/apps/${appId}/dev/manifest`);
+      return res.data;
+    },
+    enabled: Boolean(appId),
+  });
+}
+
+export function useUpdateAppManifest() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ appId, payload }: { appId: string; payload: Record<string, any> }) => {
+      const res = await api.put(`/api/v1/apps/${appId}/dev/manifest`, payload);
+      return res.data;
+    },
+    onSuccess: (_, { appId }) => {
+      queryClient.invalidateQueries({ queryKey: ['app-manifest', appId] });
+    },
+  });
+}
+
+

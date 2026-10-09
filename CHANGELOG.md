@@ -5,6 +5,24 @@ All notable changes to the CompassX Platform will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.21] - 2026-10-09
+
+### 🚀 Highlights
+
+CompassX `0.12.21` introduces **Full-Stack Runtime Configuration & `app.yaml` Editor in App Settings**, **Streamlined Python Reverse Proxy Sandbox Execution**, and **Real-Time Gateway Port Synchronization**.
+
+### ✨ Features & Enhancements
+
+#### Visual `app.yaml` & Runtime Configuration in App Details
+- **Multi-Service Visual Editor (`AppDetailPage.tsx`, `useApps.ts`)**: Added dedicated configuration panels for Frontend UI Service (startup command, internal port, working directory) and Backend API Service (startup command, internal port, working directory) within App Detail Settings.
+- **Custom Dependency Installer (`AppDetailPage.tsx`)**: Configurable pre-startup installation command (`npm install`, `pip install -r requirements.txt`) executing prior to service launch.
+- **Port 8080 Routing Topology Visualizer (`AppDetailPage.tsx`)**: Interactive routing visualizer highlighting traffic flow (`/*` to frontend UI, `/api/*` and `/ws/*` to backend API).
+
+#### Streamlined Sandbox Reverse Proxy Launch
+- **Pure-Python Reverse Proxy Daemon (`omnigent_dev_service.py`)**: Dev sandboxes launch a lightweight zero-dependency Python reverse proxy (`/tmp/reverse_proxy.py`) on port 8080 during container startup for reliable multi-service multiplexing across local and Kubernetes profiles.
+
+---
+
 ## [0.12.20] - 2026-10-09
 
 ### 🚀 Highlights

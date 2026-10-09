@@ -61,6 +61,8 @@ import {
   useStopDevSession,
   useDevWorkspaces,
   useDeleteDevWorkspace,
+  useAppManifest,
+  useUpdateAppManifest,
   DevWorkspace,
   DeploymentItem,
   AppRuntimeStatus,
@@ -185,6 +187,17 @@ export default function AppDetailPage() {
   const [configPat, setConfigPat] = useState('');
   const [showConfigPat, setShowConfigPat] = useState(false);
   const [configDirty, setConfigDirty] = useState(false);
+
+  // Manifest & Port Mapping State (app.yaml)
+  const { data: manifestData, refetch: refetchManifest } = useAppManifest(resolvedAppId);
+  const updateManifestMutation = useUpdateAppManifest();
+  const [manifestFrontendCmd, setManifestFrontendCmd] = useState('');
+  const [manifestFrontendPort, setManifestFrontendPort] = useState<number | string>(4000);
+  const [manifestFrontendDir, setManifestFrontendDir] = useState('frontend');
+  const [manifestBackendCmd, setManifestBackendCmd] = useState('');
+  const [manifestBackendPort, setManifestBackendPort] = useState<number | string>(8000);
+  const [manifestBackendDir, setManifestBackendDir] = useState('.');
+  const [manifestInstallCmd, setManifestInstallCmd] = useState('');
 
   // Dev Sandbox Lifecycle Settings State
   const [autoSuspendEnabled, setAutoSuspendEnabled] = useState(true);
@@ -373,6 +386,22 @@ export default function AppDetailPage() {
   }, [app]);
 
   useEffect(() => {
+    if (manifestData?.run_config) {
+      const rc = manifestData.run_config;
+      if (rc.frontend_command !== undefined) setManifestFrontendCmd(rc.frontend_command || '');
+      if (rc.frontend_port !== undefined) setManifestFrontendPort(rc.frontend_port || 4000);
+      if (rc.frontend_dir !== undefined) setManifestFrontendDir(rc.frontend_dir || 'frontend');
+      if (rc.backend_command !== undefined) setManifestBackendCmd(rc.backend_command || '');
+      if (rc.backend_port !== undefined) setManifestBackendPort(rc.backend_port || 8000);
+      if (rc.backend_dir !== undefined) setManifestBackendDir(rc.backend_dir || '.');
+    }
+    if (manifestData?.manifest?.install) {
+      const inst = manifestData.manifest.install;
+      setManifestInstallCmd(Array.isArray(inst) ? inst.join(' && ') : String(inst));
+    }
+  }, [manifestData]);
+
+  useEffect(() => {
     if (autoScroll && logTerminalRef.current) {
       logTerminalRef.current.scrollTop = logTerminalRef.current.scrollHeight;
     }
@@ -520,9 +549,29 @@ export default function AppDetailPage() {
           config: updatedConfig,
         },
       });
+
+      if (manifestFrontendCmd || manifestBackendCmd || manifestFrontendPort || manifestBackendPort || manifestInstallCmd) {
+        try {
+          await updateManifestMutation.mutateAsync({
+            appId: resolvedAppId,
+            payload: {
+              frontend_command: manifestFrontendCmd.trim() || undefined,
+              frontend_port: Number(manifestFrontendPort) || 4000,
+              frontend_dir: manifestFrontendDir.trim() || 'frontend',
+              backend_command: manifestBackendCmd.trim() || undefined,
+              backend_port: Number(manifestBackendPort) || 8000,
+              backend_dir: manifestBackendDir.trim() || '.',
+              install_command: manifestInstallCmd.trim() || undefined,
+            },
+          });
+        } catch (mErr) {
+          console.warn('App manifest update error:', mErr);
+        }
+      }
+
       setConfigPat('');
       setConfigDirty(false);
-      toast.success('App configuration updated successfully.');
+      toast.success('App configuration and app.yaml updated successfully.');
     } catch (err: any) {
       toast.error(err?.response?.data?.detail || 'Failed to update configuration.');
     }
@@ -3246,6 +3295,245 @@ export default function AppDetailPage() {
                   </label>
                 </div>
               )}
+            </div>
+          </div>
+
+          {/* Runtime Commands & Port Mapping (app.yaml) */}
+          <div
+            style={{
+              padding: '18px 20px',
+              border: '1px solid var(--color-border)',
+              borderRadius: 'var(--radius-md, 6px)',
+              background: 'var(--color-bg-subtle, rgba(255,255,255,0.02))',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 16,
+            }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+              <div>
+                <h4 style={{ margin: '0 0 4px', fontSize: '0.92rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <Terminal size={16} color="var(--color-primary)" />
+                  <span>Runtime Commands & Port Mapping (<code>app.yaml</code>)</span>
+                  <span
+                    style={{
+                      fontSize: '0.7rem',
+                      padding: '2px 8px',
+                      borderRadius: 12,
+                      background: 'rgba(59,130,246,0.12)',
+                      color: 'var(--color-primary)',
+                      fontWeight: 500,
+                    }}
+                  >
+                    In-Pod Gateway
+                  </span>
+                </h4>
+                <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>
+                  Configure frontend/backend startup commands and ports. An internal reverse proxy (Caddy / Python) on port <code>8080</code> automatically routes Ingress traffic to your internal services without CORS hurdles.
+                </p>
+              </div>
+            </div>
+
+            {/* Architecture Banner */}
+            <div
+              style={{
+                padding: '10px 14px',
+                borderRadius: 6,
+                background: 'rgba(59,130,246,0.06)',
+                border: '1px solid rgba(59,130,246,0.2)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                fontSize: '0.78rem',
+                color: 'var(--color-text)',
+                gap: 12,
+                flexWrap: 'wrap',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <Globe size={14} color="var(--color-primary)" />
+                <span>Ingress / Docker (<strong>Port 8080</strong>)</span>
+              </div>
+              <span style={{ color: 'var(--color-text-muted)' }}>➔ Reverse Proxy ➔</span>
+              <div style={{ display: 'flex', gap: 16 }}>
+                <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                  <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#3b82f6' }} />
+                  <strong>/*</strong> ➔ Frontend (:<strong>{manifestFrontendPort || 4000}</strong>)
+                </span>
+                <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                  <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#10b981' }} />
+                  <strong>/api/*, /ws/*</strong> ➔ Backend (:<strong>{manifestBackendPort || 8000}</strong>)
+                </span>
+              </div>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+              {/* Frontend Service */}
+              <div
+                style={{
+                  padding: '14px 16px',
+                  borderRadius: 6,
+                  border: '1px solid var(--color-border)',
+                  background: 'var(--color-surface)',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 12,
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <Code2 size={15} color="var(--color-primary)" />
+                  <span style={{ fontSize: '0.85rem', fontWeight: 600 }}>Frontend Service (UI)</span>
+                </div>
+
+                <label className="uc-field" style={{ marginBottom: 0 }}>
+                  <span className="uc-field-label">Startup Command</span>
+                  <input
+                    type="text"
+                    placeholder="e.g. npm run dev -- --port 4000 --host 0.0.0.0"
+                    value={manifestFrontendCmd}
+                    onChange={(e) => {
+                      setManifestFrontendCmd(e.target.value);
+                      setConfigDirty(true);
+                    }}
+                    className="input-field"
+                    style={{ fontFamily: 'monospace', fontSize: '0.8rem' }}
+                  />
+                </label>
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                  <label className="uc-field" style={{ marginBottom: 0 }}>
+                    <span className="uc-field-label">Internal Port</span>
+                    <input
+                      type="number"
+                      placeholder="4000"
+                      value={manifestFrontendPort}
+                      onChange={(e) => {
+                        setManifestFrontendPort(e.target.value);
+                        setConfigDirty(true);
+                      }}
+                      className="input-field"
+                    />
+                  </label>
+                  <label className="uc-field" style={{ marginBottom: 0 }}>
+                    <span className="uc-field-label">Working Directory</span>
+                    <input
+                      type="text"
+                      placeholder="frontend"
+                      value={manifestFrontendDir}
+                      onChange={(e) => {
+                        setManifestFrontendDir(e.target.value);
+                        setConfigDirty(true);
+                      }}
+                      className="input-field"
+                      style={{ fontFamily: 'monospace', fontSize: '0.8rem' }}
+                    />
+                  </label>
+                </div>
+              </div>
+
+              {/* Backend Service */}
+              <div
+                style={{
+                  padding: '14px 16px',
+                  borderRadius: 6,
+                  border: '1px solid var(--color-border)',
+                  background: 'var(--color-surface)',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 12,
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <Server size={15} color="#10b981" />
+                  <span style={{ fontSize: '0.85rem', fontWeight: 600 }}>Backend Service (API)</span>
+                </div>
+
+                <label className="uc-field" style={{ marginBottom: 0 }}>
+                  <span className="uc-field-label">Startup Command</span>
+                  <input
+                    type="text"
+                    placeholder="e.g. uvicorn main:app --host 0.0.0.0 --port 8000"
+                    value={manifestBackendCmd}
+                    onChange={(e) => {
+                      setManifestBackendCmd(e.target.value);
+                      setConfigDirty(true);
+                    }}
+                    className="input-field"
+                    style={{ fontFamily: 'monospace', fontSize: '0.8rem' }}
+                  />
+                </label>
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                  <label className="uc-field" style={{ marginBottom: 0 }}>
+                    <span className="uc-field-label">Internal Port</span>
+                    <input
+                      type="number"
+                      placeholder="8000"
+                      value={manifestBackendPort}
+                      onChange={(e) => {
+                        setManifestBackendPort(e.target.value);
+                        setConfigDirty(true);
+                      }}
+                      className="input-field"
+                    />
+                  </label>
+                  <label className="uc-field" style={{ marginBottom: 0 }}>
+                    <span className="uc-field-label">Working Directory</span>
+                    <input
+                      type="text"
+                      placeholder="."
+                      value={manifestBackendDir}
+                      onChange={(e) => {
+                        setManifestBackendDir(e.target.value);
+                        setConfigDirty(true);
+                      }}
+                      className="input-field"
+                      style={{ fontFamily: 'monospace', fontSize: '0.8rem' }}
+                    />
+                  </label>
+                </div>
+              </div>
+            </div>
+
+            {/* Custom Dependency Install Command */}
+            <div
+              style={{
+                padding: '14px 16px',
+                borderRadius: 6,
+                border: '1px solid var(--color-border)',
+                background: 'var(--color-surface)',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 10,
+              }}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <Layers size={15} color="var(--color-primary)" />
+                  <span style={{ fontSize: '0.85rem', fontWeight: 600 }}>Custom Dependency Install Command (Optional)</span>
+                </div>
+                <span style={{ fontSize: '0.72rem', color: 'var(--color-text-muted)' }}>
+                  Runs during container startup before service execution
+                </span>
+              </div>
+              <input
+                type="text"
+                placeholder="e.g. pip install -r requirements.txt && cd frontend && npm install"
+                value={manifestInstallCmd}
+                onChange={(e) => {
+                  setManifestInstallCmd(e.target.value);
+                  setConfigDirty(true);
+                }}
+                className="input-field"
+                style={{ fontFamily: 'monospace', fontSize: '0.8rem' }}
+              />
+            </div>
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>
+              <ShieldCheck size={14} color="#10b981" />
+              <span>
+                Saving updates <code>app.yaml</code> in the app workspace root and synchronizes runtime ports automatically across both Docker & Kubernetes sandboxes.
+              </span>
             </div>
           </div>
 
