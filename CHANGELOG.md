@@ -5,6 +5,24 @@ All notable changes to the CompassX Platform will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.29] - 2026-10-09
+
+### 🚀 Highlights
+
+CompassX `0.12.29` introduces **Dynamic Custom App Environment Variable Injection**, **Optimized Live Preview Reachability Probing**, and **Seamless Iframe Transition Handling**.
+
+### ✨ Features & Enhancements
+
+#### Dynamic Custom App Environment Variable Injection
+- **App Settings Environment Variable Propagation (`kubernetes_driver.py`, `omnigent_dev_service.py`)**: Automatically parses custom environment variables configured in App Settings (`app.config.env_vars`, `app.config.environment`, `app.config.env`) across dictionaries, list of key/value pairs, and raw key=value strings.
+- **Container Spec & Runtime Injection (`kubernetes_driver.py`, `omnigent_dev_service.py`)**: Injects all custom variables directly into Kubernetes container pod definitions (`client.V1EnvVar`) and pre-exports them in shell execution scripts and `app.yaml` service runners.
+
+#### Optimized Live Preview & Iframe Transitions
+- **Short-Circuited Reachability Probing (`LivePreviewCanvas.tsx`)**: Eliminates redundant polling loops once the sandbox dev server is confirmed reachable.
+- **Smooth Iframe Reload Handling (`LivePreviewCanvas.tsx`)**: Tracks reload keys using persistent component references, preventing unwanted flashing and flickering during live preview updates.
+
+---
+
 ## [0.12.28] - 2026-10-09
 
 ### 🚀 Highlights

@@ -1138,6 +1138,48 @@ class KubernetesDevDriver(BaseDevDriver):
                     workload_identity_id = f"id_app_{clean_app_id[:12]}"
 
                 runner_script_b64 = base64.b64encode(self._get_dev_runner_script().encode("utf-8")).decode("ascii")
+                # App-configured custom environment variables (from app.config)
+                app_cfg = getattr(app, "config", {}) or {}
+                raw_custom_env = app_cfg.get("env_vars") or app_cfg.get("environment") or app_cfg.get("env") or []
+                custom_export_stmts = []
+                dev_env_list = [
+                    client.V1EnvVar(name="PORT", value="8080"),
+                    client.V1EnvVar(name="APP_NAME", value=str(app.name)),
+                    client.V1EnvVar(name="APP_SLUG", value=str(app.slug)),
+                    client.V1EnvVar(name="APP_ID", value=str(app.id)),
+                    client.V1EnvVar(name="WORKSPACE_ID", value=str(getattr(app, "workspace_id", ""))),
+                    client.V1EnvVar(name="COMPASSX_WORKLOAD_IDENTITY", value=str(workload_identity_id)),
+                    client.V1EnvVar(name="OMNIGENT_HOST_ID", value=str(host_id)),
+                    client.V1EnvVar(name="OMNIGENT_HOST_NAME", value=str(host_name)),
+                    client.V1EnvVar(name="OMNIGENT_SERVER_URL", value=str(omnigent_internal_url)),
+                    client.V1EnvVar(name="DEV_WORKSPACE_DIR", value=workdir),
+                    client.V1EnvVar(name="GIT_SUBDIR", value=str(git_subdir)),
+                    client.V1EnvVar(name="APP_SUBDIR", value=str(git_subdir)),
+                ]
+                existing_env_keys = {e.name for e in dev_env_list}
+                if isinstance(raw_custom_env, dict):
+                    for k, v in raw_custom_env.items():
+                        if k and k not in existing_env_keys and v is not None:
+                            dev_env_list.append(client.V1EnvVar(name=str(k), value=str(v)))
+                            custom_export_stmts.append(f"export {k}={shlex.quote(str(v))};")
+                            existing_env_keys.add(k)
+                elif isinstance(raw_custom_env, list):
+                    for ev in raw_custom_env:
+                        if isinstance(ev, dict):
+                            k = ev.get("key") or ev.get("name")
+                            v = ev.get("value")
+                            if k and k not in existing_env_keys and v is not None:
+                                dev_env_list.append(client.V1EnvVar(name=str(k), value=str(v)))
+                                custom_export_stmts.append(f"export {k}={shlex.quote(str(v))};")
+                                existing_env_keys.add(k)
+                        elif isinstance(ev, str) and "=" in ev:
+                            k, v = ev.split("=", 1)
+                            if k.strip() and k.strip() not in existing_env_keys:
+                                dev_env_list.append(client.V1EnvVar(name=k.strip(), value=v.strip()))
+                                custom_export_stmts.append(f"export {k.strip()}={shlex.quote(v.strip())};")
+                                existing_env_keys.add(k.strip())
+                custom_exports_str = " ".join(custom_export_stmts)
+
                 dev_cmd = (
                     f"mkdir -p /workspaces/.shared_auth/.gemini/antigravity-cli && "
                     f"if [ ! -f /workspaces/.shared_auth/.gemini/antigravity-cli/antigravity-oauth-token ]; then "
@@ -1166,6 +1208,7 @@ class KubernetesDevDriver(BaseDevDriver):
                     f"printf 'host:\\n  host_id: {host_id}\\n  name: \"{host_name}\"\\n' | tee /root/.omnigent/config.yaml /root/.config/omnigent/config.yaml /root/.config/opencode/config.yaml /root/.opencode/config.yaml >/dev/null; "
                     f"export OMNIGENT_HOST_ID={host_id} OMNIGENT_HOST_NAME=\"{host_name}\" HOST_ID={host_id} HOST_NAME=\"{host_name}\" OPENCODE_HOST_ID={host_id} OPENCODE_HOST_NAME=\"{host_name}\" "
                     f"POSTGRES_DSN=\"${{POSTGRES_DSN:-postgresql://postgres:postgres@compassx-postgres:5432/autonomic}}\" REDIS_URL=\"${{REDIS_URL:-redis://compassx-redis:6379/0}}\" JWT_SECRET=\"${{JWT_SECRET:-dev-jwt-secret-change-me-for-production-use-min-32-chars}}\" "
+                    f"{custom_exports_str} "
                     f"COMPASSX_WORKLOAD_IDENTITY=\"{workload_identity_id}\" WORKSPACE_ID=\"{getattr(app, 'workspace_id', '')}\" APP_ID=\"{app.id}\" APP_NAME=\"{app.name}\" APP_SLUG=\"{app.slug}\" GIT_SUBDIR=\"{git_subdir}\" APP_SUBDIR=\"{git_subdir}\" "
                     f"CHOKIDAR_USEPOLLING=1 CHOKIDAR_INTERVAL=2000 WATCHPACK_POLLING=true WATCHPACK_POLLING_INTERVAL=2000 WATCHFILES_FORCE_POLLING=true WATCHFILES_POLL_DELAY_MS=2000 "
                     f"NODE_TLS_REJECT_UNAUTHORIZED=0 NPM_CONFIG_STRICT_SSL=false PYTHONHTTPSVERIFY=0 GIT_SSL_NO_VERIFY=true CURL_INSECURE=1; "
@@ -1190,20 +1233,7 @@ class KubernetesDevDriver(BaseDevDriver):
                     command=["/bin/sh", "-c"],
                     args=[dev_cmd],
                     ports=[client.V1ContainerPort(container_port=8080, name="http")],
-                    env=[
-                        client.V1EnvVar(name="PORT", value="8080"),
-                        client.V1EnvVar(name="APP_NAME", value=str(app.name)),
-                        client.V1EnvVar(name="APP_SLUG", value=str(app.slug)),
-                        client.V1EnvVar(name="APP_ID", value=str(app.id)),
-                        client.V1EnvVar(name="WORKSPACE_ID", value=str(getattr(app, "workspace_id", ""))),
-                        client.V1EnvVar(name="COMPASSX_WORKLOAD_IDENTITY", value=str(workload_identity_id)),
-                        client.V1EnvVar(name="OMNIGENT_HOST_ID", value=str(host_id)),
-                        client.V1EnvVar(name="OMNIGENT_HOST_NAME", value=str(host_name)),
-                        client.V1EnvVar(name="OMNIGENT_SERVER_URL", value=str(omnigent_internal_url)),
-                        client.V1EnvVar(name="DEV_WORKSPACE_DIR", value=workdir),
-                        client.V1EnvVar(name="GIT_SUBDIR", value=str(git_subdir)),
-                        client.V1EnvVar(name="APP_SUBDIR", value=str(git_subdir)),
-                    ],
+                    env=dev_env_list,
                     resources=client.V1ResourceRequirements(
                         requests={"cpu": "500m", "memory": "1Gi"},
                         limits={"cpu": "4", "memory": "8Gi"},

@@ -6,6 +6,7 @@ import shutil
 import logging
 import subprocess
 import difflib
+import shlex
 import uuid
 import base64
 import json
@@ -1768,6 +1769,27 @@ class OmnigentDevService:
         manifest_data = self._resolve_app_manifest(app, dev_driver, folder_path, target_dir, repo_dir)
         run_cfg = app_manifest_service.get_run_config(manifest_data)
 
+        # Collect custom environment variables from app.config (App Settings) as well as app.yaml
+        app_cfg = getattr(app, "config", {}) or {}
+        raw_app_env = app_cfg.get("env_vars") or app_cfg.get("environment") or app_cfg.get("env") or []
+        app_env_exports = []
+        if isinstance(raw_app_env, dict):
+            for k, v in raw_app_env.items():
+                if k and v is not None:
+                    app_env_exports.append(f"export {k}={shlex.quote(str(v))};")
+        elif isinstance(raw_app_env, list):
+            for ev in raw_app_env:
+                if isinstance(ev, dict):
+                    k = ev.get("key") or ev.get("name")
+                    v = ev.get("value")
+                    if k and v is not None:
+                        app_env_exports.append(f"export {k}={shlex.quote(str(v))};")
+                elif isinstance(ev, str) and "=" in ev:
+                    k, v = ev.split("=", 1)
+                    app_env_exports.append(f"export {k.strip()}={shlex.quote(v.strip())};")
+
+        combined_env_exports = (" ".join(app_env_exports) + " " + (env_exports or "")).strip()
+
         if run_cfg:
             backend_cmd = run_cfg.get("backend_command")
             backend_dir = run_cfg.get("backend_dir")
@@ -1776,7 +1798,6 @@ class OmnigentDevService:
             frontend_dir = run_cfg.get("frontend_dir")
             frontend_port = run_cfg.get("frontend_port", 4000)
             gateway_port = run_cfg.get("gateway_port", 8080)
-            env_exports = run_cfg.get("env_exports", "")
 
             # Generate Caddyfile and Python fallback proxy configurations
             caddyfile_text = app_manifest_service.generate_caddyfile(run_cfg)
@@ -1793,8 +1814,8 @@ class OmnigentDevService:
                 f"echo '{caddyfile_b64}' | base64 -d > /tmp/Caddyfile 2>/dev/null;",
                 f"echo '{proxy_script_b64}' | base64 -d > /tmp/compassx_proxy.py 2>/dev/null;",
             ]
-            if env_exports:
-                run_script_parts.append(env_exports + ";")
+            if combined_env_exports:
+                run_script_parts.append(combined_env_exports + ";")
 
             # Patch Vite allowedHosts inside frontend directory if exists
             patch_vite_cmd = (

@@ -137,6 +137,9 @@ export function LivePreviewCanvas({
       return;
     }
 
+    // If server is already verified reachable, no need to re-probe
+    if (isServerReachable) return;
+
     let isCancelled = false;
     let pollTimeout: any = null;
 
@@ -144,7 +147,6 @@ export function LivePreviewCanvas({
       if (isCancelled) return;
       setIsProbing(true);
       try {
-        // mode: 'no-cors' returns opaque response on success, throws TypeError on connection refused
         await fetch(targetUrl, { mode: 'no-cors', cache: 'no-cache' });
         if (!isCancelled) {
           setIsServerReachable(true);
@@ -154,7 +156,6 @@ export function LivePreviewCanvas({
         if (!isCancelled) {
           setIsServerReachable(false);
           setIsProbing(false);
-          // Poll every 3s until reachable
           pollTimeout = setTimeout(probeServer, 3000);
         }
       }
@@ -166,17 +167,21 @@ export function LivePreviewCanvas({
       isCancelled = true;
       if (pollTimeout) clearTimeout(pollTimeout);
     };
-  }, [targetUrl, isContainerRunning, reloadKey, step4Completed, hasCompletedInit]);
+  }, [targetUrl, isContainerRunning, reloadKey, step4Completed, hasCompletedInit, isServerReachable]);
 
-  // When targetUrl changes or reloadKey increments, trigger iframe loading overlay
+  // When explicit reloadKey changes or on first mount, handle iframe loading state smoothly
+  const prevReloadKeyRef = useRef(reloadKey);
   useEffect(() => {
     if (isContainerRunning && targetUrl && isServerReachable) {
-      setIsIframeLoading(true);
-      setIframeError(false);
-      const timer = setTimeout(() => {
-        setIsIframeLoading(false);
-      }, 5000);
-      return () => clearTimeout(timer);
+      if (reloadKey !== prevReloadKeyRef.current) {
+        prevReloadKeyRef.current = reloadKey;
+        setIsIframeLoading(true);
+        setIframeError(false);
+        const timer = setTimeout(() => {
+          setIsIframeLoading(false);
+        }, 3000);
+        return () => clearTimeout(timer);
+      }
     }
   }, [targetUrl, isContainerRunning, reloadKey, isServerReachable]);
 
