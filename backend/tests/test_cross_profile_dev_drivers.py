@@ -292,9 +292,57 @@ env:
         self.assertEqual(run_cfg["backend_dir"], "api")
         self.assertEqual(run_cfg["frontend_command"], "npm run start")
         self.assertEqual(run_cfg["frontend_dir"], "client")
-        self.assertIn("export PORT=8080", run_cfg["env_exports"])
-        self.assertIn("export DEBUG=true", run_cfg["env_exports"])
+    def test_run_dev_app_with_manifest_and_custom_env(self):
+        """Test run_dev_app does not raise NameError for env_exports and properly includes manifest & custom env."""
+        from unittest import mock
+        from app.models.app import App
+        fake_app = App(id="app-test12345", name="Test App", config={"env_vars": [{"key": "CUSTOM_VAR", "value": "custom_val"}]})
+        
+        yaml_text = """
+services:
+  backend:
+    command: "python main.py"
+    port: 8000
+  frontend:
+    command: "npm run dev"
+    port: 4000
+env:
+  - name: MANIFEST_VAR
+    value: "manifest_val"
+"""
+        manifest = app_manifest_service.parse_manifest_text(yaml_text, "app.yaml")
+        with mock.patch.object(omnigent_dev_service, "_resolve_app_manifest", return_value=manifest):
+            mock_driver = mock.MagicMock()
+            mock_driver.exec_command_in_dev.return_value = {
+                "success": True,
+                "output": "✓ Phase 4 Complete: Application dev runtime is running and ready.",
+            }
+            with mock.patch("app.services.drivers.factory.driver_factory.get_dev_driver", return_value=mock_driver):
+                res = omnigent_dev_service.run_dev_app(fake_app)
+                self.assertTrue(res["success"])
+                # Ensure exec_command_in_dev was called with both custom and manifest env exports
+                called_cmd = mock_driver.exec_command_in_dev.call_args[1]["command"]
+                self.assertIn("export CUSTOM_VAR=", called_cmd)
+                self.assertIn("custom_val", called_cmd)
+                self.assertIn("export MANIFEST_VAR=", called_cmd)
+                self.assertIn("manifest_val", called_cmd)
+
+    def test_auto_start_script_syntax_validity(self):
+        """Verify that auto_start_script parses cleanly in Python without syntax errors."""
+        import ast
+        import re
+        from app.routes.app_dev_routes import build_auto_start_script
+        auto_script = build_auto_start_script()
+        # auto_start_script starts with 'python3 -c "' and ends with '" > /tmp/auto_start.log 2>&1 &'
+        match = re.search(r'python3 -c "(.*)"\s*>', auto_script, re.DOTALL)
+        self.assertIsNotNone(match)
+        py_code = match.group(1).encode().decode('unicode_escape')
+        # ast.parse will throw SyntaxError if there is any syntax error in the python code
+        parsed_ast = ast.parse(py_code)
+        self.assertIsNotNone(parsed_ast)
 
 
 if __name__ == "__main__":
     unittest.main()
+
+

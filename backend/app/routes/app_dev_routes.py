@@ -349,58 +349,24 @@ def delete_app_session(
     return dev_session_service.delete_session(app=app, session_id=session_id)
 
 
-def _build_app_sandbox_spec(app: App) -> SandboxSpec:
-    repo_dir = omnigent_dev_service.get_repo_dir(app)
-    clean_k8s_app_id = app.id.replace("_", "-").lower()
-
-    git_url = getattr(app, "git_repo_url", None)
-    git_token = None
-    if hasattr(app, "git_pat_enc") and app.git_pat_enc:
-        try:
-            from app.services.encryption import decrypt_field
-            git_token = decrypt_field(app.git_pat_enc)
-        except Exception:
-            pass
-
-    auth_url = git_url or ""
-    if git_token and git_url and not ("@" in git_url.split("//")[-1]):
-        if "github.com" in git_url:
-            auth_url = git_url.replace("https://", f"https://x-access-token:{git_token}@")
-        else:
-            auth_url = git_url.replace("https://", f"https://oauth2:{git_token}@")
-
-    git_ref = getattr(app, "git_ref", None) or getattr(app, "git_branch", None) or "main"
-
-    clone_cmd = "git status || git init"
-    if auth_url:
-        clone_cmd = (
-            f"if [ ! -d /workspace/.git ] || [ -z \"$(find /workspace -maxdepth 2 -not -name '.git*' -not -name 'index.html' 2>/dev/null)\" ]; then "
-            f"  rm -rf /workspace/* /workspace/.[!.]* 2>/dev/null || true; "
-            f"  (git clone --branch '{git_ref}' '{auth_url}' /workspace || git clone '{auth_url}' /workspace || (cd /workspace && git init)); "
-            f"fi"
-        )
-
-    git_config_cmd = "git config --global user.name 'CompassX Dev' && git config --global user.email 'dev@compassx.io'"
-    if git_token:
-        if "github.com" in (git_url or ""):
-            git_config_cmd += f" && git config --global url.\"https://x-access-token:{git_token}@github.com/\".insteadOf \"https://github.com/\""
-        elif "gitlab.com" in (git_url or ""):
-            git_config_cmd += f" && git config --global url.\"https://oauth2:{git_token}@gitlab.com/\".insteadOf \"https://gitlab.com/\""
-
-    auto_start_script = (
+def build_auto_start_script() -> str:
+    return (
         "python3 -c \""
-        "import os, sys, subprocess, yaml, time, socket, threading, re; "
-        "manifest = None; "
-        "for root, _, files in os.walk('/workspace'):\n"
-        "    if 'node_modules' in root or '.git' in root: continue\n"
-        "    for f in ('app.yaml', 'app.yml'):\n"
-        "        if f in files:\n"
-        "            try:\n"
-        "                with open(os.path.join(root, f), 'r', encoding='utf-8') as fh:\n"
-        "                    manifest = yaml.safe_load(fh)\n"
-        "                    manifest['_dir'] = root\n"
-        "                    break\n"
-        "            except Exception: pass\n"
+        "import os, sys, subprocess, yaml, time, socket, threading, re\n"
+        "manifest = None\n"
+        "for search_dir in ['/workspace', '/workspaces']:\n"
+        "    if not os.path.exists(search_dir): continue\n"
+        "    for root, _, files in os.walk(search_dir):\n"
+        "        if 'node_modules' in root or '.git' in root: continue\n"
+        "        for f in ('app.yaml', 'app.yml'):\n"
+        "            if f in files:\n"
+        "                try:\n"
+        "                    with open(os.path.join(root, f), 'r', encoding='utf-8') as fh:\n"
+        "                        manifest = yaml.safe_load(fh)\n"
+        "                        manifest['_dir'] = root\n"
+        "                        break\n"
+        "                except Exception: pass\n"
+        "        if manifest: break\n"
         "    if manifest: break\n"
         "mdir = manifest.get('_dir', '/workspace') if manifest else '/workspace'\n"
         "services = (manifest.get('services') or {}) if manifest else {}\n"
@@ -414,7 +380,7 @@ def _build_app_sandbox_spec(app: App) -> SandboxSpec:
         "            b_port = int(b_svc.get('port', 8000))\n"
         "            if b_svc.get('dir'): b_dir = os.path.normpath(os.path.join(mdir, b_svc['dir']))\n"
         "            b_path = b_svc.get('path', '/api')\n"
-        "    f_svc = services.get('frontend') or services.get('ui')\n"
+        "    f_svc = services.get('frontend') or services.get('ui') or services.get('web')\n"
         "    if f_svc:\n"
         "        f_cmd = f_svc.get('command') if isinstance(f_svc, dict) else str(f_svc)\n"
         "        if isinstance(f_svc, dict):\n"
@@ -433,17 +399,19 @@ def _build_app_sandbox_spec(app: App) -> SandboxSpec:
         "            b_dir = root; b_cmd = 'uvicorn main:app --host 0.0.0.0 --port 8000 --reload' if 'main.py' in files else 'python3 app.py'\n"
         "        if not f_cmd and 'package.json' in files:\n"
         "            f_dir = root; f_cmd = 'npm run dev -- --port 4000 --host 0.0.0.0'\n"
-        "for root, _, files in os.walk('/workspace'):\n"
-        "    if 'node_modules' in root or '.git' in root: continue\n"
-        "    for vf in files:\n"
-        "        if vf.startswith('vite.config.') and vf.endswith(('.ts', '.js', '.mjs', '.cjs')):\n"
-        "            vp = os.path.join(root, vf)\n"
-        "            try:\n"
-        "                with open(vp, 'r') as vfh: vc = vfh.read()\n"
-        "                if 'allowedHosts' not in vc and 'server:' in vc:\n"
-        "                    vc = re.sub(r'server\\\\s*:\\\\s*\\\\{', 'server: {\\\\n    allowedHosts: true,', vc, count=1)\n"
-        "                    with open(vp, 'w') as vfh: vfh.write(vc)\n"
-        "            except Exception: pass\n"
+        "for search_dir in ['/workspace', '/workspaces']:\n"
+        "    if not os.path.exists(search_dir): continue\n"
+        "    for root, _, files in os.walk(search_dir):\n"
+        "        if 'node_modules' in root or '.git' in root: continue\n"
+        "        for vf in files:\n"
+        "            if vf.startswith('vite.config.') and vf.endswith(('.ts', '.js', '.mjs', '.cjs')):\n"
+        "                vp = os.path.join(root, vf)\n"
+        "                try:\n"
+        "                    with open(vp, 'r') as vfh: vc = vfh.read()\n"
+        "                    if 'allowedHosts' not in vc and 'server:' in vc:\n"
+        "                        vc = re.sub(r'server\\\\s*:\\\\s*\\\\{', 'server: {\\\\n    allowedHosts: true,', vc, count=1)\n"
+        "                        with open(vp, 'w') as vfh: vfh.write(vc)\n"
+        "                except Exception: pass\n"
         "if b_cmd:\n"
         "    b_str = ' '.join(b_cmd) if isinstance(b_cmd, list) else str(b_cmd)\n"
         "    subprocess.Popen(b_str, shell=True, cwd=b_dir, stdout=open('/tmp/app_backend.log', 'a'), stderr=subprocess.STDOUT)\n"
@@ -502,6 +470,47 @@ def _build_app_sandbox_spec(app: App) -> SandboxSpec:
         "    except Exception: pass\n"
         "\" > /tmp/auto_start.log 2>&1 &"
     )
+
+
+def _build_app_sandbox_spec(app: App) -> SandboxSpec:
+    repo_dir = omnigent_dev_service.get_repo_dir(app)
+    clean_k8s_app_id = app.id.replace("_", "-").lower()
+
+    git_url = getattr(app, "git_repo_url", None)
+    git_token = None
+    if hasattr(app, "git_pat_enc") and app.git_pat_enc:
+        try:
+            from app.services.encryption import decrypt_field
+            git_token = decrypt_field(app.git_pat_enc)
+        except Exception:
+            pass
+
+    auth_url = git_url or ""
+    if git_token and git_url and not ("@" in git_url.split("//")[-1]):
+        if "github.com" in git_url:
+            auth_url = git_url.replace("https://", f"https://x-access-token:{git_token}@")
+        else:
+            auth_url = git_url.replace("https://", f"https://oauth2:{git_token}@")
+
+    git_ref = getattr(app, "git_ref", None) or getattr(app, "git_branch", None) or "main"
+
+    clone_cmd = "git status || git init"
+    if auth_url:
+        clone_cmd = (
+            f"if [ ! -d /workspace/.git ] || [ -z \"$(find /workspace -maxdepth 2 -not -name '.git*' -not -name 'index.html' 2>/dev/null)\" ]; then "
+            f"  rm -rf /workspace/* /workspace/.[!.]* 2>/dev/null || true; "
+            f"  (git clone --branch '{git_ref}' '{auth_url}' /workspace || git clone '{auth_url}' /workspace || (cd /workspace && git init)); "
+            f"fi"
+        )
+
+    git_config_cmd = "git config --global user.name 'CompassX Dev' && git config --global user.email 'dev@compassx.io'"
+    if git_token:
+        if "github.com" in (git_url or ""):
+            git_config_cmd += f" && git config --global url.\"https://x-access-token:{git_token}@github.com/\".insteadOf \"https://github.com/\""
+        elif "gitlab.com" in (git_url or ""):
+            git_config_cmd += f" && git config --global url.\"https://oauth2:{git_token}@gitlab.com/\".insteadOf \"https://gitlab.com/\""
+
+    auto_start_script = build_auto_start_script()
 
     auth_sync_script = (
         "mkdir -p /root/.gemini/antigravity-cli /root/.gemini/config /workspace/.gemini_auth/antigravity-cli /workspace/.gemini_auth/config 2>/dev/null || true; "

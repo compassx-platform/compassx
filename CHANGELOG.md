@@ -5,6 +5,21 @@ All notable changes to the CompassX Platform will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.31] - 2026-10-09
+
+### 🚀 Highlights
+
+CompassX `0.12.31` introduces **Robust In-Pod Dev Auto-Start Syntax Fixes**, **Unbound Variable Resolution in App Server Runtime**, and **Multi-Workspace Path Discovery**.
+
+### 🐛 Bug Fixes & Resiliency
+
+#### Application Runtime & Sandbox Auto-Start
+- **Fixed `auto_start_script` Syntax Error (`app_dev_routes.py`)**: Resolved compound statement syntax error on line 1 of container initialization script by properly separating statements with newline characters.
+- **Fixed `env_exports` Unbound Variable (`omnigent_dev_service.py`)**: Defined `manifest_env_exports` properly when combining custom app environment variables in `run_dev_app`, eliminating 500 `NameError` exceptions during Step 4 execution.
+- **Multi-Workspace Discovery (`app_dev_routes.py`)**: Expanded `app.yaml` discovery paths across both `/workspace` and `/workspaces` for Kubernetes shared storage and PVC mounts.
+
+---
+
 ## [0.12.30] - 2026-10-09
 
 ### 🚀 Highlights

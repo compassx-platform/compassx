@@ -1787,8 +1787,8 @@ class OmnigentDevService:
                 elif isinstance(ev, str) and "=" in ev:
                     k, v = ev.split("=", 1)
                     app_env_exports.append(f"export {k.strip()}={shlex.quote(v.strip())};")
-
-        combined_env_exports = (" ".join(app_env_exports) + " " + (env_exports or "")).strip()
+        manifest_env_exports = app_manifest_service.get_env_exports(manifest_data) if manifest_data else ""
+        combined_env_exports = (" ".join(app_env_exports) + " " + (manifest_env_exports or "")).strip()
 
         if run_cfg:
             backend_cmd = run_cfg.get("backend_command")
