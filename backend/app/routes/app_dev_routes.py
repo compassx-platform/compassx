@@ -352,6 +352,144 @@ def delete_app_session(
 def _build_app_sandbox_spec(app: App) -> SandboxSpec:
     repo_dir = omnigent_dev_service.get_repo_dir(app)
     clean_k8s_app_id = app.id.replace("_", "-").lower()
+
+    git_url = getattr(app, "git_repo_url", None)
+    git_token = None
+    if hasattr(app, "git_pat_enc") and app.git_pat_enc:
+        try:
+            from app.services.encryption import decrypt_field
+            git_token = decrypt_field(app.git_pat_enc)
+        except Exception:
+            pass
+
+    auth_url = git_url or ""
+    if git_token and git_url and not ("@" in git_url.split("//")[-1]):
+        if "github.com" in git_url:
+            auth_url = git_url.replace("https://", f"https://x-access-token:{git_token}@")
+        else:
+            auth_url = git_url.replace("https://", f"https://oauth2:{git_token}@")
+
+    git_ref = getattr(app, "git_ref", None) or getattr(app, "git_branch", None) or "main"
+
+    clone_cmd = "git status || git init"
+    if auth_url:
+        clone_cmd = (
+            f"if [ ! -d /workspace/.git ] || [ -z \"$(find /workspace -maxdepth 2 -not -name '.git*' -not -name 'index.html' 2>/dev/null)\" ]; then "
+            f"  rm -rf /workspace/* /workspace/.[!.]* 2>/dev/null || true; "
+            f"  (git clone --branch '{git_ref}' '{auth_url}' /workspace || git clone '{auth_url}' /workspace || (cd /workspace && git init)); "
+            f"fi"
+        )
+
+    git_config_cmd = "git config --global user.name 'CompassX Dev' && git config --global user.email 'dev@compassx.io'"
+    if git_token:
+        if "github.com" in (git_url or ""):
+            git_config_cmd += f" && git config --global url.\"https://x-access-token:{git_token}@github.com/\".insteadOf \"https://github.com/\""
+        elif "gitlab.com" in (git_url or ""):
+            git_config_cmd += f" && git config --global url.\"https://oauth2:{git_token}@gitlab.com/\".insteadOf \"https://gitlab.com/\""
+
+    auto_start_script = (
+        "python3 -c \""
+        "import os, sys, subprocess, yaml, time, socket, threading, re; "
+        "manifest = None; "
+        "for root, _, files in os.walk('/workspace'):\n"
+        "    if 'node_modules' in root or '.git' in root: continue\n"
+        "    for f in ('app.yaml', 'app.yml'):\n"
+        "        if f in files:\n"
+        "            try:\n"
+        "                with open(os.path.join(root, f), 'r', encoding='utf-8') as fh:\n"
+        "                    manifest = yaml.safe_load(fh)\n"
+        "                    manifest['_dir'] = root\n"
+        "                    break\n"
+        "            except Exception: pass\n"
+        "    if manifest: break\n"
+        "if not manifest: sys.exit(0)\n"
+        "mdir = manifest.get('_dir', '/workspace')\n"
+        "services = manifest.get('services') or {}\n"
+        "b_cmd = None; b_port = 8000; b_dir = mdir; b_path = '/api'\n"
+        "f_cmd = None; f_port = 4000; f_dir = mdir\n"
+        "if isinstance(services, dict) and services:\n"
+        "    b_svc = services.get('backend') or services.get('api')\n"
+        "    if b_svc:\n"
+        "        b_cmd = b_svc.get('command') if isinstance(b_svc, dict) else str(b_svc)\n"
+        "        if isinstance(b_svc, dict):\n"
+        "            b_port = int(b_svc.get('port', 8000))\n"
+        "            if b_svc.get('dir'): b_dir = os.path.normpath(os.path.join(mdir, b_svc['dir']))\n"
+        "            b_path = b_svc.get('path', '/api')\n"
+        "    f_svc = services.get('frontend') or services.get('ui')\n"
+        "    if f_svc:\n"
+        "        f_cmd = f_svc.get('command') if isinstance(f_svc, dict) else str(f_svc)\n"
+        "        if isinstance(f_svc, dict):\n"
+        "            f_port = int(f_svc.get('port', 4000))\n"
+        "            if f_svc.get('dir'): f_dir = os.path.normpath(os.path.join(mdir, f_svc['dir']))\n"
+        "elif 'command' in manifest:\n"
+        "    b_cmd = manifest.get('command')\n"
+        "    b_port = int(manifest.get('port', manifest.get('backend_port', 8080)))\n"
+        "    if manifest.get('frontend'):\n"
+        "        f_cmd = manifest.get('frontend')\n"
+        "        f_port = int(manifest.get('frontend_port', 4000))\n"
+        "for root, _, files in os.walk('/workspace'):\n"
+        "    if 'node_modules' in root or '.git' in root: continue\n"
+        "    for vf in files:\n"
+        "        if vf.startswith('vite.config.') and vf.endswith(('.ts', '.js', '.mjs', '.cjs')):\n"
+        "            vp = os.path.join(root, vf)\n"
+        "            try:\n"
+        "                with open(vp, 'r') as vfh: vc = vfh.read()\n"
+        "                if 'allowedHosts' not in vc and 'server:' in vc:\n"
+        "                    vc = re.sub(r'server\\\\s*:\\\\s*\\\\{', 'server: {\\\\n    allowedHosts: true,', vc, count=1)\n"
+        "                    with open(vp, 'w') as vfh: vfh.write(vc)\n"
+        "            except Exception: pass\n"
+        "if b_cmd:\n"
+        "    b_str = ' '.join(b_cmd) if isinstance(b_cmd, list) else str(b_cmd)\n"
+        "    subprocess.Popen(b_str, shell=True, cwd=b_dir, stdout=open('/tmp/app_backend.log', 'a'), stderr=subprocess.STDOUT)\n"
+        "if f_cmd:\n"
+        "    f_str = ' '.join(f_cmd) if isinstance(f_cmd, list) else str(f_cmd)\n"
+        "    subprocess.Popen(f_str, shell=True, cwd=f_dir, stdout=open('/tmp/app_frontend.log', 'a'), stderr=subprocess.STDOUT)\n"
+        "time.sleep(1)\n"
+        "GATEWAY_PORT = 8080\n"
+        "def forward(src, dst):\n"
+        "    while True:\n"
+        "        try:\n"
+        "            data = src.recv(8192)\n"
+        "            if not data: break\n"
+        "            dst.sendall(data)\n"
+        "        except Exception: break\n"
+        "    try: src.close()\n"
+        "    except Exception: pass\n"
+        "    try: dst.close()\n"
+        "    except Exception: pass\n"
+        "def handle_client(client):\n"
+        "    try:\n"
+        "        peek = client.recv(1024, socket.MSG_PEEK)\n"
+        "        t_port = f_port if f_cmd else b_port\n"
+        "        if peek and f_cmd and b_cmd:\n"
+        "            try:\n"
+        "                line = peek.decode('utf-8', errors='ignore').split('\\\\r\\\\n')[0]\n"
+        "                parts = line.split(' ')\n"
+        "                if len(parts) >= 2:\n"
+        "                    path = parts[1]\n"
+        "                    if path.startswith(b_path) or path.startswith('/ws') or path.startswith('/docs') or path.startswith('/openapi.json'):\n"
+        "                        t_port = b_port\n"
+        "                    else:\n"
+        "                        t_port = f_port\n"
+        "            except Exception: pass\n"
+        "        target = socket.create_connection(('127.0.0.1', int(t_port)), timeout=5)\n"
+        "        threading.Thread(target=forward, args=(client, target), daemon=True).start()\n"
+        "        threading.Thread(target=forward, args=(target, client), daemon=True).start()\n"
+        "    except Exception:\n"
+        "        try: client.close()\n"
+        "        except Exception: pass\n"
+        "srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)\n"
+        "srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)\n"
+        "srv.bind(('0.0.0.0', GATEWAY_PORT))\n"
+        "srv.listen(100)\n"
+        "while True:\n"
+        "    try:\n"
+        "        c, _ = srv.accept()\n"
+        "        threading.Thread(target=handle_client, args=(c,), daemon=True).start()\n"
+        "    except Exception: pass\n"
+        "\" > /tmp/auto_start.log 2>&1 &"
+    )
+
     return SandboxSpec(
         sandbox_id=f"dev-app-{app.id}",
         consumer_key=f"app_{app.id}",
@@ -362,9 +500,10 @@ def _build_app_sandbox_spec(app: App) -> SandboxSpec:
         ports=[8080, 9201],
         storage_mounts=[StorageMount(source_path=repo_dir, mount_path="/workspace")],
         init_scripts=[
-            InitScript(name="Prepare Workspace Code", command="git status || git init", ignore_failure=True),
-            InitScript(name="Install Dependencies", command="pip install -r requirements.txt || true", timeout_seconds=180, ignore_failure=True),
-            InitScript(name="Run Application Server", command="python -c \"print('App sandbox environment ready')\"", ignore_failure=True),
+            InitScript(name="Configure Git Credentials", command=git_config_cmd, ignore_failure=True),
+            InitScript(name="Prepare Workspace Code", command=clone_cmd, ignore_failure=True),
+            InitScript(name="Install Dependencies", command="pip install -r requirements.txt || (find /workspace -maxdepth 3 -name package.json -execdir npm install \\; 2>/dev/null) || true", timeout_seconds=180, ignore_failure=True),
+            InitScript(name="Run Application Server", command=auto_start_script, ignore_failure=True),
         ],
         labels={
             "compassx/app-id": clean_k8s_app_id,
@@ -1074,6 +1213,14 @@ def get_dev_manifest(
 
     repo_dir = omnigent_dev_service.get_repo_dir(app)
     manifest = app_manifest_service.load_manifest(repo_dir)
+    if not manifest:
+        try:
+            from app.services.drivers.factory import driver_factory
+            dev_driver = driver_factory.get_dev_driver()
+            clean_id = app.id.replace("_", "-").lower()
+            manifest = omnigent_dev_service._resolve_app_manifest(app, dev_driver, f"{clean_id}/default", repo_dir, repo_dir)
+        except Exception:
+            pass
     run_cfg = app_manifest_service.get_run_config(manifest)
     return {
         "app_id": app.id,
@@ -1136,8 +1283,23 @@ def update_dev_manifest(
 
         yaml_content = yaml.dump(manifest_dict, sort_keys=False, default_flow_style=False)
 
-    with open(manifest_path, "w", encoding="utf-8") as f:
-        f.write(yaml_content)
+    try:
+        with open(manifest_path, "w", encoding="utf-8") as f:
+            f.write(yaml_content)
+    except Exception:
+        pass
+
+    # Sync to dev sandbox pod if running
+    try:
+        from app.services.drivers.factory import driver_factory
+        import base64
+        dev_driver = driver_factory.get_dev_driver()
+        clean_id = app.id.replace("_", "-").lower()
+        b64 = base64.b64encode(yaml_content.encode("utf-8")).decode("ascii")
+        sync_cmd = f"mkdir -p /workspace && echo '{b64}' | base64 -d | tee /workspace/app.yaml /workspaces/{clean_id}/*/app.yaml 2>/dev/null || true"
+        dev_driver.exec_command_in_dev(app, sync_cmd)
+    except Exception:
+        pass
 
     parsed = app_manifest_service.parse_manifest_text(yaml_content, manifest_path=manifest_path)
     run_cfg = app_manifest_service.get_run_config(parsed)

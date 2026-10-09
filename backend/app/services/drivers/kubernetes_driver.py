@@ -1087,8 +1087,11 @@ class KubernetesDevDriver(BaseDevDriver):
                     except Exception:
                         pass
                 auth_url = git_url
-                if git_token and git_url and "github.com" in git_url and not ("@" in git_url.split("//")[-1]):
-                    auth_url = git_url.replace("https://", f"https://x-access-token:{git_token}@")
+                if git_token and git_url and not ("@" in git_url.split("//")[-1]):
+                    if "github.com" in git_url:
+                        auth_url = git_url.replace("https://", f"https://x-access-token:{git_token}@")
+                    else:
+                        auth_url = git_url.replace("https://", f"https://oauth2:{git_token}@")
                 git_ref = getattr(app, "git_ref", None) or getattr(app, "git_branch", None) or "main"
 
                 # Dedicated branch for this workspace
@@ -2301,10 +2304,11 @@ class KubernetesDevDriver(BaseDevDriver):
             'else '
             '  BASE_REPO=""; '
             f'  for d in /workspace /workspaces/{clean_app}/default /workspaces/{clean_app}/main /workspaces/{clean_app}/* /workspaces/* /app; do '
-            f'    if [ -e "$d/.git" ] && [ "$d" != "{target_dir}" ] && [ -n "$(ls -A "$d" 2>/dev/null)" ]; then BASE_REPO="$d"; break; fi; '
+            f'    if [ -d "$d" ] && [ "$d" != "{target_dir}" ] && (cd "$d" && git rev-parse --verify HEAD >/dev/null 2>&1) && [ -n "$(find "$d" -maxdepth 2 -not -name \'.git*\' -not -name \'index.html\' 2>/dev/null)" ]; then BASE_REPO="$d"; break; fi; '
             '  done; '
             '  if [ -n "$BASE_REPO" ]; then '
             '    log "  → Found base repository at $BASE_REPO"; '
+            f'    (cd "$BASE_REPO" && (git remote set-url origin \'{auth_url}\' 2>/dev/null || git remote add origin \'{auth_url}\' 2>/dev/null || true)); '
             '    log "  [2/4] Fetching latest remote commits (git fetch origin)..."; '
             '    (cd "$BASE_REPO" && git worktree prune 2>/dev/null || true); '
             '    (cd "$BASE_REPO" && git fetch origin 2>&1 | tee -a "$LOG_FILE" || true); '

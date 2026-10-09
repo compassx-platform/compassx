@@ -1308,7 +1308,7 @@ class OmnigentDevService:
         # 2. If not found on host, probe dev sandbox via dev_driver (Docker container or K8s pod)
         try:
             probe_cmd = (
-                "for f in app.yaml app.yml .compass/app.yaml .compass/app.yml; do "
+                "for f in app.yaml app.yml .compass/app.yaml .compass/app.yml /workspace/app.yaml /workspace/app.yml /workspaces/*/*/app.yaml; do "
                 "  if [ -f \"$f\" ]; then "
                 "    echo \"---MANIFEST_FILE:$f---\"; "
                 "    cat \"$f\"; "

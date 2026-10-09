@@ -5,6 +5,24 @@ All notable changes to the CompassX Platform will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.22] - 2026-10-09
+
+### 🚀 Highlights
+
+CompassX `0.12.22` introduces **Automated Git Authentication & Auto-Start in Kubernetes Sandboxes**, **Robust Multi-Repo Base Detection with Remote Reconfiguration**, and **Cross-Container App Manifest Live Synchronization**.
+
+### ✨ Features & Enhancements
+
+#### Automated Kubernetes Sandbox Provisioning & Auto-Start
+- **Authenticated Repo Init & Auto-Clone (`app_dev_routes.py`)**: Sandboxes automatically configure Git credentials (`x-access-token` for GitHub, `oauth2` for other providers), clone workspace repositories into `/workspace`, install multi-tier dependencies (`pip`, nested `npm`), and launch background process supervisors with built-in port 8080 reverse proxying.
+- **Robust Base Repository Detection (`kubernetes_driver.py`)**: Detects valid Git repositories via `git rev-parse --verify HEAD` avoiding empty or stale initialized directories, and automatically updates remote origin URLs.
+
+#### Live Manifest Synchronization
+- **Live Container Manifest Sync (`app_dev_routes.py`, `omnigent_dev_service.py`)**: Updating `app.yaml` in the UI immediately broadcasts and writes the configuration into running sandbox pods (`/workspace/app.yaml`, `/workspaces/*/*/app.yaml`).
+- **Extended Manifest Probing (`omnigent_dev_service.py`)**: Resolves app manifests across full container workspace hierarchies when not directly mounted on the host filesystem.
+
+---
+
 ## [0.12.21] - 2026-10-09
 
 ### 🚀 Highlights
