@@ -5,6 +5,22 @@ All notable changes to the CompassX Platform will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.25] - 2026-10-09
+
+### 🚀 Highlights
+
+CompassX `0.12.25` introduces **Resilient Reverse Proxy & Dynamic App Gateway on Port 8080**, **Zero-502 Live Compilation Splash Handling**, **Automatic Heuristic Backend & Frontend Service Discovery**, and **Unified Cross-Driver Manifest Resolution**.
+
+### ✨ Features & Enhancements
+
+#### Resilient Reverse Proxy & App Gateway
+- **Zero-502 Live Preview Gateway (`kubernetes_driver.py`, `app_dev_routes.py`)**: Implemented a built-in reverse proxy gateway listening on port 8080 that buffers incoming browser requests and serves a live loading splash page with auto-refresh while backend/frontend services initialize, eliminating 502 Bad Gateway and connection refused errors.
+- **Intelligent API & Route Forwarding**: Automatically routes `/api`, `/ws`, `/docs`, and `/openapi.json` requests directly to backend services (port 8000) while proxying static and SPA route traffic to the active frontend server (port 4000).
+- **Heuristic Project Discovery (`kubernetes_driver.py`, `app_dev_routes.py`)**: Automatically detects and launches Python backends (`app.py`, `main.py`, `server.py`) and Node frontend applications (`package.json`) across nested directories even when an explicit `app.yaml` manifest is not present.
+- **Synchronous Manifest Resolution (`kubernetes_driver.py`)**: Enhanced `app.yaml`/`app.yml` discovery across multiple root folders (`$BASE_DIR`, `$ACTIVE_DIR`, `/workspace`, `/app`) with environment variable exports and multi-service command resolution.
+
+---
+
 ## [0.12.24] - 2026-10-09
 
 ### 🚀 Highlights
