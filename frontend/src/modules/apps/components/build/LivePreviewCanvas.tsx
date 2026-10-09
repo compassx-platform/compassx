@@ -256,14 +256,14 @@ export function LivePreviewCanvas({
 
   // ── View 2: Application Starting / 4-Step Progress View ───────────────────────
   // Displayed until the dev server is fully booted and responsive
-  if (!isServerReachable) {
+  if (!isServerReachable || (!step4Completed && !hasCompletedInit)) {
     // Determine overall active step state
     const currentStepIndex = Math.min(Math.max(initStep, 0), 3);
     const isStep1Done = isContainerRunning;
     const isStep2Done = step2Completed;
     const isStep3Done = step3Completed;
     const isStep4Done = step4Completed;
-    const isWaitingAfterStep2 = isStep2Done && !isStep3Done && !startError;
+    const isWaitingAfterStep2 = isStep2Done && !isStep3Done && !startError && !isProceedingToStep3 && initStep < 2;
 
     return (
       <div

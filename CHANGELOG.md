@@ -5,6 +5,24 @@ All notable changes to the CompassX Platform will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.26] - 2026-10-09
+
+### 🚀 Highlights
+
+CompassX `0.12.26` introduces **Antigravity Non-Interactive Workspace Trust Configuration**, **Full 4-Step Auto-Progression Pipeline in App Studio**, and **Enhanced Workspace Seeding for Terminal CLI Agents**.
+
+### ✨ Features & Enhancements
+
+#### Antigravity Workspace Trust & Non-Interactive CLI Setup
+- **Automated Workspace Trust Configuration (`docker_driver.py`, `kubernetes_driver.py`)**: Pre-configures `trustedFolders` and `trustedWorkspaces` (`trustAllWorkspaces: true`) across `/root/.gemini/antigravity/`, `/root/.gemini/antigravity-cli/`, `/root/.config/antigravity/`, and persistent storage directories (`/workspace/.gemini_auth`, `/workspaces/.shared_auth/.gemini`), eliminating interactive workspace trust prompts when launching Antigravity in sandboxes.
+- **Environment Trust Flag Exports (`docker_driver.py`, `kubernetes_driver.py`)**: Automatically exports `AGY_TRUST_ALL=true`, `ANTIGRAVITY_TRUST_ALL_WORKSPACES=true`, and `AGY_NON_INTERACTIVE=true` when launching `agy --dangerously-skip-permissions`.
+
+#### App Studio Pipeline Auto-Progression
+- **Hands-free 4-Step Build Flow (`AppBuildPage.tsx`, `LivePreviewCanvas.tsx`)**: Fully automates progression through all stages: Step 1 (Compute Provisioning) -> Step 2 (Code Verification & Sync) -> Step 3 (Dependency Installation) -> Step 4 (Application Startup & Live Preview) without requiring manual button clicks between steps.
+- **Dynamic Transition States (`LivePreviewCanvas.tsx`)**: Refined step completion logic and waiting indicators to ensure smooth UI updates and continuous progress feedback during automated multi-stage builds.
+
+---
+
 ## [0.12.25] - 2026-10-09
 
 ### 🚀 Highlights

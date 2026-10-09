@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { useParams } from 'react-router-dom';
 import {
   Boxes,
@@ -777,9 +777,60 @@ export default function AppBuildPage() {
   }, [resolvedAppId, app, sandboxStatus, isContainerRunning, userExplicitlyStopped, startError, isDevLoading, devStatus]);
 
 
-  // ── Step 1 -> Step 2 Auto-Progression (Paused after Step 2 for code verification) ──
+  // Staged Progression: Step 4 (Run App)
+  const handleProceedToStep4 = useCallback(async () => {
+    if (!resolvedAppId) return;
+    try {
+      setStartError(null);
+      setInitStep(3);
+      toast.info('Step 4: Starting application server...');
+      const res = await runAppMutation.mutateAsync({
+        appId: resolvedAppId,
+        workspaceId: activeWorkspace?.id || devStatus?.workspace_id,
+        workspaceName: activeWorkspace?.name || devStatus?.workspace_name,
+      });
+      const out = res?.output || res?.message || 'Application running.';
+      setRunAppOutput(out);
+      setStep4Completed(true);
+      setHasCompletedInit(true);
+      setPreviewReloadKey(Date.now());
+      toast.success('Step 4 Complete: Application running.');
+    } catch (err: any) {
+      const msg = err?.response?.data?.detail || err?.message || 'Failed to start application processes.';
+      setStartError(msg);
+      toast.error(msg);
+    }
+  }, [resolvedAppId, activeWorkspace?.id, activeWorkspace?.name, devStatus?.workspace_id, devStatus?.workspace_name, runAppMutation, toast]);
+
+  // Staged Progression: Step 3 (Dependencies) & Auto-Trigger Step 4
+  const handleProceedToStep3 = useCallback(async () => {
+    if (!resolvedAppId) return;
+    try {
+      setStartError(null);
+      setInitStep(2);
+      toast.info('Step 3: Installing dependencies...');
+      const res = await installDepsMutation.mutateAsync({
+        appId: resolvedAppId,
+        workspaceId: activeWorkspace?.id || devStatus?.workspace_id,
+        workspaceName: activeWorkspace?.name || devStatus?.workspace_name,
+      });
+      const out = res?.output || res?.message || 'Dependencies installed successfully.';
+      setInstallOutput(out);
+      setStep3Completed(true);
+      toast.success('Step 3 Complete: Dependencies installed.');
+
+      // Automatically launch Step 4 (Application Server)
+      await handleProceedToStep4();
+    } catch (err: any) {
+      const msg = err?.response?.data?.detail || err?.message || 'Failed to install dependencies.';
+      setStartError(msg);
+      toast.error(msg);
+    }
+  }, [resolvedAppId, activeWorkspace?.id, activeWorkspace?.name, devStatus?.workspace_id, devStatus?.workspace_name, installDepsMutation, handleProceedToStep4, toast]);
+
+  // ── Step 1 -> Step 2 -> Step 3 -> Step 4 Auto-Progression ──
   // Step 1 is complete when stage === 'running' (Dev sandbox compute is ready).
-  // Step 2 automatically prepares workspace code and fetches codebase files.
+  // Step 2 prepares workspace code, then automatically triggers dependency install (Step 3) and app start (Step 4).
   useEffect(() => {
     if (
       stage === 'running' &&
@@ -802,13 +853,15 @@ export default function AppBuildPage() {
             const out = data?.output || data?.message || 'Workspace codebase verified and ready.';
             setGitOutput(out);
             setStep2Completed(true);
-            setHasCompletedInit(true);
             setStartError(null);
             // Invalidate files and git commits queries to populate Code panel
             qc.invalidateQueries({ queryKey: ['app-dev-files', resolvedAppId] });
             qc.invalidateQueries({ queryKey: ['apps', resolvedAppId, 'dev', 'commits'] });
             refetchDevFiles();
             toast.success('Step 2 Complete: Workspace code prepared & ready.');
+
+            // Automatically move directly to Step 3 (dependencies) & Step 4 (server start)
+            void handleProceedToStep3();
           },
           onError: (err: any) => {
             const msg = err?.response?.data?.detail || err?.message || 'Failed to prepare workspace codebase.';
@@ -828,55 +881,12 @@ export default function AppBuildPage() {
     activeWorkspace?.name,
     devStatus?.workspace_id,
     devStatus?.workspace_name,
+    handleProceedToStep3,
+    qc,
+    refetchDevFiles,
+    toast,
+    verifyGitMutation,
   ]);
-
-  // Staged Progression: Step 3 (Dependencies)
-  const handleProceedToStep3 = async () => {
-    if (!resolvedAppId) return;
-    try {
-      setStartError(null);
-      setInitStep(2);
-      toast.info('Step 3: Installing dependencies...');
-      const res = await installDepsMutation.mutateAsync({
-        appId: resolvedAppId,
-        workspaceId: activeWorkspace?.id || devStatus?.workspace_id,
-        workspaceName: activeWorkspace?.name || devStatus?.workspace_name,
-      });
-      const out = res?.output || res?.message || 'Dependencies installed successfully.';
-      setInstallOutput(out);
-      setStep3Completed(true);
-      toast.success('Step 3 Complete: Dependencies installed.');
-    } catch (err: any) {
-      const msg = err?.response?.data?.detail || err?.message || 'Failed to install dependencies.';
-      setStartError(msg);
-      toast.error(msg);
-    }
-  };
-
-  // Staged Progression: Step 4 (Run App)
-  const handleProceedToStep4 = async () => {
-    if (!resolvedAppId) return;
-    try {
-      setStartError(null);
-      setInitStep(3);
-      toast.info('Step 4: Starting application server...');
-      const res = await runAppMutation.mutateAsync({
-        appId: resolvedAppId,
-        workspaceId: activeWorkspace?.id || devStatus?.workspace_id,
-        workspaceName: activeWorkspace?.name || devStatus?.workspace_name,
-      });
-      const out = res?.output || res?.message || 'Application running.';
-      setRunAppOutput(out);
-      setStep4Completed(true);
-      setHasCompletedInit(true);
-      setPreviewReloadKey(Date.now());
-      toast.success('Step 4 Complete: Application running.');
-    } catch (err: any) {
-      const msg = err?.response?.data?.detail || err?.message || 'Failed to start application processes.';
-      setStartError(msg);
-      toast.error(msg);
-    }
-  };
 
   const handleProceedToStudio = () => {
     setHasCompletedInit(true);

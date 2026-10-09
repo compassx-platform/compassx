@@ -2165,6 +2165,15 @@ class KubernetesDevDriver(BaseDevDriver):
             "except Exception:\n"
             "    pass\n"
             "try:\n"
+            "    trust_doc = {'trustedFolders': ['/', '/workspaces', '/workspaces/*', '/app', '/current'], 'trustedWorkspaces': ['/', '/workspaces', '/workspaces/*', '/app', '/current'], 'trustAllWorkspaces': True}\n"
+            "    for tp in ['/root/.gemini/antigravity/trusted_folders.json', '/root/.gemini/antigravity-cli/trusted_workspaces.json', '/root/.gemini/trusted_folders.json', '/root/.config/antigravity/trusted_workspaces.json', '/workspaces/.shared_auth/.gemini/antigravity/trusted_folders.json', '/workspaces/.shared_auth/.gemini/antigravity-cli/trusted_workspaces.json']:\n"
+            "        try:\n"
+            "            os.makedirs(os.path.dirname(tp), exist_ok=True)\n"
+            "            with open(tp, 'w') as f: json.dump(trust_doc, f, indent=2)\n"
+            "        except Exception: pass\n"
+            "except Exception:\n"
+            "    pass\n"
+            "try:\n"
             "    pi_p = '/root/.pi/agent/models.json'\n"
             "    os.makedirs(os.path.dirname(pi_p), exist_ok=True)\n"
             "    pi_doc = {'providers': {}}\n"
@@ -2219,7 +2228,7 @@ class KubernetesDevDriver(BaseDevDriver):
             elif agent == "opencode":
                 cli_cmd = "opencode"
             elif agent in ("antigravity", "agy"):
-                cli_cmd = "agy --dangerously-skip-permissions"
+                cli_cmd = "export AGY_TRUST_ALL=true ANTIGRAVITY_TRUST_ALL_WORKSPACES=true AGY_NON_INTERACTIVE=true; agy --dangerously-skip-permissions"
             elif agent in ("bash", "shell", "sh"):
                 cli_cmd = "exec /bin/bash -l"
 
