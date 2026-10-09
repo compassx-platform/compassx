@@ -12,6 +12,7 @@ import { type FontWeight, type ITheme, Terminal } from 'xterm';
 import 'xterm/css/xterm.css';
 import { type CodeFont, codeFontFamilyForEditor, readCodeFont } from './codeFontPreferences';
 import { CodexTerminalPalette, codexTerminalTheme } from './CodexTerminalPalette';
+import { writeToClipboard } from './terminalClipboardWriter';
 import { terminalTheme } from './terminalThemePreferences';
 
 const TERMINAL_BOLD_WEIGHT_OFFSET = 300;
@@ -316,10 +317,28 @@ export class TerminalSession {
       theme: this.theme(isDark),
       minimumContrastRatio: 4.5,
       allowProposedApi: true,
+      rightClickSelectsWord: true,
       linkHandler: { activate: activateLink, allowNonHttpProtocols: true },
     });
 
-    this.osc52Dispose = this.term.parser.registerOscHandler(52, () => true);
+    // Handle OSC 52 clipboard write sequences from tmux / vim / cli
+    this.osc52Dispose = this.term.parser.registerOscHandler(52, (data) => {
+      try {
+        const semiIdx = data.indexOf(';');
+        if (semiIdx === -1) return true;
+        const b64 = data.slice(semiIdx + 1);
+        if (!b64 || b64 === '?') return true;
+        const decoded = decodeTerminalClipboardBase64(b64) || atob(b64);
+        if (decoded) {
+          void writeToClipboard(decoded);
+          this.onClipboardRequest?.(decoded);
+        }
+      } catch (err) {
+        console.debug('OSC 52 decode error:', err);
+      }
+      return true;
+    });
+
     this.fit = new FitAddon();
     this.term.loadAddon(this.fit);
     this.term.open(container);
@@ -332,14 +351,12 @@ export class TerminalSession {
 
     // Auto-copy on highlight / mouse selection
     this.selectionDispose = this.term.onSelectionChange(() => {
-      if (this.term.hasSelection()) {
-        const selection = this.term.getSelection();
-        if (selection && selection.length > 0) {
-          if (navigator.clipboard) {
-            navigator.clipboard.writeText(selection).catch(() => {});
-          }
-          this.onClipboardRequest?.(selection);
-        }
+      const xtermText = this.term.getSelection();
+      const domText = typeof window !== 'undefined' ? window.getSelection()?.toString() : '';
+      const selection = xtermText || domText || '';
+      if (selection && selection.length > 0) {
+        void writeToClipboard(selection);
+        this.onClipboardRequest?.(selection);
       }
     });
 
@@ -349,13 +366,36 @@ export class TerminalSession {
     this.listenerCtl = new AbortController();
     const { signal } = this.listenerCtl;
 
+    // Direct mouseup listener on terminal container to ensure select-to-copy in tmux
+    container.addEventListener(
+      'mouseup',
+      () => {
+        setTimeout(() => {
+          const xtermText = this.term.getSelection();
+          const domText = typeof window !== 'undefined' ? window.getSelection()?.toString() : '';
+          const text = xtermText || domText || '';
+          if (text && text.trim().length > 0) {
+            void writeToClipboard(text);
+            this.onClipboardRequest?.(text);
+          }
+        }, 20);
+      },
+      { signal },
+    );
+
     container.addEventListener(
       'copy',
       (event) => {
-        const selection = this.term.getSelection();
+        const xtermText = this.term.getSelection();
+        const domText = typeof window !== 'undefined' ? window.getSelection()?.toString() : '';
+        const selection = xtermText || domText || '';
         if (!selection) return;
+        if (event.clipboardData) {
+          event.clipboardData.setData('text/plain', selection);
+        }
         event.preventDefault();
         event.stopImmediatePropagation();
+        void writeToClipboard(selection);
         this.onClipboardRequest?.(selection, event);
       },
       { capture: true, signal },
@@ -425,25 +465,30 @@ export class TerminalSession {
     });
 
     this.term.attachCustomKeyEventHandler((e) => {
-      // Ctrl+C / Cmd+C / Ctrl+Shift+C: Copy when text is highlighted, without sending SIGINT (\x03)
-      if ((e.ctrlKey || e.metaKey) && (e.key.toLowerCase() === 'c' || e.code === 'KeyC')) {
-        if (this.term.hasSelection()) {
+      // Ctrl+C / Cmd+C / Ctrl+Shift+C / Ctrl+Insert: Copy when text is highlighted in terminal or DOM, without sending SIGINT (\x03)
+      const isCopyKey =
+        (e.ctrlKey || e.metaKey) &&
+        (e.key.toLowerCase() === 'c' || e.code === 'KeyC' || e.key === 'Insert' || e.code === 'Insert');
+      if (isCopyKey) {
+        const xtermSelection = this.term.getSelection();
+        const domSelection = typeof window !== 'undefined' ? window.getSelection()?.toString() : '';
+        const textToCopy = xtermSelection || domSelection || '';
+        if (textToCopy && textToCopy.length > 0) {
           if (e.type === 'keydown') {
-            const selection = this.term.getSelection();
-            if (selection) {
-              if (navigator.clipboard) {
-                navigator.clipboard.writeText(selection).catch(() => {});
-              }
-              this.onClipboardRequest?.(selection);
-            }
+            void writeToClipboard(textToCopy);
+            this.onClipboardRequest?.(textToCopy);
           }
-          return false; // Prevent sending \x03 to terminal process
+          return false; // Prevent sending \x03 (SIGINT) to terminal process
         }
+        if (e.key === 'Insert' || e.code === 'Insert') return false;
         return true; // No selection: allow standard Ctrl+C to send SIGINT
       }
 
-      // Ctrl+V / Cmd+V / Ctrl+Shift+V: allow paste event
-      if ((e.ctrlKey || e.metaKey) && (e.key.toLowerCase() === 'v' || e.code === 'KeyV')) {
+      // Ctrl+V / Cmd+V / Ctrl+Shift+V / Shift+Insert: allow paste event
+      if (
+        ((e.ctrlKey || e.metaKey) && (e.key.toLowerCase() === 'v' || e.code === 'KeyV')) ||
+        (e.shiftKey && (e.key === 'Insert' || e.code === 'Insert'))
+      ) {
         return true;
       }
 
@@ -640,6 +685,7 @@ export class TerminalSession {
     ) {
       return;
     }
+    void writeToClipboard(text);
     this.onClipboardRequest?.(text);
   }
 

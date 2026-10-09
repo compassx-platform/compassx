@@ -2116,7 +2116,8 @@ class KubernetesDevDriver(BaseDevDriver):
             "        'set-option -g history-limit 50000\\n'\n"
             "        'set-option -sq extended-keys on\\n'\n"
             "        'set-option -sq extended-keys-format csi-u\\n'\n"
-            "        'set-option -sq set-clipboard external\\n'\n"
+            "        'set-option -s set-clipboard on\\n'\n"
+            "        'set-option -g allow-passthrough on\\n'\n"
             "        'set-option -g mouse on\\n'\n"
             "        'set-option -g focus-events on\\n'\n"
             "        'set-option -g escape-time 0\\n'\n"
@@ -2131,6 +2132,10 @@ class KubernetesDevDriver(BaseDevDriver):
             "        'bind-key -T copy-mode WheelDownPane select-pane \\\\; send-keys -X -N 5 scroll-down\\n'\n"
             "        'bind-key -T copy-mode-vi WheelUpPane select-pane \\\\; send-keys -X -N 5 scroll-up\\n'\n"
             "        'bind-key -T copy-mode-vi WheelDownPane select-pane \\\\; send-keys -X -N 5 scroll-down\\n'\n"
+            "        'bind-key -T copy-mode MouseDragEnd1Pane send-keys -X copy-selection-and-cancel\\n'\n"
+            "        'bind-key -T copy-mode-vi MouseDragEnd1Pane send-keys -X copy-selection-and-cancel\\n'\n"
+            "        'bind-key -T copy-mode y send-keys -X copy-selection-and-cancel\\n'\n"
+            "        'bind-key -T copy-mode-vi y send-keys -X copy-selection-and-cancel\\n'\n"
             "    )\n"
             "    with open('/root/.tmux.conf', 'w') as f:\n"
             "        f.write(tmux_cfg)\n"
@@ -2201,11 +2206,15 @@ class KubernetesDevDriver(BaseDevDriver):
         if session_name and cli_cmd:
             tmux_target = session_name.replace("'", "")
             clean_cmd = f"export OPENAI_BASE_URL={ai_gw_url} OPENAI_API_KEY=cx_gw_app_{app.id}; {cli_cmd}".replace("'", "'\\''")
+            tmux_init = (
+                "printf 'set -g mouse on\\nset -s set-clipboard on\\nset -g allow-passthrough on\\nbind -T copy-mode-vi y send-keys -X copy-selection-and-cancel\\nbind -T copy-mode-vi MouseDragEnd1Pane send-keys -X copy-selection-and-cancel\\nbind -T copy-mode MouseDragEnd1Pane send-keys -X copy-selection-and-cancel\\nbind -T copy-mode y send-keys -X copy-selection-and-cancel\\n' > /root/.tmux.conf; "
+                "tmux source-file /root/.tmux.conf 2>/dev/null; "
+            )
             shell_cmd = [
                 "/bin/sh", "-c",
                 f"cd {workdir} 2>/dev/null; "
                 f"export TERM=xterm-256color; "
-                f"tmux source-file /root/.tmux.conf 2>/dev/null; "
+                f"{tmux_init}"
                 f"tmux new-session -A -D -s '{tmux_target}' -c '{workdir}' '{clean_cmd} || exec /bin/bash -l' || exec /bin/bash -l"
             ]
         elif cli_cmd:

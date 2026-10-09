@@ -30,6 +30,7 @@ import {
   terminalTheme,
   type TerminalThemeMode,
 } from './terminalThemePreferences';
+import { readFromClipboard, writeToClipboard } from './terminalClipboardWriter';
 
 export interface TerminalViewHandle {
   focus: () => void;
@@ -271,14 +272,14 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(
     const handleContextMenu = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
       e.preventDefault();
       const session = sessionRef.current;
-      const hasSelection = !!session?.hasSelection();
+      const xtermSelection = session?.getSelection() || '';
+      const windowSelection = typeof window !== 'undefined' ? window.getSelection()?.toString() || '' : '';
+      const selectedText = xtermSelection || windowSelection;
+      const hasSelection = !!selectedText.trim();
 
       // Immediately copy selection to clipboard if highlighted
       if (hasSelection) {
-        const text = session?.getSelection();
-        if (text && navigator.clipboard) {
-          navigator.clipboard.writeText(text).catch(() => {});
-        }
+        void writeToClipboard(selectedText);
       }
 
       const containerRect = containerRef.current?.getBoundingClientRect();
@@ -305,9 +306,11 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(
     }, []);
 
     const handleCopy = useCallback(() => {
-      const text = sessionRef.current?.getSelection();
-      if (text && navigator.clipboard) {
-        navigator.clipboard.writeText(text).catch(() => {});
+      const xtermText = sessionRef.current?.getSelection() || '';
+      const windowText = typeof window !== 'undefined' ? window.getSelection()?.toString() || '' : '';
+      const text = xtermText || windowText;
+      if (text) {
+        void writeToClipboard(text);
       }
       setContextMenu(null);
     }, []);
@@ -315,12 +318,10 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(
     const handlePaste = useCallback(async () => {
       setContextMenu(null);
       try {
-        if (navigator.clipboard) {
-          const text = await navigator.clipboard.readText();
-          if (text) {
-            sessionRef.current?.paste(text);
-            sessionRef.current?.focus();
-          }
+        const text = await readFromClipboard();
+        if (text) {
+          sessionRef.current?.paste(text);
+          sessionRef.current?.focus();
         }
       } catch (err) {
         console.warn('Clipboard paste failed:', err);

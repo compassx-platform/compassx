@@ -5,6 +5,27 @@ All notable changes to the CompassX Platform will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.23] - 2026-10-09
+
+### 🚀 Highlights
+
+CompassX `0.12.23` introduces **Universal Clipboard Support with Seamless Non-Secure/HTTP Fallbacks**, **Native OSC 52 Terminal Clipboard Sequence Handling**, **Enhanced Multi-Key Selection & Copy-Paste Shortcuts**, and **Tmux Driver Clipboard Integration**.
+
+### ✨ Features & Enhancements
+
+#### Universal Terminal Clipboard Architecture
+- **Universal Clipboard Fallback Engine (`terminalClipboardWriter.ts`)**: Implemented dual-mode clipboard write/read handlers with seamless fallback to offscreen `textarea` selection and `document.execCommand('copy')` when running on non-secure origins (HTTP or direct IP addresses) where `navigator.clipboard` is restricted.
+- **Native OSC 52 Protocol Support (`TerminalSession.ts`)**: Added parser hooks for OSC 52 clipboard write escape sequences (`\x1b]52;...`), allowing terminal applications like `tmux`, `vim`, `emacs`, and CLI tools to copy text directly to the user's system clipboard.
+- **Enhanced Select-to-Copy & Mouse Actions (`TerminalSession.ts`, `TerminalView.tsx`)**: Auto-copy on mouse highlight and container `mouseup` triggers across both xterm buffer selections and fallback DOM text selections.
+- **Multi-Key Copy/Paste Keyboard Shortcuts (`TerminalSession.ts`)**: Added support for `Ctrl+C`, `Cmd+C`, `Ctrl+Shift+C`, and `Ctrl+Insert` (copying selected text without sending `SIGINT` \x03 to terminal processes), as well as `Shift+Insert` and `Ctrl+V` for clipboard pasting.
+- **Context Menu Actions (`TerminalView.tsx`)**: Direct context menu copy and paste handlers utilizing universal clipboard helpers.
+
+#### Tmux & Container Driver Integration
+- **Driver Clipboard Settings (`docker_driver.py`, `kubernetes_driver.py`)**: Configured tmux session defaults with `set -s set-clipboard on`, `set -g allow-passthrough on`, mouse drag end copy bindings, and copy-mode `y` keybindings.
+- **Pre-initialized Pod Tmux Configuration (`kubernetes_driver.py`)**: Pre-populates `/root/.tmux.conf` on Kubernetes terminal session launch to ensure consistent copy-paste behavior across all pod exec sessions.
+
+---
+
 ## [0.12.22] - 2026-10-09
 
 ### 🚀 Highlights
