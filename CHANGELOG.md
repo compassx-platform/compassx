@@ -5,6 +5,24 @@ All notable changes to the CompassX Platform will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.20] - 2026-10-09
+
+### 🚀 Highlights
+
+CompassX `0.12.20` introduces **Full-Stack App Reverse Proxying & Caddyfile Generation**, **Seamless Port 8080 Gateway Routing**, **Enhanced Dev Terminal Resizing & Session Lifecycle**, and **Cross-Profile Dev Driver Testing**.
+
+### ✨ Features & Enhancements
+
+#### Full-Stack App Reverse Proxying & Port 8080 Gateway
+- **Automated Caddy & Proxy Scripts (`app_manifest_service.py`)**: Added `generate_caddyfile` and `generate_proxy_script` fallback generator in `AppManifestService` to route frontend UI traffic (`/`) and backend API traffic (`/api`, `/ws`, `/docs`, `/openapi.json`) cleanly through unified port 8080.
+- **Flexible Service Manifest Parsing (`app_manifest_service.py`)**: Enhanced manifest resolution to automatically parse multi-service configurations (`services.api`, `services.web`, `backend_port`, `frontend_port`, `gateway_port`, `backend_path`, `frontend_path`).
+- **Dynamic Gateway Startup (`omnigent_dev_service.py`)**: Sandboxes automatically launch the unified reverse proxy gateway when full-stack multi-process applications are detected.
+
+#### Terminal Session & UI Reliability
+- **Interactive Terminal Lifecycle (`TerminalSession.ts`, `TerminalView.tsx`)**: Upgraded terminal resize debouncing, auto-fit geometry synchronization, reconnect resilience, and proper session teardown for the Output Drawer dev terminal.
+
+---
+
 ## [0.12.19] - 2026-10-08
 
 ### 🚀 Highlights

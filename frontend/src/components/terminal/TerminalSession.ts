@@ -273,6 +273,7 @@ export class TerminalSession {
   private readonly listenerCtl: AbortController;
   private readonly resizeObserver: ResizeObserver;
   private readonly dataDispose: { dispose: () => void };
+  private readonly selectionDispose: { dispose: () => void };
   private readonly osc52Dispose: { dispose: () => void };
   private readonly codexPalette: CodexTerminalPalette | null;
   private readonly onClipboardRequest?: TerminalClipboardListener;
@@ -328,6 +329,19 @@ export class TerminalSession {
     } catch {
       this.term.resize(80, 24);
     }
+
+    // Auto-copy on highlight / mouse selection
+    this.selectionDispose = this.term.onSelectionChange(() => {
+      if (this.term.hasSelection()) {
+        const selection = this.term.getSelection();
+        if (selection && selection.length > 0) {
+          if (navigator.clipboard) {
+            navigator.clipboard.writeText(selection).catch(() => {});
+          }
+          this.onClipboardRequest?.(selection);
+        }
+      }
+    });
 
     this.ws = new WebSocket(url);
     this.ws.binaryType = 'arraybuffer';
@@ -411,6 +425,28 @@ export class TerminalSession {
     });
 
     this.term.attachCustomKeyEventHandler((e) => {
+      // Ctrl+C / Cmd+C / Ctrl+Shift+C: Copy when text is highlighted, without sending SIGINT (\x03)
+      if ((e.ctrlKey || e.metaKey) && (e.key.toLowerCase() === 'c' || e.code === 'KeyC')) {
+        if (this.term.hasSelection()) {
+          if (e.type === 'keydown') {
+            const selection = this.term.getSelection();
+            if (selection) {
+              if (navigator.clipboard) {
+                navigator.clipboard.writeText(selection).catch(() => {});
+              }
+              this.onClipboardRequest?.(selection);
+            }
+          }
+          return false; // Prevent sending \x03 to terminal process
+        }
+        return true; // No selection: allow standard Ctrl+C to send SIGINT
+      }
+
+      // Ctrl+V / Cmd+V / Ctrl+Shift+V: allow paste event
+      if ((e.ctrlKey || e.metaKey) && (e.key.toLowerCase() === 'v' || e.code === 'KeyV')) {
+        return true;
+      }
+
       const payload = terminalKeyEventPayload(e);
       if (payload === null) return true;
       if (e.type === 'keydown') {
@@ -561,12 +597,33 @@ export class TerminalSession {
     this.sendResize();
   }
 
+  getSelection(): string {
+    return this.term.getSelection();
+  }
+
+  hasSelection(): boolean {
+    return this.term.hasSelection();
+  }
+
+  selectAll(): void {
+    this.term.selectAll();
+  }
+
+  clearSelection(): void {
+    this.term.clearSelection();
+  }
+
+  paste(data: string): void {
+    this.term.paste(data);
+  }
+
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
     this.listenerCtl.abort();
     this.resizeObserver.disconnect();
     this.dataDispose.dispose();
+    this.selectionDispose.dispose();
     this.osc52Dispose.dispose();
     try {
       this.ws.close();

@@ -1,7 +1,11 @@
-// xterm.js view bridged to a dev container or agent over WebSocket.
-// Copied and adapted directly from Omnigent's battle-tested TerminalView.tsx.
-
-import { Loader2Icon, RefreshCwIcon } from 'lucide-react';
+import {
+  CheckSquare,
+  ClipboardPaste,
+  Copy,
+  Loader2Icon,
+  RefreshCwIcon,
+  Trash2,
+} from 'lucide-react';
 import React, {
   forwardRef,
   useCallback,
@@ -51,6 +55,12 @@ export interface TerminalViewProps {
   isDark?: boolean;
 }
 
+interface ContextMenuState {
+  x: number;
+  y: number;
+  hasSelection: boolean;
+}
+
 export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(
   function TerminalView(
     {
@@ -74,6 +84,8 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(
     const [connectAttempt, setConnectAttempt] = useState(0);
     const [resumeError, setResumeError] = useState<string | null>(null);
     const [reconnectPending, setReconnectPending] = useState(false);
+    const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
+    const containerRef = useRef<HTMLDivElement | null>(null);
     const reconnectAttemptsRef = useRef(0);
     const connectedAtRef = useRef<number | null>(null);
 
@@ -256,6 +268,92 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(
       };
     }, [state, disposeActiveSession]);
 
+    const handleContextMenu = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+      e.preventDefault();
+      const session = sessionRef.current;
+      const hasSelection = !!session?.hasSelection();
+
+      // Immediately copy selection to clipboard if highlighted
+      if (hasSelection) {
+        const text = session?.getSelection();
+        if (text && navigator.clipboard) {
+          navigator.clipboard.writeText(text).catch(() => {});
+        }
+      }
+
+      const containerRect = containerRef.current?.getBoundingClientRect();
+      if (!containerRect) return;
+
+      let posX = e.clientX - containerRect.left;
+      let posY = e.clientY - containerRect.top;
+
+      const MENU_WIDTH = 190;
+      const MENU_HEIGHT = 160;
+
+      if (posX + MENU_WIDTH > containerRect.width) {
+        posX = Math.max(8, containerRect.width - MENU_WIDTH - 8);
+      }
+      if (posY + MENU_HEIGHT > containerRect.height) {
+        posY = Math.max(8, containerRect.height - MENU_HEIGHT - 8);
+      }
+
+      setContextMenu({
+        x: posX,
+        y: posY,
+        hasSelection,
+      });
+    }, []);
+
+    const handleCopy = useCallback(() => {
+      const text = sessionRef.current?.getSelection();
+      if (text && navigator.clipboard) {
+        navigator.clipboard.writeText(text).catch(() => {});
+      }
+      setContextMenu(null);
+    }, []);
+
+    const handlePaste = useCallback(async () => {
+      setContextMenu(null);
+      try {
+        if (navigator.clipboard) {
+          const text = await navigator.clipboard.readText();
+          if (text) {
+            sessionRef.current?.paste(text);
+            sessionRef.current?.focus();
+          }
+        }
+      } catch (err) {
+        console.warn('Clipboard paste failed:', err);
+      }
+    }, []);
+
+    const handleSelectAll = useCallback(() => {
+      sessionRef.current?.selectAll();
+      setContextMenu(null);
+    }, []);
+
+    const handleClear = useCallback(() => {
+      sessionRef.current?.clear();
+      setContextMenu(null);
+    }, []);
+
+    useEffect(() => {
+      if (!contextMenu) return;
+      const handleOutsideClick = () => {
+        setContextMenu(null);
+      };
+      const handleKeyDown = (e: KeyboardEvent) => {
+        if (e.key === 'Escape') setContextMenu(null);
+      };
+
+      window.addEventListener('mousedown', handleOutsideClick);
+      window.addEventListener('keydown', handleKeyDown);
+      return () => {
+        window.removeEventListener('mousedown', handleOutsideClick);
+        window.removeEventListener('keydown', handleKeyDown);
+      };
+    }, [contextMenu]);
+
     return (
       <div
         data-state={state.kind}
@@ -305,6 +403,8 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(
           }
         `}</style>
         <div
+          ref={containerRef}
+          onContextMenu={handleContextMenu}
           className="relative min-h-0 flex-1 overflow-hidden p-0"
           style={{ backgroundColor: terminalBackground }}
         >
@@ -313,6 +413,96 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(
             ref={attachSession}
             className="h-full w-full overflow-hidden"
           />
+          {contextMenu && (
+            <div
+              className={`absolute z-50 min-w-[190px] rounded-lg border p-1 shadow-2xl backdrop-blur-md select-none transition-opacity duration-150 ${
+                isDark
+                  ? 'bg-zinc-900/95 border-zinc-700/80 text-zinc-200 shadow-black/60'
+                  : 'bg-white/95 border-slate-200 text-slate-700 shadow-slate-400/30'
+              }`}
+              style={{
+                left: `${contextMenu.x}px`,
+                top: `${contextMenu.y}px`,
+              }}
+              onMouseDown={(e) => e.stopPropagation()}
+            >
+              <button
+                type="button"
+                onClick={handleCopy}
+                disabled={!contextMenu.hasSelection}
+                className={`flex w-full items-center justify-between gap-3 px-2.5 py-1.5 rounded-md text-xs font-medium cursor-pointer transition-colors ${
+                  !contextMenu.hasSelection
+                    ? 'opacity-40 cursor-not-allowed'
+                    : isDark
+                    ? 'hover:bg-zinc-800 hover:text-white'
+                    : 'hover:bg-slate-100 hover:text-slate-900'
+                }`}
+              >
+                <span className="flex items-center gap-2">
+                  <Copy className="h-3.5 w-3.5 text-zinc-400" />
+                  <span>Copy</span>
+                </span>
+                <kbd className={`text-[10px] font-mono px-1 py-0.5 rounded ${isDark ? 'bg-zinc-800 text-zinc-400' : 'bg-slate-100 text-slate-500'}`}>
+                  Ctrl+C
+                </kbd>
+              </button>
+
+              {!readOnly && (
+                <button
+                  type="button"
+                  onClick={handlePaste}
+                  className={`flex w-full items-center justify-between gap-3 px-2.5 py-1.5 rounded-md text-xs font-medium cursor-pointer transition-colors ${
+                    isDark
+                      ? 'hover:bg-zinc-800 hover:text-white'
+                      : 'hover:bg-slate-100 hover:text-slate-900'
+                  }`}
+                >
+                  <span className="flex items-center gap-2">
+                    <ClipboardPaste className="h-3.5 w-3.5 text-zinc-400" />
+                    <span>Paste</span>
+                  </span>
+                  <kbd className={`text-[10px] font-mono px-1 py-0.5 rounded ${isDark ? 'bg-zinc-800 text-zinc-400' : 'bg-slate-100 text-slate-500'}`}>
+                    Ctrl+V
+                  </kbd>
+                </button>
+              )}
+
+              <button
+                type="button"
+                onClick={handleSelectAll}
+                className={`flex w-full items-center justify-between gap-3 px-2.5 py-1.5 rounded-md text-xs font-medium cursor-pointer transition-colors ${
+                  isDark
+                    ? 'hover:bg-zinc-800 hover:text-white'
+                    : 'hover:bg-slate-100 hover:text-slate-900'
+                }`}
+              >
+                <span className="flex items-center gap-2">
+                  <CheckSquare className="h-3.5 w-3.5 text-zinc-400" />
+                  <span>Select All</span>
+                </span>
+                <kbd className={`text-[10px] font-mono px-1 py-0.5 rounded ${isDark ? 'bg-zinc-800 text-zinc-400' : 'bg-slate-100 text-slate-500'}`}>
+                  Ctrl+A
+                </kbd>
+              </button>
+
+              <div className={`my-1 border-t ${isDark ? 'border-zinc-800' : 'border-slate-100'}`} />
+
+              <button
+                type="button"
+                onClick={handleClear}
+                className={`flex w-full items-center justify-between gap-3 px-2.5 py-1.5 rounded-md text-xs font-medium cursor-pointer transition-colors ${
+                  isDark
+                    ? 'hover:bg-zinc-800 hover:text-rose-400 text-zinc-300'
+                    : 'hover:bg-rose-50 hover:text-rose-600 text-slate-700'
+                }`}
+              >
+                <span className="flex items-center gap-2">
+                  <Trash2 className="h-3.5 w-3.5 text-zinc-400" />
+                  <span>Clear Console</span>
+                </span>
+              </button>
+            </div>
+          )}
           {state.kind !== 'connected' && (
             <StatusOverlay
               state={state}

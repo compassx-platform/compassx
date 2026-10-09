@@ -2,8 +2,8 @@ apiVersion: v2
 name: compassx
 description: Enterprise AI-native Data & Analytics Platform for Kubernetes
 type: application
-version: 0.12.19
-appVersion: "0.12.19"
+version: 0.12.20
+appVersion: "0.12.20"
 keywords:
   - analytics
   - ai

@@ -34,6 +34,18 @@ def _sanitize_k8s_label_value(val: any) -> str:
     return cleaned[:63]
 
 
+def _sanitize_k8s_label_key(key: str) -> str:
+    """Sanitize a key to be a valid Kubernetes label key ([prefix/]name)."""
+    if not key:
+        return "label"
+    if "/" in key:
+        parts = key.split("/", 1)
+        prefix = _sanitize_k8s_name(parts[0])
+        name = re.sub(r"[^A-Za-z0-9_.-]", "-", parts[1]).strip("-._")[:63]
+        return f"{prefix}/{name}"
+    return re.sub(r"[^A-Za-z0-9_.-]", "-", str(key)).strip("-._")[:63]
+
+
 class KubernetesSandboxDriver(BaseSandboxDriver):
     """Manages isolated compute sandboxes as Kubernetes Pods and Services."""
 
@@ -164,7 +176,7 @@ class KubernetesSandboxDriver(BaseSandboxDriver):
             labels["compassx.workspace-id"] = _sanitize_k8s_label_value(spec.workspace_id)
         if spec.labels:
             for k, v in spec.labels.items():
-                clean_k = _sanitize_k8s_name(k)
+                clean_k = _sanitize_k8s_label_key(k)
                 labels[clean_k] = _sanitize_k8s_label_value(v)
 
         annotations = {

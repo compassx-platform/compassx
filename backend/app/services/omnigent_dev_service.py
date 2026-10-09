@@ -1771,68 +1771,126 @@ class OmnigentDevService:
         if run_cfg:
             backend_cmd = run_cfg.get("backend_command")
             backend_dir = run_cfg.get("backend_dir")
+            backend_port = run_cfg.get("backend_port", 8000)
             frontend_cmd = run_cfg.get("frontend_command")
             frontend_dir = run_cfg.get("frontend_dir")
+            frontend_port = run_cfg.get("frontend_port", 4000)
+            gateway_port = run_cfg.get("gateway_port", 8080)
             env_exports = run_cfg.get("env_exports", "")
+
+            # Generate Caddyfile and Python fallback proxy configurations
+            caddyfile_text = app_manifest_service.generate_caddyfile(run_cfg)
+            caddyfile_b64 = base64.b64encode(caddyfile_text.encode("utf-8")).decode("ascii")
+            proxy_script_text = app_manifest_service.generate_proxy_script(run_cfg)
+            proxy_script_b64 = base64.b64encode(proxy_script_text.encode("utf-8")).decode("ascii")
 
             run_script_parts = [
                 "LOG_FILE='/tmp/workspace_setup.log';",
                 "log() { echo \"[$(date +'%H:%M:%S')] $1\" | tee -a \"$LOG_FILE\"; };",
                 "log '──────────────────────────────────────────────────────────';",
                 "log '=== Phase 4: Application Runtime Initialization (app.yaml) ===';",
-                "log '  [1/3] Configuring runtime environment from app.yaml...';",
+                f"log '  [1/3] Configuring runtime environment (Gateway: {gateway_port}, Backend: {backend_port}, Frontend: {frontend_port})...';",
+                f"echo '{caddyfile_b64}' | base64 -d > /tmp/Caddyfile 2>/dev/null;",
+                f"echo '{proxy_script_b64}' | base64 -d > /tmp/compassx_proxy.py 2>/dev/null;",
             ]
             if env_exports:
                 run_script_parts.append(env_exports + ";")
+
+            # Patch Vite allowedHosts inside frontend directory if exists
+            patch_vite_cmd = (
+                "python3 -c \""
+                "import os, re; "
+                "for root, _, files in os.walk('.'): "
+                "    if 'node_modules' in root or '.git' in root: continue; "
+                "    for f in files: "
+                "        if f.startswith('vite.config.') and f.endswith(('.ts', '.js', '.mjs', '.cjs')): "
+                "            fp = os.path.join(root, f); "
+                "            try: "
+                "                with open(fp, 'r', encoding='utf-8') as fh: c = fh.read(); "
+                "                orig = c; "
+                "                if 'allowedHosts' not in c and 'server:' in c: "
+                "                    c = re.sub(r'server\\s*:\\s*\\{', 'server: {\\n    allowedHosts: true,', c, count=1); "
+                "                if c != orig: "
+                "                    with open(fp, 'w', encoding='utf-8') as fh: fh.write(c); "
+                "            except Exception: pass; "
+                "\" 2>/dev/null || true;"
+            )
+            run_script_parts.append(patch_vite_cmd)
 
             if backend_cmd and frontend_cmd:
                 b_prefix = f"cd '{backend_dir}' && " if backend_dir else ""
                 f_prefix = f"cd '{frontend_dir}' && " if frontend_dir else ""
                 run_script_parts.append(
-                    f"log '  [2/3] Launching backend and frontend services...'; "
-                    f"if (ss -tln 2>/dev/null || netstat -an 2>/dev/null) | grep -qE '[:.]8000[[:space:]]'; then "
-                    f"  log '    ✓ Backend service already active on port 8000'; "
+                    f"log '  [2/3] Launching backend (port {backend_port}) and frontend (port {frontend_port})...'; "
+                    f"if (ss -tln 2>/dev/null || netstat -an 2>/dev/null) | grep -qE '[:.]{backend_port}[[:space:]]'; then "
+                    f"  log '    ✓ Backend service already active on port {backend_port}'; "
                     f"else "
                     f"  log '    → Starting backend: {backend_cmd}...'; "
                     f"  ({b_prefix}nohup {backend_cmd} > /tmp/app_backend.log 2>&1 &); "
                     f"fi; "
-                    f"if (ss -tln 2>/dev/null || netstat -an 2>/dev/null) | grep -qE '[:.]8080[[:space:]]'; then "
-                    f"  log '    ✓ Frontend service already active on port 8080'; "
+                    f"if (ss -tln 2>/dev/null || netstat -an 2>/dev/null) | grep -qE '[:.]{frontend_port}[[:space:]]'; then "
+                    f"  log '    ✓ Frontend service already active on port {frontend_port}'; "
                     f"else "
                     f"  log '    → Starting frontend: {frontend_cmd}...'; "
                     f"  ({f_prefix}nohup {frontend_cmd} > /tmp/app_frontend.log 2>&1 &); "
+                    f"fi; "
+                    f"if (ss -tln 2>/dev/null || netstat -an 2>/dev/null) | grep -qE '[:.]{gateway_port}[[:space:]]'; then "
+                    f"  log '    ✓ Gateway reverse proxy active on port {gateway_port}'; "
+                    f"else "
+                    f"  log '    → Starting in-pod reverse proxy on port {gateway_port}...'; "
+                    f"  if which caddy >/dev/null 2>&1; then "
+                    f"    (nohup caddy run --config /tmp/Caddyfile --adapter caddyfile > /tmp/caddy.log 2>&1 &); "
+                    f"  else "
+                    f"    (nohup python3 /tmp/compassx_proxy.py > /tmp/proxy.log 2>&1 &); "
+                    f"  fi; "
                     f"fi;"
                 )
             elif backend_cmd:
                 b_prefix = f"cd '{backend_dir}' && " if backend_dir else ""
                 run_script_parts.append(
-                    f"log '  [2/3] Launching backend service...'; "
-                    f"if (ss -tln 2>/dev/null || netstat -an 2>/dev/null) | grep -qE '[:.]8080[[:space:]]' || (ss -tln 2>/dev/null || netstat -an 2>/dev/null) | grep -qE '[:.]8000[[:space:]]'; then "
-                    f"  log '    ✓ Application service already active'; "
+                    f"log '  [2/3] Launching backend service on port {backend_port}...'; "
+                    f"if (ss -tln 2>/dev/null || netstat -an 2>/dev/null) | grep -qE '[:.]{backend_port}[[:space:]]'; then "
+                    f"  log '    ✓ Application service already active on port {backend_port}'; "
                     f"else "
                     f"  log '    → Starting service: {backend_cmd}...'; "
                     f"  ({b_prefix}nohup {backend_cmd} > /tmp/app_service.log 2>&1 &); "
+                    f"fi; "
+                    f"if [ '{backend_port}' != '{gateway_port}' ] && ! (ss -tln 2>/dev/null || netstat -an 2>/dev/null) | grep -qE '[:.]{gateway_port}[[:space:]]'; then "
+                    f"  if which caddy >/dev/null 2>&1; then "
+                    f"    (nohup caddy run --config /tmp/Caddyfile --adapter caddyfile > /tmp/caddy.log 2>&1 &); "
+                    f"  else "
+                    f"    (nohup python3 /tmp/compassx_proxy.py > /tmp/proxy.log 2>&1 &); "
+                    f"  fi; "
                     f"fi;"
                 )
             elif frontend_cmd:
                 f_prefix = f"cd '{frontend_dir}' && " if frontend_dir else ""
                 run_script_parts.append(
-                    f"log '  [2/3] Launching frontend service...'; "
-                    f"if (ss -tln 2>/dev/null || netstat -an 2>/dev/null) | grep -qE '[:.]8080[[:space:]]'; then "
-                    f"  log '    ✓ Frontend service already active on port 8080'; "
+                    f"log '  [2/3] Launching frontend service on port {frontend_port}...'; "
+                    f"if (ss -tln 2>/dev/null || netstat -an 2>/dev/null) | grep -qE '[:.]{frontend_port}[[:space:]]'; then "
+                    f"  log '    ✓ Frontend service already active on port {frontend_port}'; "
                     f"else "
                     f"  log '    → Starting frontend: {frontend_cmd}...'; "
                     f"  ({f_prefix}nohup {frontend_cmd} > /tmp/app_frontend.log 2>&1 &); "
+                    f"fi; "
+                    f"if [ '{frontend_port}' != '{gateway_port}' ] && ! (ss -tln 2>/dev/null || netstat -an 2>/dev/null) | grep -qE '[:.]{gateway_port}[[:space:]]'; then "
+                    f"  if which caddy >/dev/null 2>&1; then "
+                    f"    (nohup caddy run --config /tmp/Caddyfile --adapter caddyfile > /tmp/caddy.log 2>&1 &); "
+                    f"  else "
+                    f"    (nohup python3 /tmp/compassx_proxy.py > /tmp/proxy.log 2>&1 &); "
+                    f"  fi; "
                     f"fi;"
                 )
 
             run_script_parts.append(
                 "log '  [3/3] Verifying runtime health and port responsiveness...'; "
                 "sleep 2; "
-                "if (curl -fsSL --connect-timeout 2 http://localhost:8080 >/dev/null 2>&1 || wget -q -O - http://localhost:8080 >/dev/null 2>&1); then "
-                "  log '  ✓ Application responding on port 8080 (Web UI ready).'; "
-                "elif (curl -fsSL --connect-timeout 2 http://localhost:8000 >/dev/null 2>&1 || wget -q -O - http://localhost:8000 >/dev/null 2>&1); then "
-                "  log '  ✓ Application responding on port 8000 (Backend API ready).'; "
+                f"if (curl -fsSL --connect-timeout 2 http://localhost:{gateway_port} >/dev/null 2>&1 || wget -q -O - http://localhost:{gateway_port} >/dev/null 2>&1); then "
+                f"  log '  ✓ Gateway responding on port {gateway_port} (Entrypoint ready).'; "
+                f"elif (curl -fsSL --connect-timeout 2 http://localhost:{frontend_port} >/dev/null 2>&1 || wget -q -O - http://localhost:{frontend_port} >/dev/null 2>&1); then "
+                f"  log '  ✓ Application responding on port {frontend_port} (Frontend ready).'; "
+                f"elif (curl -fsSL --connect-timeout 2 http://localhost:{backend_port} >/dev/null 2>&1 || wget -q -O - http://localhost:{backend_port} >/dev/null 2>&1); then "
+                f"  log '  ✓ Application responding on port {backend_port} (Backend API ready).'; "
                 "else "
                 "  log '  → Application processes launched and listening.'; "
                 "fi; "

@@ -620,7 +620,7 @@ class DockerDevDriver(BaseDevDriver):
             "--label", f"compassx.sandbox_id=dev-app-{app.id}",
             "--label", f"compassx.sandbox_name={app.name} (Dev Sandbox)",
             "--label", "compassx.consumer_module=app",
-            "--label", f"compassx.workspace_id={app.workspace_id or ''}",
+            "--label", f"compassx.workspace_id={getattr(app, 'workspace_id', None) or ''}",
             "-p", f"{dev_port}:8080",
             "-v", f"{repo_dir}:/app",
             "-w", "/app",

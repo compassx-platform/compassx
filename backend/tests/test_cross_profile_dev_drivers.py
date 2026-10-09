@@ -23,6 +23,7 @@ class MockApp:
         self.slug = slug
         self.name = "Test App"
         self.git_branch = "main"
+        self.workspace_id = None
         self.config = {}
 
 
@@ -68,11 +69,15 @@ class TestCrossProfileDevDrivers(unittest.TestCase):
     # ==========================================
     @patch("subprocess.run")
     def test_docker_dev_driver_exec_command(self, mock_subproc):
-        # Mock test -d output to EXISTS
-        mock_subproc.side_effect = [
-            MagicMock(returncode=0, stdout="EXISTS", stderr=""),  # test -d check
-            MagicMock(returncode=0, stdout="installed successfully\n", stderr=""),  # main command
-        ]
+        def fake_run(cmd, *args, **kwargs):
+            cmd_str = " ".join(str(c) for c in cmd)
+            if "test -d" in cmd_str:
+                return MagicMock(returncode=0, stdout="EXISTS", stderr="")
+            elif "mkdir -p" in cmd_str:
+                return MagicMock(returncode=0, stdout="", stderr="")
+            return MagicMock(returncode=0, stdout="installed successfully\n", stderr="")
+
+        mock_subproc.side_effect = fake_run
 
         driver = DockerDevDriver()
         res = driver.exec_command_in_dev(self.app, "npm install", workspace_folder="default")
@@ -84,10 +89,15 @@ class TestCrossProfileDevDrivers(unittest.TestCase):
 
     @patch("subprocess.run")
     def test_docker_dev_driver_non_zero_exit_code(self, mock_subproc):
-        mock_subproc.side_effect = [
-            MagicMock(returncode=0, stdout="EXISTS", stderr=""),
-            MagicMock(returncode=1, stdout="", stderr="npm ERR! missing script: build\n"),
-        ]
+        def fake_run(cmd, *args, **kwargs):
+            cmd_str = " ".join(str(c) for c in cmd)
+            if "test -d" in cmd_str:
+                return MagicMock(returncode=0, stdout="EXISTS", stderr="")
+            elif "mkdir -p" in cmd_str:
+                return MagicMock(returncode=0, stdout="", stderr="")
+            return MagicMock(returncode=1, stdout="", stderr="npm ERR! missing script: build\n")
+
+        mock_subproc.side_effect = fake_run
 
         driver = DockerDevDriver()
         res = driver.exec_command_in_dev(self.app, "npm run build", workspace_folder="default")
@@ -183,11 +193,17 @@ class TestCrossProfileDevDrivers(unittest.TestCase):
 
     @patch("subprocess.run")
     def test_docker_dev_driver_get_status_detects_image_and_host_type(self, mock_subproc):
-        # Inspect returns: running|compassx-host:latest
-        mock_subproc.side_effect = [
-            MagicMock(returncode=0, stdout="running|compassx-host:latest\n", stderr=""),
-            MagicMock(returncode=0, stdout="running|ghcr.io/omnigent-ai/omnigent-host:latest\n", stderr=""),
-        ]
+        state = {"count": 0}
+        def fake_inspect(cmd, *args, **kwargs):
+            cmd_str = " ".join(str(c) for c in cmd)
+            if "inspect" in cmd_str:
+                state["count"] += 1
+                if state["count"] == 1:
+                    return MagicMock(returncode=0, stdout="running|compassx-host:latest\n", stderr="")
+                return MagicMock(returncode=0, stdout="running|ghcr.io/omnigent-ai/omnigent-host:latest\n", stderr="")
+            return MagicMock(returncode=0, stdout="", stderr="")
+
+        mock_subproc.side_effect = fake_inspect
 
         driver = DockerDevDriver()
 

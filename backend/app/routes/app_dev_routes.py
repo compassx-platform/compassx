@@ -351,6 +351,7 @@ def delete_app_session(
 
 def _build_app_sandbox_spec(app: App) -> SandboxSpec:
     repo_dir = omnigent_dev_service.get_repo_dir(app)
+    clean_k8s_app_id = app.id.replace("_", "-").lower()
     return SandboxSpec(
         sandbox_id=f"dev-app-{app.id}",
         consumer_key=f"app_{app.id}",
@@ -366,9 +367,14 @@ def _build_app_sandbox_spec(app: App) -> SandboxSpec:
             InitScript(name="Run Application Server", command="python -c \"print('App sandbox environment ready')\"", ignore_failure=True),
         ],
         labels={
+            "compassx/app-id": clean_k8s_app_id,
+            "compassx/dev": "true",
+            "compassx/role": "dev",
+            "compassx-app-id": app.id,
             "compassx.app_id": app.id,
             "compassx.app_slug": app.slug or "",
             "compassx.consumer_key": f"app_{app.id}",
+            "compassx-consumer-key": f"app_{app.id}",
         },
         metadata={"app_id": app.id, "app_name": app.name, "slug": app.slug},
     )
@@ -1037,6 +1043,112 @@ async def dev_terminal_websocket(
         agent=agent,
         session_id=session_id,
     )
+
+
+class AppManifestUpdateRequest(BaseModel):
+    frontend_command: Optional[str] = None
+    frontend_dir: Optional[str] = None
+    frontend_port: Optional[int] = None
+    backend_command: Optional[str] = None
+    backend_dir: Optional[str] = None
+    backend_port: Optional[int] = None
+    install_command: Optional[str] = None
+    env: Optional[Dict[str, str]] = None
+    raw_yaml: Optional[str] = None
+    workspace_id: Optional[str] = None
+
+
+@router.get("/manifest")
+def get_dev_manifest(
+    app_id: str,
+    workspace_id: Optional[str] = Query(None),
+    db: Session = Depends(get_system_db),
+    guard: Guard = Depends(get_guard),
+):
+    """Retrieve and parse the app.yaml manifest or generated runtime configuration for an app."""
+    app = db.query(App).filter(App.id == app_id).first()
+    if not app:
+        raise HTTPException(status_code=404, detail=f"App '{app_id}' not found.")
+    if guard.workspace_id and app.workspace_id != guard.workspace_id:
+        raise HTTPException(status_code=403, detail="Cannot access app in another workspace.")
+
+    repo_dir = omnigent_dev_service.get_repo_dir(app)
+    manifest = app_manifest_service.load_manifest(repo_dir)
+    run_cfg = app_manifest_service.get_run_config(manifest)
+    return {
+        "app_id": app.id,
+        "has_manifest": manifest is not None,
+        "manifest": manifest,
+        "run_config": run_cfg or {
+            "gateway_port": 8080,
+            "frontend_port": 4000,
+            "backend_port": 8000,
+            "frontend_command": "npm run dev",
+            "backend_command": "uvicorn main:app --port 8000",
+        },
+    }
+
+
+@router.put("/manifest")
+def update_dev_manifest(
+    app_id: str,
+    body: AppManifestUpdateRequest,
+    db: Session = Depends(get_system_db),
+    guard: Guard = Depends(get_guard),
+):
+    """Save or generate an app.yaml manifest directly into the app repository."""
+    app = db.query(App).filter(App.id == app_id).first()
+    if not app:
+        raise HTTPException(status_code=404, detail=f"App '{app_id}' not found.")
+    if guard.workspace_id and app.workspace_id != guard.workspace_id:
+        raise HTTPException(status_code=403, detail="Cannot access app in another workspace.")
+
+    repo_dir = omnigent_dev_service.get_repo_dir(app)
+    os.makedirs(repo_dir, exist_ok=True)
+    manifest_path = os.path.join(repo_dir, "app.yaml")
+
+    if body.raw_yaml and body.raw_yaml.strip():
+        yaml_content = body.raw_yaml.strip()
+    else:
+        manifest_dict: Dict[str, Any] = {
+            "version": "1",
+            "name": app.slug or app.name or app.id,
+            "services": {}
+        }
+        if body.backend_command:
+            manifest_dict["services"]["backend"] = {
+                "command": body.backend_command,
+                "port": body.backend_port or 8000,
+                "dir": body.backend_dir or ".",
+                "path": "/api",
+            }
+        if body.frontend_command:
+            manifest_dict["services"]["frontend"] = {
+                "command": body.frontend_command,
+                "port": body.frontend_port or 4000,
+                "dir": body.frontend_dir or "frontend",
+                "path": "/",
+            }
+        if body.install_command:
+            manifest_dict["install"] = body.install_command
+        if body.env:
+            manifest_dict["env"] = body.env
+
+        yaml_content = yaml.dump(manifest_dict, sort_keys=False, default_flow_style=False)
+
+    with open(manifest_path, "w", encoding="utf-8") as f:
+        f.write(yaml_content)
+
+    parsed = app_manifest_service.parse_manifest_text(yaml_content, manifest_path=manifest_path)
+    run_cfg = app_manifest_service.get_run_config(parsed)
+
+    return {
+        "app_id": app.id,
+        "status": "saved",
+        "manifest_path": manifest_path,
+        "manifest": parsed,
+        "run_config": run_cfg,
+    }
 
 
 
