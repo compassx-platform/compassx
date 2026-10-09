@@ -5,6 +5,20 @@ All notable changes to the CompassX Platform will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.28] - 2026-10-09
+
+### 🚀 Highlights
+
+CompassX `0.12.28` introduces **Comprehensive Vite 5/6 Allowed Hosts & Server Configuration Injection** and **Universal Sandbox Cross-Origin Preview Support**.
+
+### ✨ Features & Enhancements
+
+#### Vite 5/6 Allowed Hosts & Sandbox Server Injection
+- **Universal Vite Server Configuration (`omnigent_dev_service.py`)**: Automatically scans and updates all Vite configuration file variants (`vite.config.ts`, `vite.config.js`, `vite.config.mjs`, `vite.config.cjs`, `vite.config.mts`) during repository preparation and dependency installation.
+- **Zero-Block Host Security Bypass**: Injects `server: { host: "0.0.0.0", allowedHosts: true, cors: true }` and overrides restrictive `allowedHosts` arrays or missing `server:` blocks, eliminating Vite 6 "Blocked request: The requested host is not allowed" errors across reverse proxy, ingress, and iframe live previews.
+
+---
+
 ## [0.12.27] - 2026-10-09
 
 ### 🚀 Highlights
