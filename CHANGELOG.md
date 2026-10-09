@@ -5,6 +5,23 @@ All notable changes to the CompassX Platform will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.27] - 2026-10-09
+
+### 🚀 Highlights
+
+CompassX `0.12.27` introduces **Multi-Variant Sandbox Pod Locator & Identifier Resolution**, **App Manifest Execution Feedback Reporting**, and **PostgreSQL Connection Pool Recycling**.
+
+### ✨ Features & Enhancements
+
+#### Multi-Variant Sandbox Pod Locator & Identifier Resolution
+- **Broad Variant Sandbox Pod Matching (`kubernetes_driver.py`)**: Enhanced pod discovery in Kubernetes runtime drivers to reliably match all sandbox ID variants (`clean_id`, `raw_uuid`, `underscore_id`, `compassx-sb-dev-app-{raw_uuid}`, prefix labels and annotations).
+- **Zero-Failure Terminal & Exec Resolution (`kubernetes_driver.py`)**: Resolves terminal connections, code synchronization, and dev supervisor execution commands across sandboxes launched with raw UUID schemas.
+
+#### Manifest Execution Feedback
+- **Structured Execution Status Reporting (`omnigent_dev_service.py`)**: Directly captures output logs, success markers, and error messages from `app.yaml`/`app.yml` execution pipelines, providing clear user feedback in App Studio builds.
+
+---
+
 ## [0.12.26] - 2026-10-09
 
 ### 🚀 Highlights

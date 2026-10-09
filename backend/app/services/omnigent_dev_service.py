@@ -1898,7 +1898,15 @@ class OmnigentDevService:
                 "log '──────────────────────────────────────────────────────────'"
             )
             run_script = " ".join(run_script_parts)
-            dev_driver.exec_command_in_dev(app, command=run_script, workspace_folder=folder_path)
+            exec_res = dev_driver.exec_command_in_dev(app, command=run_script, workspace_folder=folder_path)
+            output = (exec_res.get("output") or "").strip()
+            success = exec_res.get("success", False) or ("Phase 4 Complete" in output) or ("Application dev runtime is running and ready" in output)
+            return {
+                "success": success,
+                "dev_url": dev_url,
+                "output": output,
+                "message": "Application running successfully from app.yaml." if success else (output or "Failed to start application services defined in app.yaml."),
+            }
 
         # Delegate to driver's unified supervisor (switch_active_sandbox / dev-runner.sh)
         if hasattr(dev_driver, "switch_active_sandbox"):

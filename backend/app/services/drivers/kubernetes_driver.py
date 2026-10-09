@@ -1891,19 +1891,25 @@ class KubernetesDevDriver(BaseDevDriver):
 
         sb_name = f"compassx-sb-dev-app-{clean_id}"
         underscore_id = clean_id.replace("-", "_")
+        raw_uuid = clean_id.replace("app-", "")
+        sb_name_no_prefix = f"compassx-sb-dev-app-{raw_uuid}"
 
         deadline = time.time() + max(0, wait_seconds)
         while True:
             # 1. Try label selectors (both unified sandbox and legacy dev pod labels)
             for selector in [
                 f"compassx.sandbox-id=dev-app-{clean_id}",
+                f"compassx.sandbox-id=dev-app-{raw_uuid}",
                 f"compassx.consumer-key=app_{clean_id}",
                 f"compassx.consumer-key=app_{underscore_id}",
+                f"compassx.consumer-key=app_{raw_uuid}",
                 f"compassx.app_id={clean_id}",
                 f"compassx.app_id={underscore_id}",
+                f"compassx.app_id={raw_uuid}",
                 f"compassx/app-id={clean_id},compassx/dev=true",
                 f"app.kubernetes.io/name={dev_name}",
                 f"compassx/app-id={clean_id}",
+                f"compassx/app-id={raw_uuid}",
             ]:
                 try:
                     pods = k8s.core().list_namespaced_pod(namespace=ns, label_selector=selector)
@@ -1935,9 +1941,14 @@ class KubernetesDevDriver(BaseDevDriver):
                     if (
                         pname.startswith(f"{sb_name}-")
                         or pname == sb_name
+                        or pname.startswith(f"{sb_name_no_prefix}-")
+                        or pname == sb_name_no_prefix
                         or pname.startswith(f"{dev_name}-")
                         or pname == dev_name
                         or f"dev-app-{clean_id}" in pname
+                        or f"dev-app-{raw_uuid}" in pname
+                        or (clean_id in pname and "compassx" in pname)
+                        or (raw_uuid and len(raw_uuid) >= 8 and raw_uuid[:8] in pname and "compassx" in pname)
                     ):
                         matched.append(p)
                         continue
@@ -1945,10 +1956,10 @@ class KubernetesDevDriver(BaseDevDriver):
                     # Match by annotations or labels
                     sb_id = annos.get("compassx.sandbox.id") or labels.get("compassx.sandbox-id")
                     ckey = annos.get("compassx.sandbox.consumer_key") or labels.get("compassx.consumer-key")
-                    if sb_id and (clean_id in sb_id or underscore_id in sb_id):
+                    if sb_id and (clean_id in sb_id or underscore_id in sb_id or raw_uuid in sb_id):
                         matched.append(p)
                         continue
-                    if ckey and (clean_id in ckey or underscore_id in ckey):
+                    if ckey and (clean_id in ckey or underscore_id in ckey or raw_uuid in ckey):
                         matched.append(p)
                         continue
 
