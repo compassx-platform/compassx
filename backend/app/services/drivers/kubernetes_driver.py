@@ -2093,7 +2093,7 @@ class KubernetesDevDriver(BaseDevDriver):
         pi_models = [{"id": m, "name": m, "contextWindow": 128000, "maxTokens": 8192} for m in models]
 
         py_script = (
-            "import json, os\n"
+            "import json, os, shutil\n"
             f"api_key = {json.dumps(api_key)}\n"
             f"base_url = {json.dumps(base_url)}\n"
             f"oc_models = {json.dumps(oc_models)}\n"
@@ -2111,6 +2111,28 @@ class KubernetesDevDriver(BaseDevDriver):
             "        with open(p, 'w') as f: json.dump(doc, f, indent=2)\n"
             "    except Exception:\n"
             "        pass\n"
+            "try:\n"
+            "    auth_dirs = ['/workspaces/.shared_auth/.gemini', '/workspace/.gemini_auth']\n"
+            "    has_root_token = os.path.exists('/root/.gemini/antigravity-cli/antigravity-oauth-token') or os.path.exists('/root/.gemini/oauth_creds.json')\n"
+            "    if not has_root_token:\n"
+            "        for ad in auth_dirs:\n"
+            "            if os.path.isdir(ad) and os.listdir(ad):\n"
+            "                if os.path.realpath('/root/.gemini') != os.path.realpath(ad):\n"
+            "                    os.makedirs('/root/.gemini', exist_ok=True)\n"
+            "                    shutil.copytree(ad, '/root/.gemini', dirs_exist_ok=True)\n"
+            "                break\n"
+            "    elif os.path.isdir('/root/.gemini') and os.listdir('/root/.gemini'):\n"
+            "        for ad in auth_dirs:\n"
+            "            try:\n"
+            "                if os.path.realpath('/root/.gemini') != os.path.realpath(ad):\n"
+            "                    parent = os.path.dirname(ad)\n"
+            "                    if os.path.isdir(parent) or parent in ('/workspace', '/workspaces', '/workspaces/.shared_auth'):\n"
+            "                        os.makedirs(ad, exist_ok=True)\n"
+            "                        shutil.copytree('/root/.gemini', ad, dirs_exist_ok=True)\n"
+            "            except Exception:\n"
+            "                pass\n"
+            "except Exception:\n"
+            "    pass\n"
             "try:\n"
             "    tmux_cfg = (\n"
             "        'set-option -g history-limit 50000\\n'\n"
@@ -2202,6 +2224,10 @@ class KubernetesDevDriver(BaseDevDriver):
                 cli_cmd = "exec /bin/bash -l"
 
         ai_gw_url = f"http://compassx-backend.{ns}.svc.cluster.local:8000/api/v1/ai-gateway/v1"
+        auth_restore = (
+            "if [ -d /workspaces/.shared_auth/.gemini ] && [ -n \"$(find /workspaces/.shared_auth/.gemini -type f 2>/dev/null)\" ]; then cp -rn /workspaces/.shared_auth/.gemini/* /root/.gemini/ 2>/dev/null || true; "
+            "elif [ -d /workspace/.gemini_auth ] && [ -n \"$(find /workspace/.gemini_auth -type f 2>/dev/null)\" ]; then cp -rn /workspace/.gemini_auth/* /root/.gemini/ 2>/dev/null || true; fi; "
+        )
 
         if session_name and cli_cmd:
             tmux_target = session_name.replace("'", "")
@@ -2214,6 +2240,7 @@ class KubernetesDevDriver(BaseDevDriver):
                 "/bin/sh", "-c",
                 f"cd {workdir} 2>/dev/null; "
                 f"export TERM=xterm-256color; "
+                f"{auth_restore}"
                 f"{tmux_init}"
                 f"tmux new-session -A -D -s '{tmux_target}' -c '{workdir}' '{clean_cmd} || exec /bin/bash -l' || exec /bin/bash -l"
             ]
@@ -2223,6 +2250,7 @@ class KubernetesDevDriver(BaseDevDriver):
                 "/bin/sh", "-c",
                 f"cd {workdir} 2>/dev/null; "
                 f"export TERM=xterm-256color; "
+                f"{auth_restore}"
                 f"{clean_cmd} || exec /bin/bash -l"
             ]
         else:
@@ -2230,6 +2258,7 @@ class KubernetesDevDriver(BaseDevDriver):
                 "/bin/sh", "-c",
                 f"cd {workdir} 2>/dev/null; "
                 f"export TERM=xterm-256color; "
+                f"{auth_restore}"
                 f"if [ -x /bin/bash ]; then exec /bin/bash -l; else exec /bin/sh -l; fi"
             ]
 

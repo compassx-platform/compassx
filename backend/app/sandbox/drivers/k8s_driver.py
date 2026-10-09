@@ -89,6 +89,7 @@ class KubernetesSandboxDriver(BaseSandboxDriver):
             V1EnvVar,
             V1HostPathVolumeSource,
             V1ObjectMeta,
+            V1PersistentVolumeClaimVolumeSource,
             V1Pod,
             V1PodSpec,
             V1ResourceRequirements,
@@ -149,6 +150,28 @@ class KubernetesSandboxDriver(BaseSandboxDriver):
                     host_path=V1HostPathVolumeSource(path=source_p, type="DirectoryOrCreate"),
                 )
             )
+
+        # 3b. Check if cluster has shared-storage PVC for multi-app persistent auth/workspace sync
+        shared_pvc = os.environ.get("COMPASSX_SHARED_STORAGE_PVC") or "compassx-shared-storage"
+        if not any(m.mount_path == "/workspaces" for m in spec.storage_mounts):
+            try:
+                pvc_check = k8s.core().read_namespaced_persistent_volume_claim(name=shared_pvc, namespace=self.namespace)
+                if pvc_check and pvc_check.status and pvc_check.status.phase in ("Bound", "Pending"):
+                    volume_mounts.append(
+                        V1VolumeMount(
+                            name="shared-storage",
+                            mount_path="/workspaces",
+                            sub_path="workspaces",
+                        )
+                    )
+                    volumes.append(
+                        V1Volume(
+                            name="shared-storage",
+                            persistent_volume_claim=V1PersistentVolumeClaimVolumeSource(claim_name=shared_pvc),
+                        )
+                    )
+            except Exception:
+                pass
 
         # 4. Resource limits
         requests = {"cpu": "100m", "memory": "256Mi"}

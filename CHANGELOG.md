@@ -5,6 +5,22 @@ All notable changes to the CompassX Platform will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.24] - 2026-10-09
+
+### 🚀 Highlights
+
+CompassX `0.12.24` introduces **Persistent Antigravity & AI Agent Authentication Across Sandbox Pod Restarts**, **Automated Shared Storage PVC Auto-Mounting (`compassx-shared-storage`)**, and **Bi-directional Daemonized Agent Credential Synchronization**.
+
+### ✨ Features & Enhancements
+
+#### Persistent Antigravity & AI Agent Authentication
+- **Dual-Layer Token Persistence (`k8s_driver.py`, `app_dev_routes.py`, `kubernetes_driver.py`)**: Persists Antigravity OAuth tokens (`antigravity-oauth-token`, `oauth_creds.json`, `jetski_state.pbtxt`, `installation_id`, `config.json`, `mcp_config.json`) across container restarts by backing them up to both the persistent workspace repo volume (`/workspace/.gemini_auth`) and the cluster shared storage PVC (`/workspaces/.shared_auth/.gemini`).
+- **Cluster Shared Storage PVC Auto-Mounting (`k8s_driver.py`)**: Automatically detects and mounts `compassx-shared-storage` PVC at `/workspaces` (with subPath `workspaces`) whenever present in the cluster namespace, enabling seamless cross-pod credential and asset sharing.
+- **Continuous Auth Sync Daemon (`app_dev_routes.py`)**: Runs an asynchronous background sync loop in sandboxes every 5 seconds, capturing refreshed OAuth tokens and state changes in `/root/.gemini/` and syncing them instantly to persistent storage without disrupting running dev servers.
+- **Terminal Session Pre-Seeding (`kubernetes_driver.py`, `docker_driver.py`)**: Automatically ensures `/root/.gemini` authentication files are restored and permissions set upon terminal attachment and exec command execution.
+
+---
+
 ## [0.12.23] - 2026-10-09
 
 ### 🚀 Highlights

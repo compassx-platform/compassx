@@ -931,11 +931,20 @@ class DockerDevDriver(BaseDevDriver):
             container_token_content = (chk.stdout or "").strip() if chk.returncode == 0 else ""
 
             if container_token_content and "refresh_token" in container_token_content and "auto-authenticated" not in container_token_content:
-                # Container has genuine token; persist to host storage
+                # Container has genuine token; persist to host storage and workspace
                 with open(host_token_file, "w", encoding="utf-8") as f:
                     f.write(container_token_content)
                 with open(host_creds_file, "w", encoding="utf-8") as f:
                     f.write(container_token_content)
+                subprocess.run(
+                    ["docker", "exec", dev_container_name, "bash", "-c",
+                     "for d in /workspace/.gemini_auth /app/.gemini_auth; do "
+                     "  mkdir -p \"$d/antigravity-cli\"; "
+                     "  cp -f /root/.gemini/antigravity-cli/antigravity-oauth-token \"$d/antigravity-cli/\" 2>/dev/null || true; "
+                     "  cp -f /root/.gemini/oauth_creds.json \"$d/\" 2>/dev/null || true; "
+                     "done"],
+                    capture_output=True, check=False, timeout=3.0,
+                )
             elif os.path.isfile(host_token_file):
                 # Container is missing or has stale token; seed from host storage
                 subprocess.run(
@@ -953,8 +962,8 @@ class DockerDevDriver(BaseDevDriver):
                 # Also propagate to any running omnigent antigravity session home directories
                 subprocess.run(
                     ["docker", "exec", dev_container_name, "bash", "-c",
-                     "for d in /root/.omnigent/antigravity-native/*/agy-home/.gemini; do "
-                     "  if [ -d \"$d\" ]; then "
+                     "for d in /root/.omnigent/antigravity-native/*/agy-home/.gemini /workspace/.gemini_auth /app/.gemini_auth; do "
+                     "  if [ -d \"$d\" ] || [ \"$d\" = \"/workspace/.gemini_auth\" ]; then "
                      "    mkdir -p \"$d/antigravity-cli\"; "
                      "    cp -f /root/.gemini/antigravity-cli/antigravity-oauth-token \"$d/antigravity-cli/\" 2>/dev/null || true; "
                      "    cp -f /root/.gemini/oauth_creds.json \"$d/\" 2>/dev/null || true; "
@@ -1007,6 +1016,29 @@ class DockerDevDriver(BaseDevDriver):
             "        with open(p, 'w') as f: json.dump(doc, f, indent=2)\n"
             "    except Exception:\n"
             "        pass\n"
+            "try:\n"
+            "    import shutil\n"
+            "    auth_dirs = ['/workspace/.gemini_auth', '/app/.gemini_auth']\n"
+            "    has_root_token = os.path.exists('/root/.gemini/antigravity-cli/antigravity-oauth-token') or os.path.exists('/root/.gemini/oauth_creds.json')\n"
+            "    if not has_root_token:\n"
+            "        for ad in auth_dirs:\n"
+            "            if os.path.isdir(ad) and os.listdir(ad):\n"
+            "                if os.path.realpath('/root/.gemini') != os.path.realpath(ad):\n"
+            "                    os.makedirs('/root/.gemini', exist_ok=True)\n"
+            "                    shutil.copytree(ad, '/root/.gemini', dirs_exist_ok=True)\n"
+            "                break\n"
+            "    elif os.path.isdir('/root/.gemini') and os.listdir('/root/.gemini'):\n"
+            "        for ad in auth_dirs:\n"
+            "            try:\n"
+            "                if os.path.realpath('/root/.gemini') != os.path.realpath(ad):\n"
+            "                    parent = os.path.dirname(ad)\n"
+            "                    if os.path.isdir(parent) or parent in ('/workspace', '/app'):\n"
+            "                        os.makedirs(ad, exist_ok=True)\n"
+            "                        shutil.copytree('/root/.gemini', ad, dirs_exist_ok=True)\n"
+            "            except Exception:\n"
+            "                pass\n"
+            "except Exception:\n"
+            "    pass\n"
             "try:\n"
             "    tmux_cfg = (\n"
             "        'set-option -g history-limit 50000\\n'\n"

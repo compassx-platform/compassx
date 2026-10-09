@@ -490,6 +490,37 @@ def _build_app_sandbox_spec(app: App) -> SandboxSpec:
         "\" > /tmp/auto_start.log 2>&1 &"
     )
 
+    auth_sync_script = (
+        "mkdir -p /root/.gemini/antigravity-cli /root/.gemini/config /workspace/.gemini_auth/antigravity-cli /workspace/.gemini_auth/config 2>/dev/null || true; "
+        "if [ -d /workspaces/.shared_auth/.gemini ] && [ -n \"$(find /workspaces/.shared_auth/.gemini -type f 2>/dev/null)\" ]; then "
+        "  cp -rn /workspaces/.shared_auth/.gemini/* /root/.gemini/ 2>/dev/null || true; "
+        "  cp -rn /workspaces/.shared_auth/.gemini/* /workspace/.gemini_auth/ 2>/dev/null || true; "
+        "elif [ -d /workspace/.gemini_auth ] && [ -n \"$(find /workspace/.gemini_auth -type f 2>/dev/null)\" ]; then "
+        "  cp -rn /workspace/.gemini_auth/* /root/.gemini/ 2>/dev/null || true; "
+        "  if [ -d /workspaces ]; then "
+        "    mkdir -p /workspaces/.shared_auth/.gemini 2>/dev/null || true; "
+        "    cp -rn /workspace/.gemini_auth/* /workspaces/.shared_auth/.gemini/ 2>/dev/null || true; "
+        "  fi; "
+        "fi; "
+        "(while true; do "
+        "  for src in /root/.gemini /root/.omnigent/antigravity-native/*/agy-home/.gemini; do "
+        "    if [ -d \"$src\" ]; then "
+        "      for f in antigravity-cli/antigravity-oauth-token oauth_creds.json antigravity-cli/jetski_state.pbtxt antigravity-cli/installation_id config/config.json config/projects/default-cli-project.json config/mcp_config.json; do "
+        "        if [ -f \"$src/$f\" ] && [ -s \"$src/$f\" ]; then "
+        "          mkdir -p \"/workspace/.gemini_auth/$(dirname \"$f\")\" 2>/dev/null || true; "
+        "          cp -u \"$src/$f\" \"/workspace/.gemini_auth/$f\" 2>/dev/null || cp -f \"$src/$f\" \"/workspace/.gemini_auth/$f\" 2>/dev/null || true; "
+        "          if [ -d /workspaces/.shared_auth/.gemini ]; then "
+        "            mkdir -p \"/workspaces/.shared_auth/.gemini/$(dirname \"$f\")\" 2>/dev/null || true; "
+        "            cp -u \"$src/$f\" \"/workspaces/.shared_auth/.gemini/$f\" 2>/dev/null || cp -f \"$src/$f\" \"/workspaces/.shared_auth/.gemini/$f\" 2>/dev/null || true; "
+        "          fi; "
+        "        fi; "
+        "      done; "
+        "    fi; "
+        "  done; "
+        "  sleep 3; "
+        "done) &"
+    )
+
     return SandboxSpec(
         sandbox_id=f"dev-app-{app.id}",
         consumer_key=f"app_{app.id}",
@@ -500,6 +531,7 @@ def _build_app_sandbox_spec(app: App) -> SandboxSpec:
         ports=[8080, 9201],
         storage_mounts=[StorageMount(source_path=repo_dir, mount_path="/workspace")],
         init_scripts=[
+            InitScript(name="Restore & Sync Agent Auth", command=auth_sync_script, ignore_failure=True),
             InitScript(name="Configure Git Credentials", command=git_config_cmd, ignore_failure=True),
             InitScript(name="Prepare Workspace Code", command=clone_cmd, ignore_failure=True),
             InitScript(name="Install Dependencies", command="pip install -r requirements.txt || (find /workspace -maxdepth 3 -name package.json -execdir npm install \\; 2>/dev/null) || true", timeout_seconds=180, ignore_failure=True),
