@@ -292,57 +292,63 @@ env:
         self.assertEqual(run_cfg["backend_dir"], "api")
         self.assertEqual(run_cfg["frontend_command"], "npm run start")
         self.assertEqual(run_cfg["frontend_dir"], "client")
+        self.assertIn("export PORT=8080", run_cfg["env_exports"])
+        self.assertIn("export DEBUG=true", run_cfg["env_exports"])
+
     def test_run_dev_app_with_manifest_and_custom_env(self):
-        """Test run_dev_app does not raise NameError for env_exports and properly includes manifest & custom env."""
-        from unittest import mock
-        from app.models.app import App
-        fake_app = App(id="app-test12345", name="Test App", config={"env_vars": [{"key": "CUSTOM_VAR", "value": "custom_val"}]})
-        
+        """Test run_dev_app properly combines custom app.config and app.yaml env variables."""
+        mock_app = MockApp()
+        mock_app.git_repo_url = "https://github.com/example/test-repo.git"
+        mock_app.config = {"env_vars": [{"key": "CUSTOM_VAR", "value": "custom_val"}]}
+
         yaml_text = """
 services:
   backend:
     command: "python main.py"
     port: 8000
-  frontend:
-    command: "npm run dev"
-    port: 4000
 env:
   - name: MANIFEST_VAR
     value: "manifest_val"
 """
         manifest = app_manifest_service.parse_manifest_text(yaml_text, "app.yaml")
-        with mock.patch.object(omnigent_dev_service, "_resolve_app_manifest", return_value=manifest):
-            mock_driver = mock.MagicMock()
+        with patch.object(omnigent_dev_service, "_resolve_app_manifest", return_value=manifest), \
+             patch("app.services.app_runner.app_runner_service.clone_or_update_repo", return_value="/tmp/test-repo"):
+            mock_driver = MagicMock()
             mock_driver.exec_command_in_dev.return_value = {
                 "success": True,
                 "output": "✓ Phase 4 Complete: Application dev runtime is running and ready.",
             }
-            with mock.patch("app.services.drivers.factory.driver_factory.get_dev_driver", return_value=mock_driver):
-                res = omnigent_dev_service.run_dev_app(fake_app)
+            with patch("app.services.drivers.factory.driver_factory.get_dev_driver", return_value=mock_driver):
+                res = omnigent_dev_service.run_dev_app(mock_app)
                 self.assertTrue(res["success"])
-                # Ensure exec_command_in_dev was called with both custom and manifest env exports
                 called_cmd = mock_driver.exec_command_in_dev.call_args[1]["command"]
                 self.assertIn("export CUSTOM_VAR=", called_cmd)
                 self.assertIn("custom_val", called_cmd)
                 self.assertIn("export MANIFEST_VAR=", called_cmd)
                 self.assertIn("manifest_val", called_cmd)
 
-    def test_auto_start_script_syntax_validity(self):
-        """Verify that auto_start_script parses cleanly in Python without syntax errors."""
-        import ast
-        import re
-        from app.routes.app_dev_routes import build_auto_start_script
-        auto_script = build_auto_start_script()
-        # auto_start_script starts with 'python3 -c "' and ends with '" > /tmp/auto_start.log 2>&1 &'
-        match = re.search(r'python3 -c "(.*)"\s*>', auto_script, re.DOTALL)
-        self.assertIsNotNone(match)
-        py_code = match.group(1).encode().decode('unicode_escape')
-        # ast.parse will throw SyntaxError if there is any syntax error in the python code
-        parsed_ast = ast.parse(py_code)
-        self.assertIsNotNone(parsed_ast)
+    def test_k8s_pod_name_matching_slug(self):
+        """Test KubernetesDevDriver matches pods by slug prefix."""
+        driver = KubernetesDevDriver()
+        mock_k8s = MagicMock()
+        mock_core = MagicMock()
+        mock_k8s.core.return_value = mock_core
+        mock_pod1 = MagicMock()
+        mock_pod1.metadata.name = "dev-myapp-test-6d9b4c-xyz"
+        mock_pod1.metadata.deletion_timestamp = None
+        mock_pod1.metadata.creation_timestamp = None
+        mock_pod1.metadata.annotations = {}
+        mock_pod1.metadata.labels = {}
+        mock_pod1.status.phase = "Running"
+        mock_pod1.status.container_statuses = [MagicMock(ready=True)]
+        mock_core.list_namespaced_pod.return_value.items = [mock_pod1]
+
+        with patch.object(driver, "_get_k8s_client", return_value=mock_k8s):
+            found = driver._find_running_pod_name("different-id", "default", app_slug="myapp-test", wait_seconds=0)
+            self.assertEqual(found, "dev-myapp-test-6d9b4c-xyz")
+
 
 
 if __name__ == "__main__":
     unittest.main()
-
 

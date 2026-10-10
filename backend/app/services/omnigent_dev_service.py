@@ -1786,8 +1786,13 @@ class OmnigentDevService:
                         app_env_exports.append(f"export {k}={shlex.quote(str(v))};")
                 elif isinstance(ev, str) and "=" in ev:
                     k, v = ev.split("=", 1)
-                    app_env_exports.append(f"export {k.strip()}={shlex.quote(v.strip())};")
-        manifest_env_exports = app_manifest_service.get_env_exports(manifest_data) if manifest_data else ""
+        # Collect environment variables from app.yaml manifest / run configuration
+        manifest_env_exports = ""
+        if run_cfg and run_cfg.get("env_exports"):
+            manifest_env_exports = run_cfg.get("env_exports", "")
+        elif manifest_data:
+            manifest_env_exports = app_manifest_service.get_env_exports(manifest_data)
+
         combined_env_exports = (" ".join(app_env_exports) + " " + (manifest_env_exports or "")).strip()
 
         if run_cfg:

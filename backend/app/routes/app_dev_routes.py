@@ -1,4 +1,5 @@
 import os
+import base64
 import logging
 from typing import Optional, List, Dict, Any
 from pydantic import BaseModel
@@ -349,129 +350,6 @@ def delete_app_session(
     return dev_session_service.delete_session(app=app, session_id=session_id)
 
 
-def build_auto_start_script() -> str:
-    return (
-        "python3 -c \""
-        "import os, sys, subprocess, yaml, time, socket, threading, re\n"
-        "manifest = None\n"
-        "for search_dir in ['/workspace', '/workspaces']:\n"
-        "    if not os.path.exists(search_dir): continue\n"
-        "    for root, _, files in os.walk(search_dir):\n"
-        "        if 'node_modules' in root or '.git' in root: continue\n"
-        "        for f in ('app.yaml', 'app.yml'):\n"
-        "            if f in files:\n"
-        "                try:\n"
-        "                    with open(os.path.join(root, f), 'r', encoding='utf-8') as fh:\n"
-        "                        manifest = yaml.safe_load(fh)\n"
-        "                        manifest['_dir'] = root\n"
-        "                        break\n"
-        "                except Exception: pass\n"
-        "        if manifest: break\n"
-        "    if manifest: break\n"
-        "mdir = manifest.get('_dir', '/workspace') if manifest else '/workspace'\n"
-        "services = (manifest.get('services') or {}) if manifest else {}\n"
-        "b_cmd = None; b_port = 8000; b_dir = mdir; b_path = '/api'\n"
-        "f_cmd = None; f_port = 4000; f_dir = mdir\n"
-        "if isinstance(services, dict) and services:\n"
-        "    b_svc = services.get('backend') or services.get('api')\n"
-        "    if b_svc:\n"
-        "        b_cmd = b_svc.get('command') if isinstance(b_svc, dict) else str(b_svc)\n"
-        "        if isinstance(b_svc, dict):\n"
-        "            b_port = int(b_svc.get('port', 8000))\n"
-        "            if b_svc.get('dir'): b_dir = os.path.normpath(os.path.join(mdir, b_svc['dir']))\n"
-        "            b_path = b_svc.get('path', '/api')\n"
-        "    f_svc = services.get('frontend') or services.get('ui') or services.get('web')\n"
-        "    if f_svc:\n"
-        "        f_cmd = f_svc.get('command') if isinstance(f_svc, dict) else str(f_svc)\n"
-        "        if isinstance(f_svc, dict):\n"
-        "            f_port = int(f_svc.get('port', 4000))\n"
-        "            if f_svc.get('dir'): f_dir = os.path.normpath(os.path.join(mdir, f_svc['dir']))\n"
-        "elif manifest and 'command' in manifest:\n"
-        "    b_cmd = manifest.get('command')\n"
-        "    b_port = int(manifest.get('port', manifest.get('backend_port', 8080)))\n"
-        "    if manifest.get('frontend'):\n"
-        "        f_cmd = manifest.get('frontend')\n"
-        "        f_port = int(manifest.get('frontend_port', 4000))\n"
-        "else:\n"
-        "    for root, dirs, files in os.walk(mdir):\n"
-        "        if 'node_modules' in root or '.git' in root: continue\n"
-        "        if not b_cmd and any(f in files for f in ('app.py', 'main.py', 'server.py')):\n"
-        "            b_dir = root; b_cmd = 'uvicorn main:app --host 0.0.0.0 --port 8000 --reload' if 'main.py' in files else 'python3 app.py'\n"
-        "        if not f_cmd and 'package.json' in files:\n"
-        "            f_dir = root; f_cmd = 'npm run dev -- --port 4000 --host 0.0.0.0'\n"
-        "for search_dir in ['/workspace', '/workspaces']:\n"
-        "    if not os.path.exists(search_dir): continue\n"
-        "    for root, _, files in os.walk(search_dir):\n"
-        "        if 'node_modules' in root or '.git' in root: continue\n"
-        "        for vf in files:\n"
-        "            if vf.startswith('vite.config.') and vf.endswith(('.ts', '.js', '.mjs', '.cjs')):\n"
-        "                vp = os.path.join(root, vf)\n"
-        "                try:\n"
-        "                    with open(vp, 'r') as vfh: vc = vfh.read()\n"
-        "                    if 'allowedHosts' not in vc and 'server:' in vc:\n"
-        "                        vc = re.sub(r'server\\\\s*:\\\\s*\\\\{', 'server: {\\\\n    allowedHosts: true,', vc, count=1)\n"
-        "                        with open(vp, 'w') as vfh: vfh.write(vc)\n"
-        "                except Exception: pass\n"
-        "if b_cmd:\n"
-        "    b_str = ' '.join(b_cmd) if isinstance(b_cmd, list) else str(b_cmd)\n"
-        "    subprocess.Popen(b_str, shell=True, cwd=b_dir, stdout=open('/tmp/app_backend.log', 'a'), stderr=subprocess.STDOUT)\n"
-        "if f_cmd:\n"
-        "    f_str = ' '.join(f_cmd) if isinstance(f_cmd, list) else str(f_cmd)\n"
-        "    subprocess.Popen(f_str, shell=True, cwd=f_dir, stdout=open('/tmp/app_frontend.log', 'a'), stderr=subprocess.STDOUT)\n"
-        "time.sleep(0.5)\n"
-        "GATEWAY_PORT = 8080\n"
-        "SPLASH_HTML = b'HTTP/1.1 200 OK\\\\r\\\\nContent-Type: text/html; charset=utf-8\\\\r\\\\nConnection: close\\\\r\\\\n\\\\r\\\\n<!DOCTYPE html><html><head><meta charset=\"utf-8\"><meta http-equiv=\"refresh\" content=\"2\"><title>Live Sandbox Starting</title><style>body{background:#0b0f19;color:#f1f5f9;font-family:-apple-system,BlinkMacSystemFont,sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;}.card{background:#111827;border:1px solid #1e293b;border-radius:12px;padding:2.5rem;text-align:center;max-width:440px;box-shadow:0 20px 25px -5px rgba(0,0,0,0.5);}.spinner{width:38px;height:38px;border:3px solid rgba(59,130,246,0.2);border-top-color:#3b82f6;border-radius:50%;animation:spin 0.8s linear infinite;margin:0 auto 1.25rem;}@keyframes spin{to{transform:rotate(360deg);}}h2{font-size:1.2rem;font-weight:600;margin-bottom:0.5rem;color:#f8fafc;}p{font-size:0.875rem;color:#94a3b8;line-height:1.5;}</style></head><body><div class=\"card\"><div class=\"spinner\"></div><h2>Live Sandbox Starting...</h2><p>Application dev server is compiling and starting. This preview will automatically refresh once ready.</p></div></body></html>'\n"
-        "def forward(src, dst):\n"
-        "    while True:\n"
-        "        try:\n"
-        "            data = src.recv(8192)\n"
-        "            if not data: break\n"
-        "            dst.sendall(data)\n"
-        "        except Exception: break\n"
-        "    try: src.close()\n"
-        "    except Exception: pass\n"
-        "    try: dst.close()\n"
-        "    except Exception: pass\n"
-        "def handle_client(client):\n"
-        "    try:\n"
-        "        peek = client.recv(1024, socket.MSG_PEEK)\n"
-        "        t_port = f_port if f_cmd else b_port\n"
-        "        if peek and f_cmd and b_cmd:\n"
-        "            try:\n"
-        "                line = peek.decode('utf-8', errors='ignore').split('\\\\r\\\\n')[0]\n"
-        "                parts = line.split(' ')\n"
-        "                if len(parts) >= 2:\n"
-        "                    path = parts[1]\n"
-        "                    if path.startswith(b_path) or path.startswith('/ws') or path.startswith('/docs') or path.startswith('/openapi.json'):\n"
-        "                        t_port = b_port\n"
-        "                    else:\n"
-        "                        t_port = f_port\n"
-        "            except Exception: pass\n"
-        "        try:\n"
-        "            target = socket.create_connection(('127.0.0.1', int(t_port)), timeout=3)\n"
-        "            threading.Thread(target=forward, args=(client, target), daemon=True).start()\n"
-        "            threading.Thread(target=forward, args=(target, client), daemon=True).start()\n"
-        "        except Exception:\n"
-        "            try:\n"
-        "                client.sendall(SPLASH_HTML)\n"
-        "                client.close()\n"
-        "            except Exception: pass\n"
-        "    except Exception:\n"
-        "        try: client.close()\n"
-        "        except Exception: pass\n"
-        "srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)\n"
-        "srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)\n"
-        "srv.bind(('0.0.0.0', GATEWAY_PORT))\n"
-        "srv.listen(100)\n"
-        "while True:\n"
-        "    try:\n"
-        "        c, _ = srv.accept()\n"
-        "        threading.Thread(target=handle_client, args=(c,), daemon=True).start()\n"
-        "    except Exception: pass\n"
-        "\" > /tmp/auto_start.log 2>&1 &"
-    )
-
-
 def _build_app_sandbox_spec(app: App) -> SandboxSpec:
     repo_dir = omnigent_dev_service.get_repo_dir(app)
     clean_k8s_app_id = app.id.replace("_", "-").lower()
@@ -510,7 +388,207 @@ def _build_app_sandbox_spec(app: App) -> SandboxSpec:
         elif "gitlab.com" in (git_url or ""):
             git_config_cmd += f" && git config --global url.\"https://oauth2:{git_token}@gitlab.com/\".insteadOf \"https://gitlab.com/\""
 
-    auto_start_script = build_auto_start_script()
+    raw_auto_start_py = """import os, sys, subprocess, yaml, time, socket, threading, re
+
+if os.fork() != 0:
+    sys.exit(0)
+os.setsid()
+if os.fork() != 0:
+    sys.exit(0)
+
+sys.stdout.flush()
+sys.stderr.flush()
+si = open('/dev/null', 'r')
+so = open('/tmp/auto_start.log', 'a+')
+se = open('/tmp/auto_start.log', 'a+', 1)
+os.dup2(si.fileno(), sys.stdin.fileno())
+os.dup2(so.fileno(), sys.stdout.fileno())
+os.dup2(se.fileno(), sys.stderr.fileno())
+
+print("[auto_start] Daemon initialized", flush=True)
+
+manifest = None
+for base_dir in ['/workspace', '/workspaces']:
+    if not os.path.exists(base_dir):
+        continue
+    for f in ('app.yaml', 'app.yml'):
+        p = os.path.join(base_dir, f)
+        if os.path.isfile(p):
+            try:
+                with open(p, 'r', encoding='utf-8') as fh:
+                    manifest = yaml.safe_load(fh)
+                    manifest['_dir'] = base_dir
+                    print(f"[auto_start] Found direct manifest: {p}", flush=True)
+                    break
+            except Exception as e:
+                print(f"[auto_start] Error loading manifest: {e}", flush=True)
+    if manifest:
+        break
+    for root, dirs, files in os.walk(base_dir):
+        depth = root[len(base_dir):].count(os.sep)
+        if depth > 3:
+            dirs[:] = []
+            continue
+        if any(x in root for x in ('node_modules', '.git', '.cache', '__pycache__', 'venv', '.venv')):
+            dirs[:] = []
+            continue
+        for f in ('app.yaml', 'app.yml'):
+            if f in files:
+                try:
+                    with open(os.path.join(root, f), 'r', encoding='utf-8') as fh:
+                        manifest = yaml.safe_load(fh)
+                        manifest['_dir'] = root
+                        print(f"[auto_start] Found manifest: {os.path.join(root, f)}", flush=True)
+                        break
+                except Exception as e:
+                    print(f"[auto_start] Error loading manifest: {e}", flush=True)
+        if manifest:
+            break
+    if manifest:
+        break
+
+mdir = manifest.get('_dir', '/workspace') if manifest else '/workspace'
+services = (manifest.get('services') or {}) if manifest else {}
+b_cmd = None
+b_port = 8877
+b_dir = mdir
+b_path = '/api'
+f_cmd = None
+f_port = 4000
+f_dir = mdir
+
+if isinstance(services, dict) and services:
+    b_svc = services.get('backend') or services.get('api')
+    if b_svc:
+        b_cmd = b_svc.get('command') if isinstance(b_svc, dict) else str(b_svc)
+        if isinstance(b_svc, dict):
+            b_port = int(b_svc.get('port', 8877))
+            if b_svc.get('dir'):
+                b_dir = os.path.normpath(os.path.join(mdir, b_svc['dir']))
+            b_path = b_svc.get('path', '/api')
+    f_svc = services.get('frontend') or services.get('ui')
+    if f_svc:
+        f_cmd = f_svc.get('command') if isinstance(f_svc, dict) else str(f_svc)
+        if isinstance(f_svc, dict):
+            f_port = int(f_svc.get('port', 4000))
+            if f_svc.get('dir'):
+                f_dir = os.path.normpath(os.path.join(mdir, f_svc['dir']))
+elif manifest and 'command' in manifest:
+    b_cmd = manifest.get('command')
+    b_port = int(manifest.get('port', manifest.get('backend_port', 8877)))
+    if manifest.get('frontend'):
+        f_cmd = manifest.get('frontend')
+        f_port = int(manifest.get('frontend_port', 4000))
+else:
+    for root, dirs, files in os.walk(mdir):
+        if any(x in root for x in ('node_modules', '.git', '.cache')):
+            dirs[:] = []
+            continue
+        if not b_cmd and any(f in files for f in ('app.py', 'main.py', 'server.py')):
+            b_dir = root
+            b_cmd = 'uvicorn main:app --host 0.0.0.0 --port 8000 --reload' if 'main.py' in files else 'python3 app.py'
+        if not f_cmd and 'package.json' in files:
+            f_dir = root
+            f_cmd = 'npm run dev -- --port 4000 --host 0.0.0.0'
+
+print(f"[auto_start] Starting backend in {b_dir}: {b_cmd} (port {b_port})", flush=True)
+print(f"[auto_start] Starting frontend in {f_dir}: {f_cmd} (port {f_port})", flush=True)
+
+for check_dir in ['/workspace']:
+    if os.path.exists(check_dir):
+        for root, dirs, files in os.walk(check_dir):
+            if any(x in root for x in ('node_modules', '.git')):
+                dirs[:] = []
+                continue
+            for vf in files:
+                if vf.startswith('vite.config.') and vf.endswith(('.ts', '.js', '.mjs', '.cjs')):
+                    vp = os.path.join(root, vf)
+                    try:
+                        with open(vp, 'r', encoding='utf-8') as vfh:
+                            vc = vfh.read()
+                        if 'allowedHosts' not in vc and 'server:' in vc:
+                            vc = re.sub(r'server\\s*:\\s*\\{', 'server: {\\n    allowedHosts: true,', vc, count=1)
+                            with open(vp, 'w', encoding='utf-8') as vfh:
+                                vfh.write(vc)
+                    except Exception:
+                        pass
+
+if b_cmd:
+    b_str = ' '.join(b_cmd) if isinstance(b_cmd, list) else str(b_cmd)
+    subprocess.Popen(b_str, shell=True, cwd=b_dir, stdout=open('/tmp/app_backend.log', 'a'), stderr=subprocess.STDOUT)
+
+if f_cmd:
+    f_str = ' '.join(f_cmd) if isinstance(f_cmd, list) else str(f_cmd)
+    subprocess.Popen(f_str, shell=True, cwd=f_dir, stdout=open('/tmp/app_frontend.log', 'a'), stderr=subprocess.STDOUT)
+
+time.sleep(0.5)
+GATEWAY_PORT = 8080
+SPLASH_HTML = b'HTTP/1.1 200 OK\\r\\nContent-Type: text/html; charset=utf-8\\r\\nConnection: close\\r\\n\\r\\n<!DOCTYPE html><html><head><meta charset="utf-8"><meta http-equiv="refresh" content="2"><title>Live Sandbox Starting</title><style>body{background:#0b0f19;color:#f1f5f9;font-family:-apple-system,BlinkMacSystemFont,sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;}.card{background:#111827;border:1px solid #1e293b;border-radius:12px;padding:2.5rem;text-align:center;max-width:440px;box-shadow:0 20px 25px -5px rgba(0,0,0,0.5);}.spinner{width:38px;height:38px;border:3px solid rgba(59,130,246,0.2);border-top-color:#3b82f6;border-radius:50%;animation:spin 0.8s linear infinite;margin:0 auto 1.25rem;}@keyframes spin{to{transform:rotate(360deg);}}h2{font-size:1.2rem;font-weight:600;margin-bottom:0.5rem;color:#f8fafc;}p{font-size:0.875rem;color:#94a3b8;line-height:1.5;}</style></head><body><div class="card"><div class="spinner"></div><h2>Live Sandbox Starting...</h2><p>Application dev server is compiling and starting. This preview will automatically refresh once ready.</p></div></body></html>'
+
+def forward(src, dst):
+    while True:
+        try:
+            data = src.recv(8192)
+            if not data:
+                break
+            dst.sendall(data)
+        except Exception:
+            break
+    try:
+        src.close()
+    except Exception:
+        pass
+    try:
+        dst.close()
+    except Exception:
+        pass
+
+def handle_client(client):
+    try:
+        peek = client.recv(1024, socket.MSG_PEEK)
+        t_port = f_port if f_cmd else b_port
+        if peek and f_cmd and b_cmd:
+            try:
+                line = peek.decode('utf-8', errors='ignore').split('\\r\\n')[0]
+                parts = line.split(' ')
+                if len(parts) >= 2:
+                    path = parts[1]
+                    if path.startswith(b_path) or path.startswith('/ws') or path.startswith('/docs') or path.startswith('/openapi.json'):
+                        t_port = b_port
+                    else:
+                        t_port = f_port
+            except Exception:
+                pass
+        try:
+            target = socket.create_connection(('127.0.0.1', int(t_port)), timeout=3)
+            threading.Thread(target=forward, args=(client, target), daemon=True).start()
+            threading.Thread(target=forward, args=(target, client), daemon=True).start()
+        except Exception:
+            try:
+                client.sendall(SPLASH_HTML)
+                client.close()
+            except Exception:
+                pass
+    except Exception:
+        try:
+            client.close()
+        except Exception:
+            pass
+
+srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+srv.bind(('0.0.0.0', GATEWAY_PORT))
+srv.listen(100)
+print(f"[auto_start] Gateway proxy listening on port {GATEWAY_PORT}", flush=True)
+while True:
+    try:
+        c, _ = srv.accept()
+        threading.Thread(target=handle_client, args=(c,), daemon=True).start()
+    except Exception:
+        pass
+"""
+    b64_auto_start = base64.b64encode(raw_auto_start_py.strip().encode("utf-8")).decode("ascii")
+    auto_start_script = f"echo '{b64_auto_start}' | base64 -d > /tmp/compassx_auto_start.py && python3 /tmp/compassx_auto_start.py"
 
     auth_sync_script = (
         "mkdir -p /root/.gemini/antigravity-cli /root/.gemini/config /workspace/.gemini_auth/antigravity-cli /workspace/.gemini_auth/config 2>/dev/null || true; "
@@ -523,6 +601,14 @@ def _build_app_sandbox_spec(app: App) -> SandboxSpec:
         "    mkdir -p /workspaces/.shared_auth/.gemini 2>/dev/null || true; "
         "    cp -rn /workspace/.gemini_auth/* /workspaces/.shared_auth/.gemini/ 2>/dev/null || true; "
         "  fi; "
+        "fi; "
+        "if [ -f /workspace/.env ]; then "
+        "  mkdir -p /etc/profile.d 2>/dev/null || true; "
+        "  cp -f /workspace/.env /etc/profile.d/compassx_env.sh 2>/dev/null || true; "
+        "  sed -i 's/^/export /' /etc/profile.d/compassx_env.sh 2>/dev/null || true; "
+        "  sed -i 's/export export /export /' /etc/profile.d/compassx_env.sh 2>/dev/null || true; "
+        "  grep -q 'compassx_env.sh' /root/.bashrc 2>/dev/null || echo '[ -f /etc/profile.d/compassx_env.sh ] && source /etc/profile.d/compassx_env.sh' >> /root/.bashrc; "
+        "  grep -q 'compassx_env.sh' /etc/profile 2>/dev/null || echo '[ -f /etc/profile.d/compassx_env.sh ] && source /etc/profile.d/compassx_env.sh' >> /etc/profile; "
         "fi; "
         "(while true; do "
         "  for src in /root/.gemini /root/.omnigent/antigravity-native/*/agy-home/.gemini; do "
@@ -543,6 +629,26 @@ def _build_app_sandbox_spec(app: App) -> SandboxSpec:
         "done) &"
     )
 
+    # App-configured custom environment variables (from app.config)
+    app_cfg = getattr(app, "config", {}) or {}
+    raw_custom_env = app_cfg.get("env_vars") or app_cfg.get("environment") or app_cfg.get("env") or []
+    custom_env_dict: Dict[str, str] = {}
+    if isinstance(raw_custom_env, dict):
+        for k, v in raw_custom_env.items():
+            if k and v is not None:
+                custom_env_dict[str(k)] = str(v)
+    elif isinstance(raw_custom_env, list):
+        for ev in raw_custom_env:
+            if isinstance(ev, dict):
+                k = ev.get("key") or ev.get("name")
+                v = ev.get("value")
+                if k and v is not None:
+                    custom_env_dict[str(k)] = str(v)
+            elif isinstance(ev, str) and "=" in ev:
+                k, v = ev.split("=", 1)
+                if k.strip():
+                    custom_env_dict[k.strip()] = v.strip()
+
     return SandboxSpec(
         sandbox_id=f"dev-app-{app.id}",
         consumer_key=f"app_{app.id}",
@@ -551,12 +657,13 @@ def _build_app_sandbox_spec(app: App) -> SandboxSpec:
         workspace_id=str(app.workspace_id) if app.workspace_id else None,
         image=os.environ.get("COMPASSX_SANDBOX_IMAGE") or "ghcr.io/omnigent-ai/omnigent-host:latest",
         ports=[8080, 9201],
+        env_vars=custom_env_dict,
         storage_mounts=[StorageMount(source_path=repo_dir, mount_path="/workspace")],
         init_scripts=[
             InitScript(name="Restore & Sync Agent Auth", command=auth_sync_script, ignore_failure=True),
             InitScript(name="Configure Git Credentials", command=git_config_cmd, ignore_failure=True),
             InitScript(name="Prepare Workspace Code", command=clone_cmd, ignore_failure=True),
-            InitScript(name="Install Dependencies", command="pip install -r requirements.txt || (find /workspace -maxdepth 3 -name package.json -execdir npm install \\; 2>/dev/null) || true", timeout_seconds=180, ignore_failure=True),
+            InitScript(name="Install Dependencies", command="(test -f requirements.txt && pip install -r requirements.txt || true); (find /workspace -maxdepth 3 -name package.json -execdir npm install \\; 2>/dev/null || true)", timeout_seconds=180, ignore_failure=True),
             InitScript(name="Run Application Server", command=auto_start_script, ignore_failure=True),
         ],
         labels={

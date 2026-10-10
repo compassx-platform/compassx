@@ -5,18 +5,25 @@ All notable changes to the CompassX Platform will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.12.31] - 2026-10-09
+## [0.12.31] - 2026-10-10
 
 ### 🚀 Highlights
 
-CompassX `0.12.31` introduces **Robust In-Pod Dev Auto-Start Syntax Fixes**, **Unbound Variable Resolution in App Server Runtime**, and **Multi-Workspace Path Discovery**.
+CompassX `0.12.31` introduces **App Slug-Aware Pod Resolution**, **Dynamic Fallback Workspace Resolution**, **Combined Environment Variable Propagation**, and **Base64-Protected In-Pod Auto-Start Gateway Proxy**.
 
-### 🐛 Bug Fixes & Resiliency
+### ✨ Features & Enhancements
 
-#### Application Runtime & Sandbox Auto-Start
-- **Fixed `auto_start_script` Syntax Error (`app_dev_routes.py`)**: Resolved compound statement syntax error on line 1 of container initialization script by properly separating statements with newline characters.
-- **Fixed `env_exports` Unbound Variable (`omnigent_dev_service.py`)**: Defined `manifest_env_exports` properly when combining custom app environment variables in `run_dev_app`, eliminating 500 `NameError` exceptions during Step 4 execution.
-- **Multi-Workspace Discovery (`app_dev_routes.py`)**: Expanded `app.yaml` discovery paths across both `/workspace` and `/workspaces` for Kubernetes shared storage and PVC mounts.
+#### App Slug-Aware Pod Resolution & Resilient Workspace Directory Discovery
+- **App Slug-Aware Pod Locator (`kubernetes_driver.py`)**: Enhanced `_find_running_pod_name` to search dev sandbox pods by both ID (`clean_id`, `raw_uuid`) and `app_slug` prefix across standard label selectors and pod name heuristics.
+- **Dynamic Non-Empty Workspace Discovery (`kubernetes_driver.py`)**: `exec_command_in_dev` checks directory non-emptiness dynamically and auto-resolves subdirectories in `/workspaces`, `/workspace`, and `/app` before defaulting, preventing empty directory execution errors.
+
+#### Combined App Config & Manifest Environment Propagation
+- **Combined Variable Export (`omnigent_dev_service.py`)**: Seamlessly aggregates environment variables configured in App Settings (`app.config.env_vars`) and declared in `app.yaml`/`app.yml` manifest files (`env`/`environment`/`env_vars`), exporting them across runtime and dev service executions.
+- **Persistent Profile Exports (`app_dev_routes.py`)**: Automatically mirrors `/workspace/.env` into `/etc/profile.d/compassx_env.sh` and bash startup profiles, ensuring interactive terminal and background tasks inherit custom environment variables.
+
+#### Base64-Protected In-Pod Auto-Start Runtime
+- **Robust Auto-Start Gateway Proxy (`app_dev_routes.py`)**: Re-encoded in-pod auto-start proxy script via base64 payload to eliminate bash escaping and multiline string syntax parsing errors during container bootstrap.
+- **Non-Failing Dependency Installation (`app_dev_routes.py`)**: Guarded `pip install -r requirements.txt` with existence checks so workspaces without python requirements proceed directly to JavaScript package installation.
 
 ---
 

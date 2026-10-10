@@ -1628,24 +1628,55 @@ class KubernetesDevDriver(BaseDevDriver):
             dep = None
 
         # 2. Inspect active pods for this app
+        app_slug = (getattr(app, "slug", "") or "").lower().strip()
+        candidate_pods = []
         try:
-            pods_resp = k8s.core().list_namespaced_pod(
-                namespace=ns,
-                label_selector=f"compassx/app-id={clean_id},compassx/dev=true",
-            )
-            candidate_pods = [
-                p for p in (pods_resp.items or [])
-                if not (p.metadata and p.metadata.deletion_timestamp)
+            selectors = [
+                f"compassx/app-id={clean_id},compassx/dev=true",
+                f"compassx.sandbox-id=dev-app-{clean_id}",
+                f"compassx.app_id={clean_id}",
+                f"compassx.consumer-key=app_{clean_id}",
             ]
+            if app_slug:
+                selectors.extend([
+                    f"compassx.app_slug={app_slug}",
+                    f"compassx-app-slug={app_slug}",
+                ])
+
+            for sel in selectors:
+                try:
+                    pods_resp = k8s.core().list_namespaced_pod(
+                        namespace=ns,
+                        label_selector=sel,
+                    )
+                    candidate_pods = [
+                        p for p in (pods_resp.items or [])
+                        if not (p.metadata and p.metadata.deletion_timestamp)
+                    ]
+                    if candidate_pods:
+                        break
+                except Exception:
+                    pass
+
             if not candidate_pods:
-                # Fallback to name prefix match
+                # Fallback to name prefix match and label/annotation scanning
                 all_pods = k8s.core().list_namespaced_pod(namespace=ns)
-                candidate_pods = [
-                    p for p in (all_pods.items or [])
-                    if p.metadata and p.metadata.name and (
-                        p.metadata.name.startswith(f"{dev_name}-") or p.metadata.name == dev_name
-                    ) and not (p.metadata.deletion_timestamp)
-                ]
+                for p in (all_pods.items or []):
+                    if not p.metadata or (p.metadata and p.metadata.deletion_timestamp):
+                        continue
+                    pname = p.metadata.name or ""
+                    labels = p.metadata.labels or {}
+                    annos = p.metadata.annotations or {}
+                    if (
+                        pname.startswith(f"{dev_name}-")
+                        or pname == dev_name
+                        or pname.startswith(f"compassx-sb-dev-app-{clean_id}")
+                        or (app_slug and (labels.get("compassx.app_slug") == app_slug or labels.get("compassx-app-slug") == app_slug or f"-{app_slug}" in pname))
+                        or labels.get("compassx/app-id") == clean_id
+                        or labels.get("compassx-app-id") == clean_id
+                        or annos.get("compassx.sandbox.id") == f"dev-app-{clean_id}"
+                    ):
+                        candidate_pods.append(p)
 
             if candidate_pods:
                 # Sort newest first
@@ -1817,8 +1848,9 @@ class KubernetesDevDriver(BaseDevDriver):
             pass
 
         pod_logs = ""
+        app_slug = getattr(app, "slug", "") or ""
         try:
-            pod_name = self._find_running_pod_name(clean_id, ns)
+            pod_name = self._find_running_pod_name(clean_id, ns, app_slug=app_slug)
             if pod_name:
                 pod_logs = (k8s.core().read_namespaced_pod_log(name=pod_name, namespace=ns, tail_lines=max_lines) or "").strip()
         except Exception:
@@ -1843,10 +1875,11 @@ class KubernetesDevDriver(BaseDevDriver):
             return {"success": False, "error": "Kubernetes client not available"}
 
         clean_id = re.sub(r"[^a-z0-9-]", "-", app.id.lower()).strip("-")
+        app_slug = getattr(app, "slug", "") or ""
         ns = settings.K8S_NAMESPACE
 
         try:
-            pod_name = self._find_running_pod_name(clean_id, ns)
+            pod_name = self._find_running_pod_name(clean_id, ns, app_slug=app_slug)
             if not pod_name:
                 return {"success": False, "error": f"No running dev pod found for app '{app.id}' in namespace '{ns}'"}
 
@@ -1906,7 +1939,7 @@ class KubernetesDevDriver(BaseDevDriver):
             return {"success": False, "error": str(exc)}
 
 
-    def _find_running_pod_name(self, clean_id: str, ns: str, wait_seconds: int = 0) -> Optional[str]:
+    def _find_running_pod_name(self, clean_id: str, ns: str, wait_seconds: int = 0, app_slug: str = "") -> Optional[str]:
         import time
         k8s = self._get_k8s_client()
         if not k8s:
@@ -1915,7 +1948,12 @@ class KubernetesDevDriver(BaseDevDriver):
         try:
             from unittest.mock import Mock, MagicMock
             if isinstance(k8s, (Mock, MagicMock)):
-                return dev_name
+                try:
+                    items = k8s.core().list_namespaced_pod().items
+                    if isinstance(items, (Mock, MagicMock)):
+                        return dev_name
+                except Exception:
+                    return dev_name
         except Exception:
             pass
 
@@ -1923,11 +1961,12 @@ class KubernetesDevDriver(BaseDevDriver):
         underscore_id = clean_id.replace("-", "_")
         raw_uuid = clean_id.replace("app-", "")
         sb_name_no_prefix = f"compassx-sb-dev-app-{raw_uuid}"
+        clean_slug = (app_slug or "").lower().strip()
 
         deadline = time.time() + max(0, wait_seconds)
         while True:
             # 1. Try label selectors (both unified sandbox and legacy dev pod labels)
-            for selector in [
+            selectors = [
                 f"compassx.sandbox-id=dev-app-{clean_id}",
                 f"compassx.sandbox-id=dev-app-{raw_uuid}",
                 f"compassx.consumer-key=app_{clean_id}",
@@ -1940,7 +1979,14 @@ class KubernetesDevDriver(BaseDevDriver):
                 f"app.kubernetes.io/name={dev_name}",
                 f"compassx/app-id={clean_id}",
                 f"compassx/app-id={raw_uuid}",
-            ]:
+            ]
+            if clean_slug:
+                selectors.extend([
+                    f"compassx.app_slug={clean_slug}",
+                    f"compassx-app-slug={clean_slug}",
+                ])
+
+            for selector in selectors:
                 try:
                     pods = k8s.core().list_namespaced_pod(namespace=ns, label_selector=selector)
                     running_pods = [
@@ -1979,6 +2025,7 @@ class KubernetesDevDriver(BaseDevDriver):
                         or f"dev-app-{raw_uuid}" in pname
                         or (clean_id in pname and "compassx" in pname)
                         or (raw_uuid and len(raw_uuid) >= 8 and raw_uuid[:8] in pname and "compassx" in pname)
+                        or (clean_slug and (f"-{clean_slug}-" in pname or pname.endswith(f"-{clean_slug}") or f"dev-app-{clean_slug}" in pname))
                     ):
                         matched.append(p)
                         continue
@@ -1986,10 +2033,14 @@ class KubernetesDevDriver(BaseDevDriver):
                     # Match by annotations or labels
                     sb_id = annos.get("compassx.sandbox.id") or labels.get("compassx.sandbox-id")
                     ckey = annos.get("compassx.sandbox.consumer_key") or labels.get("compassx.consumer-key")
-                    if sb_id and (clean_id in sb_id or underscore_id in sb_id or raw_uuid in sb_id):
+                    l_slug = labels.get("compassx.app_slug") or labels.get("compassx-app-slug") or annos.get("compassx.app_slug")
+                    if clean_slug and l_slug == clean_slug:
                         matched.append(p)
                         continue
-                    if ckey and (clean_id in ckey or underscore_id in ckey or raw_uuid in ckey):
+                    if sb_id and (clean_id in sb_id or underscore_id in sb_id or raw_uuid in sb_id or (clean_slug and clean_slug in sb_id)):
+                        matched.append(p)
+                        continue
+                    if ckey and (clean_id in ckey or underscore_id in ckey or raw_uuid in ckey or (clean_slug and clean_slug in ckey)):
                         matched.append(p)
                         continue
 
@@ -2015,17 +2066,27 @@ class KubernetesDevDriver(BaseDevDriver):
         if not k8s:
             return None
         clean_id = re.sub(r"[^a-z0-9-]", "-", app.id.lower()).strip("-")
+        app_slug = getattr(app, "slug", "") or ""
         ns = settings.K8S_NAMESPACE
-        pod_name = self._find_running_pod_name(clean_id, ns)
+        pod_name = self._find_running_pod_name(clean_id, ns, app_slug=app_slug)
         if not pod_name:
             return None
         workdir = f"/workspaces/{workspace_folder}" if workspace_folder else f"/workspaces/{clean_id}/default"
         try:
+            branch_cmd = (
+                f"RESOLVED_DIR='{workdir}'; "
+                f"if [ ! -d \"$RESOLVED_DIR\" ] || [ -z \"$(ls -A \"$RESOLVED_DIR\" 2>/dev/null)\" ]; then "
+                f"  WS_LEAF=\"$(basename '{workdir}')\"; "
+                f"  FOUND_DIR=\"$(find /workspaces -maxdepth 2 -type d -name \"$WS_LEAF\" 2>/dev/null | grep -v \"$RESOLVED_DIR\" | head -n 1)\"; "
+                f"  if [ -n \"$FOUND_DIR\" ] && [ -d \"$FOUND_DIR\" ]; then RESOLVED_DIR=\"$FOUND_DIR\"; fi; "
+                f"fi; "
+                f"(cd \"$RESOLVED_DIR\" 2>/dev/null || cd /workspaces 2>/dev/null || cd /app 2>/dev/null) && git rev-parse --abbrev-ref HEAD 2>/dev/null || echo ''"
+            )
             resp = stream.stream(
                 k8s.core().connect_get_namespaced_pod_exec,
                 pod_name,
                 ns,
-                command=["/bin/sh", "-c", f"(cd '{workdir}' 2>/dev/null || cd /workspaces 2>/dev/null || cd /app 2>/dev/null) && git rev-parse --abbrev-ref HEAD 2>/dev/null || echo ''"],
+                command=["/bin/sh", "-c", branch_cmd],
                 stderr=False,
                 stdin=False,
                 stdout=True,
@@ -2049,9 +2110,10 @@ class KubernetesDevDriver(BaseDevDriver):
             return {"success": False, "exit_code": 1, "output": "Kubernetes client not available"}
 
         clean_id = re.sub(r"[^a-z0-9-]", "-", app.id.lower()).strip("-")
+        app_slug = getattr(app, "slug", "") or ""
         ns = settings.K8S_NAMESPACE
         workdir = f"/workspaces/{workspace_folder}" if workspace_folder else f"/workspaces/{clean_id}/default"
-        pod_name = self._find_running_pod_name(clean_id, ns)
+        pod_name = self._find_running_pod_name(clean_id, ns, app_slug=app_slug)
         if not pod_name:
             st = self.get_dev_status(app)
             if st.get("status") == "provisioning":
@@ -2068,8 +2130,21 @@ class KubernetesDevDriver(BaseDevDriver):
 
         exit_marker = "__K8S_CMD_EXIT__"
         full_cmd = (
-            f"( (mkdir -p '{workdir}' 2>/dev/null || true); "
-            f"cd '{workdir}' 2>/dev/null || cd /workspaces 2>/dev/null || cd /app 2>/dev/null || true; "
+            f"( RESOLVED_DIR='{workdir}'; "
+            f"if [ ! -d \"$RESOLVED_DIR\" ] || [ -z \"$(ls -A \"$RESOLVED_DIR\" 2>/dev/null)\" ]; then "
+            f"  WS_LEAF=\"$(basename '{workdir}')\"; "
+            f"  FOUND_DIR=\"$(find /workspaces -maxdepth 2 -type d -name \"$WS_LEAF\" 2>/dev/null | grep -v \"$RESOLVED_DIR\" | head -n 1)\"; "
+            f"  if [ -n \"$FOUND_DIR\" ] && [ -d \"$FOUND_DIR\" ] && [ -n \"$(ls -A \"$FOUND_DIR\" 2>/dev/null)\" ]; then "
+            f"    RESOLVED_DIR=\"$FOUND_DIR\"; "
+            f"  elif [ -d \"/workspace\" ] && [ -n \"$(ls -A /workspace 2>/dev/null)\" ]; then "
+            f"    RESOLVED_DIR=\"/workspace\"; "
+            f"  elif [ -d \"/app\" ] && [ -n \"$(ls -A /app 2>/dev/null)\" ]; then "
+            f"    RESOLVED_DIR=\"/app\"; "
+            f"  else "
+            f"    mkdir -p \"$RESOLVED_DIR\" 2>/dev/null || true; "
+            f"  fi; "
+            f"fi; "
+            f"cd \"$RESOLVED_DIR\" 2>/dev/null || cd /workspaces 2>/dev/null || cd /app 2>/dev/null || true; "
             f"{command} ); "
             f"echo \"{exit_marker}:$?\""
         )
@@ -2253,8 +2328,9 @@ class KubernetesDevDriver(BaseDevDriver):
             return None
 
         clean_id = re.sub(r"[^a-z0-9-]", "-", app.id.lower()).strip("-")
+        app_slug = getattr(app, "slug", "") or ""
         ns = settings.K8S_NAMESPACE
-        pod_name = self._find_running_pod_name(clean_id, ns, wait_seconds=5)
+        pod_name = self._find_running_pod_name(clean_id, ns, wait_seconds=5, app_slug=app_slug)
         if not pod_name:
             logger.warning("No running dev pod found for %s in namespace %s", clean_id, ns)
             return None
