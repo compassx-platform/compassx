@@ -756,27 +756,56 @@ class DockerDevDriver(BaseDevDriver):
     def get_dev_url(self, app) -> str:
         return ingress_service.get_app_dev_url(app)
 
-    def get_dev_logs(self, app, max_lines: int = 250) -> str:
+    def get_dev_logs(self, app, max_lines: int = 200) -> str:
         dev_container_name = self._get_dev_container_name(app)
-        setup_logs = ""
+        log_collect_cmd = (
+            "python3 -c \""
+            "import os\n"
+            "sections = [\n"
+            "    ('WORKSPACE SETUP PHASES', '/tmp/workspace_setup.log', 200),\n"
+            "    ('APPLICATION SUPERVISOR', '/tmp/auto_start.log', 50),\n"
+            "    ('BACKEND SERVER LOGS', '/tmp/app_backend.log', 150),\n"
+            "    ('FRONTEND SERVER LOGS', '/tmp/app_frontend.log', 150),\n"
+            "    ('GATEWAY / PROXY', '/tmp/proxy.log', 50),\n"
+            "    ('CADDY PROXY', '/tmp/caddy.log', 50),\n"
+            "]\n"
+            "out = []\n"
+            "for title, path, max_l in sections:\n"
+            "    if os.path.isfile(path) and os.path.getsize(path) > 0:\n"
+            "        try:\n"
+            "            with open(path, 'r', encoding='utf-8', errors='replace') as f:\n"
+            "                lines = f.readlines()\n"
+            "                content = ''.join(lines[-max_l:]).strip()\n"
+            "                if content:\n"
+            "                    out.append(f'=== {title} ===\\n{content}')\n"
+            "        except Exception:\n"
+            "            pass\n"
+            "print('\\n\\n'.join(out) if out else '<no runtime logs found>')\n"
+            "\" 2>/dev/null || cat /tmp/workspace_setup.log 2>/dev/null || true"
+        )
+        collected_logs = ""
         try:
-            setup_res = subprocess.run(
-                ["docker", "exec", dev_container_name, "cat", "/tmp/workspace_setup.log"],
-                capture_output=True, text=True, check=False, timeout=2.0
+            res = subprocess.run(
+                ["docker", "exec", dev_container_name, "sh", "-c", log_collect_cmd],
+                capture_output=True, text=True, check=False, timeout=3.0
             )
-            if setup_res.returncode == 0 and setup_res.stdout:
-                setup_logs = setup_res.stdout.strip()
+            if res.returncode == 0 and res.stdout:
+                collected_logs = res.stdout.strip()
         except Exception:
             pass
 
-        res = subprocess.run(["docker", "logs", "--tail", str(max_lines), dev_container_name], capture_output=True, text=True, check=False)
-        container_logs = ((res.stdout or "") + (res.stderr or "")).strip()
+        container_logs = ""
+        try:
+            res = subprocess.run(["docker", "logs", "--tail", str(max_lines), dev_container_name], capture_output=True, text=True, check=False)
+            raw = ((res.stdout or "") + (res.stderr or "")).strip()
+            if raw and not raw.startswith("tail -f"):
+                container_logs = f"=== CONTAINER LOGS ===\n{raw}"
+        except Exception:
+            pass
 
-        if setup_logs and container_logs:
-            return f"{setup_logs}\n\n{container_logs}"
-        elif setup_logs:
-            return setup_logs
-        return container_logs
+        if collected_logs and container_logs:
+            return f"{collected_logs}\n\n{container_logs}"
+        return collected_logs or container_logs or "Sandbox running. No output logged yet."
 
     def exec_git_in_workspace(
         self,

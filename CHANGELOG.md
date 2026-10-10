@@ -5,6 +5,27 @@ All notable changes to the CompassX Platform will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.32] - 2026-10-10
+
+### 🚀 Highlights
+
+CompassX `0.12.32` introduces **Multi-Channel In-Pod Log Aggregation**, **10-Second Health-Check Polling with Auto Log Fallback**, and **Extended Sandbox Initialization Timeouts**.
+
+### ✨ Features & Enhancements
+
+#### Multi-Channel In-Pod Log Aggregation
+- **Structured Multi-Service Log Collection (`kubernetes_driver.py`, `docker_driver.py`)**: `get_dev_logs` collects and formats runtime logs across all container subsystems (Workspace Setup Phases, Application Supervisor, Backend Server, Frontend Server, and Caddy / Gateway Proxy) into clear, partitioned sections.
+- **Container Log Deduplication (`kubernetes_driver.py`, `docker_driver.py`)**: Filters out raw container `tail -f` noise and formats live pod / docker container stdout alongside in-pod file logs.
+
+#### Resilient Health-Check Polling & Automated Error Diagnostics
+- **10-Second Readiness Polling Loop (`omnigent_dev_service.py`)**: Replaced single-shot sleep with iterative 10-second polling across gateway (`8080`), backend API (`8000`), and web UI (`3000`/`5173`) ports to accommodate slow server cold-starts.
+- **Automatic Error Diagnostic Fallback (`omnigent_dev_service.py`)**: If dev services do not respond within the polling window, automatically captures and appends the last 15 lines of `/tmp/app_backend.log`, `/tmp/app_frontend.log`, and `/tmp/auto_start.log` directly into Phase 4 setup logs.
+
+#### Sandbox Provisioning Resiliency
+- **Extended Init Script Timeout (`models.py`)**: Increased default sandbox `InitScript` timeout from 120s to 600s, ensuring large monorepo builds, dependency installations, and complex setup scripts complete without premature timeouts.
+
+---
+
 ## [0.12.31] - 2026-10-10
 
 ### 🚀 Highlights

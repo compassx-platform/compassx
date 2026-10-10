@@ -663,7 +663,7 @@ while True:
             InitScript(name="Restore & Sync Agent Auth", command=auth_sync_script, ignore_failure=True),
             InitScript(name="Configure Git Credentials", command=git_config_cmd, ignore_failure=True),
             InitScript(name="Prepare Workspace Code", command=clone_cmd, ignore_failure=True),
-            InitScript(name="Install Dependencies", command="(test -f requirements.txt && pip install -r requirements.txt || true); (find /workspace -maxdepth 3 -name package.json -execdir npm install \\; 2>/dev/null || true)", timeout_seconds=180, ignore_failure=True),
+            InitScript(name="Install Dependencies", command="(test -f requirements.txt && pip install --prefer-binary -r requirements.txt || true); (find /workspace -maxdepth 3 -name package.json -execdir npm install --prefer-offline --no-audit \\; 2>/dev/null || true)", timeout_seconds=600, ignore_failure=True),
             InitScript(name="Run Application Server", command=auto_start_script, ignore_failure=True),
         ],
         labels={

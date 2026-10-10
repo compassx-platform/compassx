@@ -56,7 +56,7 @@ backend:
   image:
     repository: ghcr.io/compassx-platform/backend
     pullPolicy: IfNotPresent
-    tag: \"v0.12.31\"
+    tag: "v0.12.32"
 
   service:
     type: ClusterIP
@@ -126,7 +126,7 @@ frontend:
   image:
     repository: ghcr.io/compassx-platform/frontend
     pullPolicy: IfNotPresent
-    tag: \"v0.12.31\"
+    tag: "v0.12.32"
 
   service:
     type: ClusterIP

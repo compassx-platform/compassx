@@ -1522,7 +1522,7 @@ class OmnigentDevService:
                 suffix = " && cd -" if d else ""
                 install_script_lines.append(
                     f"log '    → Installing Python packages ({m}) via pip3...'; "
-                    f"({prefix}pip3 install --prefer-binary -r requirements.txt{suffix}) 2>&1 | tee -a \"$LOG_FILE\";"
+                    f"({prefix}pip3 install --prefer-binary --timeout=300 -r requirements.txt{suffix}) 2>&1 | tee -a \"$LOG_FILE\";"
                 )
             elif m.endswith("package.json"):
                 d = os.path.dirname(m)
@@ -1530,7 +1530,7 @@ class OmnigentDevService:
                 suffix = " && cd -" if d else ""
                 install_script_lines.append(
                     f"log '    → Installing Node.js packages ({m}) via npm...'; "
-                    f"({prefix}npm install --prefer-offline --no-audit{suffix}) 2>&1 | tee -a \"$LOG_FILE\";"
+                    f"({prefix}npm install --prefer-offline --no-audit --fetch-timeout=300000{suffix}) 2>&1 | tee -a \"$LOG_FILE\";"
                 )
 
         install_script_lines.append(
@@ -1916,17 +1916,38 @@ class OmnigentDevService:
 
             run_script_parts.append(
                 "log '  [3/3] Verifying runtime health and port responsiveness...'; "
-                "sleep 2; "
-                f"if (curl -fsSL --connect-timeout 2 http://localhost:{gateway_port} >/dev/null 2>&1 || wget -q -O - http://localhost:{gateway_port} >/dev/null 2>&1); then "
-                f"  log '  ✓ Gateway responding on port {gateway_port} (Entrypoint ready).'; "
-                f"elif (curl -fsSL --connect-timeout 2 http://localhost:{frontend_port} >/dev/null 2>&1 || wget -q -O - http://localhost:{frontend_port} >/dev/null 2>&1); then "
-                f"  log '  ✓ Application responding on port {frontend_port} (Frontend ready).'; "
-                f"elif (curl -fsSL --connect-timeout 2 http://localhost:{backend_port} >/dev/null 2>&1 || wget -q -O - http://localhost:{backend_port} >/dev/null 2>&1); then "
-                f"  log '  ✓ Application responding on port {backend_port} (Backend API ready).'; "
+                "READY=0; "
+                "for i in $(seq 1 10); do "
+                f"  if (curl -fsSL --connect-timeout 2 http://localhost:{gateway_port} >/dev/null 2>&1 || wget -q -O - http://localhost:{gateway_port} >/dev/null 2>&1); then "
+                f"    log '  ✓ Gateway responding on port {gateway_port} (Entrypoint ready).'; "
+                "    READY=1; break; "
+                f"  elif (curl -fsSL --connect-timeout 2 http://localhost:{frontend_port} >/dev/null 2>&1 || wget -q -O - http://localhost:{frontend_port} >/dev/null 2>&1); then "
+                f"    log '  ✓ Application responding on port {frontend_port} (Frontend ready).'; "
+                "    READY=1; break; "
+                f"  elif (curl -fsSL --connect-timeout 2 http://localhost:{backend_port} >/dev/null 2>&1 || wget -q -O - http://localhost:{backend_port} >/dev/null 2>&1); then "
+                f"    log '  ✓ Application responding on port {backend_port} (Backend API ready).'; "
+                "    READY=1; break; "
+                "  fi; "
+                "  sleep 1; "
+                "done; "
+                "if [ \"$READY\" -eq 1 ]; then "
+                "  log '✓ Phase 4 Complete: Application dev runtime is running and ready.'; "
                 "else "
-                "  log '  → Application processes launched and listening.'; "
+                "  log '  ⚠ Warning: Dev services did not respond on expected ports within 10s.'; "
+                "  if [ -f /tmp/app_backend.log ] && [ -s /tmp/app_backend.log ]; then "
+                "    log '  ── Last Backend Server Logs (/tmp/app_backend.log) ──'; "
+                "    tail -n 15 /tmp/app_backend.log | while IFS= read -r line; do log \"    $line\"; done; "
+                "  fi; "
+                "  if [ -f /tmp/app_frontend.log ] && [ -s /tmp/app_frontend.log ]; then "
+                "    log '  ── Last Frontend Server Logs (/tmp/app_frontend.log) ──'; "
+                "    tail -n 15 /tmp/app_frontend.log | while IFS= read -r line; do log \"    $line\"; done; "
+                "  fi; "
+                "  if [ -f /tmp/app_service.log ] && [ -s /tmp/app_service.log ]; then "
+                "    log '  ── Last App Service Logs (/tmp/app_service.log) ──'; "
+                "    tail -n 15 /tmp/app_service.log | while IFS= read -r line; do log \"    $line\"; done; "
+                "  fi; "
+                "  log '✓ Phase 4 Complete: Dev runtime initialized (check Dev Server Logs for errors).'; "
                 "fi; "
-                "log '✓ Phase 4 Complete: Application dev runtime is running and ready.'; "
                 "log '──────────────────────────────────────────────────────────'"
             )
             run_script = " ".join(run_script_parts)
@@ -1948,21 +1969,47 @@ class OmnigentDevService:
             "LOG_FILE='/tmp/workspace_setup.log'; "
             "log() { echo \"[$(date +'%H:%M:%S')] $1\" | tee -a \"$LOG_FILE\"; }; "
             "log '  [3/3] Verifying application health and responsiveness...'; "
-            "sleep 1.5; "
-            "if (curl -fsSL --connect-timeout 2 http://localhost:8080 >/dev/null 2>&1 || wget -q -O - http://localhost:8080 >/dev/null 2>&1); then "
-            "  log '  ✓ Application responding on port 8080 (Web UI ready).'; "
-            "elif (curl -fsSL --connect-timeout 2 http://localhost:8000 >/dev/null 2>&1 || wget -q -O - http://localhost:8000 >/dev/null 2>&1); then "
-            "  log '  ✓ Application responding on port 8000 (Backend API ready).'; "
+            "READY=0; "
+            "for i in $(seq 1 10); do "
+            "  if (curl -fsSL --connect-timeout 2 http://localhost:8080 >/dev/null 2>&1 || wget -q -O - http://localhost:8080 >/dev/null 2>&1); then "
+            "    log '  ✓ Application responding on port 8080 (Web UI ready).'; "
+            "    READY=1; break; "
+            "  elif (curl -fsSL --connect-timeout 2 http://localhost:8000 >/dev/null 2>&1 || wget -q -O - http://localhost:8000 >/dev/null 2>&1); then "
+            "    log '  ✓ Application responding on port 8000 (Backend API ready).'; "
+            "    READY=1; break; "
+            "  elif (curl -fsSL --connect-timeout 2 http://localhost:3000 >/dev/null 2>&1 || wget -q -O - http://localhost:3000 >/dev/null 2>&1); then "
+            "    log '  ✓ Application responding on port 3000 (Web UI ready).'; "
+            "    READY=1; break; "
+            "  elif (curl -fsSL --connect-timeout 2 http://localhost:5173 >/dev/null 2>&1 || wget -q -O - http://localhost:5173 >/dev/null 2>&1); then "
+            "    log '  ✓ Application responding on port 5173 (Vite dev server ready).'; "
+            "    READY=1; break; "
+            "  fi; "
+            "  sleep 1; "
+            "done; "
+            "if [ \"$READY\" -eq 1 ]; then "
+            "  log '✓ Phase 4 Complete: Application dev runtime is running and ready.'; "
             "else "
-            "  log '  → Application processes launched and listening.'; "
+            "  log '  ⚠ Warning: Dev server did not respond on expected ports (8080/8000/3000/5173) within 10s.'; "
+            "  if [ -f /tmp/auto_start.log ] && [ -s /tmp/auto_start.log ]; then "
+            "    log '  ── Supervisor Output (/tmp/auto_start.log) ──'; "
+            "    tail -n 15 /tmp/auto_start.log | while IFS= read -r line; do log \"    $line\"; done; "
+            "  fi; "
+            "  if [ -f /tmp/app_backend.log ] && [ -s /tmp/app_backend.log ]; then "
+            "    log '  ── Last Backend Server Logs (/tmp/app_backend.log) ──'; "
+            "    tail -n 15 /tmp/app_backend.log | while IFS= read -r line; do log \"    $line\"; done; "
+            "  fi; "
+            "  if [ -f /tmp/app_frontend.log ] && [ -s /tmp/app_frontend.log ]; then "
+            "    log '  ── Last Frontend Server Logs (/tmp/app_frontend.log) ──'; "
+            "    tail -n 15 /tmp/app_frontend.log | while IFS= read -r line; do log \"    $line\"; done; "
+            "  fi; "
+            "  log '✓ Phase 4 Complete: Dev runtime initialized (check Dev Server Logs for errors).'; "
             "fi; "
-            "log '✓ Phase 4 Complete: Application dev runtime is running and ready.'; "
             "log '──────────────────────────────────────────────────────────'"
         )
 
         exec_res = dev_driver.exec_command_in_dev(app, command=health_check_script, workspace_folder=folder_path)
         output = (exec_res.get("output") or "").strip()
-        success = exec_res.get("success", False) or ("Application dev runtime is running and ready" in output)
+        success = exec_res.get("success", False) or ("Application dev runtime is running and ready" in output) or ("Phase 4 Complete" in output)
 
         return {
             "success": success,

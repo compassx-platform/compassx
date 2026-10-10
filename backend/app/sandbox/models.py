@@ -30,7 +30,7 @@ class InitScript(BaseModel):
     name: str = Field(description="Human-readable label for the init step")
     command: Any = Field(description="Command string or list of argument tokens to execute")
     working_dir: Optional[str] = Field(default=None, description="Working directory inside sandbox")
-    timeout_seconds: int = Field(default=120, description="Max execution timeout in seconds")
+    timeout_seconds: int = Field(default=600, description="Max execution timeout in seconds")
     ignore_failure: bool = Field(default=False, description="Continue provisioning if this script fails")
     env: Dict[str, str] = Field(default_factory=dict, description="Custom environment variables for this script")
 

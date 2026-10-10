@@ -1839,11 +1839,37 @@ class KubernetesDevDriver(BaseDevDriver):
             return ""
         ns = settings.K8S_NAMESPACE
         clean_id = re.sub(r"[^a-z0-9-]", "-", app.id.lower()).strip("-")
-        setup_logs = ""
+
+        log_collect_cmd = (
+            "python3 -c \""
+            "import os\n"
+            "sections = [\n"
+            "    ('WORKSPACE SETUP PHASES', '/tmp/workspace_setup.log', 200),\n"
+            "    ('APPLICATION SUPERVISOR', '/tmp/auto_start.log', 50),\n"
+            "    ('BACKEND SERVER LOGS', '/tmp/app_backend.log', 150),\n"
+            "    ('FRONTEND SERVER LOGS', '/tmp/app_frontend.log', 150),\n"
+            "    ('GATEWAY / PROXY', '/tmp/proxy.log', 50),\n"
+            "    ('CADDY PROXY', '/tmp/caddy.log', 50),\n"
+            "]\n"
+            "out = []\n"
+            "for title, path, max_l in sections:\n"
+            "    if os.path.isfile(path) and os.path.getsize(path) > 0:\n"
+            "        try:\n"
+            "            with open(path, 'r', encoding='utf-8', errors='replace') as f:\n"
+            "                lines = f.readlines()\n"
+            "                content = ''.join(lines[-max_l:]).strip()\n"
+            "                if content:\n"
+            "                    out.append(f'=== {title} ===\\n{content}')\n"
+            "        except Exception:\n"
+            "            pass\n"
+            "print('\\n\\n'.join(out) if out else '<no runtime logs found>')\n"
+            "\" 2>/dev/null || cat /tmp/workspace_setup.log 2>/dev/null || true"
+        )
+        collected_logs = ""
         try:
-            res = self.exec_command_in_dev(app, "cat /tmp/workspace_setup.log 2>/dev/null || true")
+            res = self.exec_command_in_dev(app, log_collect_cmd)
             if res.get("success") and res.get("output"):
-                setup_logs = res["output"].strip()
+                collected_logs = res["output"].strip()
         except Exception:
             pass
 
@@ -1852,13 +1878,15 @@ class KubernetesDevDriver(BaseDevDriver):
         try:
             pod_name = self._find_running_pod_name(clean_id, ns, app_slug=app_slug)
             if pod_name:
-                pod_logs = (k8s.core().read_namespaced_pod_log(name=pod_name, namespace=ns, tail_lines=max_lines) or "").strip()
+                raw_pod_logs = (k8s.core().read_namespaced_pod_log(name=pod_name, namespace=ns, tail_lines=max_lines) or "").strip()
+                if raw_pod_logs and not raw_pod_logs.startswith("tail -f"):
+                    pod_logs = f"=== POD CONTAINER LOGS ===\n{raw_pod_logs}"
         except Exception:
             pass
 
-        if setup_logs and pod_logs:
-            return f"{setup_logs}\n\n{pod_logs}"
-        return setup_logs or pod_logs
+        if collected_logs and pod_logs:
+            return f"{collected_logs}\n\n{pod_logs}"
+        return collected_logs or pod_logs or "Sandbox running. No output logged yet."
 
     def exec_git_in_workspace(
         self,
