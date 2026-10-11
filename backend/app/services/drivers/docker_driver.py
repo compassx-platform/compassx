@@ -393,11 +393,13 @@ class DockerDevDriver(BaseDevDriver):
         app_type = getattr(app, "app_type", "custom_web") or "custom_web"
         git_subdir = (getattr(app, "git_subdir", "") or "").strip("/\\")
 
+        git_ref = getattr(app, "git_ref", None) or getattr(app, "git_branch", None) or "main"
         target_branch = workspace_branch
         if not target_branch and workspace_folder:
-            target_branch = f"dev/{workspace_folder.split('/')[-1]}"
+            ws_leaf = workspace_folder.split("/")[-1]
+            target_branch = f"dev/{ws_leaf}" if ws_leaf != "default" else git_ref
         if not target_branch:
-            target_branch = "dev/default"
+            target_branch = git_ref
 
         vite_patch_b64 = base64.b64encode(_DOCKER_VITE_PATCHER.encode("utf-8")).decode("ascii")
 

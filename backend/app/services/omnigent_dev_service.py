@@ -12,6 +12,7 @@ import base64
 import json
 from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Optional, Any, Tuple
+from contextlib import contextmanager
 
 from app.services.app_runner import app_runner_service, BASE_APPS_STORAGE
 from app.services.drivers.factory import driver_factory
@@ -24,10 +25,15 @@ logger = logging.getLogger(__name__)
 _DEV_SESSIONS: Dict[str, Dict[str, Any]] = {}
 
 
+@contextmanager
 def _get_system_db():
     """Get a system DB session for workspace operations."""
     from app.database import SystemSessionLocal
-    return SystemSessionLocal()
+    db = SystemSessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
 
 
 def _clean_id(raw_id: str) -> str:
@@ -695,6 +701,18 @@ class OmnigentDevService:
         dev_port = raw_driver_res.get("dev_port") or 9201
         dev_url = raw_driver_res.get("dev_url") or ingress_service.get_app_dev_url(app, dev_port)
 
+        # Automatically ensure Ingress with Let's Encrypt TLS for both main and dev domains
+        try:
+            clean_app_id = re.sub(r"[^a-z0-9-]", "-", str(app.id).lower()).strip("-")
+            ingress_service.ensure_app_ingress(
+                app,
+                service_name=f"compassx-sb-dev-app-{clean_app_id}",
+                service_port=8080,
+                is_dev=True,
+            )
+        except Exception as ing_err:
+            logger.debug("Non-fatal dev session ingress ensure error for %s: %s", app.slug, ing_err)
+
         # 3. Create or link Omnigent session
         omnigent_link = self.create_or_get_omnigent_session(
             app, repo_dir, dev_port, host_id=expected_host_id, workspace_folder=folder_path
@@ -1043,6 +1061,49 @@ class OmnigentDevService:
                     .order_by(DevWorkspace.last_active_at.desc().nullslast(), DevWorkspace.created_at.desc())
                     .all()
                 )
+                if not workspaces:
+                    clean_app_id = _clean_id(app.id)
+                    default_branch = getattr(app, "git_branch", "main") or "main"
+                    if is_pod_running and hasattr(dev_driver, "get_live_branch"):
+                        try:
+                            live_b = dev_driver.get_live_branch(app, f"{clean_app_id}/default")
+                            if live_b:
+                                default_branch = live_b
+                        except Exception:
+                            pass
+                    default_ws = DevWorkspace(
+                        id="default",
+                        app_id=app.id,
+                        workspace_id=getattr(app, "workspace_id", "") or "",
+                        name="default",
+                        folder_path=f"{clean_app_id}/default",
+                        git_branch=default_branch,
+                        status="inactive",
+                        created_by=None,
+                        last_active_at=datetime.now(timezone.utc),
+                    )
+                    ws1 = DevWorkspace(
+                        id="workspace-1",
+                        app_id=app.id,
+                        workspace_id=getattr(app, "workspace_id", "") or "",
+                        name="workspace-1",
+                        folder_path=f"{clean_app_id}/workspace-1",
+                        git_branch="dev/workspace-1",
+                        status="active",
+                        created_by=None,
+                        last_active_at=datetime.now(timezone.utc),
+                    )
+                    try:
+                        db.add(default_ws)
+                        db.add(ws1)
+                        db.commit()
+                        db.refresh(default_ws)
+                        db.refresh(ws1)
+                        workspaces = [ws1, default_ws]
+                    except Exception as seed_err:
+                        db.rollback()
+                        logger.debug("Could not auto-seed workspaces: %s", seed_err)
+
                 res = []
                 for ws in workspaces:
                     # Dynamically determine if active in running pod
@@ -1344,22 +1405,7 @@ class OmnigentDevService:
         mode = sess.get("mode") if sess else None
         dev_driver = driver_factory.get_dev_driver(mode)
         clean_id = _clean_id(app.id)
-        ws_name = "default"
-        if workspace_name:
-            ws_name = _sanitize_workspace_name(workspace_name)
-        elif workspace_id:
-            try:
-                from app.models.dev_workspace import DevWorkspace
-                with _get_system_db() as db:
-                    ws = db.query(DevWorkspace).filter(
-                        DevWorkspace.app_id == app.id,
-                        (DevWorkspace.id == workspace_id) | (DevWorkspace.name == workspace_id),
-                    ).first()
-                    if ws and ws.name:
-                        ws_name = ws.name
-            except Exception:
-                ws_name = workspace_id
-        folder_path = f"{clean_id}/{ws_name}"
+        ws_id, ws_name, folder_path, _ = self._resolve_workspace_info(app, workspace_id or workspace_name)
         repo_dir = self.get_repo_dir(app)
         target_dir = repo_dir
         if workspace_name:
@@ -1565,31 +1611,40 @@ class OmnigentDevService:
         sess = _DEV_SESSIONS.get(app.id)
         mode = sess.get("mode") if sess else None
         dev_driver = driver_factory.get_dev_driver(mode)
-        clean_id = _clean_id(app.id)
-        ws_name = "default"
-        target_branch = None
-        if workspace_name:
-            ws_name = _sanitize_workspace_name(workspace_name)
-        elif workspace_id:
+        # 1. Proactively ensure base default workspace exists in container
+        try:
+            self.ensure_workspace_worktree(app, workspace_id="default")
+        except Exception as wt_err:
+            logger.debug("Non-fatal ensure base default worktree: %s", wt_err)
+
+        # 2. If no specific workspace requested, check if custom sandbox exists or auto-provision workspace-1
+        if not workspace_id and not workspace_name:
             try:
                 from app.models.dev_workspace import DevWorkspace
                 with _get_system_db() as db:
-                    ws = db.query(DevWorkspace).filter(
+                    existing_custom = db.query(DevWorkspace).filter(
                         DevWorkspace.app_id == app.id,
-                        (DevWorkspace.id == workspace_id) | (DevWorkspace.name == workspace_id),
+                        DevWorkspace.name != "default",
                     ).first()
-                    if ws:
-                        if ws.name:
-                            ws_name = ws.name
-                        if ws.git_branch:
-                            target_branch = ws.git_branch
-            except Exception:
-                ws_name = workspace_id
-        folder_path = f"{clean_id}/{ws_name}"
-        if not target_branch:
-            target_branch = f"dev/{ws_name}" if ws_name != "default" else getattr(app, "git_branch", "main")
 
-        # Proactively ensure git worktree exists before verification
+                if not existing_custom:
+                    # Auto-create initial isolated development worktree 'workspace-1' on branch 'dev/workspace-1'
+                    self.create_dev_workspace(
+                        app,
+                        name="workspace-1",
+                        git_branch="dev/workspace-1",
+                        base_branch=getattr(app, "git_branch", "main") or "main",
+                        fetch_remote=False,
+                    )
+                    self.activate_dev_workspace(app, workspace_id="workspace-1")
+                    workspace_id = "workspace-1"
+            except Exception as auto_wt_err:
+                logger.warning("Auto-create initial workspace-1: %s", auto_wt_err)
+
+        # 3. Resolve target workspace info
+        ws_id, ws_name, folder_path, target_branch = self._resolve_workspace_info(app, workspace_id or workspace_name)
+
+        # 4. Proactively ensure git worktree exists for target before verification
         try:
             self.ensure_workspace_worktree(app, workspace_id=ws_name)
         except Exception as wt_err:
@@ -1742,22 +1797,7 @@ class OmnigentDevService:
         mode = sess.get("mode") if sess else None
         dev_driver = driver_factory.get_dev_driver(mode)
         clean_id = _clean_id(app.id)
-        ws_name = "default"
-        if workspace_name:
-            ws_name = _sanitize_workspace_name(workspace_name)
-        elif workspace_id:
-            try:
-                from app.models.dev_workspace import DevWorkspace
-                with _get_system_db() as db:
-                    ws = db.query(DevWorkspace).filter(
-                        DevWorkspace.app_id == app.id,
-                        (DevWorkspace.id == workspace_id) | (DevWorkspace.name == workspace_id),
-                    ).first()
-                    if ws and ws.name:
-                        ws_name = ws.name
-            except Exception:
-                ws_name = workspace_id
-        folder_path = f"{clean_id}/{ws_name}"
+        ws_id, ws_name, folder_path, _ = self._resolve_workspace_info(app, workspace_id or workspace_name)
         dev_url = sess.get("dev_url") if sess else ""
         repo_dir = self.get_repo_dir(app)
         target_dir = repo_dir
@@ -2195,7 +2235,7 @@ for r, dirs, files in os.walk(root_dir):
 print('__JSON_START__' + json.dumps(res) + '__JSON_END__')
 """
                 b64_code = base64.b64encode(py_code.encode("utf-8")).decode("ascii")
-                exec_res = dev_driver.exec_command_in_dev(app, command=f"echo {b64_code} | base64 -d | python3")
+                exec_res = dev_driver.exec_command_in_dev(app, command=f"echo '{b64_code}' | base64 -d | python3", workspace_folder=folder_path)
                 out = exec_res.get("output") or ""
                 if "__JSON_START__" in out and "__JSON_END__" in out:
                     raw_json = out.split("__JSON_START__", 1)[1].split("__JSON_END__", 1)[0]

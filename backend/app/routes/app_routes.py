@@ -155,6 +155,14 @@ def create_app(
     db.commit()
     db.refresh(app)
     logger.info("Created app '%s' (id=%s) for workspace '%s'", app.name, app.id, workspace_id)
+
+    # Automatically provision Ingress with Let's Encrypt TLS so certificates are generated immediately
+    try:
+        from app.services.ingress_service import ingress_service
+        ingress_service.ensure_app_ingress(app)
+    except Exception as ing_err:
+        logger.warning("Non-fatal app ingress initialization error for %s: %s", app.slug, ing_err)
+
     return _to_response(app)
 
 

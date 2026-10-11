@@ -55,7 +55,7 @@ export function SandboxSelector({
     workspaces[0];
 
   const activeName = activeWs?.name || 'default';
-  const activeBranch = activeWs?.git_branch || `dev/${activeName}`;
+  const activeBranch = activeWs?.git_branch || (activeName === 'default' ? (baseBranch || 'main') : `dev/${activeName}`);
 
   return (
     <div ref={containerRef} style={{ position: 'relative', display: 'inline-block' }}>

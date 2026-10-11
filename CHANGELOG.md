@@ -5,6 +5,28 @@ All notable changes to the CompassX Platform will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.33] - 2026-10-11
+
+### 🚀 Highlights
+
+CompassX `0.12.33` introduces **Automatic Workspace Worktree Seeding & Default Isolation**, **Dynamic Kubernetes Ingress Provisioning with Let's Encrypt TLS**, and **Refined Workspace Branch Alignment**.
+
+### ✨ Features & Enhancements
+
+#### Automatic Workspace Worktree Seeding & Isolation
+- **Auto-Provisioned Initial Dev Workspace (`omnigent_dev_service.py`)**: Automatically provisions and seeds an initial development workspace `workspace-1` (tracking `dev/workspace-1`) alongside the `default` workspace during Phase 1 verification, guaranteeing immediate isolation for code edits and AI builds.
+- **Consistent Workspace Info Resolution (`omnigent_dev_service.py`)**: Standardized `_resolve_workspace_info` across all build and runtime execution stages to accurately determine target workspace IDs, paths, and branch names.
+
+#### Dynamic Kubernetes Ingress & TLS Management
+- **Automated Ingress with Let's Encrypt (`ingress_service.py`, `app_routes.py`)**: Implemented `ensure_app_ingress` to dynamically provision and reconcile Ingress resources with `cert-manager` TLS certificates for both app production (`{slug}.{base_domain}`) and development (`{slug}-dev.{base_domain}`) hostnames.
+- **Path and Subdomain Routing (`ingress_service.py`)**: Added support for both root host mapping and `/apps/{slug}` prefix path routing to ensure dev previews are accessible regardless of ingress routing topology.
+
+#### Workspace Branch Alignment & UI Indicators
+- **Base Branch Alignment (`kubernetes_driver.py`, `docker_driver.py`)**: Aligned the `default` workspace branch fallback to target `git_ref` (e.g. `main`) instead of `dev/default`, preventing branch detachment.
+- **Sandbox Selector Branch Labeling (`SandboxSelector.tsx`)**: Dynamic active branch labeling in the sandbox selector dropdown accurately reflects the base repository branch for `default` and feature branches (`dev/{name}`) for active sandboxes.
+
+---
+
 ## [0.12.32] - 2026-10-10
 
 ### 🚀 Highlights

@@ -282,6 +282,16 @@ class KubernetesSandboxDriver(BaseSandboxDriver):
                                 k8s.core().create_namespaced_service(namespace=self.namespace, body=service)
                             except Exception:
                                 pass
+                        if spec.consumer_module == "app":
+                            try:
+                                from app.services.ingress_service import ingress_service
+                                app_obj = type("AppObj", (), {
+                                    "id": (spec.metadata or {}).get("app_id") or spec.consumer_key or clean_sb_id,
+                                    "slug": (spec.metadata or {}).get("slug") or (spec.labels or {}).get("compassx.app_slug") or clean_sb_id,
+                                })()
+                                ingress_service.ensure_app_ingress(app_obj, service_name=svc_name, service_port=8080, is_dev=True)
+                            except Exception as ing_err:
+                                logger.debug("Could not ensure sandbox ingress for %s: %s", svc_name, ing_err)
                     endpoints = {
                         str(port): f"http://{svc_name}.{self.namespace}.svc.cluster.local:{port}"
                         for port in spec.ports
@@ -327,6 +337,16 @@ class KubernetesSandboxDriver(BaseSandboxDriver):
                 k8s.core().create_namespaced_service(namespace=self.namespace, body=service)
             except Exception as svc_err:
                 logger.debug("Could not create K8s service %s: %s", svc_name, svc_err)
+            if spec.consumer_module == "app":
+                try:
+                    from app.services.ingress_service import ingress_service
+                    app_obj = type("AppObj", (), {
+                        "id": (spec.metadata or {}).get("app_id") or spec.consumer_key or clean_sb_id,
+                        "slug": (spec.metadata or {}).get("slug") or (spec.labels or {}).get("compassx.app_slug") or clean_sb_id,
+                    })()
+                    ingress_service.ensure_app_ingress(app_obj, service_name=svc_name, service_port=8080, is_dev=True)
+                except Exception as ing_err:
+                    logger.debug("Could not ensure sandbox ingress for %s: %s", svc_name, ing_err)
 
         # Wait up to 10s for pod to reach Running phase
         pod_phase = "Pending"

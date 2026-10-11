@@ -1098,9 +1098,9 @@ class KubernetesDevDriver(BaseDevDriver):
                 target_branch = workspace_branch
                 if not target_branch and workspace_folder:
                     ws_leaf = workspace_folder.split("/")[-1]
-                    target_branch = f"dev/{ws_leaf}"
+                    target_branch = f"dev/{ws_leaf}" if ws_leaf != "default" else git_ref
                 if not target_branch:
-                    target_branch = "dev/default"
+                    target_branch = git_ref
 
                 clone_snippet = ""
                 if auth_url:

@@ -1,5 +1,6 @@
 """Ingress and URL resolution service for multi-mode environments (local-dev, docker, kubernetes)."""
 import os
+import re
 import subprocess
 import logging
 from typing import Optional, Dict, Any
@@ -185,6 +186,154 @@ class IngressService:
         """Construct full URL to an Omnigent session."""
         base = self.get_omnigent_public_url()
         return base
+
+    def ensure_app_ingress(
+        self,
+        app,
+        service_name: Optional[str] = None,
+        service_port: int = 8080,
+        is_dev: bool = True,
+    ) -> bool:
+        """Ensure Kubernetes Ingress resource with Let's Encrypt TLS exists for an app.
+        
+        Configures both main app ({slug}.{base_domain}) and dev app ({slug}-dev.{base_domain})
+        with automatic TLS certificates managed by cert-manager.
+        """
+        if not self.is_kubernetes():
+            return False
+
+        try:
+            from app.compute.services.k8s_client import get_k8s_client
+            from kubernetes import client
+            from kubernetes.client.exceptions import ApiException
+
+            k8s = get_k8s_client()
+            if not k8s:
+                return False
+
+            ns = settings.K8S_NAMESPACE
+            app_id = getattr(app, "id", str(app))
+            clean_id = re.sub(r"[^a-z0-9-]", "-", str(app_id).lower()).strip("-")
+            slug = getattr(app, "slug", clean_id)
+            if not slug:
+                slug = clean_id
+
+            app_domain = self.get_app_domain(app)
+            dev_domain = self.get_app_dev_domain(app)
+
+            # Determine target service name
+            target_svc = service_name or (f"compassx-sb-dev-app-{clean_id}" if is_dev else f"compassx-app-{clean_id}")
+            ingress_name = f"compassx-app-dev-{clean_id}-ingress" if is_dev else f"compassx-app-{clean_id}-ingress"
+
+            tls_secret_main = f"{slug}-tls"
+            tls_secret_dev = f"{slug}-dev-tls"
+
+            tls_list = [
+                client.V1IngressTLS(hosts=[app_domain], secret_name=tls_secret_main),
+                client.V1IngressTLS(hosts=[dev_domain], secret_name=tls_secret_dev),
+            ]
+
+            rules = [
+                client.V1IngressRule(
+                    host=app_domain,
+                    http=client.V1HTTPIngressRuleValue(
+                        paths=[
+                            client.V1HTTPIngressPath(
+                                path="/()(.*)",
+                                path_type="ImplementationSpecific",
+                                backend=client.V1IngressBackend(
+                                    service=client.V1IngressServiceBackend(
+                                        name=target_svc,
+                                        port=client.V1ServiceBackendPort(number=service_port),
+                                    )
+                                ),
+                            ),
+                            client.V1HTTPIngressPath(
+                                path=f"/apps/{slug}(/|$)(.*)",
+                                path_type="ImplementationSpecific",
+                                backend=client.V1IngressBackend(
+                                    service=client.V1IngressServiceBackend(
+                                        name=target_svc,
+                                        port=client.V1ServiceBackendPort(number=service_port),
+                                    )
+                                ),
+                            ),
+                        ]
+                    ),
+                ),
+                client.V1IngressRule(
+                    host=dev_domain,
+                    http=client.V1HTTPIngressRuleValue(
+                        paths=[
+                            client.V1HTTPIngressPath(
+                                path="/()(.*)",
+                                path_type="ImplementationSpecific",
+                                backend=client.V1IngressBackend(
+                                    service=client.V1IngressServiceBackend(
+                                        name=target_svc,
+                                        port=client.V1ServiceBackendPort(number=service_port),
+                                    )
+                                ),
+                            ),
+                            client.V1HTTPIngressPath(
+                                path=f"/apps/{slug}-dev(/|$)(.*)",
+                                path_type="ImplementationSpecific",
+                                backend=client.V1IngressBackend(
+                                    service=client.V1IngressServiceBackend(
+                                        name=target_svc,
+                                        port=client.V1ServiceBackendPort(number=service_port),
+                                    )
+                                ),
+                            ),
+                        ]
+                    ),
+                ),
+            ]
+
+            annotations = {
+                "nginx.ingress.kubernetes.io/ssl-redirect": "false",
+                "nginx.ingress.kubernetes.io/force-ssl-redirect": "false",
+                "nginx.ingress.kubernetes.io/proxy-read-timeout": "3600",
+                "nginx.ingress.kubernetes.io/proxy-send-timeout": "3600",
+                "nginx.ingress.kubernetes.io/rewrite-target": "/$2",
+                "nginx.ingress.kubernetes.io/use-regex": "true",
+            }
+            if getattr(settings, "K8S_INGRESS_CLUSTER_ISSUER", None):
+                annotations["cert-manager.io/cluster-issuer"] = settings.K8S_INGRESS_CLUSTER_ISSUER
+
+            ingress_body = client.V1Ingress(
+                api_version="networking.k8s.io/v1",
+                kind="Ingress",
+                metadata=client.V1ObjectMeta(
+                    name=ingress_name,
+                    namespace=ns,
+                    labels={
+                        "app.kubernetes.io/instance": slug,
+                        "compassx/app-id": clean_id,
+                        "compassx/managed": "true",
+                    },
+                    annotations=annotations,
+                ),
+                spec=client.V1IngressSpec(
+                    ingress_class_name=settings.K8S_INGRESS_CLASS,
+                    tls=tls_list,
+                    rules=rules,
+                ),
+            )
+
+            try:
+                k8s.networking().replace_namespaced_ingress(name=ingress_name, namespace=ns, body=ingress_body)
+                logger.info("Updated Ingress %s with TLS for app %s (%s)", ingress_name, slug, app_domain)
+            except ApiException as exc:
+                if exc.status == 404:
+                    k8s.networking().create_namespaced_ingress(namespace=ns, body=ingress_body)
+                    logger.info("Created Ingress %s with TLS for app %s (%s)", ingress_name, slug, app_domain)
+                else:
+                    raise
+            return True
+        except Exception as e:
+            logger.warning("Could not ensure app ingress for %s: %s", getattr(app, "slug", getattr(app, "id", "")), e)
+            return False
 
 
 ingress_service = IngressService()
