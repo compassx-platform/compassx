@@ -1,6 +1,6 @@
 import { useCallback, type ElementType } from 'react';
 import { useLocation, useNavigate, useParams, type NavigateOptions, type To } from 'react-router-dom';
-import { Briefcase, Code2, Layers, Zap, LayoutDashboard, FileText, Database, GitBranch, Cable, BookOpen, ServerCog, History, Activity, Home, Sparkles, Network, LayoutGrid, Compass, BarChart2, Globe, Folder } from 'lucide-react';
+import { Briefcase, Code2, Layers, Zap, LayoutDashboard, FileText, Database, GitBranch, Cable, BookOpen, ServerCog, History, Activity, Home, Sparkles, Network, LayoutGrid, Compass, BarChart2, Globe, Folder, TerminalSquare } from 'lucide-react';
 
 export const APP_IDS = ['platform', 'apps', 'portal'] as const;
 export type AppId = (typeof APP_IDS)[number];
@@ -56,6 +56,7 @@ const PLATFORM_NAV_GROUPS: NavGroup[] = [
     title: 'AI & Meaning',
     items: [
       { to: '/agents', icon: Layers, label: 'Agents', end: false },
+      { to: '/agent-runtime', icon: TerminalSquare, label: 'Agent Runtime', end: false },
       { to: '/ai-gateway', icon: Sparkles, label: 'AI Gateway', end: false },
       { to: '/ontology', icon: Network, label: 'Ontology', end: false },
       { to: '/connections', icon: Cable, label: 'Connections', end: false },
@@ -98,6 +99,7 @@ export const APP_DEFINITIONS: Record<AppId, AppDefinition> = {
       '/jobs',
       '/notebooks',
       '/agents',
+      '/agent-runtime',
       '/ai-gateway',
       '/ontology',
       '/topology',

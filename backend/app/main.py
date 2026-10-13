@@ -496,7 +496,7 @@ app = FastAPI(
     lifespan=lifespan,
     title="CompassX API",
     description="CompassX Platform API",
-    version="0.13.2",
+    version="0.13.3",
     docs_url="/api/swagger/docs",
     openapi_url="/api/swagger.json",
 )
@@ -634,6 +634,9 @@ app.include_router(omnigent_router, prefix="/api/v1/services/omnigent")
 from app.sandbox.routes import router as sandbox_router  # noqa: E402
 app.include_router(sandbox_router, prefix="/api/v1")
 app.include_router(sandbox_router, prefix="/api/v1/compute")
+
+from app.agent_runtime.routes import router as agent_runtime_router  # noqa: E402
+app.include_router(agent_runtime_router, prefix="/api/v1")
 
 
 

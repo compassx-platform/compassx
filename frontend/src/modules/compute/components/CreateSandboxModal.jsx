@@ -13,7 +13,6 @@ const CONSUMER_MODULES = [
 
 const PRESET_IMAGES = [
   { label: 'CompassX Sandbox Host (Pinned AI Tools & Shell)', value: 'compassx-sandbox-host:latest' },
-  { label: 'Omnigent Agent Runtime (Remote GHCR)', value: 'ghcr.io/omnigent-ai/omnigent-host:latest' },
   { label: 'Python 3.11 Slim', value: 'python:3.11-slim' },
   { label: 'Node.js 20 LTS', value: 'node:20-slim' },
   { label: 'CompassX Runtime Base', value: 'compassx/runtime-base:latest' },
@@ -26,7 +25,7 @@ const PRESET_IMAGES = [
 export default function CreateSandboxModal({ isOpen, onClose, onProvision }) {
   const [name, setName] = useState('');
   const [consumerModule, setConsumerModule] = useState('app');
-  const [image, setImage] = useState('python:3.11-slim');
+  const [image, setImage] = useState('compassx-sandbox-host:latest');
   const [customImage, setCustomImage] = useState('');
   const [ports, setPorts] = useState('8080');
   const [initCommand, setInitCommand] = useState('');

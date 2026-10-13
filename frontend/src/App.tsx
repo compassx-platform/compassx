@@ -33,6 +33,7 @@ import AgentsPage from '@/modules/agents/pages/AgentsPage';
 import AgentToolDetailPage from '@/modules/agents/pages/AgentToolDetailPage';
 import AgentBuilderPage from '@/modules/agents/pages/AgentBuilderPage';
 import AgentChatPage from '@/modules/agents/pages/AgentChatPage';
+import AgentRuntimePage from '@/modules/agents/pages/AgentRuntimePage';
 import OntologyPage from '@/modules/ontology/pages/OntologyPage';
 import ConnectionsPage from '@/modules/agents/pages/ConnectionsPage';
 import CreateConnectionPage from '@/modules/agents/pages/CreateConnectionPage';
@@ -316,6 +317,10 @@ export default function App() {
                   <Route path="agents/new" element={<AgentBuilderPage />} />
                   <Route path="agents/create" element={<AgentBuilderPage />} />
                   <Route path="agents/tools/:toolKey" element={<AgentToolDetailPage />} />
+                  <Route path="agent-runtime" element={<AgentRuntimePage />} />
+                  <Route path="agent-runtime/:sessionId" element={<AgentRuntimePage />} />
+                  <Route path="agents/runtime" element={<AgentRuntimePage />} />
+                  <Route path="agents/runtime/:sessionId" element={<AgentRuntimePage />} />
                   <Route path="agents/:agentId" element={<AgentChatPage />} />
                   <Route path="agents/:agentId/sessions" element={<AgentChatPage />} />
                   <Route path="agents/:agentId/sessions/:sessionId" element={<AgentChatPage />} />

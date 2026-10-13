@@ -5,6 +5,29 @@ All notable changes to the CompassX Platform will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.13.3] - 2026-10-13
+
+### 🚀 Highlights
+
+CompassX `0.13.3` introduces the **Dedicated Agent Runtime Service & API**, **Agent Runtime Frontend Management Console & Navigation**, and **Sandbox Preset Polish**.
+
+### ✨ Features & Enhancements
+
+#### Dedicated Agent Runtime Service & API
+- **Modular Agent Runtime Backend (`backend/app/agent_runtime/`)**: Added dedicated `service.py`, `models.py`, and `routes.py` providing session lifecycle management, active execution tracking, and driver abstraction for agent execution environments.
+- **Agent Runtime Endpoints Mounted (`backend/app/main.py`)**: Mounted `/api/v1/agent-runtime` routes into the core FastAPI application.
+- **Comprehensive Agent Runtime Unit Tests (`backend/tests/test_agent_runtime.py`)**: Added full unit test suite covering session provisioning, execution telemetry, and lifecycle cleanup.
+
+#### Agent Runtime Frontend Management Console & Navigation
+- **Dedicated Agent Runtime Route & Console (`AgentRuntimePage.tsx`, `App.tsx`)**: Created `/agent-runtime` and `/agent-runtime/:sessionId` interactive console with live telemetry, session controls, and inspection.
+- **Interactive Session Creation Modal (`CreateAgentSessionModal.tsx`)**: Added modal for launching agent sessions with customizable runtime drivers, timeout limits, and memory policies.
+- **Platform Navigation Integration (`appNavigation.ts`)**: Added "Agent Runtime" under the "AI & Meaning" navigation group with dedicated terminal square iconography.
+
+#### Sandbox Preset Polish
+- **Default Sandbox Host Image (`CreateSandboxModal.jsx`, `docker_driver.py`)**: Defaulted new sandbox creation to pinned `compassx-sandbox-host:latest` and deprecated legacy remote omnigent host references.
+
+---
+
 ## [0.13.2] - 2026-10-13
 
 ### 🚀 Highlights

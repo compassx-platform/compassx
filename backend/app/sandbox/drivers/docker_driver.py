@@ -36,7 +36,6 @@ class DockerSandboxDriver(BaseSandboxDriver):
             "compassx-sandbox-host:latest",
             "compassx-dev-host:latest",
             "compassx-host:latest",
-            "ghcr.io/omnigent-ai/omnigent-host:latest",
             "python:3.11-slim",
             "node:20-slim",
             "alpine:latest",
