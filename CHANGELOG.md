@@ -5,6 +5,28 @@ All notable changes to the CompassX Platform will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.13.1] - 2026-10-13
+
+### 🚀 Highlights
+
+CompassX `0.13.1` introduces **Interactive Multi-Runtime Sandbox Terminal & PTY Streaming**, **Unified In-Browser Terminal UI for Compute Sandboxes**, and **Agent Runtime Sandbox Lifecycle Enhancements**.
+
+### ✨ Features & Enhancements
+
+#### Interactive Multi-Runtime Sandbox Terminal & PTY Streaming
+- **Generic WebSocket Terminal Endpoint (`sandbox/routes.py`, `sandbox/service.py`)**: Added `/sandboxes/{sandbox_id}/terminal/ws` providing bidirectional, sub-millisecond PTY streaming into any compute sandbox across Kubernetes pods, Docker containers, and local processes.
+- **Dynamic Terminal Resize Handling (`k8s_driver.py`, `docker_driver.py`)**: Implemented dynamic terminal window resizing (`resize_terminal`) on both Kubernetes executive channels and Docker/POSIX PTY processes based on viewport dimensions.
+- **Universal Session Attachment (`interfaces.py`)**: Added `open_terminal_stream` and `resize_terminal` contracts to `SandboxDriver` interface, unifying interactive console access across all compute environments.
+
+#### Unified In-Browser Terminal UI for Compute Sandboxes
+- **Decoupled Terminal Component (`SandboxTerminal.tsx`)**: Created reusable, decoupled terminal component with connection state tracking, automatic reconnection, command bar, and smooth layout resizing.
+- **Compute Sandboxes Console Drawer (`ComputeSandboxesTable.jsx`, `CreateSandboxModal.jsx`)**: Added interactive Terminal launch button and slide-out console drawer directly to the compute sandboxes management view.
+
+#### Agent Runtime Sandbox Lifecycle Verification
+- **Automated Agent Runtime Tests (`test_sandbox.py`)**: Added end-to-end sandbox lifecycle tests verifying provisioning, execution, and cleanup of Agent Runtime container sandboxes.
+
+---
+
 ## [0.12.33] - 2026-10-11
 
 ### 🚀 Highlights

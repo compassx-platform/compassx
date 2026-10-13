@@ -1,6 +1,6 @@
 """Abstract base driver interface and handle definition for the Sandbox module."""
 from abc import ABC, abstractmethod
-from typing import AsyncGenerator, Dict, List, Optional
+from typing import Any, AsyncGenerator, Dict, List, Optional
 import logging
 
 from app.sandbox.models import ExecResult, SandboxInstance, SandboxSpec, SandboxStatus
@@ -61,6 +61,26 @@ class BaseSandboxDriver(ABC):
     @abstractmethod
     def get_endpoints(self, instance: SandboxInstance) -> Dict[str, str]:
         """Resolve browser/service reachable URLs for the exposed ports."""
+        pass
+
+    def open_terminal_stream(
+        self,
+        instance: SandboxInstance,
+        cols: int = 100,
+        rows: int = 30,
+        working_dir: Optional[str] = None,
+        command: Optional[str] = None,
+    ) -> Any:
+        """Create a bidirectional streaming connection / PTY client to the sandbox."""
+        return None
+
+    def resize_terminal(
+        self,
+        instance: SandboxInstance,
+        cols: int,
+        rows: int,
+    ) -> None:
+        """Dynamically resize interactive terminal dimensions."""
         pass
 
     def discover_active_instances(self) -> List[SandboxInstance]:

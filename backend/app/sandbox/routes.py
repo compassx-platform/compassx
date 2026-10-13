@@ -1,6 +1,6 @@
 """FastAPI routes for the Sandbox Module."""
 from typing import Any, Dict, List, Optional
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, HTTPException, Query, Request, WebSocket
 from pydantic import BaseModel, Field
 
 from app.sandbox.models import ExecResult, SandboxInstance, SandboxSpec, SandboxStatus
@@ -119,4 +119,24 @@ def exec_in_sandbox(sandbox_id: str, body: ExecRequestBody):
         working_dir=body.working_dir,
         env=body.env,
         timeout=body.timeout,
+    )
+
+
+@router.websocket("/{sandbox_id}/terminal/ws")
+async def sandbox_terminal_websocket(
+    websocket: WebSocket,
+    sandbox_id: str,
+    cols: int = Query(100),
+    rows: int = Query(30),
+    working_dir: Optional[str] = Query(None),
+    command: Optional[str] = Query(None),
+):
+    """Interactive real-time WebSocket PTY terminal for any compute sandbox."""
+    await sandbox_service.handle_terminal_websocket(
+        websocket=websocket,
+        sandbox_id=sandbox_id,
+        cols=cols,
+        rows=rows,
+        working_dir=working_dir,
+        command=command,
     )

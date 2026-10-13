@@ -3,7 +3,7 @@ import asyncio
 import logging
 import time
 from datetime import datetime, timezone
-from typing import AsyncGenerator, Dict, List, Optional
+from typing import Any, AsyncGenerator, Dict, List, Optional
 import uuid
 
 from app.sandbox.interfaces import BaseSandboxDriver
@@ -376,3 +376,83 @@ class DockerSandboxDriver(BaseSandboxDriver):
             return client.containers.get(container_name)
         except Exception:
             return None
+
+    def open_terminal_stream(
+        self,
+        instance: SandboxInstance,
+        cols: int = 100,
+        rows: int = 30,
+        working_dir: Optional[str] = None,
+        command: Optional[str] = None,
+    ) -> Any:
+        """Start a subprocess for Docker interactive exec into the sandbox container."""
+        import subprocess
+        container = self._find_container(instance)
+        if not container:
+            return None
+
+        target_container = container.id
+        workdir = working_dir or instance.working_dir or "/workspace"
+        cli_cmd = command or "if [ -x /bin/bash ]; then exec /bin/bash -l; else exec /bin/sh -l; fi"
+
+        py_pty_script = (
+            "import pty, os, sys, fcntl, termios, struct; "
+            f"cols = int(os.environ.get('COLUMNS', {cols})); "
+            f"rows = int(os.environ.get('LINES', {rows})); "
+            "pid, m = pty.fork(); "
+            "("
+            f"    os.execlp('sh', 'sh', '-c', '{cli_cmd}') if pid == 0 else ("
+            "        fcntl.ioctl(m, termios.TIOCSWINSZ, struct.pack('HHHH', rows, cols, 0, 0)), "
+            "        pty._copy(m, pty._read, pty._read), "
+            "        os.close(m), "
+            "        os.waitpid(pid, 0)"
+            "    )"
+            ")"
+        )
+        cmd = [
+            "docker", "exec", "-i", "-w", workdir,
+            "-e", f"COLUMNS={cols}", "-e", f"LINES={rows}",
+            "-e", "TERM=xterm-256color",
+            target_container,
+            "python3", "-c", py_pty_script,
+        ]
+
+        try:
+            proc = subprocess.Popen(
+                cmd,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                bufsize=0,
+            )
+            return proc
+        except Exception as exc:
+            logger.warning("Failed to start docker interactive terminal for sandbox %s: %s", instance.id, exc)
+            # Fallback to direct shell without python3 pty wrapper
+            try:
+                cmd_fallback = [
+                    "docker", "exec", "-i", "-w", workdir,
+                    "-e", f"COLUMNS={cols}", "-e", f"LINES={rows}",
+                    "-e", "TERM=xterm-256color",
+                    target_container,
+                    "sh", "-c", cli_cmd,
+                ]
+                return subprocess.Popen(
+                    cmd_fallback,
+                    stdin=subprocess.PIPE,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    bufsize=0,
+                )
+            except Exception as ex2:
+                logger.error("Fallback docker exec failed for sandbox %s: %s", instance.id, ex2)
+                return None
+
+    def resize_terminal(
+        self,
+        instance: SandboxInstance,
+        cols: int,
+        rows: int,
+    ) -> None:
+        """Resize terminal dimensions."""
+        pass

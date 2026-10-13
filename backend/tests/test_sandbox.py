@@ -57,7 +57,6 @@ def test_sandbox_lifecycle():
     assert handle.resume() is True
     assert handle.status == SandboxStatus.RUNNING
 
-    # 7. Terminate
     print("Testing terminate...")
     assert handle.terminate() is True
     assert handle.status == SandboxStatus.TERMINATED
@@ -65,5 +64,36 @@ def test_sandbox_lifecycle():
     print("ALL SANDBOX TESTS PASSED!")
 
 
+def test_agent_runtime_sandbox_lifecycle():
+    """Verify that an Agent Runtime Sandbox can be provisioned and manipulated cleanly."""
+    print("Testing Agent Runtime Sandbox Lifecycle...")
+    spec = SandboxSpec(
+        name="test-agent-runtime",
+        consumer_module="agent",
+        runtime_mode="local",
+        image="ghcr.io/omnigent-ai/omnigent-host:latest",
+        ports=[9201, 8080],
+        init_scripts=[
+            InitScript(
+                name="Check Agent CLI Tools",
+                command="python -c \"print('Agent runtime ready')\"",
+            ),
+        ],
+    )
+
+    handle = sandbox_service.provision_sandbox(spec)
+    assert handle.status in (SandboxStatus.READY, SandboxStatus.RUNNING)
+    assert handle.instance.consumer_module == "agent"
+
+    # Verify command execution inside the agent sandbox
+    res = handle.exec("python -c \"print('Agent tools running')\"")
+    assert res.exit_code == 0
+    assert "Agent tools running" in res.stdout
+
+    # Clean up
+    assert handle.terminate() is True
+
+
 if __name__ == "__main__":
     test_sandbox_lifecycle()
+    test_agent_runtime_sandbox_lifecycle()

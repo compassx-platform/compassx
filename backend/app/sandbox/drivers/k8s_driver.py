@@ -5,7 +5,7 @@ import os
 import re
 import time
 from datetime import datetime, timezone
-from typing import AsyncGenerator, Dict, List, Optional
+from typing import Any, AsyncGenerator, Dict, List, Optional
 import uuid
 
 from app.sandbox.interfaces import BaseSandboxDriver
@@ -699,4 +699,63 @@ class KubernetesSandboxDriver(BaseSandboxDriver):
         except Exception as exc:
             logger.debug("K8s sandbox discovery failed: %s", exc)
         return instances
+
+    def open_terminal_stream(
+        self,
+        instance: SandboxInstance,
+        cols: int = 100,
+        rows: int = 30,
+        working_dir: Optional[str] = None,
+        command: Optional[str] = None,
+    ) -> Any:
+        """Open a live bidirectional interactive PTY stream to the sandbox pod."""
+        from kubernetes import stream
+        import json
+        k8s = get_k8s_client()
+        if not k8s:
+            return None
+
+        clean_sb_id = _sanitize_k8s_name(instance.id)
+        pod_name = instance.pod_name or f"compassx-sb-{clean_sb_id}"
+        ns = self.namespace
+        workdir = working_dir or instance.working_dir or "/workspace"
+        cli_cmd = command or "if [ -x /bin/bash ]; then exec /bin/bash -l; else exec /bin/sh -l; fi"
+
+        shell_cmd = [
+            "/bin/sh", "-c",
+            f"cd '{workdir}' 2>/dev/null; "
+            f"export TERM=xterm-256color; "
+            f"{cli_cmd}"
+        ]
+
+        try:
+            ws_client = stream.stream(
+                k8s.core().connect_get_namespaced_pod_exec,
+                pod_name,
+                ns,
+                command=shell_cmd,
+                stderr=True,
+                stdin=True,
+                stdout=True,
+                tty=True,
+                _preload_content=False,
+            )
+            try:
+                from kubernetes.stream.ws_client import RESIZE_CHANNEL
+                ws_client.write_channel(RESIZE_CHANNEL, json.dumps({"Width": cols, "Height": rows}))
+            except Exception:
+                pass
+            return ws_client
+        except Exception as exc:
+            logger.warning("Failed to open terminal stream in sandbox pod %s: %s", pod_name, exc)
+            return None
+
+    def resize_terminal(
+        self,
+        instance: SandboxInstance,
+        cols: int,
+        rows: int,
+    ) -> None:
+        """Resize terminal dimensions."""
+        pass
 

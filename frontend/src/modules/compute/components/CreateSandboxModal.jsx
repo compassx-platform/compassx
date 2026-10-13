@@ -12,6 +12,7 @@ const CONSUMER_MODULES = [
 ];
 
 const PRESET_IMAGES = [
+  { label: 'Omnigent Agent Runtime (AI Tools & Shell)', value: 'ghcr.io/omnigent-ai/omnigent-host:latest' },
   { label: 'Python 3.11 Slim', value: 'python:3.11-slim' },
   { label: 'Node.js 20 LTS', value: 'node:20-slim' },
   { label: 'CompassX Runtime Base', value: 'compassx/runtime-base:latest' },
@@ -165,7 +166,16 @@ export default function CreateSandboxModal({ isOpen, onClose, onProvision }) {
                   return (
                     <div
                       key={mod.id}
-                      onClick={() => setConsumerModule(mod.id)}
+                      onClick={() => {
+                        setConsumerModule(mod.id);
+                        if (mod.id === 'agent') {
+                          setImage('ghcr.io/omnigent-ai/omnigent-host:latest');
+                          setPorts('9201,8080');
+                        } else if (mod.id === 'app') {
+                          setImage('node:20-slim');
+                          setPorts('8080');
+                        }
+                      }}
                       style={{
                         padding: '8px 10px',
                         borderRadius: '4px',
