@@ -161,12 +161,12 @@ class TestCrossProfileDevDrivers(unittest.TestCase):
         # Test CompassX host
         res_compassx = driver.start_dev(self.app, repo_dir="/tmp/repo", omnigent_internal_url="http://localhost:8000", host_type="compassx")
         self.assertEqual(res_compassx["host_type"], "compassx")
-        self.assertEqual(res_compassx["host_image"], "ghcr.io/omnigent-ai/omnigent-host:latest")
+        self.assertEqual(res_compassx["host_image"], "compassx-sandbox-host:latest")
 
         # Test Omnigent host
         res_omnigent = driver.start_dev(self.app, repo_dir="/tmp/repo", omnigent_internal_url="http://localhost:8000", host_type="omnigent")
         self.assertEqual(res_omnigent["host_type"], "omnigent")
-        self.assertEqual(res_omnigent["host_image"], "ghcr.io/omnigent-ai/omnigent-host:latest")
+        self.assertEqual(res_omnigent["host_image"], "compassx-sandbox-host:latest")
 
     # ==========================================
     # 3B. DOCKER DRIVER HOST TYPE RESOLUTION
@@ -184,12 +184,12 @@ class TestCrossProfileDevDrivers(unittest.TestCase):
             # CompassX host
             res_cx = driver.start_dev(self.app, repo_dir="/tmp/repo", omnigent_internal_url="http://localhost:8000", host_type="compassx")
             self.assertEqual(res_cx["host_type"], "compassx")
-            self.assertEqual(res_cx["host_image"], "compassx-host:latest")
+            self.assertEqual(res_cx["host_image"], "compassx-sandbox-host:latest")
 
             # Omnigent host
             res_omni = driver.start_dev(self.app, repo_dir="/tmp/repo", omnigent_internal_url="http://localhost:8000", host_type="omnigent")
             self.assertEqual(res_omni["host_type"], "omnigent")
-            self.assertEqual(res_omni["host_image"], "ghcr.io/omnigent-ai/omnigent-host:latest")
+            self.assertEqual(res_omni["host_image"], "compassx-sandbox-host:latest")
 
     @patch("subprocess.run")
     def test_docker_dev_driver_get_status_detects_image_and_host_type(self, mock_subproc):

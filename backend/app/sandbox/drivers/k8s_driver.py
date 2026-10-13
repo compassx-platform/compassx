@@ -16,7 +16,7 @@ from compute.k8s_client import get_k8s_client
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_SANDBOX_IMAGE = "ghcr.io/omnigent-ai/omnigent-host:latest"
+DEFAULT_SANDBOX_IMAGE = "compassx-sandbox-host:latest"
 
 
 def _sanitize_k8s_name(name: str) -> str:
@@ -77,7 +77,7 @@ class KubernetesSandboxDriver(BaseSandboxDriver):
 
     def _resolve_image(self, requested_image: Optional[str]) -> str:
         """Resolve container image with fallback chain for Kubernetes."""
-        if requested_image and requested_image.strip() and requested_image.strip() not in ("compassx-dev-host:latest", "compassx-dev-sandbox"):
+        if requested_image and requested_image.strip() and requested_image.strip() not in ("compassx-dev-host:latest", "compassx-dev-sandbox", "ghcr.io/omnigent-ai/omnigent-host:latest"):
             return requested_image.strip()
         return os.environ.get("COMPASSX_SANDBOX_IMAGE") or DEFAULT_SANDBOX_IMAGE
 

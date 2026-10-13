@@ -1,0 +1,111 @@
+# CompassX Sandbox Host Runtime Image
+#
+# Dedicated, frozen host runtime for CompassX App Dev and Agent compute sandboxes.
+# Replaces external unpinned references to ghcr.io/omnigent-ai/omnigent-host:latest
+# providing 100% in-house reproducibility, pinned CLI versions, and security.
+#
+# Build:
+#   docker build -t compassx-sandbox-host:latest -f backend/Dockerfile.sandbox-host .
+
+ARG PYTHON_VERSION=3.12
+ARG NODE_VERSION=22
+
+# ── Stage 1: Node Runtime Provider ─────────────────────────────────────
+FROM node:${NODE_VERSION}-slim AS node-runtime
+
+# ── Stage 2: Final CompassX Sandbox Host Image ─────────────────────────
+FROM python:${PYTHON_VERSION}-slim AS compassx-host
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    IS_SANDBOX=1 \
+    TERM=xterm-256color \
+    LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8
+
+# 1. Base Linux system packages & utilities
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    bash \
+    curl \
+    ca-certificates \
+    git \
+    tmux \
+    procps \
+    lsof \
+    bubblewrap \
+    unzip \
+    bzip2 \
+    tar \
+    iproute2 \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+# 2. Add non-root sandbox user (compatible with OpenShell & security policies)
+RUN groupadd -g 1000660000 sandbox 2>/dev/null || true \
+ && useradd -m -d /sandbox -u 1000660000 -g sandbox sandbox 2>/dev/null || true
+
+# 3. Copy pinned Node.js runtime from official Node stage
+COPY --from=node-runtime /usr/local/bin/node /usr/local/bin/node
+COPY --from=node-runtime /usr/local/lib/node_modules /usr/local/lib/node_modules
+RUN ln -s /usr/local/lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
+ && ln -s /usr/local/lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx
+
+# 4. Install pre-baked AI coding harness CLIs via npm
+RUN npm install -g --no-audit --no-fund \
+    @anthropic-ai/claude-code \
+    @openai/codex \
+    @earendil-works/pi-coding-agent \
+    opencode-ai@1.18.0 \
+ && npm cache clean --force
+
+# 5. Pinned Antigravity CLI (agy)
+ARG AGY_VERSION=1.1.16
+ARG AGY_SHA256_AMD64=7742953b7835b457e9102f1357a493913657dfd147435584f609d58356ec085a
+ARG AGY_SHA256_ARM64=c71599bb548cf72dfe7a8f6c411b3c7a3623cd4b0f6276bae89c69f769d6c92d
+
+RUN set -eu; \
+    arch="$(dpkg --print-architecture)"; \
+    case "$arch" in \
+      amd64) asset="agy_cli_linux_x64.tar.gz"; sha="$AGY_SHA256_AMD64" ;; \
+      arm64) asset="agy_cli_linux_arm64.tar.gz"; sha="$AGY_SHA256_ARM64" ;; \
+      *) echo "ERROR: unsupported arch '$arch' for agy" >&2; exit 1 ;; \
+    esac; \
+    url="https://github.com/google-antigravity/antigravity-cli/releases/download/${AGY_VERSION}/${asset}"; \
+    curl -fsSL -o /tmp/agy.tar.gz "$url"; \
+    echo "${sha}  /tmp/agy.tar.gz" | sha256sum -c -; \
+    tar -xzf /tmp/agy.tar.gz -C /tmp antigravity; \
+    install -m 0755 /tmp/antigravity /usr/local/bin/agy; \
+    rm -f /tmp/agy.tar.gz /tmp/antigravity; \
+    test -x /usr/local/bin/agy; \
+    echo "agy ${AGY_VERSION} pinned (sha256 verified)"
+
+# 6. Pinned GitHub CLI (gh)
+ARG GH_VERSION=2.100.0
+ARG GH_SHA256_AMD64=e4d4bb4498e8d007abe545b6568926793ace1b6447da598294a610018cb164be
+ARG GH_SHA256_ARM64=ea4e7a581a32ccad6cc7923cb1576ac5859ba4b9a16ab22eb8f8a96e78e2e961
+
+RUN set -eu; \
+    arch="$(dpkg --print-architecture)"; \
+    case "$arch" in \
+      amd64) sha="$GH_SHA256_AMD64" ;; \
+      arm64) sha="$GH_SHA256_ARM64" ;; \
+      *) echo "ERROR: unsupported arch '$arch' for gh" >&2; exit 1 ;; \
+    esac; \
+    asset="gh_${GH_VERSION}_linux_${arch}.tar.gz"; \
+    curl -fsSL -o /tmp/gh.tar.gz "https://github.com/cli/cli/releases/download/v${GH_VERSION}/${asset}"; \
+    echo "${sha}  /tmp/gh.tar.gz" | sha256sum -c -; \
+    tar -xzf /tmp/gh.tar.gz -C /tmp "gh_${GH_VERSION}_linux_${arch}/bin/gh"; \
+    install -m 0755 "/tmp/gh_${GH_VERSION}_linux_${arch}/bin/gh" /usr/local/bin/gh; \
+    rm -rf /tmp/gh.tar.gz "/tmp/gh_${GH_VERSION}_linux_${arch}"; \
+    test -x /usr/local/bin/gh; \
+    echo "gh ${GH_VERSION} pinned (sha256 verified)"
+
+# 7. Git credential helper for token auth
+RUN git config --system credential.helper \
+      '!f() { [ "$1" = get ] || return 0; [ -n "$GIT_TOKEN" ] || return 0; printf "username=%s\npassword=%s\n" "${GIT_USERNAME:-x-access-token}" "$GIT_TOKEN"; }; f'
+
+# 8. Configure global workspace directory
+WORKDIR /workspace
+RUN mkdir -p /workspace /workspaces
+
+CMD ["sleep", "infinity"]

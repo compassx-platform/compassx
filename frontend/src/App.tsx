@@ -43,6 +43,7 @@ import NotebookPage from '@/modules/notebooks/pages/NotebookPage';
 import NotebooksListPage from '@/modules/notebooks/pages/NotebooksListPage';
 import ComputePage from '@/modules/compute/pages/ComputePage';
 import ComputeResourceDetailPage from '@/modules/compute/pages/ComputeResourceDetailPage';
+import ComputeSandboxTerminalPage from '@/modules/compute/pages/ComputeSandboxTerminalPage';
 import DashboardsPage from '@/modules/dashboards/pages/DashboardsPage';
 import DashboardEditorPage from '@/modules/dashboards/pages/DashboardEditorPage';
 import JobsListPage from '@/modules/jobs/pages/JobsListPage';
@@ -335,6 +336,8 @@ export default function App() {
                   <Route path="notebooks" element={<NotebooksListPage />} />
                   <Route path="notebooks/open" element={<NotebookPage />} />
                   <Route path="compute" element={<ComputePage />} />
+                  <Route path="compute/sandboxes/:sandboxId/terminal" element={<ComputeSandboxTerminalPage />} />
+                  <Route path="compute/sandboxes/:sandboxId" element={<ComputeSandboxTerminalPage />} />
                   <Route path="compute/:resourceId" element={<ComputeResourceDetailPage />} />
                   <Route path="monitoring" element={<UMSuspense><MonitoringPage /></UMSuspense>} />
                   <Route path="dashboards" element={<DashboardsPage />} />

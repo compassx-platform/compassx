@@ -602,15 +602,17 @@ class DockerDevDriver(BaseDevDriver):
         # Resolve dev host image based on host_type selection
         host_type = str(host_type or kwargs.get("host_type") or "compassx").lower()
         if host_type == "omnigent":
-            dev_host_image = "ghcr.io/omnigent-ai/omnigent-host:latest"
+            dev_host_image = os.environ.get("COMPASSX_SANDBOX_IMAGE") or "compassx-sandbox-host:latest"
         else:
             host_type = "compassx"
-            if self._image_exists("compassx-host:latest"):
+            if self._image_exists("compassx-sandbox-host:latest"):
+                dev_host_image = "compassx-sandbox-host:latest"
+            elif self._image_exists("compassx-host:latest"):
                 dev_host_image = "compassx-host:latest"
             elif self._image_exists("compassx-dev-host:latest"):
                 dev_host_image = "compassx-dev-host:latest"
             else:
-                dev_host_image = "ghcr.io/omnigent-ai/omnigent-host:latest"
+                dev_host_image = os.environ.get("COMPASSX_SANDBOX_IMAGE") or "compassx-sandbox-host:latest"
 
         run_cmd = [
             "docker", "run", "-d",

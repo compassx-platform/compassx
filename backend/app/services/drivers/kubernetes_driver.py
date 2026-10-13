@@ -127,7 +127,7 @@ class KubernetesAppDriver(BaseAppDriver):
             container_cmd = None
             container_args = None
         else:
-            image_tag = "ghcr.io/omnigent-ai/omnigent-host:latest"
+            image_tag = os.environ.get("COMPASSX_SANDBOX_IMAGE") or "compassx-sandbox-host:latest"
             container_cmd = ["/bin/sh", "-c"]
             subdir = (getattr(app, "git_subdir", "") or "").strip("/")
             run_cmd = (
@@ -1072,7 +1072,7 @@ class KubernetesDevDriver(BaseDevDriver):
         elif getattr(settings, "DEV_HOST_IMAGE", None) and ("/" in str(settings.DEV_HOST_IMAGE)):
             dev_host_image = str(settings.DEV_HOST_IMAGE)
         else:
-            dev_host_image = "ghcr.io/omnigent-ai/omnigent-host:latest"
+            dev_host_image = os.environ.get("COMPASSX_SANDBOX_IMAGE") or "compassx-sandbox-host:latest"
 
         # If k8s client is available, provision Dev Pod, Service, and Ingress
         if k8s:

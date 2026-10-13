@@ -12,7 +12,7 @@ from app.services.ingress_service import ingress_service
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_SANDBOX_IMAGE = "compassx-dev-host:latest"
+DEFAULT_SANDBOX_IMAGE = "compassx-sandbox-host:latest"
 
 
 class DockerSandboxDriver(BaseSandboxDriver):
@@ -33,6 +33,7 @@ class DockerSandboxDriver(BaseSandboxDriver):
         if requested_image:
             candidates.append(requested_image)
         candidates.extend([
+            "compassx-sandbox-host:latest",
             "compassx-dev-host:latest",
             "compassx-host:latest",
             "ghcr.io/omnigent-ai/omnigent-host:latest",

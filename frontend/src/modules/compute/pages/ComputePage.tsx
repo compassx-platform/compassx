@@ -1,5 +1,6 @@
 // @ts-nocheck
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { Search } from 'lucide-react';
 import ComputeResourcesTable from '@/modules/compute/components/ComputeResourcesTable';
 import ComputeServicesPanel from '@/modules/compute/components/ComputeServicesPanel';
@@ -18,8 +19,19 @@ const COMPUTE_TAB_VALUES = ['resources', 'services', 'sandboxes'] as const;
 export default function ComputePage() {
   const navigate = useScopedNavigate();
   const currentUserId = getPrincipalInfo()?.principal_id;
+  const [searchParams, setSearchParams] = useSearchParams();
 
-  const [tab, setTab] = useState('resources');
+  const initialTab = searchParams.get('tab');
+  const [tab, setTab] = useState(
+    initialTab && COMPUTE_TAB_VALUES.includes(initialTab) ? initialTab : 'resources'
+  );
+
+  useEffect(() => {
+    const tabParam = searchParams.get('tab');
+    if (tabParam && COMPUTE_TAB_VALUES.includes(tabParam) && tabParam !== tab) {
+      setTab(tabParam);
+    }
+  }, [searchParams, tab]);
   const [resources, setResources] = useState([]);
   const [services, setServices] = useState([]);
   const [sandboxes, setSandboxes] = useState([]);
@@ -296,6 +308,7 @@ export default function ComputePage() {
 
       <PageTabs tabs={computeTabs} value={tab} onChange={(newTab) => {
         setTab(newTab);
+        setSearchParams({ tab: newTab }, { replace: true });
         setStatusFilter('');
         setRuntimeFilter('');
         setConsumerFilter('');

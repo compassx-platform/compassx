@@ -5,6 +5,26 @@ All notable changes to the CompassX Platform will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.13.2] - 2026-10-13
+
+### 🚀 Highlights
+
+CompassX `0.13.2` introduces the **In-House Pinned Sandbox Host Runtime Container**, **Dedicated Fullscreen Compute Sandbox Terminal View**, and **Compute Sandboxes Table Interactive Navigation**.
+
+### ✨ Features & Enhancements
+
+#### In-House Pinned Sandbox Host Runtime
+- **Dedicated Multi-Tool Sandbox Host Image (`backend/Dockerfile.sandbox-host`)**: Pinned base image `compassx-sandbox-host:latest` with pre-installed Node.js 22 LTS, Python 3.12, system build essentials, curl, git, procps, and popular agent CLIs.
+- **Consistent Driver Image Defaults (`k8s_driver.py`, `docker_driver.py`, `app_dev_routes.py`)**: Updated Kubernetes and Docker sandbox drivers as well as app dev routes to default to the pinned in-house sandbox host image rather than unpinned external base images.
+- **Cross-Profile Dev Drivers Testing (`test_cross_profile_dev_drivers.py`, `test_sandbox.py`)**: Verified seamless driver image selection, terminal command invocation, and lifecycle across both Docker and Kubernetes profiles.
+
+#### Dedicated Fullscreen Compute Sandbox Terminal View
+- **Fullscreen Terminal Route (`ComputeSandboxTerminalPage.tsx`, `App.tsx`)**: Added dedicated `/compute/sandboxes/:sandboxId/terminal` route offering an immersive fullscreen terminal experience with live status telemetry, copy-ID, quick start/stop controls, and external service links.
+- **URL Tab Persistence in Compute (`ComputePage.tsx`)**: Synchronized active tabs with URL query parameters (`?tab=sandboxes`) for consistent deep-linking and browser navigation.
+- **Interactive Sandboxes Table UX (`ComputeSandboxesTable.jsx`)**: Enabled table row clicks and action buttons to open the dedicated fullscreen sandbox terminal view directly.
+
+---
+
 ## [0.13.1] - 2026-10-13
 
 ### 🚀 Highlights

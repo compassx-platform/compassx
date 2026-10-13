@@ -4,7 +4,7 @@ import { Play, Square, Trash2, Terminal, ExternalLink, RefreshCw, X, Box, Copy, 
 import { AppTable } from '@/components/common/AppTable';
 import ConfirmDialog from '@/components/common/ConfirmDialog';
 import { computeApi } from '@/modules/compute/computeApi';
-import { SandboxTerminal } from '@/components/sandbox/SandboxTerminal';
+import { useScopedNavigate } from '@/lib/appNavigation';
 
 const statusColorMap = {
   ready: '#10b981',
@@ -38,9 +38,9 @@ export default function ComputeSandboxesTable({
   loadingId,
   onRefresh,
 }) {
+  const navigate = useScopedNavigate();
   const [sandboxToDelete, setSandboxToDelete] = useState(null);
   const [activeLogsSandbox, setActiveLogsSandbox] = useState(null);
-  const [activeTerminalSandbox, setActiveTerminalSandbox] = useState(null);
   const [logsText, setLogsText] = useState('');
   const [logsLoading, setLogsLoading] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -98,7 +98,11 @@ export default function ComputeSandboxesTable({
         const rawStatus = String(sandbox.status || 'unknown').toLowerCase();
         const dotColor = statusColorMap[rawStatus] || '#6b7280';
         return (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+          <div
+            style={{ display: 'flex', flexDirection: 'column', gap: '2px', cursor: 'pointer' }}
+            onClick={() => navigate(`/compute/sandboxes/${sandbox.id}/terminal`)}
+            title="Open Sandbox Terminal (Full Page)"
+          >
             <div style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', fontWeight: 600 }}>
               <span
                 title={`Status: ${sandbox.status}`}
@@ -111,7 +115,7 @@ export default function ComputeSandboxesTable({
                   flexShrink: 0,
                 }}
               />
-              <span style={{ color: 'var(--color-text)' }}>{sandbox.name}</span>
+              <span style={{ color: 'var(--color-primary, #2563eb)' }}>{sandbox.name}</span>
             </div>
             <span style={{ fontSize: '11px', color: 'var(--color-text-muted)', paddingLeft: '16px', fontFamily: 'monospace' }}>
               {sandbox.id}
@@ -244,9 +248,9 @@ export default function ComputeSandboxesTable({
             className="ghost-icon-btn"
             onClick={(e) => {
               e.stopPropagation();
-              setActiveTerminalSandbox(sandbox);
+              navigate(`/compute/sandboxes/${sandbox.id}/terminal`);
             }}
-            title="Open Interactive Terminal"
+            title="Open Fullscreen Terminal"
             aria-label={`Open Terminal for ${sandbox.name}`}
             style={{ color: '#2563eb' }}
           >
@@ -316,6 +320,7 @@ export default function ComputeSandboxesTable({
         columns={columns}
         rows={sandboxes}
         rowKey={(sb) => sb.id}
+        onRowClick={(sb) => navigate(`/compute/sandboxes/${sb.id}/terminal`)}
         emptyText="No compute sandboxes running currently"
       />
 
@@ -430,95 +435,6 @@ export default function ComputeSandboxesTable({
               ) : (
                 logsText || <span style={{ color: '#8b949e' }}>[No output generated yet]</span>
               )}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ── Interactive Terminal Modal ── */}
-      {activeTerminalSandbox && (
-        <div
-          onClick={() => setActiveTerminalSandbox(null)}
-          style={{
-            position: 'fixed',
-            inset: 0,
-            background: 'rgba(0, 0, 0, 0.65)',
-            zIndex: 1050,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            padding: '24px',
-          }}
-        >
-          <div
-            onClick={(e) => e.stopPropagation()}
-            style={{
-              width: '92vw',
-              maxWidth: '1050px',
-              height: '80vh',
-              maxHeight: '750px',
-              background: '#0d1117',
-              borderRadius: '8px',
-              border: '1px solid #30363d',
-              boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.5)',
-              display: 'flex',
-              flexDirection: 'column',
-              overflow: 'hidden',
-            }}
-          >
-            {/* Header */}
-            <div
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                padding: '10px 16px',
-                borderBottom: '1px solid #30363d',
-                background: '#161b22',
-              }}
-            >
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <TerminalSquare size={16} color="#38bdf8" />
-                <span style={{ fontWeight: 700, fontSize: '13px', color: '#f0f6fc' }}>
-                  Interactive Terminal: {activeTerminalSandbox.name}
-                </span>
-                <span style={{ fontSize: '11px', color: '#8b949e', fontFamily: 'monospace' }}>
-                  ({activeTerminalSandbox.id})
-                </span>
-                <span
-                  style={{
-                    fontSize: '11px',
-                    padding: '1px 6px',
-                    borderRadius: '4px',
-                    background: 'rgba(56, 189, 248, 0.15)',
-                    color: '#38bdf8',
-                    fontWeight: 600,
-                  }}
-                >
-                  {activeTerminalSandbox.consumer_module || 'sandbox'}
-                </span>
-              </div>
-              <div>
-                <button
-                  className="ghost-icon-btn"
-                  onClick={() => setActiveTerminalSandbox(null)}
-                  title="Close Terminal"
-                  style={{ color: '#8b949e' }}
-                >
-                  <X size={16} />
-                </button>
-              </div>
-            </div>
-
-            {/* Terminal Body */}
-            <div style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
-              <SandboxTerminal
-                sandboxId={activeTerminalSandbox.id}
-                sandboxName={activeTerminalSandbox.name}
-                isRunning={isRunning(activeTerminalSandbox)}
-                onResume={() => onResume?.(activeTerminalSandbox.id)}
-                fullHeight={true}
-              />
             </div>
           </div>
         </div>

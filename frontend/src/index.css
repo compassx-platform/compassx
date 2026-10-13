@@ -681,7 +681,8 @@ textarea.form-input { resize: vertical; min-height: 80px; }
 .page-content:has(.monitoring-root),
 .page-content:has(.landing-page-root),
 .page-content:has(.ontology-page-root),
-.page-content:has(.app-build-page-root) {
+.page-content:has(.app-build-page-root),
+.page-content:has(.sandbox-terminal-page-root) {
   padding: 0;
   overflow: hidden;
   height: 100%;

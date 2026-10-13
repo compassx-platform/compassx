@@ -71,7 +71,7 @@ def test_agent_runtime_sandbox_lifecycle():
         name="test-agent-runtime",
         consumer_module="agent",
         runtime_mode="local",
-        image="ghcr.io/omnigent-ai/omnigent-host:latest",
+        image="compassx-sandbox-host:latest",
         ports=[9201, 8080],
         init_scripts=[
             InitScript(
