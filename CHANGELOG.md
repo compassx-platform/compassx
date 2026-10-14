@@ -5,6 +5,35 @@ All notable changes to the CompassX Platform will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.13.6] - 2026-10-14
+
+### 🚀 Highlights
+
+CompassX `0.13.6` introduces **Agent Studio UI Design System Unification**, reusing the refined `OmnigentChatPanel` with conversational agent execution, live status indicator, and seamless session management.
+
+### ✨ Features & Enhancements
+
+#### Agent Studio UI Design System Unification
+- **Modular Chat Panel Integration ([`OmnigentChatPanel.tsx`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/frontend/src/modules/apps/components/build/OmnigentChatPanel.tsx))**: Refactored the core chat panel to support generic prompt sending, session action controls, and status telemetry adaptable across App Dev and Agent Studio.
+- **Agent Studio Redesign ([`AgentRuntimePage.tsx`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/frontend/src/modules/agents/pages/AgentRuntimePage.tsx))**: Replaced disparate ad-hoc controls with unified App UI components, standardized sidebars, interactive session switcher, and responsive terminal split panels.
+- **Interactive Session Provisioning ([`CreateAgentSessionModal.tsx`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/frontend/src/modules/agents/components/CreateAgentSessionModal.tsx))**: Updated session creation modal styling and preset pickers to conform to platform design tokens.
+
+---
+
+## [0.13.5] - 2026-10-14
+
+### 🚀 Highlights
+
+CompassX `0.13.5` introduces **Automated GHCR Sandbox Host Image Publishing & Public OCI Metadata Linking** alongside **Workflow Dispatch Auxiliary Build Controls**.
+
+### ✨ Features & Enhancements
+
+#### GHCR Sandbox Host Image Publishing & Public OCI Linking
+- **OCI Metadata Labels ([`Dockerfile.sandbox-host`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/backend/Dockerfile.sandbox-host))**: Added `org.opencontainers.image.source`, `org.opencontainers.image.description`, and `org.opencontainers.image.licenses` labels linking `compassx-sandbox-host` directly to the public GitHub repository.
+- **Workflow Dispatch Auxiliary Force Flag ([`.github/workflows/release.yml`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/.github/workflows/release.yml))**: Added `force_auxiliary` input flag and change detection to guarantee auxiliary container builds on release triggers.
+
+---
+
 ## [0.13.4] - 2026-10-14
 
 ### 🚀 Highlights
