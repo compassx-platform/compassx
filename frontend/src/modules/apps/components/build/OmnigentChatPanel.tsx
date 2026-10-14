@@ -47,15 +47,17 @@ import {
 } from '../../hooks/useOmnigentChat';
 import { useToast } from '@/lib/toast';
 import { DevTerminal } from '../DevTerminal';
+import { SandboxTerminal } from '@/components/sandbox/SandboxTerminal';
 
 export type StudioViewMode = 'chat' | 'cli' | 'split';
 
 export interface OmnigentChatPanelProps {
-  app: AppItem;
-  resolvedAppId: string;
+  app?: AppItem;
+  resolvedAppId?: string;
+  sandboxId?: string;
   session?: OmnigentSession;
   devStatus?: DevSessionStatus;
-  isDevPodRunning: boolean;
+  isDevPodRunning?: boolean;
   onCodeUpdated?: () => void;
   viewMode?: StudioViewMode;
   onViewModeChange?: (mode: StudioViewMode) => void;
@@ -65,9 +67,46 @@ export interface OmnigentChatPanelProps {
   sessionTitle?: string;
   workspaceId?: string;
   workspaceName?: string;
+  messages?: ChatMessage[];
+  onSendMessage?: (prompt: string, agentName: string) => Promise<void> | void;
+  onClearSession?: () => Promise<void> | void;
+  onAgentChange?: (agentName: string) => void;
 }
 
 const DEFAULT_AGENTS: OmnigentAgent[] = [
+  {
+    id: 'agent_antigravity',
+    name: 'antigravity',
+    display_name: 'Google Antigravity',
+    provider: 'Google DeepMind',
+    description: 'DeepMind Antigravity Pair Programmer for system architecture, refactoring, and verification',
+    role: 'Lead Architect & Pair Programmer',
+    badge: 'DeepMind Core',
+    color: '#38bdf8',
+    icon: 'sparkles',
+  },
+  {
+    id: 'agent_pi',
+    name: 'pi',
+    display_name: 'Pi Coding Agent',
+    provider: 'Pi CLI',
+    description: 'Minimalist terminal coding agent with interactive tools and native sub-process orchestration',
+    role: 'Codebase Specialist',
+    badge: 'Lightweight',
+    color: '#f59e0b',
+    icon: 'terminal',
+  },
+  {
+    id: 'agent_opencode',
+    name: 'opencode',
+    display_name: 'OpenCode AI',
+    provider: 'OpenCode',
+    description: 'OpenCode terminal and file system execution agent with direct shell tool access',
+    role: 'Terminal & Shell Specialist',
+    badge: 'Shell First',
+    color: '#10b981',
+    icon: 'code',
+  },
   {
     id: 'agent_claude_code',
     name: 'claude-code',
@@ -80,17 +119,6 @@ const DEFAULT_AGENTS: OmnigentAgent[] = [
     icon: 'terminal',
   },
   {
-    id: 'agent_antigravity',
-    name: 'antigravity-native-ui',
-    display_name: 'Antigravity',
-    provider: 'Google DeepMind',
-    description: 'Google DeepMind Antigravity Pair Programmer for system architecture, refactoring, and verification',
-    role: 'Lead Architect & Pair Programmer',
-    badge: 'Advanced AGY',
-    color: '#6366f1',
-    icon: 'sparkles',
-  },
-  {
     id: 'agent_polly',
     name: 'polly',
     display_name: 'Omnigent Polly',
@@ -100,17 +128,6 @@ const DEFAULT_AGENTS: OmnigentAgent[] = [
     badge: 'Generalist',
     color: '#8b5cf6',
     icon: 'bot',
-  },
-  {
-    id: 'agent_opencode',
-    name: 'opencode-native-ui',
-    display_name: 'OpenCode',
-    provider: 'OpenCode',
-    description: 'OpenCode terminal and file system execution agent with direct shell tool access',
-    role: 'Terminal & Shell Specialist',
-    badge: 'Shell First',
-    color: '#10b981',
-    icon: 'code',
   },
   {
     id: 'agent_codex',
@@ -178,6 +195,7 @@ const AGENT_PROMPTS: Record<string, string[]> = {
 export function OmnigentChatPanel({
   app,
   resolvedAppId,
+  sandboxId,
   session,
   devStatus,
   isDevPodRunning,
@@ -190,10 +208,14 @@ export function OmnigentChatPanel({
   sessionTitle,
   workspaceId: propWorkspaceId,
   workspaceName: propWorkspaceName,
+  messages: propMessages,
+  onSendMessage: propOnSendMessage,
+  onClearSession: propOnClearSession,
+  onAgentChange: propOnAgentChange,
 }: OmnigentChatPanelProps) {
   const toast = useToast();
   const [promptText, setPromptText] = useState('');
-  const [selectedAgentName, setSelectedAgentName] = useState(agentName || 'claude-code');
+  const [selectedAgentName, setSelectedAgentName] = useState(agentName || 'antigravity');
   const [internalViewMode, setInternalViewMode] = useState<StudioViewMode>('chat');
   const viewMode = propViewMode ?? internalViewMode;
 
@@ -234,7 +256,12 @@ export function OmnigentChatPanel({
 
   const activeAgent = useMemo(() => {
     return (
-      allAgents.find((a) => a.name === selectedAgentName || a.id === selectedAgentName) ||
+      allAgents.find((a) =>
+        a.name === selectedAgentName ||
+        a.id === selectedAgentName ||
+        (selectedAgentName && a.name.startsWith(selectedAgentName)) ||
+        (selectedAgentName && selectedAgentName.startsWith(a.name))
+      ) ||
       allAgents[0]
     );
   }, [allAgents, selectedAgentName]);
@@ -265,11 +292,14 @@ export function OmnigentChatPanel({
   const clearSessionMutation = useClearOmnigentSession();
 
   const allMessages: ChatMessage[] = useMemo(() => {
+    if (propMessages && propMessages.length > 0) {
+      return [...propMessages, ...optimisticMessages];
+    }
     if (!serverMessages || serverMessages.length === 0) {
       return optimisticMessages;
     }
     return serverMessages;
-  }, [serverMessages, optimisticMessages]);
+  }, [propMessages, serverMessages, optimisticMessages]);
 
   const prevToolCallCountRef = useRef<number>(0);
   useEffect(() => {
@@ -307,20 +337,25 @@ export function OmnigentChatPanel({
     setIsSending(true);
 
     try {
-      await sendPromptMutation.mutateAsync({
-        appId: resolvedAppId,
-        prompt: finalPrompt,
-        sessionId: resolvedSessionId,
-        agentName: activeAgent.name,
-        workspaceId: resolvedWorkspaceId,
-      });
+      if (propOnSendMessage) {
+        await propOnSendMessage(finalPrompt, activeAgent.name);
+        setOptimisticMessages([]);
+      } else if (resolvedAppId) {
+        await sendPromptMutation.mutateAsync({
+          appId: resolvedAppId,
+          prompt: finalPrompt,
+          sessionId: resolvedSessionId,
+          agentName: activeAgent.name,
+          workspaceId: resolvedWorkspaceId,
+        });
 
-      refetchMessages();
-      if (onCodeUpdated) {
-        setTimeout(onCodeUpdated, 2000);
+        refetchMessages();
+        if (onCodeUpdated) {
+          setTimeout(onCodeUpdated, 2000);
+        }
       }
     } catch (err: any) {
-      toast.error(err?.response?.data?.detail || 'Failed to send prompt to Omnigent AI.');
+      toast.error(err?.response?.data?.detail || err?.message || 'Failed to send prompt to AI agent.');
     } finally {
       setIsSending(false);
       if (textareaRef.current) {
@@ -337,17 +372,23 @@ export function OmnigentChatPanel({
   }
 
   async function handleClearHistory() {
-    if (!confirm('Clear Omnigent conversation history for this workspace?')) return;
+    if (!confirm('Clear conversation history for this workspace/session?')) return;
     try {
-      await clearSessionMutation.mutateAsync({
-        appId: resolvedAppId,
-        workspaceId: resolvedWorkspaceId,
-        sessionId: resolvedSessionId,
-      });
-      setOptimisticMessages([]);
-      toast.success('Conversation history cleared.');
+      if (propOnClearSession) {
+        await propOnClearSession();
+        setOptimisticMessages([]);
+        toast.success('Conversation history cleared.');
+      } else if (resolvedAppId) {
+        await clearSessionMutation.mutateAsync({
+          appId: resolvedAppId,
+          workspaceId: resolvedWorkspaceId,
+          sessionId: resolvedSessionId,
+        });
+        setOptimisticMessages([]);
+        toast.success('Conversation history cleared.');
+      }
     } catch (err: any) {
-      toast.error(err?.response?.data?.detail || 'Failed to clear session.');
+      toast.error(err?.response?.data?.detail || err?.message || 'Failed to clear session.');
     }
   }
 
@@ -1149,7 +1190,7 @@ export function OmnigentChatPanel({
                   value={promptText}
                   onChange={(e) => setPromptText(e.target.value)}
                   onKeyDown={handleKeyDown}
-                  placeholder={`Instruct ${activeAgent.display_name} to build, edit, or fix ${app.name}...`}
+                  placeholder={`Instruct ${activeAgent.display_name || 'AI'} to build, edit, or execute in ${app?.name || sessionTitle || 'workspace'}...`}
                   style={{
                     flex: 1,
                     background: 'transparent',
@@ -1195,10 +1236,10 @@ export function OmnigentChatPanel({
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                   {isDevPodRunning ? (
                     <span style={{ color: '#16a34a', display: 'flex', alignItems: 'center', gap: 4 }}>
-                      <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#16a34a' }} /> Pod connected
+                      <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#16a34a' }} /> {sandboxId ? 'Sandbox ready' : 'Pod connected'}
                     </span>
                   ) : (
-                    <span style={{ color: '#d97706' }}>Pod offline</span>
+                    <span style={{ color: '#d97706' }}>{sandboxId ? 'Sandbox offline' : 'Pod offline'}</span>
                   )}
                 </div>
               </div>
@@ -1213,22 +1254,31 @@ export function OmnigentChatPanel({
               flex: viewMode === 'split' ? '0 0 45%' : '1',
               display: 'flex',
               flexDirection: 'column',
-              background: '#ffffff',
+              background: '#090d16',
               overflow: 'hidden',
               position: 'relative',
             }}
           >
-            <DevTerminal
-              appId={resolvedAppId}
-              appName={app.name}
-              workspaceId={resolvedWorkspaceId}
-              workspaceName={resolvedWorkspaceName}
-              isDevPodRunning={isDevPodRunning}
-              agent={activeAgent.name}
-              sessionId={resolvedSessionId}
-              sessionTitle={sessionTitle || session?.title}
-              fullHeight={true}
-            />
+            {sandboxId ? (
+              <SandboxTerminal
+                sandboxId={sandboxId}
+                sandboxName={sessionTitle || app?.name || 'Agent Sandbox'}
+                isRunning={isDevPodRunning}
+                fullHeight={true}
+              />
+            ) : resolvedAppId ? (
+              <DevTerminal
+                appId={resolvedAppId}
+                appName={app?.name}
+                workspaceId={resolvedWorkspaceId}
+                workspaceName={resolvedWorkspaceName}
+                isDevPodRunning={isDevPodRunning ?? false}
+                agent={activeAgent.name}
+                sessionId={resolvedSessionId}
+                sessionTitle={sessionTitle || session?.title}
+                fullHeight={true}
+              />
+            ) : null}
           </div>
         )}
       </div>
@@ -1338,6 +1388,7 @@ export function OmnigentChatPanel({
                     onClick={() => {
                       setSelectedAgentName(agent.name);
                       setIsAgentModalOpen(false);
+                      propOnAgentChange?.(agent.name);
                       toast.success(`Switched AI Agent to ${agent.display_name || agent.name}`);
                     }}
                     style={{

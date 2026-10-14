@@ -108,7 +108,8 @@ export function CreateAgentSessionModal({ isOpen, onClose, onSubmit }: Props) {
       style={{
         position: 'fixed',
         inset: 0,
-        background: 'rgba(0, 0, 0, 0.65)',
+        background: 'rgba(15, 23, 42, 0.45)',
+        backdropFilter: 'blur(4px)',
         zIndex: 1100,
         display: 'flex',
         alignItems: 'center',
@@ -121,10 +122,10 @@ export function CreateAgentSessionModal({ isOpen, onClose, onSubmit }: Props) {
         style={{
           width: '100%',
           maxWidth: '580px',
-          background: 'var(--color-surface, #161b22)',
-          border: '1px solid var(--color-border, #30363d)',
-          borderRadius: '10px',
-          boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.5)',
+          background: '#ffffff',
+          border: '1px solid #e2e8f0',
+          borderRadius: '12px',
+          boxShadow: '0 20px 48px rgba(0, 0, 0, 0.12)',
           overflow: 'hidden',
           display: 'flex',
           flexDirection: 'column',
@@ -137,22 +138,51 @@ export function CreateAgentSessionModal({ isOpen, onClose, onSubmit }: Props) {
             alignItems: 'center',
             justifyContent: 'space-between',
             padding: '16px 20px',
-            borderBottom: '1px solid var(--color-border, #30363d)',
-            background: 'var(--color-surface-secondary, #0d1117)',
+            borderBottom: '1px solid #e2e8f0',
+            background: '#ffffff',
           }}
         >
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-            <TerminalSquare size={18} color="var(--color-primary, #38bdf8)" />
-            <h3 style={{ margin: 0, fontSize: '15px', fontWeight: 700, color: 'var(--color-text, #f0f6fc)' }}>
-              New Agent Runtime Session
-            </h3>
+            <div
+              style={{
+                width: 32,
+                height: 32,
+                borderRadius: 8,
+                background: '#EBF2FF',
+                border: '1px solid #dbeafe',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                color: '#1B6EF3',
+              }}
+            >
+              <TerminalSquare size={17} />
+            </div>
+            <div>
+              <h3 style={{ margin: 0, fontSize: '0.98rem', fontWeight: 700, color: '#0f172a' }}>
+                New Agent Runtime Session
+              </h3>
+              <p style={{ margin: '2px 0 0', fontSize: '0.74rem', color: '#64748b' }}>
+                Spawn an isolated agent session bound to container compute
+              </p>
+            </div>
           </div>
           <button
+            type="button"
             onClick={onClose}
-            className="ghost-icon-btn"
-            style={{ color: 'var(--color-text-muted, #8b949e)', cursor: 'pointer' }}
+            style={{
+              background: 'transparent',
+              border: 'none',
+              padding: 5,
+              color: '#64748b',
+              cursor: 'pointer',
+              borderRadius: 6,
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}
           >
-            <X size={16} />
+            <X size={18} />
           </button>
         </div>
 
@@ -163,10 +193,10 @@ export function CreateAgentSessionModal({ isOpen, onClose, onSubmit }: Props) {
               style={{
                 padding: '10px 14px',
                 borderRadius: '6px',
-                background: 'rgba(239, 68, 68, 0.12)',
-                border: '1px solid rgba(239, 68, 68, 0.3)',
-                color: '#f87171',
-                fontSize: '13px',
+                background: 'rgba(239, 68, 68, 0.1)',
+                border: '1px solid rgba(239, 68, 68, 0.25)',
+                color: '#dc2626',
+                fontSize: '0.82rem',
               }}
             >
               {error}
@@ -175,7 +205,7 @@ export function CreateAgentSessionModal({ isOpen, onClose, onSubmit }: Props) {
 
           {/* Session Title */}
           <div>
-            <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, marginBottom: '6px', color: 'var(--color-text, #c9d1d9)' }}>
+            <label style={{ display: 'block', fontSize: '0.78rem', fontWeight: 600, marginBottom: '6px', color: '#334155' }}>
               Session Title
             </label>
             <input
@@ -187,10 +217,10 @@ export function CreateAgentSessionModal({ isOpen, onClose, onSubmit }: Props) {
                 width: '100%',
                 padding: '9px 12px',
                 borderRadius: '6px',
-                border: '1px solid var(--color-border, #30363d)',
-                background: 'var(--color-surface-secondary, #0d1117)',
-                color: 'var(--color-text, #f0f6fc)',
-                fontSize: '13px',
+                border: '1px solid #cbd5e1',
+                background: '#ffffff',
+                color: '#0f172a',
+                fontSize: '0.85rem',
                 outline: 'none',
                 boxSizing: 'border-box',
               }}
@@ -199,7 +229,7 @@ export function CreateAgentSessionModal({ isOpen, onClose, onSubmit }: Props) {
 
           {/* Select Agent Engine */}
           <div>
-            <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, marginBottom: '8px', color: 'var(--color-text, #c9d1d9)' }}>
+            <label style={{ display: 'block', fontSize: '0.78rem', fontWeight: 600, marginBottom: '8px', color: '#334155' }}>
               Select Agent Engine
             </label>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '10px' }}>
@@ -210,11 +240,11 @@ export function CreateAgentSessionModal({ isOpen, onClose, onSubmit }: Props) {
                     key={agent.id}
                     onClick={() => setSelectedAgent(agent.id as any)}
                     style={{
-                      border: `1.5px solid ${isSelected ? agent.color : 'var(--color-border, #30363d)'}`,
+                      border: `1.5px solid ${isSelected ? agent.color : '#e2e8f0'}`,
                       borderRadius: '8px',
                       padding: '12px',
                       cursor: 'pointer',
-                      background: isSelected ? agent.bg : 'var(--color-surface-secondary, #0d1117)',
+                      background: isSelected ? 'rgba(56, 189, 248, 0.08)' : '#f8fafc',
                       display: 'flex',
                       flexDirection: 'column',
                       gap: '6px',
@@ -235,19 +265,19 @@ export function CreateAgentSessionModal({ isOpen, onClose, onSubmit }: Props) {
                           display: 'flex',
                           alignItems: 'center',
                           justifyContent: 'center',
-                          color: '#0d1117',
+                          color: '#ffffff',
                         }}
                       >
                         <Check size={11} strokeWidth={3} />
                       </div>
                     )}
-                    <span style={{ fontSize: '13px', fontWeight: 700, color: 'var(--color-text, #f0f6fc)' }}>
+                    <span style={{ fontSize: '0.84rem', fontWeight: 700, color: '#0f172a' }}>
                       {agent.name}
                     </span>
                     <span
                       style={{
                         display: 'inline-block',
-                        fontSize: '10px',
+                        fontSize: '0.68rem',
                         fontFamily: 'monospace',
                         color: agent.color,
                         fontWeight: 600,
@@ -255,7 +285,7 @@ export function CreateAgentSessionModal({ isOpen, onClose, onSubmit }: Props) {
                     >
                       CLI: {agent.tag}
                     </span>
-                    <p style={{ margin: 0, fontSize: '11px', color: 'var(--color-text-muted, #8b949e)', lineHeight: '1.3' }}>
+                    <p style={{ margin: 0, fontSize: '0.74rem', color: '#64748b', lineHeight: '1.3' }}>
                       {agent.desc}
                     </p>
                   </div>
@@ -266,7 +296,7 @@ export function CreateAgentSessionModal({ isOpen, onClose, onSubmit }: Props) {
 
           {/* Sandbox Binding */}
           <div>
-            <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, marginBottom: '8px', color: 'var(--color-text, #c9d1d9)' }}>
+            <label style={{ display: 'block', fontSize: '0.78rem', fontWeight: 600, marginBottom: '8px', color: '#334155' }}>
               Sandbox Runtime Binding
             </label>
 
@@ -279,8 +309,8 @@ export function CreateAgentSessionModal({ isOpen, onClose, onSubmit }: Props) {
                   gap: '10px',
                   padding: '10px 14px',
                   borderRadius: '6px',
-                  border: `1px solid ${sandboxMode === 'new' ? 'var(--color-primary, #38bdf8)' : 'var(--color-border, #30363d)'}`,
-                  background: sandboxMode === 'new' ? 'rgba(56, 189, 248, 0.08)' : 'var(--color-surface-secondary, #0d1117)',
+                  border: `1px solid ${sandboxMode === 'new' ? '#2563eb' : '#e2e8f0'}`,
+                  background: sandboxMode === 'new' ? 'rgba(37, 99, 235, 0.05)' : '#f8fafc',
                   cursor: 'pointer',
                 }}
               >
@@ -292,10 +322,10 @@ export function CreateAgentSessionModal({ isOpen, onClose, onSubmit }: Props) {
                   style={{ marginTop: '3px' }}
                 />
                 <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: '13px', fontWeight: 600, color: 'var(--color-text, #f0f6fc)' }}>
+                  <div style={{ fontSize: '0.84rem', fontWeight: 600, color: '#0f172a' }}>
                     Provision New Sandbox (Recommended)
                   </div>
-                  <div style={{ fontSize: '11px', color: 'var(--color-text-muted, #8b949e)', marginTop: '2px' }}>
+                  <div style={{ fontSize: '0.74rem', color: '#64748b', marginTop: '2px' }}>
                     Creates a fresh, dedicated compute sandbox running <code>compassx-sandbox-host:latest</code>.
                   </div>
                 </div>
@@ -309,8 +339,8 @@ export function CreateAgentSessionModal({ isOpen, onClose, onSubmit }: Props) {
                   gap: '10px',
                   padding: '10px 14px',
                   borderRadius: '6px',
-                  border: `1px solid ${sandboxMode === 'existing' ? 'var(--color-primary, #38bdf8)' : 'var(--color-border, #30363d)'}`,
-                  background: sandboxMode === 'existing' ? 'rgba(56, 189, 248, 0.08)' : 'var(--color-surface-secondary, #0d1117)',
+                  border: `1px solid ${sandboxMode === 'existing' ? '#2563eb' : '#e2e8f0'}`,
+                  background: sandboxMode === 'existing' ? 'rgba(37, 99, 235, 0.05)' : '#f8fafc',
                   cursor: 'pointer',
                 }}
               >
@@ -322,19 +352,19 @@ export function CreateAgentSessionModal({ isOpen, onClose, onSubmit }: Props) {
                   style={{ marginTop: '3px' }}
                 />
                 <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: '13px', fontWeight: 600, color: 'var(--color-text, #f0f6fc)' }}>
+                  <div style={{ fontSize: '0.84rem', fontWeight: 600, color: '#0f172a' }}>
                     Attach to Existing Sandbox
                   </div>
-                  <div style={{ fontSize: '11px', color: 'var(--color-text-muted, #8b949e)', marginTop: '2px' }}>
+                  <div style={{ fontSize: '0.74rem', color: '#64748b', marginTop: '2px' }}>
                     Reuse an active or suspended compute container in your workspace.
                   </div>
 
                   {sandboxMode === 'existing' && (
                     <div style={{ marginTop: '10px' }}>
                       {sandboxesLoading ? (
-                        <div style={{ fontSize: '12px', color: '#8b949e' }}>Loading available sandboxes...</div>
+                        <div style={{ fontSize: '0.78rem', color: '#64748b' }}>Loading available sandboxes...</div>
                       ) : availableSandboxes.length === 0 ? (
-                        <div style={{ fontSize: '12px', color: '#ef4444' }}>
+                        <div style={{ fontSize: '0.78rem', color: '#dc2626' }}>
                           No existing sandboxes found. Please provision a new sandbox.
                         </div>
                       ) : (
@@ -345,10 +375,10 @@ export function CreateAgentSessionModal({ isOpen, onClose, onSubmit }: Props) {
                             width: '100%',
                             padding: '8px 10px',
                             borderRadius: '5px',
-                            border: '1px solid var(--color-border, #30363d)',
-                            background: 'var(--color-surface, #161b22)',
-                            color: 'var(--color-text, #f0f6fc)',
-                            fontSize: '12px',
+                            border: '1px solid #cbd5e1',
+                            background: '#ffffff',
+                            color: '#0f172a',
+                            fontSize: '0.82rem',
                           }}
                         >
                           {availableSandboxes.map((sb) => (
@@ -373,10 +403,10 @@ export function CreateAgentSessionModal({ isOpen, onClose, onSubmit }: Props) {
                 marginTop: '10px',
                 padding: '8px 12px',
                 borderRadius: '5px',
-                background: 'rgba(245, 158, 11, 0.08)',
-                border: '1px solid rgba(245, 158, 11, 0.25)',
-                fontSize: '11px',
-                color: '#fbbf24',
+                background: '#fffbeb',
+                border: '1px solid #fde68a',
+                fontSize: '0.74rem',
+                color: '#b45309',
               }}
             >
               <Lock size={12} flexShrink={0} />
@@ -394,7 +424,7 @@ export function CreateAgentSessionModal({ isOpen, onClose, onSubmit }: Props) {
               justifyContent: 'flex-end',
               gap: '10px',
               paddingTop: '8px',
-              borderTop: '1px solid var(--color-border, #30363d)',
+              borderTop: '1px solid #e2e8f0',
             }}
           >
             <button
@@ -404,10 +434,10 @@ export function CreateAgentSessionModal({ isOpen, onClose, onSubmit }: Props) {
               style={{
                 padding: '8px 14px',
                 borderRadius: '6px',
-                background: 'transparent',
-                border: '1px solid var(--color-border, #30363d)',
-                color: 'var(--color-text, #f0f6fc)',
-                fontSize: '13px',
+                background: '#ffffff',
+                border: '1px solid #cbd5e1',
+                color: '#334155',
+                fontSize: '0.82rem',
                 cursor: 'pointer',
               }}
             >
@@ -422,10 +452,10 @@ export function CreateAgentSessionModal({ isOpen, onClose, onSubmit }: Props) {
                 gap: '6px',
                 padding: '8px 16px',
                 borderRadius: '6px',
-                background: '#238636',
+                background: '#2563eb',
                 border: 'none',
                 color: '#ffffff',
-                fontSize: '13px',
+                fontSize: '0.82rem',
                 fontWeight: 600,
                 cursor: submitting ? 'not-allowed' : 'pointer',
               }}
