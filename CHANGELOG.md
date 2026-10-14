@@ -5,6 +5,26 @@ All notable changes to the CompassX Platform will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.13.4] - 2026-10-14
+
+### 🚀 Highlights
+
+CompassX `0.13.4` introduces **Sandbox Contract Lifecycle Enforcement & Container Diagnostics**, **Automated Sandbox Host Auxiliary Build Pipeline**, and **Enhanced Agent Runtime Console UX**.
+
+### ✨ Features & Enhancements
+
+#### Sandbox Contract Lifecycle & Container Diagnostics
+- **Kubernetes Sandbox Diagnostics ([`k8s_driver.py`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/backend/app/sandbox/drivers/k8s_driver.py))**: Enhanced container lifecycle diagnostics to detect `ImagePullBackOff`, `CrashLoopBackOff`, and container termination exit codes with precise root cause error messages.
+- **Strict Readiness & Timeout Handling ([`service.py`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/backend/app/sandbox/service.py))**: Enforced robust sandbox contract verification during startup and execution, ensuring sandboxes transition cleanly between provisioning, ready, and failed states.
+
+#### Auxiliary Image CI Build Pipeline
+- **Sandbox Host Image Automation ([`.github/workflows/release.yml`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/.github/workflows/release.yml))**: Added automated build and push steps for `compassx-sandbox-host:latest` to GitHub Container Registry as part of the release workflow.
+
+#### Enhanced Agent Runtime Console UX
+- **Interactive Session Management ([`AgentRuntimePage.tsx`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/frontend/src/modules/agents/pages/AgentRuntimePage.tsx))**: Upgraded session cards with live telemetry badges, direct sandbox terminal tab integration, and quick session termination controls.
+
+---
+
 ## [0.13.3] - 2026-10-13
 
 ### 🚀 Highlights
