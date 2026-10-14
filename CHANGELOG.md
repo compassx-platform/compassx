@@ -5,6 +5,20 @@ All notable changes to the CompassX Platform will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.13.5] - 2026-10-14
+
+### 🚀 Highlights
+
+CompassX `0.13.5` introduces **Automated GHCR Sandbox Host Image Publishing & Public OCI Metadata Linking** alongside **Workflow Dispatch Auxiliary Build Controls**.
+
+### ✨ Features & Enhancements
+
+#### GHCR Sandbox Host Image Publishing & Public OCI Linking
+- **OCI Metadata Labels ([`Dockerfile.sandbox-host`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/backend/Dockerfile.sandbox-host))**: Added `org.opencontainers.image.source`, `org.opencontainers.image.description`, and `org.opencontainers.image.licenses` labels linking `compassx-sandbox-host` directly to the public GitHub repository.
+- **Workflow Dispatch Auxiliary Force Flag ([`.github/workflows/release.yml`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/.github/workflows/release.yml))**: Added `force_auxiliary` input flag and change detection to guarantee auxiliary container builds on release triggers.
+
+---
+
 ## [0.13.4] - 2026-10-14
 
 ### 🚀 Highlights

@@ -10,6 +10,11 @@ on:
         description: 'Release Tag (e.g. v1.0.0)'
         required: true
         type: string
+      force_auxiliary:
+        description: 'Force build all auxiliary images'
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -58,8 +63,8 @@ jobs:
             PREV_TAG=""
           fi
           
-          if [ -z "$PREV_TAG" ]; then
-            echo "Initial release detected (no previous tag). Building all auxiliary images."
+          if [ -z "$PREV_TAG" ] || [ "${{ github.event.inputs.force_auxiliary }}" = "true" ]; then
+            echo "Building all auxiliary images (initial release or force_auxiliary requested)."
             echo "build_eg=true" >> "$GITHUB_OUTPUT"
             echo "build_notebook_runner=true" >> "$GITHUB_OUTPUT"
             echo "build_jupyter_server=true" >> "$GITHUB_OUTPUT"

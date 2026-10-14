@@ -16,6 +16,10 @@ FROM node:${NODE_VERSION}-slim AS node-runtime
 # ── Stage 2: Final CompassX Sandbox Host Image ─────────────────────────
 FROM python:${PYTHON_VERSION}-slim AS compassx-host
 
+LABEL org.opencontainers.image.source="https://github.com/compassx-platform/compassx"
+LABEL org.opencontainers.image.description="CompassX Sandbox Host Runtime Image"
+LABEL org.opencontainers.image.licenses="Apache-2.0"
+
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     IS_SANDBOX=1 \
