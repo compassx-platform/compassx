@@ -240,6 +240,33 @@ class SandboxService:
                     )
                     return instance
 
+        # Check actual status from driver
+        if instance.status == SandboxStatus.FAILED:
+            instance.progress = SandboxProgress(
+                stage="failed",
+                step_index=total_steps,
+                total_steps=total_steps,
+                step_name="Failed",
+                message=instance.error_message or "Sandbox startup failed",
+                percent=100,
+                elapsed_seconds=round(time.time() - start_time, 2),
+                details={"error": instance.error_message},
+            )
+            logger.error("Sandbox '%s' (%s) FAILED in %.2fs: %s", instance.name, instance.id, time.time() - start_time, instance.error_message)
+            return instance
+
+        if instance.status == SandboxStatus.PROVISIONING:
+            instance.progress = SandboxProgress(
+                stage="starting",
+                step_index=2,
+                total_steps=total_steps,
+                step_name="Provisioning",
+                message="Sandbox compute is provisioning in cluster...",
+                percent=50,
+                elapsed_seconds=round(time.time() - start_time, 2),
+            )
+            return instance
+
         # Stage 4: Ready
         instance.status = SandboxStatus.READY
         instance.endpoints = driver.get_endpoints(instance)

@@ -73,18 +73,20 @@ class AgentRuntimeService:
 
             bound_sandbox_id: str = ""
 
+            instance = None
             # 1. Resolve or provision the bound sandbox
             if req.sandbox_mode == "existing" and req.sandbox_id:
                 existing = sandbox_service.get_sandbox(req.sandbox_id)
                 if not existing:
                     raise ValueError(f"Selected sandbox '{req.sandbox_id}' does not exist.")
                 bound_sandbox_id = existing.id
+                instance = existing
             else:
-                # Provision a new sandbox running compassx-sandbox-host:latest
+                # Provision a new sandbox running compassx-sandbox-host
                 spec = SandboxSpec(
                     name=f"{clean_title} ({clean_agent.capitalize()})",
                     consumer_module="agent",
-                    image=os.environ.get("COMPASSX_SANDBOX_IMAGE") or "compassx-sandbox-host:latest",
+                    image=os.environ.get("COMPASSX_SANDBOX_IMAGE") or "ghcr.io/compassx-platform/compassx-sandbox-host:latest",
                     ports=[8080],
                     working_dir="/workspace",
                     workspace_id=workspace_id,
@@ -114,13 +116,19 @@ class AgentRuntimeService:
                 content=greeting,
             )
 
+            init_status = "active"
+            if hasattr(instance, "status"):
+                status_val = instance.status.value if hasattr(instance.status, "value") else str(instance.status)
+                if status_val in ("failed", "provisioning"):
+                    init_status = status_val
+
             session = AgentRuntimeSession(
                 id=session_id,
                 workspace_id=workspace_id,
                 title=clean_title,
                 agent_type=clean_agent,
                 sandbox_id=bound_sandbox_id,
-                status="active",
+                status=init_status,
                 messages=[welcome_msg],
             )
 

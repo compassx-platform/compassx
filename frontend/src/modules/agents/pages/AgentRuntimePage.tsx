@@ -27,6 +27,7 @@ import {
   Terminal as TerminalIcon,
   HelpCircle,
   AlertCircle,
+  Server,
 } from 'lucide-react';
 import { useScopedNavigate } from '@/lib/appNavigation';
 import { useToast } from '@/lib/toast';
@@ -199,13 +200,32 @@ export default function AgentRuntimePage() {
     }
   }, []);
 
+  const currentSandboxStatus = useMemo(() => {
+    if (sandboxInfo?.status) return sandboxInfo.status.toLowerCase();
+    if (activeSession?.status && activeSession.status !== 'active') return activeSession.status.toLowerCase();
+    return loadingSandbox ? 'provisioning' : 'ready';
+  }, [sandboxInfo?.status, activeSession?.status, loadingSandbox]);
+
+  const isSandboxReady = currentSandboxStatus === 'running' || currentSandboxStatus === 'ready';
+  const isSandboxFailed = currentSandboxStatus === 'failed';
+  const isSandboxProvisioning = !isSandboxReady && !isSandboxFailed;
+
   useEffect(() => {
-    if (activeSession?.sandbox_id) {
-      refreshSandboxStatus(activeSession.sandbox_id);
-    } else {
+    if (!activeSession?.sandbox_id) {
       setSandboxInfo(null);
+      return;
     }
-  }, [activeSession?.sandbox_id, refreshSandboxStatus]);
+    refreshSandboxStatus(activeSession.sandbox_id);
+
+    // Actively poll status while the compute sandbox is in transitional provisioning stages
+    const isTransitional = ['provisioning', 'pending', 'starting', 'initializing', 'allocating'].includes(currentSandboxStatus);
+    if (isTransitional) {
+      const interval = setInterval(() => {
+        refreshSandboxStatus(activeSession.sandbox_id);
+      }, 3000);
+      return () => clearInterval(interval);
+    }
+  }, [activeSession?.sandbox_id, currentSandboxStatus, refreshSandboxStatus]);
 
   // Scroll chat to bottom when messages update
   useEffect(() => {
@@ -331,8 +351,7 @@ export default function AgentRuntimePage() {
     ? AGENT_CONFIGS[activeSession.agent_type] || AGENT_CONFIGS.antigravity
     : AGENT_CONFIGS.antigravity;
 
-  const currentSandboxStatus = sandboxInfo?.status || activeSession?.status || 'ready';
-  const statusColor = STATUS_COLORS[currentSandboxStatus] || '#10b981';
+  const statusColor = STATUS_COLORS[currentSandboxStatus] || (isSandboxProvisioning ? '#f59e0b' : '#10b981');
 
   return (
     <div
@@ -781,7 +800,8 @@ export default function AgentRuntimePage() {
                   }}
                 >
                   <button
-                    onClick={() => setActiveTab('chat')}
+                    onClick={() => isSandboxReady && setActiveTab('chat')}
+                    disabled={!isSandboxReady}
                     style={{
                       display: 'flex',
                       alignItems: 'center',
@@ -793,7 +813,8 @@ export default function AgentRuntimePage() {
                       padding: '6px 14px',
                       fontSize: '0.82rem',
                       fontWeight: 600,
-                      cursor: 'pointer',
+                      cursor: isSandboxReady ? 'pointer' : 'not-allowed',
+                      opacity: isSandboxReady ? 1 : 0.6,
                       transition: 'all 0.15s ease',
                       boxShadow: activeTab === 'chat' ? '0 2px 8px rgba(37, 99, 235, 0.3)' : 'none',
                     }}
@@ -801,7 +822,8 @@ export default function AgentRuntimePage() {
                     <MessageSquare size={14} /> Chat
                   </button>
                   <button
-                    onClick={() => setActiveTab('terminal')}
+                    onClick={() => isSandboxReady && setActiveTab('terminal')}
+                    disabled={!isSandboxReady}
                     style={{
                       display: 'flex',
                       alignItems: 'center',
@@ -813,7 +835,8 @@ export default function AgentRuntimePage() {
                       padding: '6px 14px',
                       fontSize: '0.82rem',
                       fontWeight: 600,
-                      cursor: 'pointer',
+                      cursor: isSandboxReady ? 'pointer' : 'not-allowed',
+                      opacity: isSandboxReady ? 1 : 0.6,
                       transition: 'all 0.15s ease',
                       boxShadow: activeTab === 'terminal' ? '0 2px 8px rgba(37, 99, 235, 0.3)' : 'none',
                     }}
@@ -824,8 +847,193 @@ export default function AgentRuntimePage() {
               </div>
             </header>
 
-            {/* ── Content Panes (Zero-Drop DOM Persistence) ── */}
-            <div style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
+            {/* ── Sandbox Contract Gate ── */}
+            {isSandboxProvisioning ? (
+              <div
+                style={{
+                  flex: 1,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  padding: '40px 24px',
+                  textAlign: 'center',
+                }}
+              >
+                <div
+                  style={{
+                    width: 64,
+                    height: 64,
+                    borderRadius: 16,
+                    background: 'linear-gradient(135deg, rgba(56, 189, 248, 0.15) 0%, rgba(37, 99, 235, 0.15) 100%)',
+                    border: '1px solid rgba(56, 189, 248, 0.3)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    color: '#38bdf8',
+                    marginBottom: 20,
+                    boxShadow: '0 8px 24px rgba(56, 189, 248, 0.2)',
+                  }}
+                >
+                  <Server size={32} className="spin" />
+                </div>
+                <h2 style={{ margin: '0 0 8px', fontSize: '1.25rem', fontWeight: 600, color: '#f8fafc' }}>
+                  {sandboxInfo?.progress?.stage === 'allocating'
+                    ? 'Allocating Compute Sandbox'
+                    : sandboxInfo?.progress?.stage === 'starting'
+                    ? 'Starting Container Environment'
+                    : 'Provisioning Agent Sandbox Compute'}
+                </h2>
+                <p style={{ margin: '0 0 24px', fontSize: '0.85rem', color: '#94a3b8', maxWidth: 460, lineHeight: 1.5 }}>
+                  {sandboxInfo?.progress?.message ||
+                    'The Kubernetes cluster is initializing worker nodes and preparing isolated container compute for this agent session.'}
+                </p>
+
+                <div
+                  style={{
+                    background: 'rgba(30, 41, 59, 0.6)',
+                    border: '1px solid var(--color-border, #334155)',
+                    borderRadius: 8,
+                    padding: '12px 20px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 16,
+                    fontSize: '0.78rem',
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <Lock size={13} style={{ color: '#94a3b8' }} />
+                    <span style={{ color: '#94a3b8' }}>Bound Sandbox:</span>
+                    <span style={{ fontFamily: 'monospace', color: '#e2e8f0' }}>{activeSession.sandbox_id}</span>
+                  </div>
+                  <div style={{ height: 14, width: 1, background: '#334155' }} />
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <span style={{ color: '#94a3b8' }}>Status:</span>
+                    <span style={{ color: '#f59e0b', textTransform: 'capitalize', fontWeight: 500 }}>
+                      {currentSandboxStatus}
+                    </span>
+                  </div>
+                </div>
+
+                <div style={{ marginTop: 20, fontSize: '0.75rem', color: '#64748b' }}>
+                  The Chat and Terminal workspace will automatically unlock once the sandbox container is fully running and healthy.
+                </div>
+              </div>
+            ) : isSandboxFailed ? (
+              <div
+                style={{
+                  flex: 1,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  padding: '40px 24px',
+                  textAlign: 'center',
+                }}
+              >
+                <div
+                  style={{
+                    width: 64,
+                    height: 64,
+                    borderRadius: 16,
+                    background: 'rgba(239, 68, 68, 0.15)',
+                    border: '1px solid rgba(239, 68, 68, 0.3)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    color: '#f87171',
+                    marginBottom: 20,
+                    boxShadow: '0 8px 24px rgba(239, 68, 68, 0.2)',
+                  }}
+                >
+                  <AlertCircle size={32} />
+                </div>
+                <h2 style={{ margin: '0 0 8px', fontSize: '1.25rem', fontWeight: 600, color: '#f8fafc' }}>
+                  Sandbox Compute Failed to Start
+                </h2>
+                <p style={{ margin: '0 0 20px', fontSize: '0.85rem', color: '#94a3b8', maxWidth: 480, lineHeight: 1.5 }}>
+                  The sandbox container encountered an infrastructure error during cluster startup.
+                </p>
+
+                {/* Diagnostic Error Box */}
+                <div
+                  style={{
+                    maxWidth: 580,
+                    width: '100%',
+                    background: 'rgba(15, 23, 42, 0.8)',
+                    border: '1px solid rgba(239, 68, 68, 0.3)',
+                    borderRadius: 8,
+                    padding: '14px 18px',
+                    textAlign: 'left',
+                    marginBottom: 24,
+                  }}
+                >
+                  <div style={{ fontSize: '0.78rem', fontWeight: 600, color: '#f87171', marginBottom: 6, display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <AlertCircle size={14} /> Diagnostic Error
+                  </div>
+                  <div
+                    style={{
+                      fontFamily: 'monospace',
+                      fontSize: '0.75rem',
+                      color: '#cbd5e1',
+                      whiteSpace: 'pre-wrap',
+                      wordBreak: 'break-word',
+                      lineHeight: 1.5,
+                    }}
+                  >
+                    {sandboxInfo?.error_message ||
+                      sandboxInfo?.progress?.message ||
+                      'Container failed to pull runtime image or schedule onto a cluster node (ImagePullBackOff / ErrImagePull).'}
+                  </div>
+                  <div style={{ marginTop: 10, display: 'flex', gap: 12, fontSize: '0.72rem', color: '#64748b' }}>
+                    <span>Sandbox ID: <code style={{ color: '#94a3b8' }}>{activeSession.sandbox_id}</code></span>
+                    <span>Image: <code style={{ color: '#94a3b8' }}>{sandboxInfo?.image || 'compassx-sandbox-host'}</code></span>
+                  </div>
+                </div>
+
+                {/* Actions */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                  <button
+                    onClick={handleResumeSandbox}
+                    disabled={resumingSandbox}
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: 8,
+                      background: '#2563eb',
+                      color: '#ffffff',
+                      border: 'none',
+                      borderRadius: 6,
+                      padding: '8px 18px',
+                      fontSize: '0.82rem',
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    {resumingSandbox ? <Loader2 size={14} className="spin" /> : <Play size={14} />} Retry Provisioning
+                  </button>
+                  <button
+                    onClick={(e) => handleDeleteSession(e, activeSession.id)}
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: 6,
+                      background: 'transparent',
+                      color: '#94a3b8',
+                      border: '1px solid #334155',
+                      borderRadius: 6,
+                      padding: '8px 14px',
+                      fontSize: '0.82rem',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    <Trash2 size={14} /> Delete Session
+                  </button>
+                </div>
+              </div>
+            ) : (
+              /* ── Content Panes (Zero-Drop DOM Persistence) ── */
+              <div style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
               {/* ── Chat View Pane ── */}
               <div
                 style={{
@@ -1203,6 +1411,7 @@ export default function AgentRuntimePage() {
                 </div>
               </div>
             </div>
+            )}
           </>
         )}
       </main>

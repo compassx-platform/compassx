@@ -16,7 +16,7 @@ from compute.k8s_client import get_k8s_client
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_SANDBOX_IMAGE = "compassx-sandbox-host:latest"
+DEFAULT_SANDBOX_IMAGE = "ghcr.io/compassx-platform/compassx-sandbox-host:latest"
 
 
 def _sanitize_k8s_name(name: str) -> str:
@@ -77,8 +77,15 @@ class KubernetesSandboxDriver(BaseSandboxDriver):
 
     def _resolve_image(self, requested_image: Optional[str]) -> str:
         """Resolve container image with fallback chain for Kubernetes."""
-        if requested_image and requested_image.strip() and requested_image.strip() not in ("compassx-dev-host:latest", "compassx-dev-sandbox", "ghcr.io/omnigent-ai/omnigent-host:latest"):
-            return requested_image.strip()
+        clean = (requested_image or "").strip()
+        if clean and clean not in (
+            "compassx-sandbox-host:latest",
+            "compassx-sandbox-host",
+            "compassx-dev-host:latest",
+            "compassx-dev-sandbox",
+            "ghcr.io/omnigent-ai/omnigent-host:latest",
+        ):
+            return clean
         return os.environ.get("COMPASSX_SANDBOX_IMAGE") or DEFAULT_SANDBOX_IMAGE
 
     def provision(self, spec: SandboxSpec) -> SandboxInstance:
@@ -350,20 +357,40 @@ class KubernetesSandboxDriver(BaseSandboxDriver):
 
         # Wait up to 10s for pod to reach Running phase
         pod_phase = "Pending"
+        container_failure_reason = None
         for _ in range(10):
             try:
                 live_pod = k8s.core().read_namespaced_pod(name=pod_name, namespace=self.namespace)
-                phase = (live_pod.status.phase or "") if live_pod.status else ""
-                if phase:
-                    pod_phase = phase
-                if phase == "Running":
-                    break
+                if live_pod and live_pod.status:
+                    phase = (live_pod.status.phase or "")
+                    if phase:
+                        pod_phase = phase
+
+                    # Inspect container status for early failure detection (e.g. ImagePullBackOff)
+                    for c_status in (live_pod.status.container_statuses or []):
+                        if c_status.state:
+                            if c_status.state.waiting:
+                                reason = c_status.state.waiting.reason or ""
+                                if reason in ("CrashLoopBackOff", "ErrImagePull", "ImagePullBackOff", "Error"):
+                                    msg = c_status.state.waiting.message or f"Container failed: {reason}"
+                                    container_failure_reason = f"{reason}: {msg}"
+                                    break
+                            if c_status.state.terminated and c_status.state.terminated.exit_code != 0:
+                                container_failure_reason = c_status.state.terminated.message or f"Container exited with code {c_status.state.terminated.exit_code}"
+                                break
+
+                    if container_failure_reason:
+                        break
+                    if phase == "Running":
+                        break
             except Exception:
                 pass
             time.sleep(1)
 
         # Resolve status
-        if pod_phase == "Running":
+        if container_failure_reason:
+            sb_status = SandboxStatus.FAILED
+        elif pod_phase == "Running":
             sb_status = SandboxStatus.RUNNING
         elif pod_phase in ("Failed", "Unknown"):
             sb_status = SandboxStatus.FAILED
@@ -389,6 +416,7 @@ class KubernetesSandboxDriver(BaseSandboxDriver):
             endpoints=endpoints,
             ports=spec.ports,
             working_dir=spec.working_dir or "/workspace",
+            error_message=container_failure_reason,
             created_at=datetime.now(timezone.utc).isoformat(),
             started_at=datetime.now(timezone.utc).isoformat(),
             labels=labels,

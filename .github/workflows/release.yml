@@ -29,6 +29,7 @@ jobs:
       build_notebook_runner: ${{ steps.check-diff.outputs.build_notebook_runner }}
       build_jupyter_server: ${{ steps.check-diff.outputs.build_jupyter_server }}
       build_duckdb: ${{ steps.check-diff.outputs.build_duckdb }}
+      build_sandbox_host: ${{ steps.check-diff.outputs.build_sandbox_host }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -63,6 +64,7 @@ jobs:
             echo "build_notebook_runner=true" >> "$GITHUB_OUTPUT"
             echo "build_jupyter_server=true" >> "$GITHUB_OUTPUT"
             echo "build_duckdb=true" >> "$GITHUB_OUTPUT"
+            echo "build_sandbox_host=true" >> "$GITHUB_OUTPUT"
           else
             echo "Comparing changes between ${PREV_TAG} and ${TAG}:"
             CHANGED_FILES=$(git diff --name-only "$PREV_TAG" "$TAG")
@@ -94,6 +96,13 @@ jobs:
               echo "build_duckdb=true" >> "$GITHUB_OUTPUT"
             else
               echo "build_duckdb=false" >> "$GITHUB_OUTPUT"
+            fi
+
+            # 5. Sandbox Host
+            if echo "$CHANGED_FILES" | grep -qE "^backend/Dockerfile\.sandbox-host"; then
+              echo "build_sandbox_host=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "build_sandbox_host=false" >> "$GITHUB_OUTPUT"
             fi
           fi
 
@@ -170,6 +179,10 @@ jobs:
             context: ./backend
             dockerfile: ./backend/Dockerfile.compute-duckdb
             flag: build_duckdb
+          - service: compassx-sandbox-host
+            context: ./backend
+            dockerfile: ./backend/Dockerfile.sandbox-host
+            flag: build_sandbox_host
     steps:
       - name: Check if build is required
         id: condition
