@@ -193,6 +193,7 @@ async def mcp_sse_stream(
     )
 
 
+@router.get("/servers/{server_name}/mcp")
 @router.get("/servers/{server_name}/sse")
 async def mcp_server_sse_stream(
     server_name: str,
@@ -208,6 +209,93 @@ async def mcp_server_sse_stream(
         server_filter=server_name,
         workspace_id=ws_id,
         user_email=user_email,
+    )
+
+
+@router.post("/servers/{server_name}/sse")
+@router.post("/servers/{server_name}/mcp")
+@router.post("/servers/{server_name}")
+async def mcp_server_streamable_post(
+    server_name: str,
+    request: Request,
+    db: Session = Depends(get_account_db),
+):
+    """
+    Streamable HTTP MCP endpoint (spec 2025-03-26) for a specific MCP server.
+    Handles direct JSON-RPC 2.0 requests from Antigravity CLI, Claude Code, and modern MCP clients.
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
+
+    ws_id = _get_workspace_id(request)
+    user_email = getattr(request.state, "user_email", None)
+    session_id = request.query_params.get("session_id")
+    session = mcp_session_manager.get_session(session_id) if session_id else None
+
+    if isinstance(body, list):
+        return [
+            await process_mcp_jsonrpc_message(
+                body=b,
+                session=session,
+                db=db,
+                workspace_id=ws_id,
+                user_email=user_email,
+                server_filter=server_name,
+            )
+            for b in body
+        ]
+
+    return await process_mcp_jsonrpc_message(
+        body=body,
+        session=session,
+        db=db,
+        workspace_id=ws_id,
+        user_email=user_email,
+        server_filter=server_name,
+    )
+
+
+@router.post("/sse")
+@router.post("/mcp")
+async def mcp_root_streamable_post(
+    request: Request,
+    db: Session = Depends(get_account_db),
+):
+    """
+    Streamable HTTP MCP root endpoint (spec 2025-03-26) for unified platform MCP tools.
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
+
+    ws_id = _get_workspace_id(request)
+    user_email = getattr(request.state, "user_email", None)
+    session_id = request.query_params.get("session_id")
+    session = mcp_session_manager.get_session(session_id) if session_id else None
+
+    if isinstance(body, list):
+        return [
+            await process_mcp_jsonrpc_message(
+                body=b,
+                session=session,
+                db=db,
+                workspace_id=ws_id,
+                user_email=user_email,
+                server_filter=None,
+            )
+            for b in body
+        ]
+
+    return await process_mcp_jsonrpc_message(
+        body=body,
+        session=session,
+        db=db,
+        workspace_id=ws_id,
+        user_email=user_email,
+        server_filter=None,
     )
 
 

@@ -164,9 +164,11 @@ async def process_mcp_jsonrpc_message(
     db: Session,
     workspace_id: Optional[str] = None,
     user_email: Optional[str] = None,
+    server_filter: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Process an incoming JSON-RPC 2.0 MCP request and return the JSON-RPC response.
+    Supports both stateful SSE sessions and stateless Streamable HTTP requests.
     """
     jsonrpc = body.get("jsonrpc", "2.0")
     msg_id = body.get("id")
@@ -175,7 +177,7 @@ async def process_mcp_jsonrpc_message(
 
     effective_ws_id = (session.workspace_id if session else None) or workspace_id
     effective_user = (session.user_email if session else None) or user_email or "system"
-    server_filter = session.server_filter if session else None
+    effective_server_filter = (session.server_filter if session else None) or server_filter
 
     # Handle Notifications (e.g. notifications/initialized)
     if method == "notifications/initialized":
@@ -213,10 +215,10 @@ async def process_mcp_jsonrpc_message(
         tool_defs: list[dict[str, Any]] = []
 
         # If filtered to a specific server (e.g., compassx_sql_warehouse)
-        if server_filter:
+        if effective_server_filter:
             # Check native builtins
-            if server_filter in BUILTIN_MCP_SERVERS:
-                for t in BUILTIN_MCP_SERVERS[server_filter].list_tools():
+            if effective_server_filter in BUILTIN_MCP_SERVERS:
+                for t in BUILTIN_MCP_SERVERS[effective_server_filter].list_tools():
                     schema = t.inputSchema.model_dump() if hasattr(t.inputSchema, "model_dump") else t.inputSchema
                     tool_defs.append({
                         "name": t.name,
@@ -226,7 +228,7 @@ async def process_mcp_jsonrpc_message(
             else:
                 # Query DB server
                 db_srv = db.query(MCPServer).filter(
-                    MCPServer.name == server_filter,
+                    MCPServer.name == effective_server_filter,
                     MCPServer.is_enabled == True,  # noqa: E712
                 ).first()
                 if db_srv:
