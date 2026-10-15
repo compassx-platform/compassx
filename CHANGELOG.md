@@ -5,6 +5,20 @@ All notable changes to the CompassX Platform will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.14.0] - 2026-10-15
+
+### 🚀 Highlights
+
+CompassX `0.14.0` introduces **Automatic Antigravity & Gemini Auth Synchronization across Compute Sandboxes**, ensuring seamless, transparent authentication for CLI agents and interactive tools across both Docker and Kubernetes runtime drivers.
+
+### ✨ Features & Enhancements
+
+#### Automatic Antigravity / Gemini Auth Synchronization
+- **Kubernetes Sandbox Driver ([`k8s_driver.py`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/backend/app/sandbox/drivers/k8s_driver.py))**: Automatically injects and mounts user Antigravity and Gemini credentials into sandbox pods, configuring runtime environment variables and secret tokens transparently for coding harnesses and CLI utilities.
+- **Docker Sandbox Driver ([`docker_driver.py`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/backend/app/sandbox/drivers/docker_driver.py))**: Synchronizes authentication configuration into local container sandbox runtimes.
+
+---
+
 ## [0.13.6] - 2026-10-14
 
 ### 🚀 Highlights
