@@ -5,6 +5,24 @@ All notable changes to the CompassX Platform will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.14.1] - 2026-10-15
+
+### 🚀 Highlights
+
+CompassX `0.14.1` introduces **Antigravity CLI Toolbox Resilience & Non-Root Workspace Trust**, **Decoupled Local SQLite State from CIFS/Azure Files**, and **Extended MCP Config & Sandbox Driver Seeding**.
+
+### ✨ Features & Enhancements
+
+#### Antigravity CLI Sandbox Stability & Workspace Trust
+- **Workspace Trust & Permissions ([`Dockerfile.sandbox-host`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/backend/Dockerfile.sandbox-host), [`k8s_driver.py`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/backend/app/sandbox/drivers/k8s_driver.py), [`docker_driver.py`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/backend/app/sandbox/drivers/docker_driver.py))**: Seeded non-root workspace trust and environment configurations to prevent premature toolbox terminations and permission errors when launching AI coding harnesses.
+- **Rootfs & Database CIFS Decoupling ([`kubernetes_driver.py`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/backend/app/services/drivers/kubernetes_driver.py))**: Eliminated CIFS symlinking of `/root/.gemini` to local volumes, resolving SQLite lock timeouts and stale file handles on network-attached storage.
+
+#### Extended MCP Protocol & Driver Seeding
+- **Omnigent MCP Sync ([`omnigent_sync.py`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/backend/app/ai_gateway/mcp/omnigent_sync.py))**: Added dual support for `serverUrl` and `url` keys in remote MCP server definitions and decoupled local tool rootfs caches from CIFS shares.
+- **Sandbox MCP Seeding ([`docker_driver.py`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/backend/app/sandbox/drivers/docker_driver.py), [`k8s_driver.py`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/backend/app/sandbox/drivers/k8s_driver.py))**: Pre-seeded MCP configurations automatically during sandbox provisioning.
+
+---
+
 ## [0.14.0] - 2026-10-15
 
 ### 🚀 Highlights
