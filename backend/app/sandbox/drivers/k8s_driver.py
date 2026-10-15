@@ -221,12 +221,21 @@ class KubernetesSandboxDriver(BaseSandboxDriver):
                 if mk and mv is not None:
                     annotations[f"compassx.metadata.{mk}"] = str(mv)
 
-        # 6. Container definition
+        # 6. Container definition with automatic Antigravity / Gemini credential synchronization
+        boot_cmd = (
+            "mkdir -p /workspaces/.shared_auth/.gemini/antigravity-cli 2>/dev/null; "
+            "if [ -d /workspaces/.shared_auth/.gemini ]; then "
+            "  mkdir -p /root/.gemini 2>/dev/null; "
+            "  cp -rn /workspaces/.shared_auth/.gemini/* /root/.gemini/ 2>/dev/null || true; "
+            "  rm -rf /root/.gemini && ln -sf /workspaces/.shared_auth/.gemini /root/.gemini 2>/dev/null || true; "
+            "fi; "
+            "exec tail -f /dev/null"
+        )
         container = V1Container(
             name="sandbox",
             image=image_name,
             image_pull_policy="IfNotPresent",
-            command=["tail", "-f", "/dev/null"],
+            command=["/bin/sh", "-c", boot_cmd],
             env=env_list,
             ports=container_ports if container_ports else None,
             volume_mounts=volume_mounts if volume_mounts else None,
@@ -557,8 +566,17 @@ class KubernetesSandboxDriver(BaseSandboxDriver):
         target_dir = working_dir or instance.working_dir or "/workspace"
         cd_prefix = f"cd '{target_dir}' && " if target_dir else ""
 
+        auth_prep = (
+            "if [ -d /workspaces/.shared_auth/.gemini ] && [ ! -L /root/.gemini ]; then "
+            "  mkdir -p /root/.gemini 2>/dev/null; "
+            "  cp -rn /workspaces/.shared_auth/.gemini/* /root/.gemini/ 2>/dev/null || true; "
+            "  rm -rf /root/.gemini && ln -sf /workspaces/.shared_auth/.gemini /root/.gemini 2>/dev/null || true; "
+            "fi; "
+        )
+
         # Wrap with explicit exit code marker
         wrapped_script = (
+            f"{auth_prep}"
             f"{env_prefix}{cd_prefix}( {cmd_str} )\n"
             f"__CX_CODE__=$?\n"
             f"echo \"\n__CX_EXIT_CODE__:$__CX_CODE__\"\n"
@@ -749,8 +767,18 @@ class KubernetesSandboxDriver(BaseSandboxDriver):
         workdir = working_dir or instance.working_dir or "/workspace"
         cli_cmd = command or "if [ -x /bin/bash ]; then exec /bin/bash -l; else exec /bin/sh -l; fi"
 
+        auth_prep = (
+            "mkdir -p /workspaces/.shared_auth/.gemini/antigravity-cli 2>/dev/null; "
+            "if [ -d /workspaces/.shared_auth/.gemini ] && [ ! -L /root/.gemini ]; then "
+            "  mkdir -p /root/.gemini 2>/dev/null; "
+            "  cp -rn /workspaces/.shared_auth/.gemini/* /root/.gemini/ 2>/dev/null || true; "
+            "  rm -rf /root/.gemini && ln -sf /workspaces/.shared_auth/.gemini /root/.gemini 2>/dev/null || true; "
+            "fi; "
+        )
+
         shell_cmd = [
             "/bin/sh", "-c",
+            f"{auth_prep}"
             f"cd '{workdir}' 2>/dev/null; "
             f"export TERM=xterm-256color; "
             f"{cli_cmd}"

@@ -122,6 +122,24 @@ class DockerSandboxDriver(BaseSandboxDriver):
         # 6. Run container
         container = client.containers.run(image_name, **kwargs)
 
+        # Seed Antigravity credentials from host storage if available
+        try:
+            backend_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+            token_storage_dir = os.path.join(backend_dir, "storage", "credentials", "antigravity")
+            host_token_file = os.path.join(token_storage_dir, "antigravity-oauth-token")
+            user_token_file = os.path.expanduser("~/.gemini/antigravity-cli/antigravity-oauth-token")
+            source_token = host_token_file if os.path.isfile(host_token_file) else (user_token_file if os.path.isfile(user_token_file) else None)
+            if source_token:
+                import base64
+                with open(source_token, "rb") as tf:
+                    token_bytes = tf.read()
+                b64 = base64.b64encode(token_bytes).decode("ascii")
+                container.exec_run(
+                    f"/bin/sh -c \"mkdir -p /root/.gemini/antigravity-cli && echo '{b64}' | base64 -d > /root/.gemini/antigravity-cli/antigravity-oauth-token && cp -f /root/.gemini/antigravity-cli/antigravity-oauth-token /root/.gemini/oauth_creds.json\""
+                )
+        except Exception as seed_err:
+            logger.debug("Sandbox token seed notice: %s", seed_err)
+
         # 7. Resolve endpoints
         container.reload()
         endpoints = self._resolve_container_endpoints(container, spec.ports)
