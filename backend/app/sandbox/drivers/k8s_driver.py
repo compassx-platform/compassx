@@ -221,14 +221,31 @@ class KubernetesSandboxDriver(BaseSandboxDriver):
                 if mk and mv is not None:
                     annotations[f"compassx.metadata.{mk}"] = str(mv)
 
-        # 6. Container definition with automatic Antigravity / Gemini credential synchronization
+        # 6. Container definition with automatic Antigravity / Gemini credential synchronization & workspace trust
         boot_cmd = (
-            "mkdir -p /workspaces/.shared_auth/.gemini/antigravity-cli 2>/dev/null; "
-            "if [ -d /workspaces/.shared_auth/.gemini ]; then "
-            "  mkdir -p /root/.gemini 2>/dev/null; "
-            "  cp -rn /workspaces/.shared_auth/.gemini/* /root/.gemini/ 2>/dev/null || true; "
-            "  rm -rf /root/.gemini && ln -sf /workspaces/.shared_auth/.gemini /root/.gemini 2>/dev/null || true; "
+            "mkdir -p /workspaces/.shared_auth/.gemini/antigravity-cli /root/.gemini/antigravity-cli /root/.gemini/antigravity /root/.config/antigravity 2>/dev/null; "
+            "python3 -c \"import json, os; doc = {'trustedFolders': ['/', '/workspaces', '/workspaces/*', '/workspace', '/workspace/*', '/app', '/current'], 'trustedWorkspaces': ['/', '/workspaces', '/workspaces/*', '/workspace', '/workspace/*', '/app', '/current'], 'trustAllWorkspaces': True}; [os.makedirs(os.path.dirname(p), exist_ok=True) or open(p, 'w').write(json.dumps(doc, indent=2)) for p in ['/root/.gemini/antigravity/trusted_folders.json', '/root/.gemini/antigravity-cli/trusted_workspaces.json', '/root/.gemini/trusted_folders.json', '/root/.config/antigravity/trusted_workspaces.json', '/workspaces/.shared_auth/.gemini/antigravity/trusted_folders.json', '/workspaces/.shared_auth/.gemini/antigravity-cli/trusted_workspaces.json']]\" 2>/dev/null || true; "
+            "if [ -f /usr/local/bin/agy ] && [ ! -f /usr/local/bin/agy-bin ]; then "
+            "  mv /usr/local/bin/agy /usr/local/bin/agy-bin 2>/dev/null && "
+            "  printf '#!/bin/sh\\nexport AGY_TRUST_ALL=true ANTIGRAVITY_TRUST_ALL_WORKSPACES=true\\ncase \"$*\" in\\n  *--dangerously-skip-permissions*) exec /usr/local/bin/agy-bin \"$@\" ;;\\n  *) exec /usr/local/bin/agy-bin --dangerously-skip-permissions \"$@\" ;;\\nesac\\n' > /usr/local/bin/agy && chmod +x /usr/local/bin/agy 2>/dev/null || true; "
+            "  ln -sf /usr/local/bin/agy /usr/local/bin/antigravity 2>/dev/null || true; "
             "fi; "
+            "if [ -d /workspaces/.shared_auth/.gemini ]; then "
+            "  cp -rn /workspaces/.shared_auth/.gemini/* /root/.gemini/ 2>/dev/null || true; "
+            "fi; "
+            "(while true; do "
+            "  if [ -f /root/.gemini/antigravity-cli/antigravity-oauth-token ]; then "
+            "    mkdir -p /workspaces/.shared_auth/.gemini/antigravity-cli 2>/dev/null; "
+            "    cp -f /root/.gemini/antigravity-cli/antigravity-oauth-token /workspaces/.shared_auth/.gemini/antigravity-cli/ 2>/dev/null || true; "
+            "    cp -f /root/.gemini/antigravity-cli/antigravity-oauth-token /root/.gemini/oauth_creds.json 2>/dev/null || true; "
+            "    cp -f /root/.gemini/antigravity-cli/antigravity-oauth-token /workspaces/.shared_auth/.gemini/oauth_creds.json 2>/dev/null || true; "
+            "  elif [ -f /workspaces/.shared_auth/.gemini/antigravity-cli/antigravity-oauth-token ]; then "
+            "    mkdir -p /root/.gemini/antigravity-cli 2>/dev/null; "
+            "    cp -f /workspaces/.shared_auth/.gemini/antigravity-cli/antigravity-oauth-token /root/.gemini/antigravity-cli/ 2>/dev/null || true; "
+            "    cp -f /workspaces/.shared_auth/.gemini/antigravity-cli/antigravity-oauth-token /root/.gemini/oauth_creds.json 2>/dev/null || true; "
+            "  fi; "
+            "  sleep 5; "
+            "done >/dev/null 2>&1 &); "
             "exec tail -f /dev/null"
         )
         container = V1Container(
@@ -567,11 +584,10 @@ class KubernetesSandboxDriver(BaseSandboxDriver):
         cd_prefix = f"cd '{target_dir}' && " if target_dir else ""
 
         auth_prep = (
-            "if [ -d /workspaces/.shared_auth/.gemini ] && [ ! -L /root/.gemini ]; then "
-            "  mkdir -p /root/.gemini 2>/dev/null; "
+            "if [ -d /workspaces/.shared_auth/.gemini ]; then "
             "  cp -rn /workspaces/.shared_auth/.gemini/* /root/.gemini/ 2>/dev/null || true; "
-            "  rm -rf /root/.gemini && ln -sf /workspaces/.shared_auth/.gemini /root/.gemini 2>/dev/null || true; "
             "fi; "
+            "export AGY_TRUST_ALL=true ANTIGRAVITY_TRUST_ALL_WORKSPACES=true AGY_NON_INTERACTIVE=true; "
         )
 
         # Wrap with explicit exit code marker
@@ -768,12 +784,19 @@ class KubernetesSandboxDriver(BaseSandboxDriver):
         cli_cmd = command or "if [ -x /bin/bash ]; then exec /bin/bash -l; else exec /bin/sh -l; fi"
 
         auth_prep = (
-            "mkdir -p /workspaces/.shared_auth/.gemini/antigravity-cli 2>/dev/null; "
-            "if [ -d /workspaces/.shared_auth/.gemini ] && [ ! -L /root/.gemini ]; then "
-            "  mkdir -p /root/.gemini 2>/dev/null; "
-            "  cp -rn /workspaces/.shared_auth/.gemini/* /root/.gemini/ 2>/dev/null || true; "
-            "  rm -rf /root/.gemini && ln -sf /workspaces/.shared_auth/.gemini /root/.gemini 2>/dev/null || true; "
+            "mkdir -p /workspaces/.shared_auth/.gemini/antigravity-cli /root/.gemini/antigravity-cli /root/.gemini/antigravity /root/.config/antigravity 2>/dev/null; "
+            "python3 -c \"import json, os; doc = {'trustedFolders': ['/', '/workspaces', '/workspaces/*', '/workspace', '/workspace/*', '/app', '/current'], 'trustedWorkspaces': ['/', '/workspaces', '/workspaces/*', '/workspace', '/workspace/*', '/app', '/current'], 'trustAllWorkspaces': True}; [os.makedirs(os.path.dirname(p), exist_ok=True) or open(p, 'w').write(json.dumps(doc, indent=2)) for p in ['/root/.gemini/antigravity/trusted_folders.json', '/root/.gemini/antigravity-cli/trusted_workspaces.json', '/root/.gemini/trusted_folders.json', '/root/.config/antigravity/trusted_workspaces.json', '/workspaces/.shared_auth/.gemini/antigravity/trusted_folders.json', '/workspaces/.shared_auth/.gemini/antigravity-cli/trusted_workspaces.json']]\" 2>/dev/null || true; "
+            "if [ -f /usr/local/bin/agy ] && [ ! -f /usr/local/bin/agy-bin ]; then "
+            "  mv /usr/local/bin/agy /usr/local/bin/agy-bin 2>/dev/null && "
+            "  printf '#!/bin/sh\\nexport AGY_TRUST_ALL=true ANTIGRAVITY_TRUST_ALL_WORKSPACES=true\\ncase \"$*\" in\\n  *--dangerously-skip-permissions*) exec /usr/local/bin/agy-bin \"$@\" ;;\\n  *) exec /usr/local/bin/agy-bin --dangerously-skip-permissions \"$@\" ;;\\nesac\\n' > /usr/local/bin/agy && chmod +x /usr/local/bin/agy 2>/dev/null || true; "
+            "  ln -sf /usr/local/bin/agy /usr/local/bin/antigravity 2>/dev/null || true; "
             "fi; "
+            "if [ -d /workspaces/.shared_auth/.gemini ]; then "
+            "  cp -rn /workspaces/.shared_auth/.gemini/* /root/.gemini/ 2>/dev/null || true; "
+            "fi; "
+            "export AGY_TRUST_ALL=true ANTIGRAVITY_TRUST_ALL_WORKSPACES=true AGY_NON_INTERACTIVE=true; "
+            "alias agy='agy --dangerously-skip-permissions' 2>/dev/null || true; "
+            "alias antigravity='agy --dangerously-skip-permissions' 2>/dev/null || true; "
         )
 
         shell_cmd = [

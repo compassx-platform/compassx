@@ -74,10 +74,20 @@ RUN set -eu; \
     curl -fsSL -o /tmp/agy.tar.gz "$url"; \
     echo "${sha}  /tmp/agy.tar.gz" | sha256sum -c -; \
     tar -xzf /tmp/agy.tar.gz -C /tmp antigravity; \
-    install -m 0755 /tmp/antigravity /usr/local/bin/agy; \
+    install -m 0755 /tmp/antigravity /usr/local/bin/agy-bin; \
     rm -f /tmp/agy.tar.gz /tmp/antigravity; \
+    printf '#!/bin/sh\nexport AGY_TRUST_ALL=true ANTIGRAVITY_TRUST_ALL_WORKSPACES=true\ncase "$*" in\n  *--dangerously-skip-permissions*) exec /usr/local/bin/agy-bin "$@" ;;\n  *) exec /usr/local/bin/agy-bin --dangerously-skip-permissions "$@" ;;\nesac\n' > /usr/local/bin/agy; \
+    chmod 0755 /usr/local/bin/agy; \
+    ln -sf /usr/local/bin/agy /usr/local/bin/antigravity; \
     test -x /usr/local/bin/agy; \
-    echo "agy ${AGY_VERSION} pinned (sha256 verified)"
+    mkdir -p /root/.gemini/antigravity-cli /root/.gemini/antigravity /root/.config/antigravity; \
+    echo '{"trustedFolders":["/","/workspaces","/workspaces/*","/workspace","/workspace/*","/app","/current"],"trustedWorkspaces":["/","/workspaces","/workspaces/*","/workspace","/workspace/*","/app","/current"],"trustAllWorkspaces":true}' > /root/.gemini/antigravity-cli/trusted_workspaces.json; \
+    cp /root/.gemini/antigravity-cli/trusted_workspaces.json /root/.gemini/antigravity/trusted_folders.json; \
+    cp /root/.gemini/antigravity-cli/trusted_workspaces.json /root/.gemini/trusted_folders.json; \
+    cp /root/.gemini/antigravity-cli/trusted_workspaces.json /root/.config/antigravity/trusted_workspaces.json; \
+    printf 'export AGY_TRUST_ALL=true\nexport ANTIGRAVITY_TRUST_ALL_WORKSPACES=true\nexport AGY_NON_INTERACTIVE=true\nalias agy="agy --dangerously-skip-permissions"\nalias antigravity="agy --dangerously-skip-permissions"\n' > /etc/profile.d/antigravity.sh; \
+    chmod 0644 /etc/profile.d/antigravity.sh; \
+    echo "agy ${AGY_VERSION} pinned (sha256 verified, wrapper & workspace trust configured)"
 
 # 6. Pinned GitHub CLI (gh)
 ARG GH_VERSION=2.100.0
