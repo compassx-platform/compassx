@@ -62,6 +62,7 @@ def build_mcp_configs_from_gateway(
     for b_name in BUILTIN_MCP_SERVERS.keys():
         endpoint = f"{base_endpoint}/api/v1/ai-gateway/mcp/servers/{b_name}/sse"
         mcp_entry: Dict[str, Any] = {
+            "serverUrl": endpoint,
             "url": endpoint,
             "type": "sse",
         }
@@ -102,6 +103,7 @@ def build_mcp_configs_from_gateway(
 
         if "sse" in s_type or "http" in s_type or endpoint:
             mcp_entry: Dict[str, Any] = {
+                "serverUrl": endpoint,
                 "url": endpoint,
                 "type": "sse",
             }
@@ -209,7 +211,14 @@ def sync_workspace_mcp_configs(
         with open(fp_gemini_cfg, "w", encoding="utf-8") as f:
             json.dump(existing_cfg, f, indent=2)
 
-        # 4. Cursor mcp.json
+        # 4. Antigravity / Agents workspace config (.agents/mcp_config.json)
+        agents_dir = os.path.join(workspace_dir, ".agents")
+        os.makedirs(agents_dir, exist_ok=True)
+        fp_agents = os.path.join(agents_dir, "mcp_config.json")
+        with open(fp_agents, "w", encoding="utf-8") as f:
+            json.dump(universal_payload, f, indent=2)
+
+        # 5. Cursor mcp.json
         cursor_dir = os.path.join(workspace_dir, ".cursor")
         os.makedirs(cursor_dir, exist_ok=True)
         fp_cursor = os.path.join(cursor_dir, "mcp.json")
@@ -240,11 +249,11 @@ def get_mcp_sync_shell_script(api_base_url: str = "") -> str:
         f"base_url = \"{endpoint}\"; "
         f"ctx = ssl._create_unverified_context(); "
         f"defaults = {{\n"
-        f"  \"compassx_sql_warehouse\": {{\"url\": f\"{{base_url}}/api/v1/ai-gateway/mcp/servers/compassx_sql_warehouse/sse\", \"type\": \"sse\"}},\n"
-        f"  \"compassx_catalog_search\": {{\"url\": f\"{{base_url}}/api/v1/ai-gateway/mcp/servers/compassx_catalog_search/sse\", \"type\": \"sse\"}},\n"
-        f"  \"compassx_notebook_manager\": {{\"url\": f\"{{base_url}}/api/v1/ai-gateway/mcp/servers/compassx_notebook_manager/sse\", \"type\": \"sse\"}},\n"
-        f"  \"compassx_dashboard_manager\": {{\"url\": f\"{{base_url}}/api/v1/ai-gateway/mcp/servers/compassx_dashboard_manager/sse\", \"type\": \"sse\"}},\n"
-        f"  \"EAM_MCP\": {{\"url\": \"https://eam.135.13.180.167.nip.io/mcp/sse\", \"type\": \"sse\"}},\n"
+        f"  \"compassx_sql_warehouse\": {{\"serverUrl\": f\"{{base_url}}/api/v1/ai-gateway/mcp/servers/compassx_sql_warehouse/sse\", \"url\": f\"{{base_url}}/api/v1/ai-gateway/mcp/servers/compassx_sql_warehouse/sse\", \"type\": \"sse\"}},\n"
+        f"  \"compassx_catalog_search\": {{\"serverUrl\": f\"{{base_url}}/api/v1/ai-gateway/mcp/servers/compassx_catalog_search/sse\", \"url\": f\"{{base_url}}/api/v1/ai-gateway/mcp/servers/compassx_catalog_search/sse\", \"type\": \"sse\"}},\n"
+        f"  \"compassx_notebook_manager\": {{\"serverUrl\": f\"{{base_url}}/api/v1/ai-gateway/mcp/servers/compassx_notebook_manager/sse\", \"url\": f\"{{base_url}}/api/v1/ai-gateway/mcp/servers/compassx_notebook_manager/sse\", \"type\": \"sse\"}},\n"
+        f"  \"compassx_dashboard_manager\": {{\"serverUrl\": f\"{{base_url}}/api/v1/ai-gateway/mcp/servers/compassx_dashboard_manager/sse\", \"url\": f\"{{base_url}}/api/v1/ai-gateway/mcp/servers/compassx_dashboard_manager/sse\", \"type\": \"sse\"}},\n"
+        f"  \"EAM_MCP\": {{\"serverUrl\": \"https://eam.135.13.180.167.nip.io/mcp/sse\", \"url\": \"https://eam.135.13.180.167.nip.io/mcp/sse\", \"type\": \"sse\"}},\n"
         f"}};\n"
         f"mcp_uni = dict(defaults); mcp_oc = {{k: {{\"type\": \"remote\", \"url\": v[\"url\"]}} for k, v in defaults.items()}}; mcp_cl = dict(defaults)\n"
         f"api_url = f\"{{base_url}}/api/v1/ai-gateway/mcp/servers\"; "
@@ -257,7 +266,7 @@ def get_mcp_sync_shell_script(api_base_url: str = "") -> str:
         f"    name = s.get(\"name\") or \"mcp_server\"\n"
         f"    endpoint_u = s.get(\"endpoint_url\"); cmd = s.get(\"command\")\n"
         f"    if endpoint_u:\n"
-        f"      mcp_uni[name] = {{\"url\": endpoint_u, \"type\": \"sse\"}}\n"
+        f"      mcp_uni[name] = {{\"serverUrl\": endpoint_u, \"url\": endpoint_u, \"type\": \"sse\"}}\n"
         f"      mcp_oc[name] = {{\"type\": \"remote\", \"url\": endpoint_u}}\n"
         f"      mcp_cl[name] = {{\"type\": \"sse\", \"url\": endpoint_u}}\n"
         f"    elif cmd:\n"
@@ -270,7 +279,7 @@ def get_mcp_sync_shell_script(api_base_url: str = "") -> str:
         f"uni_doc = {{\"mcpServers\": mcp_uni}}\n"
         f"oc_doc = {{\"mcp\": mcp_oc}}\n"
         f"import glob\n"
-        f"for ws_dir in glob.glob(\"/workspaces/*\") + glob.glob(\"/workspaces/*/*\") + [os.getcwd()]:\n"
+        f"for ws_dir in glob.glob(\"/workspaces/*\") + glob.glob(\"/workspaces/*/*\") + [\"/workspace\", os.getcwd()]:\n"
         f"  if os.path.isdir(ws_dir) and not os.path.basename(ws_dir).startswith(\".\"):\n"
         f"    for p in [\".mcp.json\", \"mcp.json\"]:\n"
         f"      try:\n"
@@ -283,6 +292,11 @@ def get_mcp_sync_shell_script(api_base_url: str = "") -> str:
         f"    os.makedirs(g_dir, exist_ok=True)\n"
         f"    try:\n"
         f"      with open(os.path.join(g_dir, \"settings.json\"), \"w\") as f: json.dump(uni_doc, f, indent=2)\n"
+        f"    except Exception: pass\n"
+        f"    a_dir = os.path.join(ws_dir, \".agents\")\n"
+        f"    os.makedirs(a_dir, exist_ok=True)\n"
+        f"    try:\n"
+        f"      with open(os.path.join(a_dir, \"mcp_config.json\"), \"w\") as f: json.dump(uni_doc, f, indent=2)\n"
         f"    except Exception: pass\n"
         f"os.makedirs(\"/root/.config/opencode\", exist_ok=True); os.makedirs(\"/root/.opencode\", exist_ok=True)\n"
         f"with open(\"/root/.config/opencode/opencode.json\", \"w\") as f: json.dump(oc_doc, f, indent=2)\n"

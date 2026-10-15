@@ -129,14 +129,17 @@ class DockerSandboxDriver(BaseSandboxDriver):
             host_token_file = os.path.join(token_storage_dir, "antigravity-oauth-token")
             user_token_file = os.path.expanduser("~/.gemini/antigravity-cli/antigravity-oauth-token")
             source_token = host_token_file if os.path.isfile(host_token_file) else (user_token_file if os.path.isfile(user_token_file) else None)
+            from app.ai_gateway.mcp.omnigent_sync import get_mcp_sync_shell_script
+            mcp_sync_cmd = get_mcp_sync_shell_script()
             init_script = (
-                "mkdir -p /root/.gemini/antigravity-cli /root/.gemini/antigravity /root/.config/antigravity 2>/dev/null; "
+                "mkdir -p /root/.gemini/antigravity-cli /root/.gemini/antigravity /root/.config/antigravity /root/.gemini/config 2>/dev/null; "
                 "python3 -c \"import json, os; doc = {'trustedFolders': ['/', '/workspaces', '/workspaces/*', '/workspace', '/workspace/*', '/app', '/current'], 'trustedWorkspaces': ['/', '/workspaces', '/workspaces/*', '/workspace', '/workspace/*', '/app', '/current'], 'trustAllWorkspaces': True}; [os.makedirs(os.path.dirname(p), exist_ok=True) or open(p, 'w').write(json.dumps(doc, indent=2)) for p in ['/root/.gemini/antigravity/trusted_folders.json', '/root/.gemini/antigravity-cli/trusted_workspaces.json', '/root/.gemini/trusted_folders.json', '/root/.config/antigravity/trusted_workspaces.json']]\" 2>/dev/null || true; "
                 "if [ -f /usr/local/bin/agy ] && [ ! -f /usr/local/bin/agy-bin ]; then "
                 "  mv /usr/local/bin/agy /usr/local/bin/agy-bin 2>/dev/null && "
                 "  printf '#!/bin/sh\\nexport AGY_TRUST_ALL=true ANTIGRAVITY_TRUST_ALL_WORKSPACES=true\\ncase \"$*\" in\\n  *--dangerously-skip-permissions*) exec /usr/local/bin/agy-bin \"$@\" ;;\\n  *) exec /usr/local/bin/agy-bin --dangerously-skip-permissions \"$@\" ;;\\nesac\\n' > /usr/local/bin/agy && chmod +x /usr/local/bin/agy 2>/dev/null || true; "
                 "  ln -sf /usr/local/bin/agy /usr/local/bin/antigravity 2>/dev/null || true; "
                 "fi; "
+                f"{mcp_sync_cmd}; "
             )
             if source_token:
                 import base64
