@@ -421,6 +421,8 @@ class DockerSandboxDriver(BaseSandboxDriver):
         rows: int = 30,
         working_dir: Optional[str] = None,
         command: Optional[str] = None,
+        agent: Optional[str] = None,
+        session_id: Optional[str] = None,
     ) -> Any:
         """Start a subprocess for Docker interactive exec into the sandbox container."""
         import subprocess
@@ -430,11 +432,34 @@ class DockerSandboxDriver(BaseSandboxDriver):
 
         target_container = container.id
         workdir = working_dir or instance.working_dir or "/workspace"
-        cli_cmd = command or "if [ -x /bin/bash ]; then exec /bin/bash -l; else exec /bin/sh -l; fi"
+
+        resolved_agent = (agent or "").lower().strip()
+        cli_cmd = command
+        if not cli_cmd:
+            if resolved_agent in ("antigravity", "agy"):
+                cli_cmd = "export AGY_TRUST_ALL=true ANTIGRAVITY_TRUST_ALL_WORKSPACES=true AGY_NON_INTERACTIVE=true; agy --dangerously-skip-permissions"
+            elif resolved_agent == "pi":
+                cli_cmd = "pi --approve"
+            elif resolved_agent == "opencode":
+                cli_cmd = "opencode"
+            elif resolved_agent in ("bash", "shell", "sh"):
+                cli_cmd = "if [ -x /bin/bash ]; then exec /bin/bash -l; else exec /bin/sh -l; fi"
+            else:
+                cli_cmd = "if [ -x /bin/bash ]; then exec /bin/bash -l; else exec /bin/sh -l; fi"
+
+        if session_id and resolved_agent and resolved_agent not in ("bash", "shell", "sh"):
+            tmux_target = f"cx_{session_id.replace('-', '_')}"
+            clean_cmd = cli_cmd.replace("'", "'\\''")
+            cli_cmd = (
+                f"(which tmux >/dev/null 2>&1 && tmux new-session -A -D -s '{tmux_target}' -c '{workdir}' '{clean_cmd} || exec /bin/bash -l') "
+                f"|| ( {cli_cmd} )"
+            )
+
         prep_cmd = (
             "export AGY_TRUST_ALL=true ANTIGRAVITY_TRUST_ALL_WORKSPACES=true AGY_NON_INTERACTIVE=true; "
             "alias agy='agy --dangerously-skip-permissions' 2>/dev/null || true; "
             "alias antigravity='agy --dangerously-skip-permissions' 2>/dev/null || true; "
+            "if [ ! -f /root/.tmux.conf ]; then printf 'set -g mouse on\\nset -s set-clipboard on\\nset -g allow-passthrough on\\nset -g status off\\n' > /root/.tmux.conf 2>/dev/null || true; fi; "
         )
         full_cli = f"{prep_cmd}{cli_cmd}"
 

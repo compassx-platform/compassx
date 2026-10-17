@@ -1263,6 +1263,8 @@ export function OmnigentChatPanel({
               <SandboxTerminal
                 sandboxId={sandboxId}
                 sandboxName={sessionTitle || app?.name || 'Agent Sandbox'}
+                agent={selectedAgentName || agentName}
+                sessionId={resolvedSessionId}
                 isRunning={isDevPodRunning}
                 fullHeight={true}
               />

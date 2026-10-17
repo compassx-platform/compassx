@@ -70,6 +70,8 @@ class BaseSandboxDriver(ABC):
         rows: int = 30,
         working_dir: Optional[str] = None,
         command: Optional[str] = None,
+        agent: Optional[str] = None,
+        session_id: Optional[str] = None,
     ) -> Any:
         """Create a bidirectional streaming connection / PTY client to the sandbox."""
         return None

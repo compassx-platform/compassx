@@ -491,6 +491,8 @@ class SandboxService:
         rows: int = 30,
         working_dir: Optional[str] = None,
         command: Optional[str] = None,
+        agent: Optional[str] = None,
+        session_id: Optional[str] = None,
     ) -> None:
         """Bridge browser WebSocket with the live interactive PTY terminal of any sandbox."""
         import json
@@ -513,17 +515,20 @@ class SandboxService:
 
         driver = self._get_driver_for_mode(instance.runtime_mode)
 
-        welcome_banner = (
-            f"\r\n\x1b[1;35m╭──────────────────────────────────────────────────────────╮\x1b[0m\r\n"
-            f"\x1b[1;35m│\x1b[0m \x1b[1;32m● Connected to Sandbox Terminal\x1b[0m                          \x1b[1;35m│\x1b[0m\r\n"
-            f"\x1b[1;35m│\x1b[0m Name: \x1b[1;36m{instance.name[:25]:<25}\x1b[0m Module: \x1b[1;33m{instance.consumer_module[:15]:<15}\x1b[0m \x1b[1;35m│\x1b[0m\r\n"
-            f"\x1b[1;35m│\x1b[0m ID:   \x1b[90m{instance.id[:45]:<45}\x1b[0m \x1b[1;35m│\x1b[0m\r\n"
-            f"\x1b[1;35m╰──────────────────────────────────────────────────────────╯\x1b[0m\r\n\r\n"
-        )
-        try:
-            await websocket.send_text(welcome_banner)
-        except Exception:
-            return
+        # Show connection banner only for general bash terminals, not for interactive CLI agents
+        clean_agent = (agent or "").lower().strip()
+        if not clean_agent or clean_agent in ("bash", "shell", "sh"):
+            welcome_banner = (
+                f"\r\n\x1b[1;35m╭──────────────────────────────────────────────────────────╮\x1b[0m\r\n"
+                f"\x1b[1;35m│\x1b[0m \x1b[1;32m● Connected to Sandbox Terminal\x1b[0m                          \x1b[1;35m│\x1b[0m\r\n"
+                f"\x1b[1;35m│\x1b[0m Name: \x1b[1;36m{instance.name[:25]:<25}\x1b[0m Module: \x1b[1;33m{instance.consumer_module[:15]:<15}\x1b[0m \x1b[1;35m│\x1b[0m\r\n"
+                f"\x1b[1;35m│\x1b[0m ID:   \x1b[90m{instance.id[:45]:<45}\x1b[0m \x1b[1;35m│\x1b[0m\r\n"
+                f"\x1b[1;35m╰──────────────────────────────────────────────────────────╯\x1b[0m\r\n\r\n"
+            )
+            try:
+                await websocket.send_text(welcome_banner)
+            except Exception:
+                return
 
         client_stream = driver.open_terminal_stream(
             instance,
@@ -531,6 +536,8 @@ class SandboxService:
             rows=rows,
             working_dir=working_dir,
             command=command,
+            agent=agent,
+            session_id=session_id,
         )
 
         if not client_stream:

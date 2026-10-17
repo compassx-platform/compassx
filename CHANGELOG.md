@@ -5,6 +5,21 @@ All notable changes to the CompassX Platform will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.14.3] - 2026-10-17
+
+### 🚀 Highlights
+
+CompassX `0.14.3` introduces **Interactive CLI Sandbox Terminal Integration & Headless Agent Execution**, featuring streamlined PTY streaming for AI coding harnesses (`agy`, `antigravity`, `pi`, `opencode`), tmux persistent sessions, banner suppression for native TUIs, and maximized full-height terminal viewports.
+
+### ✨ Features & Enhancements
+
+#### Agent Sandbox Terminal Integration & Interactive CLI Mode
+- **Native TUI & Agent Streaming ([`docker_driver.py`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/backend/app/sandbox/drivers/docker_driver.py), [`k8s_driver.py`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/backend/app/sandbox/drivers/k8s_driver.py))**: Enhanced `open_terminal_stream` to automatically route `agent` and `session_id` query parameters directly into container/pod execution. Configured session attachment with `tmux` for persistent background workflows and set proper non-interactive/workspace trust flags.
+- **WebSocket Protocol Extension ([`routes.py`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/backend/app/sandbox/routes.py), [`service.py`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/backend/app/sandbox/service.py))**: Extended `/api/v1/sandboxes/{id}/terminal/ws` endpoint with `agent` and `session_id` parameters. Suppressed the connection welcome banner during interactive agent CLI sessions to preserve TUI rendering integrity.
+- **Terminal UI Clean Layout ([`SandboxTerminal.tsx`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/frontend/src/components/sandbox/SandboxTerminal.tsx), [`OmnigentChatPanel.tsx`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/frontend/src/modules/apps/components/build/OmnigentChatPanel.tsx))**: Propagated active agent and session metadata from `OmnigentChatPanel` into `SandboxTerminal`. Automatically hid the bottom generic command prompt bar when running interactive CLI agents, maximizing terminal screen estate for agent output.
+
+---
+
 ## [0.14.2] - 2026-10-15
 
 ### 🚀 Highlights

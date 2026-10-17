@@ -130,6 +130,8 @@ async def sandbox_terminal_websocket(
     rows: int = Query(30),
     working_dir: Optional[str] = Query(None),
     command: Optional[str] = Query(None),
+    agent: Optional[str] = Query(None),
+    session_id: Optional[str] = Query(None),
 ):
     """Interactive real-time WebSocket PTY terminal for any compute sandbox."""
     await sandbox_service.handle_terminal_websocket(
@@ -139,4 +141,7 @@ async def sandbox_terminal_websocket(
         rows=rows,
         working_dir=working_dir,
         command=command,
+        agent=agent,
+        session_id=session_id,
     )
+

@@ -13,6 +13,8 @@ export interface SandboxTerminalProps {
   sandboxName?: string;
   workingDir?: string;
   command?: string;
+  agent?: string;
+  sessionId?: string;
   isRunning?: boolean;
   onResume?: () => void;
   onSessionReady?: () => void;
@@ -29,6 +31,8 @@ export function SandboxTerminal({
   sandboxName,
   workingDir,
   command,
+  agent,
+  sessionId,
   isRunning = true,
   onResume,
   onSessionReady,
@@ -58,9 +62,11 @@ export function SandboxTerminal({
     params.set('rows', String(initialRows));
     if (workingDir) params.set('working_dir', workingDir);
     if (command) params.set('command', command);
+    if (agent) params.set('agent', agent);
+    if (sessionId) params.set('session_id', sessionId);
     if (token) params.set('token', token);
     return `${protocol}//${host}/api/v1/sandboxes/${encodeURIComponent(sandboxId)}/terminal/ws?${params.toString()}`;
-  }, [sandboxId, workingDir, command]);
+  }, [sandboxId, workingDir, command, agent, sessionId]);
 
   useEffect(() => {
     setIsSessionLoading(true);
@@ -208,58 +214,60 @@ export function SandboxTerminal({
         )}
       </div>
 
-      {/* ── Direct Command Input Bar ── */}
-      <form
-        onSubmit={(e) => {
-          e.preventDefault();
-          sendCommandToTerminal(customCommand);
-        }}
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 8,
-          background: '#161b22',
-          borderTop: '1px solid #30363d',
-          padding: '6px 12px',
-        }}
-      >
-        <span style={{ color: '#38bdf8', fontFamily: 'monospace', fontWeight: 700, fontSize: '0.85rem' }}>
-          $
-        </span>
-        <input
-          type="text"
-          value={customCommand}
-          onChange={(e) => setCustomCommand(e.target.value)}
-          placeholder="Type a command and press Enter..."
-          style={{
-            flex: 1,
-            background: 'transparent',
-            border: 'none',
-            outline: 'none',
-            color: '#f0f6fc',
-            fontFamily: 'monospace',
-            fontSize: '0.85rem',
+      {/* ── Direct Command Input Bar (Hidden for native agents since each has its own interactive CLI prompt) ── */}
+      {!['pi', 'opencode', 'antigravity', 'agy'].includes((agent || '').toLowerCase()) && (
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            sendCommandToTerminal(customCommand);
           }}
-        />
-        <button
-          type="submit"
-          disabled={!customCommand.trim()}
           style={{
-            background: customCommand.trim() ? '#238636' : 'transparent',
-            color: customCommand.trim() ? '#ffffff' : '#8b949e',
-            border: 'none',
-            borderRadius: 4,
-            padding: '4px 10px',
-            fontSize: '0.8rem',
-            cursor: customCommand.trim() ? 'pointer' : 'default',
-            display: 'inline-flex',
+            display: 'flex',
             alignItems: 'center',
-            gap: 4,
+            gap: 8,
+            background: '#161b22',
+            borderTop: '1px solid #30363d',
+            padding: '6px 12px',
           }}
         >
-          <Send size={12} /> Run
-        </button>
-      </form>
+          <span style={{ color: '#38bdf8', fontFamily: 'monospace', fontWeight: 700, fontSize: '0.85rem' }}>
+            $
+          </span>
+          <input
+            type="text"
+            value={customCommand}
+            onChange={(e) => setCustomCommand(e.target.value)}
+            placeholder="Type a command and press Enter..."
+            style={{
+              flex: 1,
+              background: 'transparent',
+              border: 'none',
+              outline: 'none',
+              color: '#f0f6fc',
+              fontFamily: 'monospace',
+              fontSize: '0.85rem',
+            }}
+          />
+          <button
+            type="submit"
+            disabled={!customCommand.trim()}
+            style={{
+              background: customCommand.trim() ? '#238636' : 'transparent',
+              color: customCommand.trim() ? '#ffffff' : '#8b949e',
+              border: 'none',
+              borderRadius: 4,
+              padding: '4px 10px',
+              fontSize: '0.8rem',
+              cursor: customCommand.trim() ? 'pointer' : 'default',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 4,
+            }}
+          >
+            <Send size={12} /> Run
+          </button>
+        </form>
+      )}
     </div>
   );
 }
