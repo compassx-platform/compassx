@@ -23,6 +23,12 @@ class MockApp:
         self.slug = slug
         self.name = "Test App"
         self.git_branch = "main"
+        self.git_ref = "main"
+        self.app_type = "custom_web"
+        self.entrypoint = None
+        self.git_subdir = None
+        self.git_repo_url = "https://github.com/example/test-repo.git"
+        self.workspace_identity = None
         self.workspace_id = None
         self.config = {}
 
@@ -347,6 +353,30 @@ env:
             found = driver._find_running_pod_name("different-id", "default", app_slug="myapp-test", wait_seconds=0)
             self.assertEqual(found, "dev-myapp-test-6d9b4c-xyz")
 
+    def test_k8s_app_driver_app_root_discovery_guard(self):
+        """Test KubernetesAppDriver contains the guard to prevent premature descent into subdirectories when root contains project files."""
+        from app.services.drivers.kubernetes_driver import KubernetesAppDriver
+        driver = KubernetesAppDriver()
+        mock_k8s = MagicMock()
+        mock_apps = MagicMock()
+        mock_k8s.apps.return_value = mock_apps
+        mock_core = MagicMock()
+        mock_k8s.core.return_value = mock_core
+        mock_net = MagicMock()
+        mock_k8s.networking.return_value = mock_net
+
+        with patch.object(driver, "_get_k8s_client", return_value=mock_k8s), \
+             patch("app.services.ingress_service.ingress_service.get_app_domain", return_value="test.example.com"), \
+             patch("app.services.ingress_service.ingress_service.get_app_url", return_value="https://test.example.com"):
+            logs = []
+            res = driver.deploy(self.app, repo_dir="/tmp/fake", build_logs=logs)
+            self.assertEqual(res["status"], "running")
+            created_deploy = mock_apps.replace_namespaced_deployment.call_args[1]["body"]
+            container_args = created_deploy.spec.template.spec.containers[0].args
+            joined_args = " ".join(container_args)
+            # Must verify that APP_ROOT only loops over /app_src/* if root does not already have frontend or backend
+            self.assertIn("elif [ ! -d '/app_src/frontend' ]", joined_args)
+            self.assertIn("! -d '/app_src/backend'", joined_args)
 
 
 if __name__ == "__main__":

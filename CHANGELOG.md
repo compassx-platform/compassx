@@ -5,6 +5,22 @@ All notable changes to the CompassX Platform will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.14.6] - 2026-10-18
+
+### 🚀 Highlights
+
+CompassX `0.14.6` introduces **Fullstack App Gateway Streaming SSE & MCP Support**, **Subshell Static Dir Resolution Fixes**, and **App Root Discovery Guarding**.
+
+### ✨ Features & Enhancements
+
+#### Gateway SSE Streaming & App Root Discovery
+- **Gateway SSE / MCP Streaming Proxy ([`kubernetes_driver.py`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/backend/app/services/drivers/kubernetes_driver.py))**: Extended `is_api_req` to include `/mcp`, `/sse`, `/messages`, and `/tools`. Added unbuffered line-by-line SSE flushing with `Cache-Control: no-cache`, `Connection: keep-alive`, and `X-Accel-Buffering: no` in the Python fullstack gateway, and extended timeouts to 3600s for persistent event streams.
+- **Root Directory Discovery Guard ([`docker_driver.py`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/backend/app/services/drivers/docker_driver.py), [`kubernetes_driver.py`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/backend/app/services/drivers/kubernetes_driver.py))**: Guarded subfolder root iteration so projects already containing `frontend`, `backend`, `client`, `web`, `ui`, `package.json`, or entrypoint scripts at the root level are not erroneously recursed into nested directories.
+- **Subshell Static Directory Scoping ([`kubernetes_driver.py`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/backend/app/services/drivers/kubernetes_driver.py))**: Lifted `STATIC_DIR` assignment outside of subshell parentheses in the build script so static directories (`dist`/`build`) are correctly populated in the environment.
+- **Cross-Profile Driver Unit Tests ([`test_cross_profile_dev_drivers.py`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/backend/tests/test_cross_profile_dev_drivers.py))**: Added unit tests validating the discovery guard logic for `KubernetesAppDriver`.
+
+---
+
 ## [0.14.5] - 2026-10-18
 
 ### 🚀 Highlights

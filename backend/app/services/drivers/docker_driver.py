@@ -517,7 +517,7 @@ class DockerDevDriver(BaseDevDriver):
             f"APP_SUBDIR=\"{git_subdir}\"; "
             f"BASE_DIR=\"$ROOT_DIR\"; "
             f"if [ -n \"$APP_SUBDIR\" ] && [ -d \"$ROOT_DIR/$APP_SUBDIR\" ]; then BASE_DIR=\"$ROOT_DIR/$APP_SUBDIR\"; "
-            f"else "
+            f"elif [ ! -d \"$ROOT_DIR/frontend\" ] && [ ! -d \"$ROOT_DIR/backend\" ] && [ ! -d \"$ROOT_DIR/client\" ] && [ ! -d \"$ROOT_DIR/web\" ] && [ ! -d \"$ROOT_DIR/ui\" ] && [ ! -f \"$ROOT_DIR/package.json\" ] && [ ! -f \"$ROOT_DIR/app.py\" ] && [ ! -f \"$ROOT_DIR/main.py\" ] && [ ! -f \"$ROOT_DIR/server.py\" ] && [ ! -f \"$ROOT_DIR/app.yaml\" ] && [ ! -f \"$ROOT_DIR/app.yml\" ]; then "
             f"  for d in \"$ROOT_DIR\"/*; do "
             f"    if [ -d \"$d\" ] && ( [ -d \"$d/frontend\" ] || [ -d \"$d/backend\" ] || [ -f \"$d/package.json\" ] ); then BASE_DIR=\"$d\"; break; fi; "
             f"  done; "
