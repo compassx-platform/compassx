@@ -5,6 +5,21 @@ All notable changes to the CompassX Platform will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.14.5] - 2026-10-18
+
+### 🚀 Highlights
+
+CompassX `0.14.5` introduces **Canonical GHCR Image Fallbacks for App Dev Sandboxes & Workspaces**, resolving pod image pull errors in Kubernetes environments, and fixes fullstack app gateway shell script EOF formatting.
+
+### ✨ Features & Enhancements
+
+#### App Dev Sandbox & Runtime Driver Image Resolution
+- **Canonical GHCR Sandbox Host Image ([`kubernetes_driver.py`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/backend/app/services/drivers/kubernetes_driver.py), [`app_dev_routes.py`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/backend/app/routes/app_dev_routes.py))**: Configured `DEFAULT_SANDBOX_IMAGE = "ghcr.io/compassx-platform/compassx-sandbox-host:latest"` as the standard fallback image across `KubernetesAppDriver`, `KubernetesDevDriver`, and dev sandbox provisioning, preventing image pull failures when `COMPASSX_SANDBOX_IMAGE` is unset.
+- **Gateway Script EOF Fix ([`kubernetes_driver.py`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/backend/app/services/drivers/kubernetes_driver.py))**: Fixed a syntax error in the python fullstack gateway inline heredoc script delimiter.
+- **Driver Unit Tests ([`test_cross_profile_dev_drivers.py`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/backend/tests/test_cross_profile_dev_drivers.py))**: Updated cross-profile dev driver unit tests to assert canonical GHCR sandbox host image resolution.
+
+---
+
 ## [0.14.4] - 2026-10-18
 
 ### 🚀 Highlights

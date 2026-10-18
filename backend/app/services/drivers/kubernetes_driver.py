@@ -18,6 +18,8 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_SANDBOX_IMAGE = "ghcr.io/compassx-platform/compassx-sandbox-host:latest"
+
 
 class KubernetesAppDriver(BaseAppDriver):
     """Manages Kubernetes Deployment, Service, and Ingress with subdomain routing."""
@@ -127,7 +129,7 @@ class KubernetesAppDriver(BaseAppDriver):
             container_cmd = None
             container_args = None
         else:
-            image_tag = os.environ.get("COMPASSX_SANDBOX_IMAGE") or "compassx-sandbox-host:latest"
+            image_tag = os.environ.get("COMPASSX_SANDBOX_IMAGE") or DEFAULT_SANDBOX_IMAGE
             container_cmd = ["/bin/sh", "-c"]
             subdir = (getattr(app, "git_subdir", "") or "").strip("/")
             run_cmd = (
@@ -270,7 +272,7 @@ class KubernetesAppDriver(BaseAppDriver):
                 f"server = http.server.ThreadingHTTPServer(('0.0.0.0', port), FullstackHandler)\n"
                 f"print(f'[GATEWAY] Serving static from {{static_dir}} and proxying APIs to 127.0.0.1:8000 on port {{port}}')\n"
                 f"server.serve_forever()\n"
-                f"GW_EOF\n && "
+                f"GW_EOF\n"
                 # 3. Execution routing
                 f"  if [ -n \"$STATIC_DIR\" ] && [ -n \"$BACKEND_DIR\" ]; then "
                 f"    echo '[RUNTIME] Fullstack app detected (Frontend dist + Python Backend).' && "
@@ -1072,7 +1074,7 @@ class KubernetesDevDriver(BaseDevDriver):
         elif getattr(settings, "DEV_HOST_IMAGE", None) and ("/" in str(settings.DEV_HOST_IMAGE)):
             dev_host_image = str(settings.DEV_HOST_IMAGE)
         else:
-            dev_host_image = os.environ.get("COMPASSX_SANDBOX_IMAGE") or "compassx-sandbox-host:latest"
+            dev_host_image = os.environ.get("COMPASSX_SANDBOX_IMAGE") or DEFAULT_SANDBOX_IMAGE
 
         # If k8s client is available, provision Dev Pod, Service, and Ingress
         if k8s:

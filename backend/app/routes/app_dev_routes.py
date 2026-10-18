@@ -655,7 +655,7 @@ while True:
         name=f"{app.name} (Dev Sandbox)",
         consumer_module="app",
         workspace_id=str(app.workspace_id) if app.workspace_id else None,
-        image=os.environ.get("COMPASSX_SANDBOX_IMAGE") or "compassx-sandbox-host:latest",
+        image=os.environ.get("COMPASSX_SANDBOX_IMAGE") or "ghcr.io/compassx-platform/compassx-sandbox-host:latest",
         ports=[8080, 9201],
         env_vars=custom_env_dict,
         storage_mounts=[StorageMount(source_path=repo_dir, mount_path="/workspace")],
