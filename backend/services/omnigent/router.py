@@ -1,4 +1,4 @@
-﻿"""Databricks Omnigent service API endpoints.
+"""Databricks Omnigent service API endpoints.
 
 Prefix /api/v1/services/omnigent applied in main.py.
 """
@@ -23,10 +23,36 @@ def _error(error_type: str, message: str, code: int) -> JSONResponse:
 def start_omnigent():
     """Start Databricks Omnigent server service on-demand."""
     try:
+        from app.services.sandbox_reaper_service import unified_reaper_service
+        unified_reaper_service.touch_omnigent_activity()
         status = get_omnigent_manager().start()
         return {"phase": status.phase, "message": status.message, "details": status.details}
     except Exception as exc:
         logger.exception("Error starting Omnigent server")
+        return _error("InternalError", str(exc), 500)
+
+
+@router.post("/suspend")
+def suspend_omnigent():
+    """Suspend Databricks Omnigent server service (scale to zero replicas, keep volumes)."""
+    try:
+        status = get_omnigent_manager().suspend()
+        return {"phase": status.phase, "message": status.message, "details": status.details}
+    except Exception as exc:
+        logger.exception("Error suspending Omnigent server")
+        return _error("InternalError", str(exc), 500)
+
+
+@router.post("/resume")
+def resume_omnigent():
+    """Resume suspended Databricks Omnigent server service (scale back to 1 replica)."""
+    try:
+        from app.services.sandbox_reaper_service import unified_reaper_service
+        unified_reaper_service.touch_omnigent_activity()
+        status = get_omnigent_manager().start()
+        return {"phase": status.phase, "message": status.message, "details": status.details}
+    except Exception as exc:
+        logger.exception("Error resuming Omnigent server")
         return _error("InternalError", str(exc), 500)
 
 

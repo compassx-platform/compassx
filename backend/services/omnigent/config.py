@@ -1,4 +1,4 @@
-﻿"""Omnigent platform service configuration."""
+"""Omnigent platform service configuration."""
 import os
 from pydantic_settings import BaseSettings
 
@@ -11,6 +11,8 @@ class OmnigentSettings(BaseSettings):
     OMNIGENT_VOLUME_NAME: str = os.getenv("OMNIGENT_VOLUME_NAME", "compassx-omnigent-data")
     OMNIGENT_SERVER_URL: str = os.getenv("OMNIGENT_SERVER_URL", "http://localhost:6767")
     OMNIGENT_INTERNAL_URL: str = os.getenv("OMNIGENT_INTERNAL_URL", "http://compassx-omnigent-server:6767")
+    OMNIGENT_AUTO_SUSPEND_ENABLED: bool = os.getenv("OMNIGENT_AUTO_SUSPEND_ENABLED", "true").lower() in ("true", "1", "yes")
+    OMNIGENT_IDLE_TIMEOUT_SECONDS: int = int(os.getenv("OMNIGENT_IDLE_TIMEOUT_SECONDS", "1800"))  # 30 mins idle threshold
 
     class Config:
         env_prefix = ""

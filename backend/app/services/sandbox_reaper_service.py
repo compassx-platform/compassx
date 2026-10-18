@@ -21,9 +21,11 @@ logger = logging.getLogger(__name__)
 DEFAULT_DEV_IDLE_SUSPEND_SECONDS = 3600    # 1 hour default for dev sandboxes
 DEFAULT_APP_IDLE_SUSPEND_SECONDS = 7200    # 2 hours default for deployed apps (when auto_suspend_enabled=True)
 DEFAULT_COMPUTE_IDLE_SUSPEND_SECONDS = 300 # 5 minutes default for compute runtimes / notebooks
+DEFAULT_OMNIGENT_IDLE_SUSPEND_SECONDS = 1800 # 30 minutes default for Omnigent server
 DEFAULT_STALE_REAP_DAYS = 30               # 30 days offline -> reclaim storage
 SWEEP_INTERVAL_SECONDS = 30                # Sweep check every 30 seconds
 _LAST_TOUCHED_APP: Dict[str, float] = {}
+_LAST_TOUCHED_OMNIGENT: float = 0.0
 
 
 def _parse_datetime(dt_val: Any) -> Optional[datetime]:
@@ -58,6 +60,7 @@ class SandboxReaperService:
         self.idle_timeout_seconds = getattr(settings, "DEV_SANDBOX_IDLE_TIMEOUT_SECONDS", idle_timeout_seconds)
         self.app_idle_timeout_seconds = getattr(settings, "APP_RUNTIME_IDLE_TIMEOUT_SECONDS", DEFAULT_APP_IDLE_SUSPEND_SECONDS)
         self.compute_idle_timeout_seconds = getattr(settings, "COMPUTE_RUNTIME_IDLE_TIMEOUT_SECONDS", DEFAULT_COMPUTE_IDLE_SUSPEND_SECONDS)
+        self.omnigent_idle_timeout_seconds = getattr(settings, "OMNIGENT_SERVER_IDLE_TIMEOUT_SECONDS", DEFAULT_OMNIGENT_IDLE_SUSPEND_SECONDS)
         self.stale_reap_days = getattr(settings, "DEV_SANDBOX_STALE_REAP_DAYS", stale_reap_days)
         self.sweep_interval_seconds = sweep_interval_seconds
         self._task: Optional[asyncio.Task] = None
@@ -70,10 +73,11 @@ class SandboxReaperService:
         self._running = True
         self._task = asyncio.create_task(self._run_loop(), name="compassx-unified-reaper")
         logger.info(
-            "Unified Reaper Service started (dev_idle=%ss, app_idle=%ss, compute_idle=%ss, sweep_interval=%ss)",
+            "Unified Reaper Service started (dev_idle=%ss, app_idle=%ss, compute_idle=%ss, omnigent_idle=%ss, sweep_interval=%ss)",
             self.idle_timeout_seconds,
             self.app_idle_timeout_seconds,
             self.compute_idle_timeout_seconds,
+            self.omnigent_idle_timeout_seconds,
             self.sweep_interval_seconds,
         )
 
@@ -102,11 +106,12 @@ class SandboxReaperService:
             await asyncio.sleep(self.sweep_interval_seconds)
 
     async def sweep_once(self) -> None:
-        """Execute one complete idle and stale sweep across dev sandboxes, apps, and compute runtimes."""
+        """Execute one complete idle and stale sweep across dev sandboxes, apps, compute runtimes, and Omnigent server."""
         await asyncio.to_thread(self._sync_sweep_idle_workspaces)
         await asyncio.to_thread(self._sync_sweep_stale_workspaces)
         await asyncio.to_thread(self._sync_sweep_idle_apps)
         await asyncio.to_thread(self._sync_sweep_idle_compute_resources)
+        await asyncio.to_thread(self._sync_sweep_idle_omnigent_server)
 
     # ── 1. Dev Sandboxes (Omnigent AI & Dev Studio) ───────────────────────────
 
@@ -476,6 +481,123 @@ class SandboxReaperService:
         except Exception as err:
             logger.debug("Error during idle compute resources sweep: %s", err)
 
+    # ── 4. Databricks Omnigent Server ─────────────────────────────────────────
+
+    def _sync_sweep_idle_omnigent_server(self) -> None:
+        """Identify if Omnigent Server has been inactive for > 30 minutes with no active dev sandboxes, online hosts, or running tasks and suspend compute (scale-to-zero)."""
+        try:
+            import time
+            import urllib.request
+            from services.omnigent.manager import get_omnigent_manager
+            from services.omnigent.config import omnigent_settings
+            from app.database import SystemSessionLocal
+            from app.models.dev_workspace import DevWorkspace
+
+            global _LAST_TOUCHED_OMNIGENT
+            now_ts = time.time()
+            mgr = get_omnigent_manager()
+            status = mgr.get_status()
+
+            # If Omnigent server is already stopped/suspended, reset touch timer and return
+            is_running = str(status.phase).lower() == "running" or (status.details or {}).get("ready", False)
+            if not is_running:
+                _LAST_TOUCHED_OMNIGENT = 0.0
+                return
+
+            auto_suspend_enabled = getattr(
+                settings,
+                "OMNIGENT_AUTO_SUSPEND_ENABLED",
+                getattr(omnigent_settings, "OMNIGENT_AUTO_SUSPEND_ENABLED", True),
+            )
+            if not auto_suspend_enabled:
+                return
+
+            timeout_secs = getattr(
+                settings,
+                "OMNIGENT_SERVER_IDLE_TIMEOUT_SECONDS",
+                getattr(omnigent_settings, "OMNIGENT_IDLE_TIMEOUT_SECONDS", self.omnigent_idle_timeout_seconds),
+            )
+
+            # If touch timer hasn't been initialized yet while running, start it now
+            if _LAST_TOUCHED_OMNIGENT <= 0.0:
+                _LAST_TOUCHED_OMNIGENT = now_ts
+                return
+
+            # 1. Check if ANY DevWorkspaces in DB are active
+            with SystemSessionLocal() as db:
+                active_ws = db.query(DevWorkspace).filter(DevWorkspace.status == "active").all()
+                if active_ws:
+                    _LAST_TOUCHED_OMNIGENT = now_ts
+                    return
+
+            # 2. Check if runtime driver reports any running dev pods/containers
+            dev_driver = driver_factory.get_dev_driver()
+            if hasattr(dev_driver, "list_running_dev_app_ids"):
+                try:
+                    running_dev_ids = dev_driver.list_running_dev_app_ids()
+                    if running_dev_ids:
+                        _LAST_TOUCHED_OMNIGENT = now_ts
+                        return
+                except Exception:
+                    pass
+
+            # 3. Query Omnigent Server directly for online hosts and active sessions
+            urls_to_try = []
+            int_url = getattr(omnigent_settings, "OMNIGENT_INTERNAL_URL", "").rstrip("/")
+            pub_url = getattr(omnigent_settings, "OMNIGENT_SERVER_URL", "").rstrip("/")
+            if int_url:
+                urls_to_try.append(int_url)
+            if pub_url and pub_url not in urls_to_try:
+                urls_to_try.append(pub_url)
+
+            has_online_hosts = False
+            has_active_sessions = False
+
+            for u in urls_to_try:
+                try:
+                    # Check hosts
+                    req = urllib.request.Request(f"{u}/v1/hosts", headers={"User-Agent": "CompassX/1.0"})
+                    with urllib.request.urlopen(req, timeout=1.5) as resp:
+                        data = json.loads(resp.read().decode())
+                        for h in (data.get("hosts") or []):
+                            if str(h.get("status", "")).lower() == "online":
+                                has_online_hosts = True
+                                break
+                    if has_online_hosts:
+                        break
+
+                    # Check sessions
+                    req_s = urllib.request.Request(f"{u}/v1/sessions?limit=50", headers={"User-Agent": "CompassX/1.0"})
+                    with urllib.request.urlopen(req_s, timeout=1.5) as resp_s:
+                        data_s = json.loads(resp_s.read().decode())
+                        sessions = data_s.get("sessions") or (data_s if isinstance(data_s, list) else [])
+                        for s in sessions:
+                            s_status = str(s.get("status", "")).lower()
+                            if s_status in ("running", "active", "in_progress"):
+                                has_active_sessions = True
+                                break
+                    if has_active_sessions:
+                        break
+                except Exception:
+                    pass
+
+            if has_online_hosts or has_active_sessions:
+                _LAST_TOUCHED_OMNIGENT = now_ts
+                return
+
+            # 4. Check idle duration against threshold
+            idle_duration = now_ts - _LAST_TOUCHED_OMNIGENT
+            if idle_duration >= timeout_secs:
+                logger.info(
+                    "Suspending idle Omnigent Server (no active dev sandboxes, online hosts, or running tasks for %ss, timeout=%ss) — scaling to 0 replicas, keeping storage intact.",
+                    int(idle_duration),
+                    timeout_secs,
+                )
+                mgr.suspend()
+                _LAST_TOUCHED_OMNIGENT = 0.0
+        except Exception as err:
+            logger.debug("Error during idle Omnigent Server sweep: %s", err)
+
     # ── Activity Touch Helpers ───────────────────────────────────────────────
 
     def touch_app_activity(self, app_id: str) -> None:
@@ -511,8 +633,15 @@ class SandboxReaperService:
         except Exception as e:
             logger.debug("Failed to touch app activity for %s: %s", app_id, e)
 
+    def touch_omnigent_activity(self) -> None:
+        """Record activity for Omnigent Server (resets the 30-minute inactivity timer)."""
+        import time
+        global _LAST_TOUCHED_OMNIGENT
+        _LAST_TOUCHED_OMNIGENT = time.time()
+
     def touch_dev_sandbox_activity(self, app_id: str, workspace_id: Optional[str] = None) -> None:
-        """Record dev interaction activity for an app dev sandbox."""
+        """Record dev interaction activity for an app dev sandbox and Omnigent Server."""
+        self.touch_omnigent_activity()
         try:
             from app.services.omnigent_dev_service import omnigent_dev_service
             omnigent_dev_service.touch_workspace_activity(app_id, workspace_id)

@@ -83,6 +83,9 @@ class MockDbSession:
             def all(self):
                 return self._items
 
+            def count(self):
+                return len(self._items)
+
         return QueryMock(items)
 
     def commit(self):
@@ -212,3 +215,83 @@ def test_touch_activity_helpers():
         env_dict = json.loads(comp.extra_env)
         assert "last_active_at" in env_dict
         assert "lifecycle" in env_dict
+
+
+def test_omnigent_server_idle_sweep_suspends_when_inactive():
+    """Omnigent server idle > 30 minutes with no active dev sandboxes or hosts should be suspended."""
+    import time
+    from services.base import ServicePhase, ServiceStatus
+
+    reaper = SandboxReaperService()
+    reaper.omnigent_idle_timeout_seconds = 1800
+
+    # Set last touched to 40 minutes ago
+    import app.services.sandbox_reaper_service as srs
+    srs._LAST_TOUCHED_OMNIGENT = time.time() - 2400
+
+    mock_db = MockDbSession({"DevWorkspace": []})
+    mock_status = ServiceStatus(phase=ServicePhase.RUNNING, message="Running", details={"ready": True})
+
+    with patch("app.database.SystemSessionLocal", return_value=mock_db), \
+         patch("services.omnigent.manager.get_omnigent_manager") as mock_get_mgr, \
+         patch("app.services.drivers.factory.driver_factory.get_dev_driver") as mock_dev_driver:
+
+        mock_mgr = MagicMock()
+        mock_mgr.get_status.return_value = mock_status
+        mock_get_mgr.return_value = mock_mgr
+        mock_dev_driver.return_value.list_running_dev_app_ids.return_value = []
+
+        reaper._sync_sweep_idle_omnigent_server()
+        mock_mgr.suspend.assert_called_once()
+
+
+def test_omnigent_server_idle_sweep_skips_when_dev_sandboxes_active():
+    """Omnigent server should NOT be suspended if there are active dev sandboxes."""
+    import time
+    from services.base import ServicePhase, ServiceStatus
+
+    reaper = SandboxReaperService()
+    reaper.omnigent_idle_timeout_seconds = 1800
+
+    import app.services.sandbox_reaper_service as srs
+    srs._LAST_TOUCHED_OMNIGENT = time.time() - 2400
+
+    ws = _make_dev_workspace(ws_id="ws-active-1", app_id="app-1", status="active")
+    mock_db = MockDbSession({"DevWorkspace": [ws]})
+    mock_status = ServiceStatus(phase=ServicePhase.RUNNING, message="Running", details={"ready": True})
+
+    with patch("app.database.SystemSessionLocal", return_value=mock_db), \
+         patch("services.omnigent.manager.get_omnigent_manager") as mock_get_mgr:
+
+        mock_mgr = MagicMock()
+        mock_mgr.get_status.return_value = mock_status
+        mock_get_mgr.return_value = mock_mgr
+
+        reaper._sync_sweep_idle_omnigent_server()
+        mock_mgr.suspend.assert_not_called()
+        assert srs._LAST_TOUCHED_OMNIGENT > (time.time() - 5.0)
+
+
+def test_omnigent_server_idle_sweep_skips_when_disabled():
+    """Omnigent server should NOT be suspended if auto-suspend is disabled."""
+    import time
+    from services.base import ServicePhase, ServiceStatus
+
+    reaper = SandboxReaperService()
+    import app.services.sandbox_reaper_service as srs
+    srs._LAST_TOUCHED_OMNIGENT = time.time() - 2400
+
+    mock_db = MockDbSession({"DevWorkspace": []})
+    mock_status = ServiceStatus(phase=ServicePhase.RUNNING, message="Running", details={"ready": True})
+
+    with patch("app.database.SystemSessionLocal", return_value=mock_db), \
+         patch("services.omnigent.manager.get_omnigent_manager") as mock_get_mgr, \
+         patch("services.omnigent.config.omnigent_settings.OMNIGENT_AUTO_SUSPEND_ENABLED", False):
+
+        mock_mgr = MagicMock()
+        mock_mgr.get_status.return_value = mock_status
+        mock_get_mgr.return_value = mock_mgr
+
+        reaper._sync_sweep_idle_omnigent_server()
+        mock_mgr.suspend.assert_not_called()
+

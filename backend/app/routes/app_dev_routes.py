@@ -1060,6 +1060,7 @@ def get_omnigent_agents(
         raise HTTPException(status_code=404, detail=f"App '{app_id}' not found.")
 
     unified_reaper_service.touch_app_activity(app.id)
+    unified_reaper_service.touch_omnigent_activity()
     return omnigent_dev_service.get_omnigent_agents()
 
 
@@ -1079,6 +1080,7 @@ def create_omnigent_session(
     title = body.title if body else None
     try:
         unified_reaper_service.touch_app_activity(app.id)
+        unified_reaper_service.touch_omnigent_activity()
         return omnigent_dev_service.create_omnigent_chat_session(app, agent_name=agent_name, title=title)
     except Exception as e:
         logger.exception("Failed to create Omnigent session for app %s: %s", app.name, e)

@@ -5,6 +5,24 @@ All notable changes to the CompassX Platform will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.14.4] - 2026-10-18
+
+### 🚀 Highlights
+
+CompassX `0.14.4` introduces **Automated Scale-to-Zero Auto-Suspension for Databricks Omnigent Server**, **Activity Touch Reconciliation across Dev Sandboxes and Sessions**, and **AI Gateway Remote MCP Server Routing Alignment**.
+
+### ✨ Features & Enhancements
+
+#### Databricks Omnigent Server Auto-Suspension & Scale-to-Zero
+- **Unified Idle Sweeper Integration ([`sandbox_reaper_service.py`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/backend/app/services/sandbox_reaper_service.py))**: Extended the Unified Reaper Service with `_sync_sweep_idle_omnigent_server` to automatically detect Omnigent Server inactivity (> 30 minutes idle with 0 active dev workspaces, 0 online hosts, and 0 running tasks) and safely suspend compute (scaling K8s deployment to 0 replicas / stopping Docker container) while preserving all persistent volumes and data.
+- **Compute Suspension & Resume APIs ([`manager.py`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/backend/services/omnigent/manager.py), [`router.py`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/backend/services/omnigent/router.py))**: Added `suspend()` method, updated `stop()`, and added new POST endpoints `/api/v1/services/omnigent/suspend` and `/api/v1/services/omnigent/resume` with deployment replica state tracking and suspended status reporting.
+- **Activity Touch Hooks ([`app_dev_routes.py`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/backend/app/routes/app_dev_routes.py), [`omnigent_dev_service.py`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/backend/app/services/omnigent_dev_service.py))**: Wired `touch_omnigent_activity()` into dev sandbox interactions, workspace touches, and start/resume requests to ensure idle timers reset transparently during active development.
+
+#### AI Gateway Remote MCP Routing
+- **Server URL Normalization ([`omnigent_sync.py`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/backend/app/ai_gateway/mcp/omnigent_sync.py))**: Fixed remote MCP server endpoints to route correctly through the CompassX AI Gateway `/api/v1/ai-gateway/mcp/servers/{name}/sse` proxy and updated `EAM_MCP` endpoint resolution.
+
+---
+
 ## [0.14.3] - 2026-10-17
 
 ### 🚀 Highlights

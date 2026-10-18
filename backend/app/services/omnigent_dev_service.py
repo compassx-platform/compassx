@@ -183,6 +183,13 @@ class OmnigentDevService:
                 status = mgr.start()
             details = status.details or {}
             is_running = str(status.phase).lower() == "running" or details.get("ready", False)
+
+            try:
+                from app.services.sandbox_reaper_service import unified_reaper_service
+                unified_reaper_service.touch_omnigent_activity()
+            except Exception:
+                pass
+
             return {
                 "available": is_running,
                 "server_url": details.get("endpoint") or self.get_omnigent_server_url(),

@@ -71,6 +71,27 @@ class OmnigentManager(BaseServiceManager):
                 svc = build_omnigent_service(ns, "cloud")
                 ing = build_omnigent_ingress(ns, "cloud", domain)
 
+                # If already deployed in K8s but suspended with 0 replicas, scale up to 1
+                try:
+                    existing_dep = k8s.apps().read_namespaced_deployment(name=omnigent_settings.OMNIGENT_CONTAINER_NAME, namespace=ns)
+                    if existing_dep and existing_dep.spec and existing_dep.spec.replicas == 0:
+                        k8s.apps().patch_namespaced_deployment(
+                            name=omnigent_settings.OMNIGENT_CONTAINER_NAME,
+                            namespace=ns,
+                            body={"spec": {"replicas": 1}},
+                        )
+                        logger.info("Resumed suspended Omnigent server in Kubernetes (scaled replicas to 1)")
+                        return ServiceStatus(
+                            phase=ServicePhase.RUNNING,
+                            message=f"Omnigent server resumed in Kubernetes (Ingress: {domain}).",
+                            details=self._details(ready=True, suspended=False),
+                        )
+                except ApiException as check_err:
+                    if check_err.status != 404:
+                        pass
+                except Exception:
+                    pass
+
                 try:
                     if pvc:
                         try:
@@ -175,15 +196,39 @@ class OmnigentManager(BaseServiceManager):
                 details=self._details()
             )
 
-    def stop(self) -> ServiceStatus:
-        """Stop the Omnigent Server container."""
+    def suspend(self) -> ServiceStatus:
+        """Suspend Omnigent Server compute (scale deployment to 0 replicas or stop Docker container) while keeping persistent data/PVC intact."""
+        if ingress_service.is_kubernetes():
+            k8s = self._get_k8s_client()
+            if k8s:
+                ns = settings.K8S_NAMESPACE
+                try:
+                    k8s.apps().patch_namespaced_deployment(
+                        name=omnigent_settings.OMNIGENT_CONTAINER_NAME,
+                        namespace=ns,
+                        body={"spec": {"replicas": 0}},
+                    )
+                    logger.info("Suspended Omnigent Server in Kubernetes (scaled replicas to 0)")
+                    return ServiceStatus(
+                        phase=ServicePhase.STOPPED,
+                        message="Omnigent server suspended (scaled replicas to 0).",
+                        details=self._details(ready=False, suspended=True),
+                    )
+                except Exception as e:
+                    logger.warning("Could not scale down Omnigent deployment to 0: %s", e)
+
         if self._is_docker_available():
             subprocess.run(["docker", "stop", omnigent_settings.OMNIGENT_CONTAINER_NAME], capture_output=True, text=True, check=False)
+
         return ServiceStatus(
             phase=ServicePhase.STOPPED,
-            message="Omnigent server stopped.",
-            details=self._details()
+            message="Omnigent server suspended.",
+            details=self._details(ready=False, suspended=True),
         )
+
+    def stop(self) -> ServiceStatus:
+        """Stop/suspend the Omnigent Server container or deployment without terminating data."""
+        return self.suspend()
 
     def restart(self) -> ServiceStatus:
         """Restart the Omnigent Server container."""
@@ -207,7 +252,7 @@ class OmnigentManager(BaseServiceManager):
                     return ServiceStatus(
                         phase=ServicePhase.RUNNING,
                         message="Omnigent server running.",
-                        details=self._details(version=version_str, ready=True)
+                        details=self._details(version=version_str, ready=True, suspended=False),
                     )
         except Exception:
             pass
@@ -219,29 +264,46 @@ class OmnigentManager(BaseServiceManager):
                     return ServiceStatus(
                         phase=ServicePhase.RUNNING,
                         message="Omnigent server running.",
-                        details=self._details(version=version_str, ready=True)
+                        details=self._details(version=version_str, ready=True, suspended=False),
                     )
         except Exception:
             pass
+
+        if ingress_service.is_kubernetes():
+            k8s = self._get_k8s_client()
+            if k8s:
+                ns = settings.K8S_NAMESPACE
+                try:
+                    dep = k8s.apps().read_namespaced_deployment(name=omnigent_settings.OMNIGENT_CONTAINER_NAME, namespace=ns)
+                    replicas = dep.spec.replicas if (dep and dep.spec) else 1
+                    if replicas == 0:
+                        return ServiceStatus(
+                            phase=ServicePhase.STOPPED,
+                            message="Omnigent server is suspended (0 replicas).",
+                            details=self._details(version=version_str, ready=False, suspended=True),
+                        )
+                except Exception:
+                    pass
 
         running, state = self._get_container_state()
         if running:
             return ServiceStatus(
                 phase=ServicePhase.STARTING,
                 message="Omnigent server container is running, waiting for HTTP readiness.",
-                details=self._details(version=version_str, ready=False)
+                details=self._details(version=version_str, ready=False, suspended=False),
             )
         elif state == "not_found":
             return ServiceStatus(
                 phase=ServicePhase.STOPPED,
                 message="Omnigent server container not created (on-demand).",
-                details=self._details(version=version_str, ready=False)
+                details=self._details(version=version_str, ready=False, suspended=False),
             )
         else:
+            is_susp = state in ("exited", "stopped", "paused")
             return ServiceStatus(
                 phase=ServicePhase.STOPPED,
-                message=f"Omnigent server is stopped (container state: {state}).",
-                details=self._details(version=version_str, ready=False)
+                message=f"Omnigent server is suspended (container state: {state})." if is_susp else f"Omnigent server is stopped (container state: {state}).",
+                details=self._details(version=version_str, ready=False, suspended=is_susp),
             )
 
     def get_resource_usage(self) -> ServiceResourceUsage:
@@ -263,7 +325,7 @@ class OmnigentManager(BaseServiceManager):
             pass
         return ServiceResourceUsage(metrics_available=False)
 
-    def _details(self, version: str = "Databricks Omnigent", ready: bool = False) -> Dict[str, Any]:
+    def _details(self, version: str = "Databricks Omnigent", ready: bool = False, suspended: bool = False) -> Dict[str, Any]:
         pub_url = ingress_service.get_omnigent_public_url()
         int_url = ingress_service.get_omnigent_internal_url()
         return {
@@ -275,6 +337,7 @@ class OmnigentManager(BaseServiceManager):
             "ui_url": pub_url,
             "version": version,
             "ready": ready,
+            "suspended": suspended,
         }
 
 
