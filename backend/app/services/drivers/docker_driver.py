@@ -1321,26 +1321,27 @@ class DockerDevDriver(BaseDevDriver):
         script = (
             f"LOG_FILE='/tmp/workspace_setup.log'; "
             f"mkdir -p /workspaces /tmp; "
-            f"log() {{ echo \"[$(date +'%H:%M:%S')] $1\" | tee -a \"$LOG_FILE\"; }}; "
+            f"log() {{ echo \"[$(date +'%H:%M:%S')] $1\" | sed -E 's/(ghp_[a-zA-Z0-9]+|x-access-token:[^@]+@|oauth2:[^@]+@)/****@/g' | tee -a \"$LOG_FILE\"; }}; "
             f"log '──────────────────────────────────────────────────────────'; "
             f"log '[Phase 2: Workspace Provisioning] Setting up workspace for branch: {branch}'; "
             f"log '  [1/4] Checking workspace directory: {target_dir}...'; "
-            f"if [ -d '{target_dir}' ] && [ -e '{target_dir}/.git' ] && [ -n \"$(find '{target_dir}' -maxdepth 2 -not -name '.git*' -not -name 'index.html' 2>/dev/null)\" ]; then "
-            f"  log '  ✓ Workspace worktree already exists and is populated.'; "
+            f"if [ -d '{target_dir}' ] && [ -e '{target_dir}/.git' ]; then "
+            f"  log '  ✓ Workspace worktree already exists and is initialized.'; "
             f"  echo '__WORKTREE_EXISTS__'; "
             f"else "
             f"  BASE_REPO=\"\"; "
             f"  for d in /workspace /app /workspaces/*/default /workspaces/*/* /workspaces/*; do "
-            f"    if [ -e \"$d/.git\" ] && [ \"$d\" != \"{target_dir}\" ] && [ -n \"$(ls -A \"$d\" 2>/dev/null)\" ]; then BASE_REPO=\"$d\"; break; fi; "
+            f"    if [ -e \"$d/.git\" ] && [ \"$d\" != \"{target_dir}\" ]; then BASE_REPO=\"$d\"; break; fi; "
             f"  done; "
             f"  if [ -n \"$BASE_REPO\" ]; then "
             f"    log \"  → Found base repository at $BASE_REPO\"; "
+            f"    (cd \"$BASE_REPO\" && if ! git rev-parse --verify HEAD >/dev/null 2>&1; then echo \"# $(basename \"$BASE_REPO\")\" > README.md && git checkout -B '{base}' 2>/dev/null || true; git add README.md && git commit -m \"Initialize project\" 2>/dev/null || true; fi); "
             f"    log '  [2/4] Fetching latest remote commits (git fetch origin)...'; "
             f"    (cd \"$BASE_REPO\" && git worktree prune 2>/dev/null || true); "
-            f"    (cd \"$BASE_REPO\" && git fetch origin 2>&1 | tee -a \"$LOG_FILE\" || true); "
+            f"    (cd \"$BASE_REPO\" && git fetch origin 2>&1 | sed -E 's/ghp_[a-zA-Z0-9]+/ghp_****/g' | tee -a \"$LOG_FILE\" || true); "
             f"    rm -rf '{target_dir}'; "
             f"    log '  [3/4] Creating isolated Git worktree on branch: {branch}...'; "
-            f"    if (cd \"$BASE_REPO\" && (git worktree add -f -B '{branch}' '{target_dir}' '{base}' 2>&1 || git worktree add -f -B '{branch}' '{target_dir}' 'origin/{base}' 2>&1 || git worktree add -f --detach '{target_dir}' '{base}' 2>&1 || git worktree add -f -B '{branch}' '{target_dir}' HEAD 2>&1)) | tee -a \"$LOG_FILE\"; then "
+            f"    if (cd \"$BASE_REPO\" && (git worktree add -f -B '{branch}' '{target_dir}' '{base}' 2>&1 || git worktree add -f -B '{branch}' '{target_dir}' 'origin/{base}' 2>&1 || git worktree add -f --detach '{target_dir}' '{base}' 2>&1 || git worktree add -f -B '{branch}' '{target_dir}' HEAD 2>&1)) | sed -E 's/ghp_[a-zA-Z0-9]+/ghp_****/g' | tee -a \"$LOG_FILE\"; then "
             f"      log '  ✓ Worktree creation successful.'; "
             f"      echo '__WORKTREE_CREATED__'; "
             f"    else "
@@ -1361,7 +1362,7 @@ class DockerDevDriver(BaseDevDriver):
             f"    log '✓ Phase 2 Complete: Workspace ready for development.'; "
             f"  else "
             f"    log '  → No base repo found; creating standalone workspace directory.'; "
-            f"    mkdir -p '{target_dir}' && echo '__WORKTREE_CREATED__'; "
+            f"    mkdir -p '{target_dir}' && (cd '{target_dir}' && git init -b '{branch}' 2>/dev/null || true) && echo '__WORKTREE_CREATED__'; "
             f"  fi; "
             f"fi; "
             f"log '──────────────────────────────────────────────────────────'"
@@ -1374,6 +1375,7 @@ class DockerDevDriver(BaseDevDriver):
             timeout=30.0,
         )
         output = ((res.stdout or "") + (res.stderr or "")).strip()
+        output = re.sub(r'ghp_[a-zA-Z0-9]+', 'ghp_****', output)
         success = ("__WORKTREE_CREATED__" in output) or ("__WORKTREE_EXISTS__" in output)
         return {
             "success": success,

@@ -46,6 +46,16 @@ def _sanitize_workspace_name(raw_name: str) -> str:
     return cleaned or "default"
 
 
+def _sanitize_sensitive_output(text: str) -> str:
+    """Mask GitHub PATs and sensitive credentials from log messages or command outputs."""
+    if not text or not isinstance(text, str):
+        return text or ""
+    text = re.sub(r'https?://[^@\s/]+@', 'https://****@', text)
+    text = re.sub(r'gh[pousr]_[a-zA-Z0-9]+', 'gh_****', text)
+    text = re.sub(r'x-access-token:[a-zA-Z0-9_]+', 'x-access-token:****', text)
+    return text
+
+
 
 _OMNIGENT_SERVER_CACHE: Dict[str, Any] = {"data": None, "ts": 0}
 _LIVE_HOST_CACHE: Dict[str, Any] = {}
@@ -1356,7 +1366,7 @@ class OmnigentDevService:
         logs = dev_driver.get_dev_logs(app)
         return {
             "app_id": app.id,
-            "logs": logs or "Sandbox running. No output logged yet.",
+            "logs": _sanitize_sensitive_output(logs) if logs else "Sandbox running. No output logged yet.",
             "status": "active" if sess else "inactive",
         }
 
@@ -1596,7 +1606,7 @@ class OmnigentDevService:
 
         full_install_script = " ".join(install_script_lines)
         exec_res = dev_driver.exec_command_in_dev(app, command=full_install_script, workspace_folder=folder_path)
-        output = exec_res.get("output", "")
+        output = _sanitize_sensitive_output(exec_res.get("output", ""))
         success = ("__CX_INSTALL_SUCCESS__" in output) or exec_res.get("success", False)
 
         return {
@@ -1605,7 +1615,7 @@ class OmnigentDevService:
             "manifests": manifests,
             "exit_code": 0 if success else exec_res.get("exit_code", 1),
             "output": output,
-            "message": "Libraries installed successfully." if success else "Failed to install libraries.",
+            "message": "Libraries installed successfully." if success else _sanitize_sensitive_output(output or "Failed to install libraries."),
         }
 
     def verify_git_workspace(
@@ -1691,6 +1701,7 @@ class OmnigentDevService:
 
         exec_res = dev_driver.exec_command_in_dev(app, command=git_check_cmd, workspace_folder=folder_path)
         output = (exec_res.get("output") or "").strip()
+        output = _sanitize_sensitive_output(output)
         success = exec_res.get("success", False)
         is_pending = exec_res.get("pending", False)
         is_ok = success or ("Workspace codebase verified" in output)
@@ -1700,7 +1711,7 @@ class OmnigentDevService:
             "pending": is_pending,
             "branch": target_branch,
             "output": output,
-            "message": "Workspace codebase verified and ready." if is_ok else (output or "Workspace codebase preparation failed."),
+            "message": "Workspace codebase verified and ready." if is_ok else _sanitize_sensitive_output(output or "Workspace codebase preparation failed."),
         }
 
     def get_git_commits(
@@ -1999,13 +2010,13 @@ class OmnigentDevService:
             )
             run_script = " ".join(run_script_parts)
             exec_res = dev_driver.exec_command_in_dev(app, command=run_script, workspace_folder=folder_path)
-            output = (exec_res.get("output") or "").strip()
+            output = _sanitize_sensitive_output((exec_res.get("output") or "").strip())
             success = exec_res.get("success", False) or ("Phase 4 Complete" in output) or ("Application dev runtime is running and ready" in output)
             return {
                 "success": success,
                 "dev_url": dev_url,
                 "output": output,
-                "message": "Application running successfully from app.yaml." if success else (output or "Failed to start application services defined in app.yaml."),
+                "message": "Application running successfully from app.yaml." if success else _sanitize_sensitive_output(output or "Failed to start application services defined in app.yaml."),
             }
 
         # Delegate to driver's unified supervisor (switch_active_sandbox / dev-runner.sh)
@@ -2016,6 +2027,15 @@ class OmnigentDevService:
             "LOG_FILE='/tmp/workspace_setup.log'; "
             "log() { echo \"[$(date +'%H:%M:%S')] $1\" | tee -a \"$LOG_FILE\"; }; "
             "log '  [3/3] Verifying application health and responsiveness...'; "
+            "if [ -f /tmp/cx_framework_report.json ]; then "
+            "  DET=$(python3 -c \"import json; print('1' if json.load(open('/tmp/cx_framework_report.json')).get('detected') else '0')\" 2>/dev/null || echo '1'); "
+            "  if [ \"$DET\" = \"0\" ]; then "
+            "    log '  ⚠ [NO_SERVICE_DETECTED] No frontend or backend entry points were identified in workspace.'; "
+            "    log '  ℹ Live guidance page is active on port 8080.'; "
+            "    echo 'STATUS:NO_SERVICE_DETECTED'; "
+            "    exit 0; "
+            "  fi; "
+            "fi; "
             "READY=0; "
             "for i in $(seq 1 10); do "
             "  if (curl -fsSL --connect-timeout 2 http://localhost:8080 >/dev/null 2>&1 || wget -q -O - http://localhost:8080 >/dev/null 2>&1); then "
@@ -2055,14 +2075,22 @@ class OmnigentDevService:
         )
 
         exec_res = dev_driver.exec_command_in_dev(app, command=health_check_script, workspace_folder=folder_path)
-        output = (exec_res.get("output") or "").strip()
+        output = _sanitize_sensitive_output((exec_res.get("output") or "").strip())
+        if "STATUS:NO_SERVICE_DETECTED" in output or "NO_SERVICE_DETECTED" in output:
+            return {
+                "success": True,
+                "no_service_detected": True,
+                "dev_url": dev_url,
+                "output": output,
+                "message": "No application service identified. Live guidance page displayed.",
+            }
         success = exec_res.get("success", False) or ("Application dev runtime is running and ready" in output) or ("Phase 4 Complete" in output)
 
         return {
             "success": success,
             "dev_url": dev_url,
             "output": output,
-            "message": "Application running successfully." if success else "Failed to start application services.",
+            "message": "Application running successfully." if success else _sanitize_sensitive_output(output or "Failed to start application services."),
         }
 
 
@@ -2748,7 +2776,7 @@ else:
             f"cd {target_dir} 2>/dev/null || cd /workspaces 2>/dev/null || cd /app 2>/dev/null; "
             f"export GIT_TERMINAL_PROMPT=0; "
             f"{remote_snippet}"
-            f"git fetch origin {clean_base} 2>&1 || git fetch origin 2>&1; "
+            f"(git fetch origin {clean_base} 2>&1 || git fetch origin 2>&1) | sed -E 's/ghp_[a-zA-Z0-9]+/ghp_****/g'; "
             f"BEHIND=$(git rev-list --count HEAD..origin/{clean_base} 2>/dev/null || echo '0'); "
             f"echo \"---BEHIND:$BEHIND---\"; "
             f"if [ \"$BEHIND\" = \"0\" ]; then "
@@ -2763,7 +2791,7 @@ else:
             f"fi; "
             f"git config user.name 'CompassX Dev'; "
             f"git config user.email 'dev@compassx.io'; "
-            f"MERGE_OUT=$(git merge --no-edit -m \"Merge remote {clean_base} into {branch}\" origin/{clean_base} 2>&1); "
+            f"MERGE_OUT=$(git merge --no-edit -m \"Merge remote {clean_base} into {branch}\" origin/{clean_base} 2>&1 | sed -E 's/ghp_[a-zA-Z0-9]+/ghp_****/g'); "
             f"MERGE_STATUS=$?; "
             f"if [ \"$STASHED\" = \"1\" ]; then "
             f"  git stash pop >/dev/null 2>&1; "
@@ -2783,7 +2811,7 @@ else:
         )
 
         res = dev_driver.exec_command_in_dev(app, command=script, workspace_folder=folder_path)
-        raw_output = res.get("output", "")
+        raw_output = _sanitize_sensitive_output(res.get("output", ""))
 
         behind_count = 0
         if "---BEHIND:" in raw_output:

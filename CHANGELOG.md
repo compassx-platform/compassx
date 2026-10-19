@@ -5,6 +5,23 @@ All notable changes to the CompassX Platform will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.14.8] - 2026-10-19
+
+### 🚀 Highlights
+
+CompassX `0.14.8` introduces an **Intelligent Application Framework Detector**, **Automated Multi-Framework Dev-Runner Configuration**, **Sensitive Token Sanitization**, and **Idempotent Alembic Database Migrations**.
+
+### ✨ Features & Enhancements
+
+#### Intelligent Application Framework Detection & Dev-Runner
+- **Framework Detector Subsystem ([`framework_detector/`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/backend/app/services/framework_detector/))**: Added modular and standalone framework inspection (`detector.py`, `frontend_detector.py`, `backend_detector.py`, `manifest_detector.py`, `detect_framework_standalone.py`) to accurately resolve frontend (Vite, Next.js, React, Vue, HTML), backend (FastAPI, Flask, Streamlit, Django), and custom `app.yaml` manifests.
+- **Dev-Runner Dynamic Configuration ([`docker_driver.py`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/backend/app/services/drivers/docker_driver.py), [`kubernetes_driver.py`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/backend/app/services/drivers/kubernetes_driver.py))**: Dev-runners now dynamically execute detected commands, patch Vite `allowedHosts: true` to prevent invalid host header errors in Kubernetes ingresses, and safely fall back to workspace `node_modules` symlinking.
+- **No-Service Graceful Fallback & UI Guidance ([`omnigent_dev_service.py`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/backend/app/services/omnigent_dev_service.py), [`AppBuildPage.tsx`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/frontend/src/modules/apps/pages/AppBuildPage.tsx))**: Emits `STATUS:NO_SERVICE_DETECTED` and serves an interactive guidance page when no runnable application entry point is found, with informative feedback in the Build Page UI.
+- **Sensitive Token Sanitization ([`omnigent_dev_service.py`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/backend/app/services/omnigent_dev_service.py))**: Added `_sanitize_sensitive_output` to redact access tokens (e.g. `ghp_*`) from terminal logs, git operations, and API responses.
+- **Alembic Migration Idempotency ([`0009_agent_runtime_sessions.py`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/backend/alembic_system/versions/0009_agent_runtime_sessions.py))**: Added database schema reflection to prevent duplicate table/index creation errors on restarts and pre-upgrade hooks.
+
+---
+
 ## [0.14.7] - 2026-10-19
 
 ### 🚀 Highlights

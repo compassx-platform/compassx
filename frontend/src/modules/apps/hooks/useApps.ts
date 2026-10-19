@@ -774,6 +774,7 @@ export function useInstallDevDependencies() {
 
 export interface RunAppResult {
   success: boolean;
+  no_service_detected?: boolean;
   dev_url?: string;
   output?: string;
   message?: string;

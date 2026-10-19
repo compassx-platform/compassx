@@ -374,9 +374,9 @@ env:
             created_deploy = mock_apps.replace_namespaced_deployment.call_args[1]["body"]
             container_args = created_deploy.spec.template.spec.containers[0].args
             joined_args = " ".join(container_args)
-            # Must verify that APP_ROOT only loops over /app_src/* if root does not already have frontend or backend
-            self.assertIn("elif [ ! -d '/app_src/frontend' ]", joined_args)
-            self.assertIn("! -d '/app_src/backend'", joined_args)
+            # Must verify that APP_ROOT runs framework detector
+            self.assertIn("detect_framework.py", joined_args)
+            self.assertIn("cx_build_report.json", joined_args)
 
 
 if __name__ == "__main__":

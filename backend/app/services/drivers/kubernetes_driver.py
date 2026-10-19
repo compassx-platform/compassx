@@ -132,6 +132,8 @@ class KubernetesAppDriver(BaseAppDriver):
             image_tag = os.environ.get("COMPASSX_SANDBOX_IMAGE") or DEFAULT_SANDBOX_IMAGE
             container_cmd = ["/bin/sh", "-c"]
             subdir = (getattr(app, "git_subdir", "") or "").strip("/")
+            detector_code = KubernetesDevDriver._get_framework_detector_script()
+            detector_b64 = base64.b64encode(detector_code.encode("utf-8")).decode("ascii")
             run_cmd = (
                 f"hold_on_error() {{ "
                 f"  echo ''; "
@@ -148,63 +150,52 @@ class KubernetesAppDriver(BaseAppDriver):
                 f"  echo '[BUILD] ========================================================' && "
                 f"  echo '[BUILD] [1/3] Cloning repository ({git_ref})...' && "
                 f"  mkdir -p /app_src && cd /app_src && "
-                f"  (git clone --branch '{git_ref}' '{auth_url}' . || git clone '{auth_url}' . || true) && "
+                f"  (git clone --branch '{git_ref}' '{auth_url}' . 2>&1 | sed -E 's/ghp_[a-zA-Z0-9]+/ghp_****/g' || "
+                f"   git clone '{auth_url}' . 2>&1 | sed -E 's/ghp_[a-zA-Z0-9]+/ghp_****/g' || "
+                f"   (git init -b '{git_ref}' && git remote add origin '{auth_url}')) && "
+                f"  echo '{detector_b64}' | base64 -d > /tmp/detect_framework.py && chmod +x /tmp/detect_framework.py && "
                 f"  APP_ROOT='/app_src' && "
-                f"  if [ -n '{subdir}' ] && [ -d '/app_src/{subdir}' ]; then "
-                f"    APP_ROOT='/app_src/{subdir}'; "
-                f"  elif [ ! -d '/app_src/frontend' ] && [ ! -d '/app_src/backend' ] && [ ! -d '/app_src/client' ] && [ ! -d '/app_src/web' ] && [ ! -d '/app_src/ui' ] && [ ! -f '/app_src/package.json' ] && [ ! -f '/app_src/app.py' ] && [ ! -f '/app_src/main.py' ] && [ ! -f '/app_src/server.py' ] && [ ! -f '/app_src/app.yaml' ] && [ ! -f '/app_src/app.yml' ]; then "
-                f"    for d in /app_src/*; do "
-                f"      if [ -d \"$d\" ] && ( [ -d \"$d/frontend\" ] || [ -d \"$d/backend\" ] || [ -d \"$d/client\" ] || [ -d \"$d/web\" ] || [ -f \"$d/package.json\" ] || [ -f \"$d/app.py\" ] || [ -f \"$d/main.py\" ] || [ -f \"$d/server.py\" ] ); then "
-                f"        APP_ROOT=\"$d\"; break; "
-                f"      fi; "
-                f"    done; "
-                f"  fi && "
+                f"  if [ -n '{subdir}' ] && [ -d '/app_src/{subdir}' ]; then APP_ROOT='/app_src/{subdir}'; fi && "
                 f"  echo \"[BUILD] Source code root directory resolved to: $APP_ROOT\" && "
-                f"  echo '[BUILD] [2/3] Building dependencies and compiling assets...' && "
+                f"  echo '[BUILD] [2/3] Analyzing application framework and dependencies...' && "
+                f"  python3 /tmp/detect_framework.py \"$APP_ROOT\" > /tmp/cx_build_report.json 2>/dev/null && "
+                f"  eval $(python3 -c '\n"
+                f"import json\n"
+                f"try: r = json.load(open(\"/tmp/cx_build_report.json\"))\n"
+                f"except Exception: r = {{}}\n"
+                f"print(f\"DETECTED={{\\\"true\\\" if r.get(\\\"detected\\\") else \\\"false\\\"}};\")\n"
+                f"f = r.get(\"frontend\") or {{}}\n"
+                f"print(f\"FRONTEND_DIR={{json.dumps(f.get(\\\"directory\\\") or \\\"\\\")}};\")\n"
+                f"print(f\"BUILD_CMD={{json.dumps(f.get(\\\"build_command\\\") or \\\"\\\")}};\")\n"
+                f"print(f\"DIST_DIR={{json.dumps(f.get(\\\"dist_dir\\\") or \\\"dist\\\")}};\")\n"
+                f"b = r.get(\"backend\") or {{}}\n"
+                f"print(f\"BACKEND_DIR={{json.dumps(b.get(\\\"directory\\\") or \\\"\\\")}};\")\n"
+                f"print(f\"HAS_FRONTEND={{\\\"true\\\" if r.get(\\\"has_frontend\\\") else \\\"false\\\"}};\")\n"
+                f"print(f\"HAS_BACKEND={{\\\"true\\\" if r.get(\\\"has_backend\\\") else \\\"false\\\"}};\")\n"
+                f"') && "
+                f"  if [ \"$DETECTED\" != \"true\" ]; then "
+                f"    echo '[BUILD ERROR] ========================================================' && "
+                f"    echo '[BUILD ERROR] No application service identified in repository.' && "
+                f"    echo '[BUILD ERROR] CompassX could not find entry files for frontend (package.json) or backend (main.py, app.py, requirements.txt).' && "
+                f"    echo '[BUILD ERROR] Please add application code or an app.yaml manifest before deploying.' && "
+                f"    echo '[BUILD ERROR] ========================================================' && "
+                f"    exit 1; "
+                f"  fi && "
                 f"  STATIC_DIR=\"\" && "
-                # 1. Build Frontend if present (supports monorepo frontend, web, client, or root)
-                f"  if [ -d \"$APP_ROOT/frontend\" ] && [ -f \"$APP_ROOT/frontend/package.json\" ]; then "
-                f"    echo '[BUILD] Detected frontend directory ($APP_ROOT/frontend). Installing dependencies & building...' && "
-                f"    (cd \"$APP_ROOT/frontend\" && (npm install --legacy-peer-deps --prefer-offline --no-audit || npm install --legacy-peer-deps || npm install --force) && (npm run build || true)); "
-                f"    if [ -d \"$APP_ROOT/frontend/dist\" ]; then STATIC_DIR=\"$APP_ROOT/frontend/dist\"; "
-                f"    elif [ -d \"$APP_ROOT/frontend/build\" ]; then STATIC_DIR=\"$APP_ROOT/frontend/build\"; "
-                f"    elif [ -d \"$APP_ROOT/dist\" ]; then STATIC_DIR=\"$APP_ROOT/dist\"; "
-                f"    elif [ -d \"$APP_ROOT/build\" ]; then STATIC_DIR=\"$APP_ROOT/build\"; "
-                f"    else STATIC_DIR=\"$APP_ROOT/frontend\"; fi; "
-                f"  elif [ -d \"$APP_ROOT/client\" ] && [ -f \"$APP_ROOT/client/package.json\" ]; then "
-                f"    echo '[BUILD] Detected client directory ($APP_ROOT/client). Installing dependencies & building...' && "
-                f"    (cd \"$APP_ROOT/client\" && (npm install --legacy-peer-deps --prefer-offline --no-audit || npm install --legacy-peer-deps || npm install --force) && (npm run build || true)); "
-                f"    if [ -d \"$APP_ROOT/client/dist\" ]; then STATIC_DIR=\"$APP_ROOT/client/dist\"; "
-                f"    elif [ -d \"$APP_ROOT/client/build\" ]; then STATIC_DIR=\"$APP_ROOT/client/build\"; "
-                f"    else STATIC_DIR=\"$APP_ROOT/client\"; fi; "
-                f"  elif [ -d \"$APP_ROOT/web\" ] && [ -f \"$APP_ROOT/web/package.json\" ]; then "
-                f"    echo '[BUILD] Detected web directory ($APP_ROOT/web). Installing dependencies & building...' && "
-                f"    (cd \"$APP_ROOT/web\" && (npm install --legacy-peer-deps --prefer-offline --no-audit || npm install --legacy-peer-deps || npm install --force) && (npm run build || true)); "
-                f"    if [ -d \"$APP_ROOT/web/dist\" ]; then STATIC_DIR=\"$APP_ROOT/web/dist\"; "
-                f"    elif [ -d \"$APP_ROOT/web/build\" ]; then STATIC_DIR=\"$APP_ROOT/web/build\"; "
-                f"    else STATIC_DIR=\"$APP_ROOT/web\"; fi; "
-                f"  elif [ -f \"$APP_ROOT/package.json\" ]; then "
-                f"    echo '[BUILD] Detected root package.json. Installing dependencies & building...' && "
-                f"    (cd \"$APP_ROOT\" && (npm install --legacy-peer-deps --prefer-offline --no-audit || npm install --legacy-peer-deps || npm install --force) && (npm run build || true)); "
-                f"    if [ -d \"$APP_ROOT/dist\" ]; then STATIC_DIR=\"$APP_ROOT/dist\"; "
-                f"    elif [ -d \"$APP_ROOT/build\" ]; then STATIC_DIR=\"$APP_ROOT/build\"; "
-                f"    else STATIC_DIR=\"$APP_ROOT\"; fi; "
-                f"  elif [ -d \"$APP_ROOT/frontend/dist\" ]; then "
-                f"    STATIC_DIR=\"$APP_ROOT/frontend/dist\"; "
-                f"  elif [ -d \"$APP_ROOT/dist\" ]; then "
-                f"    STATIC_DIR=\"$APP_ROOT/dist\"; "
+                f"  if [ \"$HAS_FRONTEND\" = \"true\" ] && [ -n \"$FRONTEND_DIR\" ]; then "
+                f"    F_FULL_DIR=\"$APP_ROOT/$FRONTEND_DIR\" && [ \"$FRONTEND_DIR\" = \".\" ] && F_FULL_DIR=\"$APP_ROOT\"; "
+                f"    echo \"[BUILD] Building frontend in $F_FULL_DIR...\" && "
+                f"    (cd \"$F_FULL_DIR\" && (npm install --legacy-peer-deps --prefer-offline --no-audit || npm install --legacy-peer-deps || npm install --force) && eval \"${{BUILD_CMD:-npm run build || true}}\"); "
+                f"    if [ -d \"$F_FULL_DIR/$DIST_DIR\" ]; then STATIC_DIR=\"$F_FULL_DIR/$DIST_DIR\"; "
+                f"    elif [ -d \"$F_FULL_DIR/dist\" ]; then STATIC_DIR=\"$F_FULL_DIR/dist\"; "
+                f"    elif [ -d \"$F_FULL_DIR/build\" ]; then STATIC_DIR=\"$F_FULL_DIR/build\"; "
+                f"    else STATIC_DIR=\"$F_FULL_DIR\"; fi; "
                 f"  fi && "
-                # 2. Detect Backend directory
-                f"  BACKEND_DIR=\"\" && "
-                f"  if [ -d \"$APP_ROOT/backend\" ] && ( [ -f \"$APP_ROOT/backend/main.py\" ] || [ -f \"$APP_ROOT/backend/app.py\" ] || [ -f \"$APP_ROOT/backend/server.py\" ] || [ -f \"$APP_ROOT/backend/api.py\" ] || [ -f \"$APP_ROOT/backend/requirements.txt\" ] ); then "
-                f"    BACKEND_DIR=\"$APP_ROOT/backend\"; "
-                f"  elif [ -d \"$APP_ROOT/api\" ] && ( [ -f \"$APP_ROOT/api/main.py\" ] || [ -f \"$APP_ROOT/api/app.py\" ] || [ -f \"$APP_ROOT/api/server.py\" ] || [ -f \"$APP_ROOT/api/requirements.txt\" ] ); then "
-                f"    BACKEND_DIR=\"$APP_ROOT/api\"; "
-                f"  elif [ -d \"$APP_ROOT/server\" ] && ( [ -f \"$APP_ROOT/server/main.py\" ] || [ -f \"$APP_ROOT/server/app.py\" ] || [ -f \"$APP_ROOT/server/requirements.txt\" ] ); then "
-                f"    BACKEND_DIR=\"$APP_ROOT/server\"; "
-                f"  elif [ -f \"$APP_ROOT/main.py\" ] || [ -f \"$APP_ROOT/app.py\" ] || [ -f \"$APP_ROOT/server.py\" ] || [ -f \"$APP_ROOT/api.py\" ] || [ -f \"$APP_ROOT/requirements.txt\" ] || [ '{app_type}' = 'streamlit' ]; then "
-                f"    BACKEND_DIR=\"$APP_ROOT\"; "
+                f"  B_FULL_DIR=\"\" && "
+                f"  if [ \"$HAS_BACKEND\" = \"true\" ] && [ -n \"$BACKEND_DIR\" ]; then "
+                f"    B_FULL_DIR=\"$APP_ROOT/$BACKEND_DIR\" && [ \"$BACKEND_DIR\" = \".\" ] && B_FULL_DIR=\"$APP_ROOT\"; "
                 f"  fi && "
+                f"  BACKEND_DIR=\"$B_FULL_DIR\" && "
                 f"  echo \"[BUILD] Backend directory resolved to: $BACKEND_DIR\" && "
                 f"  echo \"[BUILD] Static frontend assets directory resolved to: $STATIC_DIR\" && "
                 f"  echo '[BUILD] [3/3] Build phase completed successfully.' && "
@@ -1127,9 +1118,15 @@ class KubernetesDevDriver(BaseDevDriver):
                 if auth_url:
                     clone_snippet = (
                         f"if [ ! -e .git ]; then "
-                        f"  rm -rf ./* ./.[!.]* 2>/dev/null || true; "
-                        f"  (git clone --branch '{git_ref}' '{auth_url}' . || git clone '{auth_url}' . || true) && "
-                        f"  (git checkout -B '{target_branch}' || true); "
+                        f"  (git clone --branch '{git_ref}' '{auth_url}' . 2>&1 | sed -E 's/ghp_[a-zA-Z0-9]+/ghp_****/g' || "
+                        f"   git clone '{auth_url}' . 2>&1 | sed -E 's/ghp_[a-zA-Z0-9]+/ghp_****/g' || "
+                        f"   (git init -b '{git_ref}' && git remote add origin '{auth_url}')) && "
+                        f"  (if ! git rev-parse --verify HEAD >/dev/null 2>&1; then "
+                        f"     echo '# App' > README.md && git checkout -B '{git_ref}' 2>/dev/null || true; "
+                        f"     git add README.md && git commit -m 'Initialize project' 2>/dev/null || true; "
+                        f"     (git push -u origin '{git_ref}' 2>/dev/null || true); "
+                        f"   fi) && "
+                        f"  (git checkout -B '{target_branch}' 2>/dev/null || true); "
                         f"else "
                         f"  (git checkout -B '{target_branch}' 2>/dev/null || true); "
                         f"fi; "
@@ -2507,27 +2504,28 @@ class KubernetesDevDriver(BaseDevDriver):
 
         cmd = (
             'LOG_FILE="/tmp/workspace_setup.log"; '
-            'log() { echo "[$(date +\'%H:%M:%S\')] $1" | tee -a "$LOG_FILE"; }; '
+            'log() { echo "[$(date +\'%H:%M:%S\')] $1" | sed -E \'s/(ghp_[a-zA-Z0-9]+|x-access-token:[^@]+@|oauth2:[^@]+@)/****@/g\' | tee -a "$LOG_FILE"; }; '
             'log "──────────────────────────────────────────────────────────"; '
             f'log "=== Phase 2: Workspace Setup ({target_dir}) ==="; '
             f'mkdir -p /workspaces/{clean_app} && '
-            f'if [ -d \'{target_dir}\' ] && [ -e \'{target_dir}/.git\' ] && [ -n "$(find \'{target_dir}\' -maxdepth 2 -not -name \'.git*\' -not -name \'index.html\' 2>/dev/null)" ]; then '
-            '  log "  ✓ Workspace worktree already exists and is populated."; '
+            f'if [ -d \'{target_dir}\' ] && [ -e \'{target_dir}/.git\' ]; then '
+            '  log "  ✓ Workspace worktree already exists and is initialized."; '
             '  echo "__WORKTREE_EXISTS__"; '
             'else '
             '  BASE_REPO=""; '
             f'  for d in /workspace /workspaces/{clean_app}/default /workspaces/{clean_app}/main /workspaces/{clean_app}/* /workspaces/* /app; do '
-            f'    if [ -d "$d" ] && [ "$d" != "{target_dir}" ] && (cd "$d" && git rev-parse --verify HEAD >/dev/null 2>&1) && [ -n "$(find "$d" -maxdepth 2 -not -name \'.git*\' -not -name \'index.html\' 2>/dev/null)" ]; then BASE_REPO="$d"; break; fi; '
+            f'    if [ -d "$d" ] && [ "$d" != "{target_dir}" ] && [ -e "$d/.git" ]; then BASE_REPO="$d"; break; fi; '
             '  done; '
             '  if [ -n "$BASE_REPO" ]; then '
             '    log "  → Found base repository at $BASE_REPO"; '
             f'    (cd "$BASE_REPO" && (git remote set-url origin \'{auth_url}\' 2>/dev/null || git remote add origin \'{auth_url}\' 2>/dev/null || true)); '
+            f'    (cd "$BASE_REPO" && if ! git rev-parse --verify HEAD >/dev/null 2>&1; then echo "# $(basename "$BASE_REPO")" > README.md && git checkout -B \'{base}\' 2>/dev/null || true; git add README.md && git commit -m "Initialize project" 2>/dev/null || true; (git push -u origin \'{base}\' 2>/dev/null || true); fi); '
             '    log "  [2/4] Fetching latest remote commits (git fetch origin)..."; '
             '    (cd "$BASE_REPO" && git worktree prune 2>/dev/null || true); '
-            '    (cd "$BASE_REPO" && git fetch origin 2>&1 | tee -a "$LOG_FILE" || true); '
+            '    (cd "$BASE_REPO" && git fetch origin 2>&1 | sed -E \'s/ghp_[a-zA-Z0-9]+/ghp_****/g\' | tee -a "$LOG_FILE" || true); '
             f'    rm -rf \'{target_dir}\'; '
             f'    log "  [3/4] Creating isolated Git worktree on branch: {branch}..."; '
-            f'    if (cd "$BASE_REPO" && (git worktree add -f -B \'{branch}\' \'{target_dir}\' \'{base}\' 2>&1 || git worktree add -f -B \'{branch}\' \'{target_dir}\' \'origin/{base}\' 2>&1 || git worktree add -f --detach \'{target_dir}\' \'{base}\' 2>&1 || git worktree add -f -B \'{branch}\' \'{target_dir}\' HEAD 2>&1)) | tee -a "$LOG_FILE"; then '
+            f'    if (cd "$BASE_REPO" && (git worktree add -f -B \'{branch}\' \'{target_dir}\' \'{base}\' 2>&1 || git worktree add -f -B \'{branch}\' \'{target_dir}\' \'origin/{base}\' 2>&1 || git worktree add -f --detach \'{target_dir}\' \'{base}\' 2>&1 || git worktree add -f -B \'{branch}\' \'{target_dir}\' HEAD 2>&1)) | sed -E \'s/ghp_[a-zA-Z0-9]+/ghp_****/g\' | tee -a "$LOG_FILE"; then '
             '      log "  ✓ Worktree creation successful."; '
             '      echo "__WORKTREE_CREATED__"; '
             '    else '
@@ -2548,17 +2546,30 @@ class KubernetesDevDriver(BaseDevDriver):
             '    log "✓ Phase 2 Complete: Workspace ready for development."; '
             f'  elif [ -n \'{auth_url}\' ]; then '
             f'    log "  → Cloning repository from remote for branch: {branch}..."; '
-            f'    rm -rf \'{target_dir}\' && mkdir -p \'{target_dir}\' && cd \'{target_dir}\' && (git clone --branch \'{base}\' \'{auth_url}\' . 2>&1 | tee -a "$LOG_FILE" || git clone \'{auth_url}\' . 2>&1 | tee -a "$LOG_FILE") && (git checkout -B \'{branch}\' 2>/dev/null || true) && echo "__WORKTREE_CREATED__"; '
-            '    log "✓ Phase 2 Complete: Remote repository cloned successfully."; '
+            f'    rm -rf \'{target_dir}\' && mkdir -p \'{target_dir}\' && cd \'{target_dir}\' && '
+            f'    (git clone --branch \'{base}\' \'{auth_url}\' . 2>&1 | sed -E \'s/ghp_[a-zA-Z0-9]+/ghp_****/g\' | tee -a "$LOG_FILE" || '
+            f'     git clone \'{auth_url}\' . 2>&1 | sed -E \'s/ghp_[a-zA-Z0-9]+/ghp_****/g\' | tee -a "$LOG_FILE" || '
+            f'     (git init -b \'{base}\' && git remote add origin \'{auth_url}\')) && '
+            f'    (if ! git rev-parse --verify HEAD >/dev/null 2>&1; then '
+            f'       log "    → Empty repository detected. Creating initial commit on {base}..."; '
+            f'       echo "# $(basename \'{target_dir}\')" > README.md && '
+            f'       git checkout -B \'{base}\' 2>/dev/null || true; '
+            f'       git add README.md 2>/dev/null || true; '
+            f'       git commit -m "Initialize project" 2>/dev/null || true; '
+            f'       (git push -u origin \'{base}\' 2>/dev/null || true); '
+            f'     fi) && '
+            f'    (git checkout -B \'{branch}\' 2>/dev/null || true) && echo "__WORKTREE_CREATED__"; '
+            '    log "✓ Phase 2 Complete: Repository initialized successfully."; '
             '  else '
             '    log "  → No base repository or remote URL found; creating standalone directory."; '
-            f'    mkdir -p \'{target_dir}\' && echo "__WORKTREE_CREATED__"; '
+            f'    mkdir -p \'{target_dir}\' && (cd \'{target_dir}\' && git init -b \'{branch}\' 2>/dev/null || true) && echo "__WORKTREE_CREATED__"; '
             '  fi; '
             'fi; '
             'log "──────────────────────────────────────────────────────────"'
         )
         res = self.exec_command_in_dev(app, cmd)
         output = res.get("output", "")
+        output = re.sub(r'ghp_[a-zA-Z0-9]+', 'ghp_****', output)
         success = ("__WORKTREE_CREATED__" in output) or ("__WORKTREE_EXISTS__" in output) or (res.get("exit_code") == 0)
         return {
             "success": success,
@@ -2585,8 +2596,25 @@ class KubernetesDevDriver(BaseDevDriver):
         return res.get("exit_code") == 0
 
     @staticmethod
+    def _get_framework_detector_script() -> str:
+        """Returns the standalone zero-dependency framework detector script."""
+        try:
+            from app.services.framework_detector.detect_framework_standalone import __file__ as sf
+            with open(sf, "r", encoding="utf-8") as fh:
+                return fh.read()
+        except Exception:
+            current_dir = os.path.dirname(os.path.abspath(__file__))
+            p = os.path.join(os.path.dirname(current_dir), "framework_detector", "detect_framework_standalone.py")
+            if os.path.isfile(p):
+                with open(p, "r", encoding="utf-8") as fh:
+                    return fh.read()
+        return ""
+
+    @staticmethod
     def _get_dev_runner_script() -> str:
         """Returns the unified dev runner bash supervisor script for development pods/containers."""
+        detector_code = KubernetesDevDriver._get_framework_detector_script()
+        detector_b64 = base64.b64encode(detector_code.encode("utf-8")).decode("ascii")
         return (
             '#!/usr/bin/env bash\n'
             '# CompassX Unified Dev Server Supervisor\n'
@@ -2717,311 +2745,136 @@ class KubernetesDevDriver(BaseDevDriver):
             'python3 -m http.server 8080 --directory /tmp/cx_splash >> /tmp/frontend.log 2>&1 &\n'
             'SPLASH_PID=$!\n'
             '\n'
-            '# Resolve BASE_DIR (if Source Code Path or inner subdirectory is configured)\n'
-            'GIT_SUBDIR_VAL="${GIT_SUBDIR:-${APP_SUBDIR:-}}"\n'
-            'BASE_DIR="$ACTIVE_DIR"\n'
-            'if [ -n "$GIT_SUBDIR_VAL" ] && [ -d "$ACTIVE_DIR/$GIT_SUBDIR_VAL" ]; then\n'
-            '  BASE_DIR="$ACTIVE_DIR/$GIT_SUBDIR_VAL"\n'
-            '  echo "[DEV-RUNNER] Using configured Source Code Path: $BASE_DIR"\n'
-            'elif [ ! -d "$BASE_DIR/frontend" ] && [ ! -d "$BASE_DIR/backend" ] && [ ! -d "$BASE_DIR/client" ] && [ ! -d "$BASE_DIR/web" ] && [ ! -d "$BASE_DIR/ui" ] && [ ! -f "$BASE_DIR/package.json" ] && [ ! -f "$BASE_DIR/app.py" ] && [ ! -f "$BASE_DIR/main.py" ] && [ ! -f "$BASE_DIR/server.py" ] && [ ! -f "$BASE_DIR/app.yaml" ] && [ ! -f "$BASE_DIR/app.yml" ]; then\n'
-            '  for d in "$ACTIVE_DIR"/*; do\n'
-            '    if [ -d "$d" ] && [ "$d" != "$ACTIVE_DIR/.git" ] && ( [ -d "$d/frontend" ] || [ -d "$d/backend" ] || [ -d "$d/client" ] || [ -d "$d/web" ] || [ -d "$d/ui" ] || [ -d "$d/src" ] || [ -f "$d/package.json" ] || [ -f "$d/app.py" ] || [ -f "$d/main.py" ] || [ -f "$d/server.py" ] || [ -f "$d/app.yaml" ] || [ -f "$d/app.yml" ] ); then\n'
-            '      BASE_DIR="$d"\n'
-            '      break\n'
-            '    fi\n'
-            '  done\n'
+            '# Framework and Service Detection using decoupled detector\n'
+            'mkdir -p /tmp\n'
+            f'echo \'{detector_b64}\' | base64 -d > /tmp/detect_framework.py && chmod +x /tmp/detect_framework.py\n'
+            'python3 /tmp/detect_framework.py "$ACTIVE_DIR" > /tmp/cx_framework_report.json 2>/dev/null\n'
+            '\n'
+            'eval $(python3 -c "\n'
+            'import json\n'
+            'try: r = json.load(open(\'/tmp/cx_framework_report.json\'))\n'
+            'except Exception: r = {}\n'
+            'detected = \'true\' if r.get(\'detected\') else \'false\'\n'
+            'has_f = \'true\' if r.get(\'has_frontend\') else \'false\'\n'
+            'has_b = \'true\' if r.get(\'has_backend\') else \'false\'\n'
+            'has_m = \'true\' if r.get(\'manifest_found\') else \'false\'\n'
+            'f = r.get(\'frontend\') or {}\n'
+            'b = r.get(\'backend\') or {}\n'
+            'm = r.get(\'manifest\') or {}\n'
+            'env_exports = [f\'export {k}={v}\' for k, v in (m.get(\'env\') or {}).items()]\n'
+            'print(f\'DETECTED={detected}; HAS_FRONTEND={has_f}; HAS_BACKEND={has_b}; HAS_MANIFEST={has_m};\')\n'
+            'print(f\'FRONTEND_DIR={json.dumps(f.get(\"directory\") or \"\")}; FRONTEND_CMD={json.dumps(f.get(\"dev_command\") or \"\")}; FRONTEND_PORT={f.get(\"port\") or 8080};\')\n'
+            'print(f\'BACKEND_DIR={json.dumps(b.get(\"directory\") or \"\")}; BACKEND_CMD={json.dumps(b.get(\"dev_command\") or \"\")}; BACKEND_PORT={b.get(\"port\") or 8000}; BACKEND_PATH={json.dumps(b.get(\"api_prefix\") or \"/api\")};\')\n'
+            'print(f\'MANIFEST_INSTALL={json.dumps(m.get(\"install_command\") or \"\")}; MANIFEST_ENV={json.dumps(\"; \".join(env_exports))};\')\n'
+            '")\n'
+            '\n'
+            'if [ -n "$MANIFEST_ENV" ]; then eval "$MANIFEST_ENV"; fi\n'
+            'if [ -n "$MANIFEST_INSTALL" ]; then\n'
+            '  echo "[DEV-RUNNER] Executing manifest install command: $MANIFEST_INSTALL"\n'
+            '  (eval "$MANIFEST_INSTALL" >> /tmp/backend.log 2>&1 || true)\n'
             'fi\n'
             '\n'
-            '# Discover and Parse app.yaml / app.yml if present\n'
-            'rm -f /tmp/cx_manifest_cfg.json 2>/dev/null || true\n'
-            'ACTIVE_DIR="$ACTIVE_DIR" BASE_DIR="$BASE_DIR" python3 -c "\n'
-            'import os, sys, yaml, shlex, json\n'
-            'active_dir = os.environ.get(\'ACTIVE_DIR\', \'\') or os.getcwd()\n'
-            'base_dir = os.environ.get(\'BASE_DIR\', \'\') or active_dir\n'
-            'manifest_data = None\n'
-            'manifest_dir = base_dir\n'
-            'search_roots = [base_dir, active_dir, \'/workspace\', \'/app\']\n'
-            'for sr in search_roots:\n'
-            '    if not sr or not os.path.isdir(sr): continue\n'
-            '    for root, _, files in os.walk(sr):\n'
-            '        if \'node_modules\' in root or \'.git\' in root: continue\n'
-            '        for fname in (\'app.yaml\', \'app.yml\'):\n'
-            '            if fname in files:\n'
-            '                p = os.path.join(root, fname)\n'
-            '                try:\n'
-            '                    with open(p, \'r\', encoding=\'utf-8\') as fh:\n'
-            '                        manifest_data = yaml.safe_load(fh)\n'
-            '                        manifest_dir = root\n'
-            '                        break\n'
-            '                except Exception: pass\n'
-            '        if manifest_data: break\n'
-            '    if manifest_data: break\n'
-            'if manifest_data and isinstance(manifest_data, dict):\n'
-            '    install_cmd = manifest_data.get(\'install\')\n'
-            '    if isinstance(install_cmd, list): install_cmd = \' && \'.join([str(c).strip() for c in install_cmd if c])\n'
-            '    elif isinstance(install_cmd, str): install_cmd = install_cmd.strip()\n'
-            '    else: install_cmd = None\n'
-            '    env_vars = manifest_data.get(\'env\') or {}\n'
-            '    env_exports = []\n'
-            '    if isinstance(env_vars, list):\n'
-            '        for e in env_vars:\n'
-            '            if isinstance(e, dict) and \'name\' in e:\n'
-            '                env_exports.append(f\"export {e[\'name\']}={shlex.quote(str(e.get(\'value\', \'\')))}\")\n'
-            '    elif isinstance(env_vars, dict):\n'
-            '        for k, v in env_vars.items():\n'
-            '            env_exports.append(f\"export {k}={shlex.quote(str(v))}\")\n'
-            '    services = manifest_data.get(\'services\') or {}\n'
-            '    b_cmd = None; b_port = 8000; b_dir = manifest_dir; b_path = \'/api\'\n'
-            '    f_cmd = None; f_port = 4000; f_dir = manifest_dir; f_path = \'/\'\n'
-            '    if isinstance(services, dict) and services:\n'
-            '        b_svc = services.get(\'backend\') or services.get(\'api\')\n'
-            '        if b_svc:\n'
-            '            b_cmd = b_svc.get(\'command\') if isinstance(b_svc, dict) else str(b_svc)\n'
-            '            if isinstance(b_svc, dict):\n'
-            '                b_port = int(b_svc.get(\'port\', 8000))\n'
-            '                if b_svc.get(\'dir\'): b_dir = os.path.normpath(os.path.join(manifest_dir, b_svc[\'dir\']))\n'
-            '                b_path = b_svc.get(\'path\', \'/api\')\n'
-            '        f_svc = services.get(\'frontend\') or services.get(\'ui\') or services.get(\'web\')\n'
-            '        if f_svc:\n'
-            '            f_cmd = f_svc.get(\'command\') if isinstance(f_svc, dict) else str(f_svc)\n'
-            '            if isinstance(f_svc, dict):\n'
-            '                f_port = int(f_svc.get(\'port\', 4000))\n'
-            '                if f_svc.get(\'dir\'): f_dir = os.path.normpath(os.path.join(manifest_dir, f_svc[\'dir\']))\n'
-            '                f_path = f_svc.get(\'path\', \'/\')\n'
-            '    elif \'command\' in manifest_data:\n'
-            '        b_cmd = manifest_data.get(\'command\')\n'
-            '        b_port = int(manifest_data.get(\'port\', manifest_data.get(\'backend_port\', 8080)))\n'
-            '        if manifest_data.get(\'frontend\'):\n'
-            '            f_cmd = manifest_data.get(\'frontend\')\n'
-            '            f_port = int(manifest_data.get(\'frontend_port\', 4000))\n'
-            '    if isinstance(b_cmd, list): b_cmd = \' \'.join([shlex.quote(str(x)) for x in b_cmd])\n'
-            '    if isinstance(f_cmd, list): f_cmd = \' \'.join([shlex.quote(str(x)) for x in f_cmd])\n'
-            '    cfg = {\n'
-            '        \'has_manifest\': True,\n'
-            '        \'install_cmd\': install_cmd,\n'
-            '        \'env_exports\': \'; \'.join(env_exports),\n'
-            '        \'backend_cmd\': b_cmd,\n'
-            '        \'backend_dir\': b_dir,\n'
-            '        \'backend_port\': b_port,\n'
-            '        \'backend_path\': b_path,\n'
-            '        \'frontend_cmd\': f_cmd,\n'
-            '        \'frontend_dir\': f_dir,\n'
-            '        \'frontend_port\': f_port,\n'
-            '        \'frontend_path\': f_path,\n'
-            '    }\n'
-            '    with open(\'/tmp/cx_manifest_cfg.json\', \'w\', encoding=\'utf-8\') as fh: json.dump(cfg, fh)\n'
-            '" 2>/dev/null || true\n'
-            '\n'
-            'BACKEND_CUSTOM_CMD=""\n'
-            'FRONTEND_CUSTOM_CMD=""\n'
-            'BACKEND_PORT="8000"\n'
-            'FRONTEND_PORT="4000"\n'
-            'BACKEND_PATH="/api"\n'
-            'if [ -f /tmp/cx_manifest_cfg.json ]; then\n'
-            '  eval $(python3 -c \'import json; c=json.load(open("/tmp/cx_manifest_cfg.json")); print(f"MANIFEST_INSTALL={json.dumps(c.get(\\\"install_cmd\\\") or \\\"\\\")}; MANIFEST_ENV={json.dumps(c.get(\\\"env_exports\\\") or \\\"\\\")}; MANIFEST_BCMD={json.dumps(c.get(\\\"backend_cmd\\\") or \\\"\\\")}; MANIFEST_BDIR={json.dumps(c.get(\\\"backend_dir\\\") or \\\"\\\")}; MANIFEST_BPORT={c.get(\\\"backend_port\\\") or 8000}; MANIFEST_BPATH={json.dumps(c.get(\\\"backend_path\\\") or \\\"/api\\\")}; MANIFEST_FCMD={json.dumps(c.get(\\\"frontend_cmd\\\") or \\\"\\\")}; MANIFEST_FDIR={json.dumps(c.get(\\\"frontend_dir\\\") or \\\"\\\")}; MANIFEST_FPORT={c.get(\\\"frontend_port\\\") or 4000}")\')\n'
-            '  if [ -n "$MANIFEST_ENV" ]; then eval "$MANIFEST_ENV"; fi\n'
-            '  if [ -n "$MANIFEST_INSTALL" ]; then\n'
-            '    echo "[DEV-RUNNER] Executing custom manifest install command: $MANIFEST_INSTALL"\n'
-            '    (eval "$MANIFEST_INSTALL" >> /tmp/backend.log 2>&1 || true)\n'
-            '  fi\n'
-            '  if [ -n "$MANIFEST_BCMD" ]; then\n'
-            '    BACKEND_CUSTOM_CMD="$MANIFEST_BCMD"\n'
-            '    BACKEND_DIR="$MANIFEST_BDIR"\n'
-            '    BACKEND_PORT="$MANIFEST_BPORT"\n'
-            '    BACKEND_PATH="$MANIFEST_BPATH"\n'
-            '  fi\n'
-            '  if [ -n "$MANIFEST_FCMD" ]; then\n'
-            '    FRONTEND_CUSTOM_CMD="$MANIFEST_FCMD"\n'
-            '    FRONTEND_DIR="$MANIFEST_FDIR"\n'
-            '    FRONTEND_PORT="$MANIFEST_FPORT"\n'
-            '  fi\n'
+            '# IF NO SERVICE IDENTIFIED: Serve clear guidance page and stop infinite loop\n'
+            'if [ "$DETECTED" != "true" ]; then\n'
+            '  echo "[DEV-RUNNER] [NOTICE] No application service identified in $ACTIVE_DIR."\n'
+            '  cat << \'CXNOEOF\' > /tmp/cx_splash/index.html\n'
+            '<!DOCTYPE html>\n'
+            '<html>\n'
+            '<head>\n'
+            '  <meta charset="utf-8">\n'
+            '  <title>No Application Service Identified</title>\n'
+            '  <style>\n'
+            '    * { box-sizing: border-box; margin: 0; padding: 0; }\n'
+            '    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0b0f19; color: #f1f5f9; display: flex; align-items: center; justify-content: center; min-height: 100vh; padding: 2rem; }\n'
+            '    .card { background: #111827; border: 1px solid #1e293b; border-radius: 14px; padding: 2.5rem; max-width: 520px; width: 100%; box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5); }\n'
+            '    .badge-warn { display: inline-flex; align-items: center; gap: 6px; font-size: 0.75rem; font-weight: 600; padding: 4px 10px; border-radius: 9999px; background: rgba(245, 158, 11, 0.15); border: 1px solid rgba(245, 158, 11, 0.35); color: #fbbf24; margin-bottom: 1rem; }\n'
+            '    h2 { font-size: 1.25rem; font-weight: 600; margin-bottom: 0.75rem; color: #f8fafc; }\n'
+            '    p.desc { font-size: 0.875rem; color: #94a3b8; line-height: 1.6; margin-bottom: 1.5rem; }\n'
+            '    .recs-title { font-size: 0.78rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: #64748b; margin-bottom: 0.75rem; }\n'
+            '    ul { list-style: none; padding: 0; margin-bottom: 1.5rem; display: flex; flex-direction: column; gap: 0.6rem; }\n'
+            '    li { display: flex; align-items: flex-start; gap: 0.6rem; font-size: 0.84rem; color: #cbd5e1; line-height: 1.4; background: #0f172a; padding: 0.65rem 0.85rem; border-radius: 8px; border: 1px solid #1e293b; }\n'
+            '    li .icon { font-size: 1rem; line-height: 1; }\n'
+            '    .actions { display: flex; gap: 0.75rem; align-items: center; }\n'
+            '    .btn { display: inline-flex; align-items: center; justify-content: center; background: #3b82f6; color: #ffffff; border: none; border-radius: 8px; padding: 0.6rem 1.2rem; font-size: 0.82rem; font-weight: 500; cursor: pointer; text-decoration: none; transition: background 0.15s; }\n'
+            '    .btn:hover { background: #2563eb; }\n'
+            '    .footer { margin-top: 1.5rem; font-size: 0.74rem; color: #64748b; text-align: center; }\n'
+            '  </style>\n'
+            '</head>\n'
+            '<body>\n'
+            '  <div class="card">\n'
+            '    <div class="badge-warn">⚠ No Service Detected</div>\n'
+            '    <h2>No Application Service Identified</h2>\n'
+            '    <p class="desc">CompassX inspected your workspace, but could not identify any standard frontend or backend entry points.</p>\n'
+            '    <div class="recs-title">Recommended Actions</div>\n'
+            '    <ul>\n'
+            '      <li><span class="icon">⚡</span><span>Ask the <strong>Antigravity Agent</strong> in the terminal to initialize and scaffold your project.</span></li>\n'
+            '      <li><span class="icon">📦</span><span>Add a <code>package.json</code> in the frontend or root directory for web applications.</span></li>\n'
+            '      <li><span class="icon">🐍</span><span>Add <code>main.py</code> or <code>app.py</code> with <code>requirements.txt</code> for Python APIs.</span></li>\n'
+            '      <li><span class="icon">⚙️</span><span>Or create an <code>app.yaml</code> file to define custom startup commands.</span></li>\n'
+            '    </ul>\n'
+            '    <div class="actions">\n'
+            '      <button class="btn" onclick="window.location.reload()">Reload Preview</button>\n'
+            '    </div>\n'
+            '    <div class="footer">CompassX Dev Studio • Live Sandbox</div>\n'
+            '  </div>\n'
+            '</body>\n'
+            '</html>\n'
+            'CXNOEOF\n'
+            '  echo "[DEV-RUNNER] Serving clear guidance page on port 8080."\n'
+            '  exit 0\n'
             'fi\n'
             '\n'
-            '# Detect Backend Directory (if not defined in manifest)\n'
-            'if [ -z "$BACKEND_CUSTOM_CMD" ]; then\n'
-            '  BACKEND_DIR=""\n'
-            '  if [ -d "$BASE_DIR/backend" ] && ( [ -f "$BASE_DIR/backend/app.py" ] || [ -f "$BASE_DIR/backend/main.py" ] || [ -f "$BASE_DIR/backend/server.py" ] || [ -f "$BASE_DIR/backend/api.py" ] || [ -f "$BASE_DIR/backend/requirements.txt" ] ); then\n'
-            '    BACKEND_DIR="$BASE_DIR/backend"\n'
-            '  elif [ -d "$BASE_DIR/api" ] && ( [ -f "$BASE_DIR/api/app.py" ] || [ -f "$BASE_DIR/api/main.py" ] || [ -f "$BASE_DIR/api/server.py" ] || [ -f "$BASE_DIR/api/requirements.txt" ] ); then\n'
-            '    BACKEND_DIR="$BASE_DIR/api"\n'
-            '  elif [ -d "$BASE_DIR/server" ] && ( [ -f "$BASE_DIR/server/app.py" ] || [ -f "$BASE_DIR/server/main.py" ] || [ -f "$BASE_DIR/server/requirements.txt" ] ); then\n'
-            '    BACKEND_DIR="$BASE_DIR/server"\n'
-            '  elif [ -f "$BASE_DIR/app.py" ] || [ -f "$BASE_DIR/main.py" ] || [ -f "$BASE_DIR/server.py" ] || [ -f "$BASE_DIR/api.py" ] || [ -f "$BASE_DIR/requirements.txt" ]; then\n'
-            '    BACKEND_DIR="$BASE_DIR"\n'
-            '  fi\n'
-            'fi\n'
-            '\n'
-            '# Detect Frontend Directory (if not defined in manifest)\n'
-            'if [ -z "$FRONTEND_CUSTOM_CMD" ]; then\n'
-            '  FRONTEND_DIR=""\n'
-            '  if [ -d "$BASE_DIR/frontend" ] && [ -f "$BASE_DIR/frontend/package.json" ]; then\n'
-            '    FRONTEND_DIR="$BASE_DIR/frontend"\n'
-            '  elif [ -d "$BASE_DIR/client" ] && [ -f "$BASE_DIR/client/package.json" ]; then\n'
-            '    FRONTEND_DIR="$BASE_DIR/client"\n'
-            '  elif [ -d "$BASE_DIR/web" ] && [ -f "$BASE_DIR/web/package.json" ]; then\n'
-            '    FRONTEND_DIR="$BASE_DIR/web"\n'
-            '  elif [ -d "$BASE_DIR/ui" ] && [ -f "$BASE_DIR/ui/package.json" ]; then\n'
-            '    FRONTEND_DIR="$BASE_DIR/ui"\n'
-            '  elif [ -f "$BASE_DIR/package.json" ]; then\n'
-            '    FRONTEND_DIR="$BASE_DIR"\n'
-            '  fi\n'
-            'fi\n'
-            '\n'
-            '# Setup Frontend Dependencies and Configuration\n'
-            'if [ -n "$FRONTEND_DIR" ] && [ -d "$FRONTEND_DIR" ]; then\n'
-            '  cd "$FRONTEND_DIR" || true\n'
-            '  if [ ! -d "node_modules" ] || [ -z "$(ls -A node_modules 2>/dev/null)" ]; then\n'
-            '    FOUND_NM=""\n'
-            '    for nm in \\\n'
-            '      "/workspaces/${CLEAN_APP}"/*/*/*/node_modules \\\n'
-            '      "/workspaces/${CLEAN_APP}"/*/*/node_modules \\\n'
-            '      "/workspaces/${CLEAN_APP}"/*/node_modules \\\n'
-            '      "/workspaces/${RAW_APP}"/*/*/*/node_modules \\\n'
-            '      "/workspaces/${RAW_APP}"/*/*/node_modules \\\n'
-            '      "/workspaces/${RAW_APP}"/*/node_modules \\\n'
-            '      "/workspaces"/*/*/*/*/node_modules \\\n'
-            '      "/workspaces"/*/*/*/node_modules \\\n'
-            '      "/workspaces"/*/*/node_modules \\\n'
-            '      "/workspaces"/*/node_modules \\\n'
-            '      "/app"/*/*/node_modules \\\n'
-            '      "/app"/*/node_modules \\\n'
-            '      "/app/node_modules"; do\n'
-            '      if [ -d "$nm" ] && [ "$nm" != "$FRONTEND_DIR/node_modules" ] && [ -n "$(ls -A "$nm" 2>/dev/null)" ]; then\n'
-            '        FOUND_NM="$nm"\n'
-            '        break\n'
-            '      fi\n'
-            '    done\n'
-            '    if [ -z "$FOUND_NM" ]; then\n'
-            '      FOUND_NM=$(find /workspaces /app -maxdepth 5 -type d -name "node_modules" 2>/dev/null | grep -v "^$FRONTEND_DIR/node_modules" | head -n 1)\n'
-            '    fi\n'
-            '    if [ -n "$FOUND_NM" ]; then\n'
-            '      echo "[DEV-RUNNER] Linking node_modules from $FOUND_NM"\n'
-            '      ln -sfn "$FOUND_NM" node_modules 2>/dev/null || cp -rs "$FOUND_NM" . 2>/dev/null || true\n'
-            '    fi\n'
-            '    if [ ! -d "node_modules" ] || [ -z "$(ls -A node_modules 2>/dev/null)" ]; then\n'
-            '      echo "[DEV-RUNNER] Installing frontend dependencies..."\n'
-            '      (npm install --prefer-offline --no-audit --legacy-peer-deps 2>&1 | tail -n 20 >> /tmp/frontend.log || true)\n'
-            '    fi\n'
-            '  fi\n'
-            '  python3 -c "\n'
-            'import os, re\n'
-            'found_configs = set()\n'
-            'search_dirs = [d for d in [os.environ.get(\'FRONTEND_DIR\', \'\'), os.environ.get(\'BASE_DIR\', \'\'), os.environ.get(\'ACTIVE_DIR\', \'\'), os.getcwd(), \'/app\'] if d and os.path.isdir(d)]\n'
-            'for sdir in search_dirs:\n'
-            '    for root, dirs, files in os.walk(sdir):\n'
-            '        if \'node_modules\' in root or \'.git\' in root: continue\n'
-            '        for f in files:\n'
-            '            if f.startswith(\'vite.config.\') and f.endswith((\'.ts\', \'.js\', \'.mjs\', \'.cjs\', \'.mts\')):\n'
-            '                found_configs.add(os.path.join(root, f))\n'
-            'for cfg_path in found_configs:\n'
-            '    try:\n'
-            '        with open(cfg_path, \'r\', encoding=\'utf-8\') as fh: c = fh.read()\n'
-            '        orig = c\n'
-            '        if \'allowedHosts\' in c:\n'
-            '            c = re.sub(r\'allowedHosts\\s*:\\s*(?:\\[[^\\]]*\\]|false|true|(?:\x27[^\x27]*\x27)|(?:\\x22[^\\x22]*\\x22))\', \'allowedHosts: true\', c)\n'
-            '        if re.search(r\'server\\s*:\\s*\\{\', c):\n'
-            '            if \'allowedHosts\' not in c:\n'
-            '                c = re.sub(r\'server\\s*:\\s*\\{\', \'server: {\\n    allowedHosts: true,\\n    host: \\"0.0.0.0\\",\\n    port: 8080,\\n    cors: true,\\n    watch: { usePolling: true, interval: 1000 },\\n    hmr: { clientPort: 443 },\', c, count=1)\n'
-            '        else:\n'
-            '            if \'return {\' in c:\n'
-            '                c = re.sub(r\'return\\s*\\{\', \'return {\\n  server: { host: \\"0.0.0.0\\", port: 8080, allowedHosts: true, cors: true, watch: { usePolling: true, interval: 1000 }, hmr: { clientPort: 443 } },\', c, count=1)\n'
-            '            elif re.search(r\'defineConfig\\s*\\(\\s*(?:\\([^)]*\\)\\s*=>\\s*)?\\(?\\s*\\{\', c):\n'
-            '                c = re.sub(r\'(defineConfig\\s*\\(\\s*(?:\\([^)]*\\)\\s*=>\\s*)?\\(?\\s*)\\{\', r\'\\1{\\n  server: { host: \\"0.0.0.0\\", port: 8080, allowedHosts: true, cors: true, watch: { usePolling: true, interval: 1000 }, hmr: { clientPort: 443 } },\', c, count=1)\n'
-            '            elif \'export default {\' in c:\n'
-            '                c = c.replace(\'export default {\', \'export default {\\n  server: { host: \\"0.0.0.0\\", port: 8080, allowedHosts: true, cors: true, watch: { usePolling: true, interval: 1000 }, hmr: { clientPort: 443 } },\', 1)\n'
-            '            elif \'module.exports = {\' in c:\n'
-            '                c = c.replace(\'module.exports = {\', \'module.exports = {\\n  server: { host: \\"0.0.0.0\\", port: 8080, allowedHosts: true, cors: true, watch: { usePolling: true, interval: 1000 }, hmr: { clientPort: 443 } },\', 1)\n'
-            '        c = c.replace(\'http://localhost:8080\', \'http://localhost:8000\')\n'
-            '        c = c.replace(\'http://127.0.0.1:8085\', \'http://localhost:8000\')\n'
-            '        if c != orig:\n'
-            '            with open(cfg_path, \'w\', encoding=\'utf-8\') as fh: fh.write(c)\n'
-            '    except Exception: pass\n'
-            'fdir = os.environ.get(\'FRONTEND_DIR\') or os.getcwd()\n'
-            'if os.path.isdir(fdir) and not any(f.startswith(\'vite.config.\') for f in os.listdir(fdir)):\n'
-            '    pkg_path = os.path.join(fdir, \'package.json\')\n'
-            '    if os.path.exists(pkg_path):\n'
-            '        try:\n'
-            '            with open(pkg_path, \'r\', encoding=\'utf-8\') as pf: pkg_content = pf.read()\n'
-            '            if \'vite\' in pkg_content:\n'
-            '                new_cfg = \'import { defineConfig } from \\x27vite\\x27;\\n\\nexport default defineConfig({\\n  server: {\\n    host: \\x220.0.0.0\\x22,\\n    port: 8080,\\n    allowedHosts: true,\\n    cors: true,\\n    watch: { usePolling: true, interval: 1000 },\\n    hmr: { clientPort: 443 },\\n  }\\n});\\n\'\n'
-            '                with open(os.path.join(fdir, \'vite.config.js\'), \'w\', encoding=\'utf-8\') as cf: cf.write(new_cfg)\n'
-            '        except Exception: pass\n'
-            '" 2>/dev/null || true\n'
-            'fi\n'
-            '\n'
-            '# Start Backend\n'
-            'if [ -n "$BACKEND_CUSTOM_CMD" ] && [ -n "$BACKEND_DIR" ]; then\n'
+            '# Start Backend (if detected)\n'
+            'if [ "$HAS_BACKEND" = "true" ] && [ -n "$BACKEND_DIR" ]; then\n'
             '  (\n'
-            '    cd "$BACKEND_DIR" || exit 1\n'
-            '    export PYTHONPATH="$ACTIVE_DIR:$BASE_DIR:$BACKEND_DIR:$BASE_DIR/backend:$BASE_DIR/api:$BASE_DIR/server:$PYTHONPATH"\n'
+            '    B_FULL_DIR="$ACTIVE_DIR/$BACKEND_DIR" && [ "$BACKEND_DIR" = "." ] && B_FULL_DIR="$ACTIVE_DIR"\n'
+            '    cd "$B_FULL_DIR" || exit 1\n'
+            '    export PYTHONPATH="$ACTIVE_DIR:$B_FULL_DIR:$PYTHONPATH"\n'
             '    export PORT=$BACKEND_PORT DASHBOARD_PORT=$BACKEND_PORT DATABASE_URL="${DATABASE_URL:-sqlite:////tmp/app.db}"\n'
-            '    log "  [2/3] Launching custom manifest backend on port $BACKEND_PORT ($BACKEND_DIR)..."\n'
-            '    echo "[DEV-RUNNER] Starting custom backend on port $BACKEND_PORT: $BACKEND_CUSTOM_CMD" >> /tmp/backend.log\n'
-            '    eval "$BACKEND_CUSTOM_CMD" >> /tmp/backend.log 2>&1\n'
-            '  ) &\n'
-            'elif [ -n "$BACKEND_DIR" ] && [ -d "$BACKEND_DIR" ]; then\n'
-            '  (\n'
-            '    cd "$BACKEND_DIR" || exit 1\n'
-            '    export PYTHONPATH="$ACTIVE_DIR:$BASE_DIR:$BACKEND_DIR:$BASE_DIR/backend:$BASE_DIR/api:$BASE_DIR/server:$PYTHONPATH"\n'
-            '    export PORT=$BACKEND_PORT DASHBOARD_PORT=$BACKEND_PORT DATABASE_URL="${DATABASE_URL:-sqlite:////tmp/app.db}"\n'
-            '    log "  [2/3] Launching backend service on port $BACKEND_PORT ($BACKEND_DIR)..."\n'
-            '    echo "[DEV-RUNNER] Starting backend on port $BACKEND_PORT ($BACKEND_DIR)..." >> /tmp/backend.log\n'
+            '    log "  [2/3] Launching backend service on port $BACKEND_PORT ($B_FULL_DIR)..."\n'
+            '    echo "[DEV-RUNNER] Starting backend on port $BACKEND_PORT: $BACKEND_CMD" >> /tmp/backend.log\n'
             '    if [ -f requirements.txt ] && [ ! -f /tmp/.reqs_installed ]; then\n'
             '      pip install --no-cache-dir -r requirements.txt >> /tmp/backend.log 2>&1 || true\n'
             '      touch /tmp/.reqs_installed\n'
             '    fi\n'
             '    pip install --no-cache-dir uvicorn fastapi >> /tmp/backend.log 2>&1 || true\n'
-            '    ENTRY_FILE=""\n'
-            '    for ef in app.py main.py server.py api.py; do\n'
-            '      if [ -f "$ef" ]; then ENTRY_FILE="$ef"; break; fi\n'
-            '    done\n'
-            '    if [ -n "$ENTRY_FILE" ]; then\n'
-            '      MODULE_NAME="${ENTRY_FILE%.py}"\n'
-            '      if grep -q "streamlit" "$ENTRY_FILE" 2>/dev/null || [ "${APP_TYPE:-}" = "streamlit" ]; then\n'
-            '        exec streamlit run "$ENTRY_FILE" --server.port $BACKEND_PORT --server.address 0.0.0.0 --server.headless true --server.enableCORS false >> /tmp/backend.log 2>&1\n'
-            '      elif grep -q -E "FastAPI|Starlette" "$ENTRY_FILE" 2>/dev/null; then\n'
-            '        exec uvicorn ${MODULE_NAME}:app --host 0.0.0.0 --port $BACKEND_PORT --reload --reload-delay 1.0 --reload-exclude \'**/node_modules/**\' --reload-exclude \'**/.git/**\' >> /tmp/backend.log 2>&1\n'
-            '      elif grep -q -E "Flask|Bottle|WSGI" "$ENTRY_FILE" 2>/dev/null; then\n'
-            '        exec python3 "$ENTRY_FILE" >> /tmp/backend.log 2>&1\n'
-            '      else\n'
-            '        exec uvicorn ${MODULE_NAME}:app --host 0.0.0.0 --port $BACKEND_PORT --reload --reload-delay 1.0 --reload-exclude \'**/node_modules/**\' --reload-exclude \'**/.git/**\' >> /tmp/backend.log 2>&1 || exec python3 "$ENTRY_FILE" >> /tmp/backend.log 2>&1\n'
-            '      fi\n'
-            '    fi\n'
+            '    eval "$BACKEND_CMD" >> /tmp/backend.log 2>&1\n'
             '  ) &\n'
             'fi\n'
             '\n'
-            '# Start Frontend\n'
-            'if [ -n "$FRONTEND_CUSTOM_CMD" ] && [ -n "$FRONTEND_DIR" ]; then\n'
+            '# Start Frontend (if detected)\n'
+            'if [ "$HAS_FRONTEND" = "true" ] && [ -n "$FRONTEND_DIR" ]; then\n'
             '  (\n'
-            '    cd "$FRONTEND_DIR" || exit 1\n'
+            '    F_FULL_DIR="$ACTIVE_DIR/$FRONTEND_DIR" && [ "$FRONTEND_DIR" = "." ] && F_FULL_DIR="$ACTIVE_DIR"\n'
+            '    cd "$F_FULL_DIR" || exit 1\n'
             '    export PATH="$PWD/node_modules/.bin:$PATH"\n'
             '    export DASHBOARD_PORT=8000 DASHBOARD_UI_PORT=$FRONTEND_PORT PORT=$FRONTEND_PORT HOST=0.0.0.0 DANGEROUSLY_DISABLE_HOST_CHECK=true WDS_SOCKET_PORT=443\n'
-            '    log "    → Starting custom manifest frontend on port $FRONTEND_PORT ($FRONTEND_DIR)..."\n'
-            '    echo "[DEV-RUNNER] Starting custom frontend on port $FRONTEND_PORT: $FRONTEND_CUSTOM_CMD" >> /tmp/frontend.log\n'
-            '    eval "$FRONTEND_CUSTOM_CMD" >> /tmp/frontend.log 2>&1\n'
-            '  ) &\n'
-            'elif [ -n "$FRONTEND_DIR" ] && [ -d "$FRONTEND_DIR" ]; then\n'
-            '  (\n'
-            '    cd "$FRONTEND_DIR" || exit 1\n'
-            '    export PATH="$PWD/node_modules/.bin:$PATH"\n'
-            '    export DASHBOARD_PORT=8000 DASHBOARD_UI_PORT=8080 PORT=8080 HOST=0.0.0.0 DANGEROUSLY_DISABLE_HOST_CHECK=true WDS_SOCKET_PORT=443\n'
-            '    log "    → Starting frontend server on port 8080 ($FRONTEND_DIR)..."\n'
-            '    echo "[DEV-RUNNER] Starting frontend on port 8080 ($FRONTEND_DIR)..." >> /tmp/frontend.log\n'
-            '    if grep -q \'"next"\' package.json 2>/dev/null; then\n'
-            '      if [ -x "./node_modules/.bin/next" ]; then exec ./node_modules/.bin/next dev -p 8080 -H 0.0.0.0 >> /tmp/frontend.log 2>&1; else exec npx next dev -p 8080 -H 0.0.0.0 >> /tmp/frontend.log 2>&1; fi\n'
-            '    elif grep -q \'"vite"\' package.json 2>/dev/null || [ -f vite.config.ts ] || [ -f vite.config.js ]; then\n'
-            '      if [ -x "./node_modules/.bin/vite" ]; then exec ./node_modules/.bin/vite --host 0.0.0.0 --port 8080 --cors >> /tmp/frontend.log 2>&1; else exec npx --yes vite --host 0.0.0.0 --port 8080 --cors >> /tmp/frontend.log 2>&1; fi\n'
-            '    elif grep -q \'"dev"\' package.json 2>/dev/null; then\n'
-            '      exec npm run dev -- --host 0.0.0.0 --port 8080 >> /tmp/frontend.log 2>&1\n'
-            '    elif grep -q \'"start"\' package.json 2>/dev/null; then\n'
-            '      exec npm start -- -p 8080 >> /tmp/frontend.log 2>&1\n'
-            '    elif [ -d "dist" ]; then\n'
-            '      exec python3 -m http.server 8080 --directory dist >> /tmp/frontend.log 2>&1\n'
-            '    elif [ -d "build" ]; then\n'
-            '      exec python3 -m http.server 8080 --directory build >> /tmp/frontend.log 2>&1\n'
-            '    else\n'
-            '      exec python3 -m http.server 8080 --directory . >> /tmp/frontend.log 2>&1\n'
+            '    log "    → Starting frontend server on port $FRONTEND_PORT ($F_FULL_DIR)..."\n'
+            '    echo "[DEV-RUNNER] Starting frontend on port $FRONTEND_PORT: $FRONTEND_CMD" >> /tmp/frontend.log\n'
+            '    if [ -f "package.json" ] && ( [ ! -d "node_modules" ] || [ -z "$(ls -A node_modules 2>/dev/null)" ] ); then\n'
+            '      FOUND_NM=$(find /workspaces /app -maxdepth 5 -type d -name "node_modules" 2>/dev/null | grep -v "^$F_FULL_DIR/node_modules" | head -n 1)\n'
+            '      if [ -n "$FOUND_NM" ]; then\n'
+            '        ln -sfn "$FOUND_NM" node_modules 2>/dev/null || cp -rs "$FOUND_NM" . 2>/dev/null || true\n'
+            '      fi\n'
+            '      if [ ! -d "node_modules" ] || [ -z "$(ls -A node_modules 2>/dev/null)" ]; then\n'
+            '        npm install --prefer-offline --no-audit --legacy-peer-deps >> /tmp/frontend.log 2>&1 || true\n'
+            '      fi\n'
             '    fi\n'
+            '    python3 -c "\n'
+            'import os, re\n'
+            'for root, dirs, files in os.walk(\'.\'):\n'
+            '    if \'node_modules\' in dirs: dirs.remove(\'node_modules\')\n'
+            '    for f in files:\n'
+            '        if f.startswith(\'vite.config.\'):\n'
+            '            p = os.path.join(root, f)\n'
+            '            try:\n'
+            '                with open(p, \'r\') as fh: c = fh.read()\n'
+            '                if \'allowedHosts\' in c:\n'
+            '                    c = re.sub(r\'allowedHosts\\s*:\\s*(?:\\[[^\\]]*\\]|false|true|(?:\x27[^\x27]*\x27)|(?:\\x22[^\\x22]*\\x22))\', \'allowedHosts: true\', c)\n'
+            '                    with open(p, \'w\') as fh: fh.write(c)\n'
+            '            except Exception: pass\n'
+            '" 2>/dev/null || true\n'
+            '    eval "$FRONTEND_CMD" >> /tmp/frontend.log 2>&1\n'
             '  ) &\n'
             'fi\n'
             '\n'

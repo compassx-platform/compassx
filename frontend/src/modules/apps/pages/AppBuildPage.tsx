@@ -802,7 +802,11 @@ export default function AppBuildPage() {
       setStep4Completed(true);
       setHasCompletedInit(true);
       setPreviewReloadKey(Date.now());
-      toast.success('Step 4 Complete: Application running.');
+      if (res?.no_service_detected) {
+        toast.info('Step 4: No application service identified. Workspace guidance displayed in preview.');
+      } else {
+        toast.success('Step 4 Complete: Application running.');
+      }
     } catch (err: any) {
       const msg = err?.response?.data?.detail || err?.message || 'Failed to start application processes.';
       setStartError(msg);
