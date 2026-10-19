@@ -17,26 +17,42 @@ depends_on: Union[str, Sequence[str], None] = None
 
 def upgrade() -> None:
     conn = op.get_bind()
+    insp = sa.inspect(conn)
+    tables = insp.get_table_names()
+
     is_pg = conn.dialect.name == "postgresql"
     json_type = postgresql.JSONB(astext_type=sa.Text()) if is_pg else sa.JSON()
 
-    op.create_table(
-        "agent_runtime_sessions",
-        sa.Column("id", sa.String(length=64), primary_key=True),
-        sa.Column("workspace_id", sa.String(length=64), nullable=True),
-        sa.Column("title", sa.String(length=255), nullable=False, server_default="Agent Session"),
-        sa.Column("agent_type", sa.String(length=64), nullable=False, server_default="antigravity"),
-        sa.Column("sandbox_id", sa.String(length=128), nullable=False),
-        sa.Column("status", sa.String(length=32), nullable=False, server_default="active"),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
-        sa.Column("messages", json_type, nullable=False, server_default=sa.text("'[]'")),
-    )
-    op.create_index("ix_agent_runtime_sessions_workspace_id", "agent_runtime_sessions", ["workspace_id"])
-    op.create_index("ix_agent_runtime_sessions_sandbox_id", "agent_runtime_sessions", ["sandbox_id"])
+    if "agent_runtime_sessions" not in tables:
+        op.create_table(
+            "agent_runtime_sessions",
+            sa.Column("id", sa.String(length=64), primary_key=True),
+            sa.Column("workspace_id", sa.String(length=64), nullable=True),
+            sa.Column("title", sa.String(length=255), nullable=False, server_default="Agent Session"),
+            sa.Column("agent_type", sa.String(length=64), nullable=False, server_default="antigravity"),
+            sa.Column("sandbox_id", sa.String(length=128), nullable=False),
+            sa.Column("status", sa.String(length=32), nullable=False, server_default="active"),
+            sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+            sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+            sa.Column("messages", json_type, nullable=False, server_default=sa.text("'[]'")),
+        )
+
+    # Check and create indices if not already present
+    indexes = [idx["name"] for idx in insp.get_indexes("agent_runtime_sessions")] if "agent_runtime_sessions" in tables else []
+    if "ix_agent_runtime_sessions_workspace_id" not in indexes:
+        op.create_index("ix_agent_runtime_sessions_workspace_id", "agent_runtime_sessions", ["workspace_id"])
+    if "ix_agent_runtime_sessions_sandbox_id" not in indexes:
+        op.create_index("ix_agent_runtime_sessions_sandbox_id", "agent_runtime_sessions", ["sandbox_id"])
 
 
 def downgrade() -> None:
-    op.drop_index("ix_agent_runtime_sessions_sandbox_id", table_name="agent_runtime_sessions")
-    op.drop_index("ix_agent_runtime_sessions_workspace_id", table_name="agent_runtime_sessions")
-    op.drop_table("agent_runtime_sessions")
+    conn = op.get_bind()
+    insp = sa.inspect(conn)
+    tables = insp.get_table_names()
+    if "agent_runtime_sessions" in tables:
+        indexes = [idx["name"] for idx in insp.get_indexes("agent_runtime_sessions")]
+        if "ix_agent_runtime_sessions_sandbox_id" in indexes:
+            op.drop_index("ix_agent_runtime_sessions_sandbox_id", table_name="agent_runtime_sessions")
+        if "ix_agent_runtime_sessions_workspace_id" in indexes:
+            op.drop_index("ix_agent_runtime_sessions_workspace_id", table_name="agent_runtime_sessions")
+        op.drop_table("agent_runtime_sessions")
