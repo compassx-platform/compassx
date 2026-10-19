@@ -399,7 +399,31 @@ async def lifespan(app: FastAPI):
                     _conn.commit()
             except Exception as _gov_mig_err:
                 logger.debug("governance schema migration check non-fatal: %s", _gov_mig_err)
+            
+            # Ensure Agent Runtime table and indexes exist in system_db
+            try:
+                with system_engine.connect() as _conn:
+                    _conn.execute(_text("""
+                        CREATE TABLE IF NOT EXISTS agent_runtime_sessions (
+                            id VARCHAR(64) PRIMARY KEY,
+                            workspace_id VARCHAR(64),
+                            title VARCHAR(255) NOT NULL DEFAULT 'Agent Session',
+                            agent_type VARCHAR(64) NOT NULL DEFAULT 'antigravity',
+                            sandbox_id VARCHAR(128) NOT NULL,
+                            status VARCHAR(32) NOT NULL DEFAULT 'active',
+                            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                            messages JSONB NOT NULL DEFAULT '[]'::jsonb
+                        );
+                        CREATE INDEX IF NOT EXISTS ix_agent_runtime_sessions_workspace_id ON agent_runtime_sessions (workspace_id);
+                        CREATE INDEX IF NOT EXISTS ix_agent_runtime_sessions_sandbox_id ON agent_runtime_sessions (sandbox_id);
+                    """))
+                    _conn.commit()
+            except Exception as _ars_err:
+                logger.debug("agent_runtime_sessions schema check non-fatal: %s", _ars_err)
+
             logger.info("User Manager & Governance: system_db tables verified/created")
+
 
         if account_engine is not None and system_engine is not None:
             from app.database import AccountSessionLocal, SystemSessionLocal
@@ -496,7 +520,7 @@ app = FastAPI(
     lifespan=lifespan,
     title="CompassX API",
     description="CompassX Platform API",
-    version="0.14.6",
+    version="0.14.7",
     docs_url="/api/swagger/docs",
     openapi_url="/api/swagger.json",
 )

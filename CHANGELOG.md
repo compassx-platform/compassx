@@ -5,6 +5,22 @@ All notable changes to the CompassX Platform will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.14.7] - 2026-10-19
+
+### 🚀 Highlights
+
+CompassX `0.14.7` introduces **PostgreSQL Multi-Replica Persistence & Workspace Scoping for Agent Runtime Sessions**, Alembic migration `0009_agent_runtime_sessions`, and session cleanup synchronization.
+
+### ✨ Features & Enhancements
+
+#### Agent Runtime PostgreSQL Persistence & Workspace Scoping
+- **PostgreSQL Session Storage ([`models.py`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/backend/app/agent_runtime/models.py), [`service.py`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/backend/app/agent_runtime/service.py))**: Transitioned Agent Runtime sessions and conversation histories from purely local JSON to primary PostgreSQL persistence (`agent_runtime_sessions` table in `system_db`) with fast in-memory caching and fallback, ensuring high availability and session durability across multi-replica backend deployments.
+- **Workspace-Scoped Session Filtering ([`routes.py`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/backend/app/agent_runtime/routes.py), [`service.py`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/backend/app/agent_runtime/service.py))**: Added `workspace_id` query parameter support in session endpoints (`GET /api/v1/agents/sessions`), filtering session listings strictly to the caller's active workspace scope.
+- **Alembic Migration & Lifespan Verification ([`0009_agent_runtime_sessions.py`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/backend/alembic_system/versions/0009_agent_runtime_sessions.py), [`main.py`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/backend/app/main.py))**: Added Alembic system revision `0009_agent_runtime_sessions` and startup schema auto-verification with indexing on `workspace_id` and `sandbox_id`.
+- **Unit Test Coverage ([`test_agent_runtime.py`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/backend/tests/test_agent_runtime.py))**: Added unit tests verifying multi-workspace session isolation and filtering.
+
+---
+
 ## [0.14.6] - 2026-10-18
 
 ### 🚀 Highlights

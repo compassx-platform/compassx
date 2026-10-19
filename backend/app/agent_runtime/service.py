@@ -10,6 +10,7 @@ from typing import Dict, List, Optional
 from app.agent_runtime.models import (
     AgentChatMessage,
     AgentRuntimeSession,
+    AgentRuntimeSessionDB,
     CreateAgentSessionRequest,
 )
 from app.sandbox.models import SandboxSpec
@@ -23,12 +24,21 @@ SESSIONS_STORE_PATH = os.path.join(
 
 
 class AgentRuntimeService:
-    """Manages agent runtime sessions, their immutable sandbox bindings, and chat interactions."""
+    """Manages agent runtime sessions, their immutable sandbox bindings, and chat interactions with PostgreSQL persistence."""
 
     def __init__(self):
         self._lock = threading.RLock()
         self._sessions: Dict[str, AgentRuntimeSession] = {}
-        self._load_sessions()
+        self._ensure_table_exists()
+        self._sync_and_load_sessions()
+
+    def _ensure_table_exists(self):
+        try:
+            from app.database import system_engine, SystemBase
+            if system_engine is not None:
+                SystemBase.metadata.create_all(bind=system_engine, tables=[AgentRuntimeSessionDB.__table__], checkfirst=True)
+        except Exception as e:
+            logger.debug("[AgentRuntimeService] Table ensure warning: %s", e)
 
     def _load_sessions(self):
         try:
@@ -39,7 +49,7 @@ class AgentRuntimeService:
                         sess = AgentRuntimeSession(**item)
                         self._sessions[sess.id] = sess
         except Exception as e:
-            logger.warning("[AgentRuntimeService] Failed to load stored sessions: %s", e)
+            logger.warning("[AgentRuntimeService] Failed to load stored sessions from file: %s", e)
 
     def _persist_sessions(self):
         try:
@@ -47,17 +57,80 @@ class AgentRuntimeService:
             with open(SESSIONS_STORE_PATH, "w", encoding="utf-8") as f:
                 json.dump([s.model_dump() for s in self._sessions.values()], f, indent=2)
         except Exception as e:
-            logger.warning("[AgentRuntimeService] Failed to persist sessions: %s", e)
+            logger.warning("[AgentRuntimeService] Failed to persist sessions to file fallback: %s", e)
+
+    def _sync_and_load_sessions(self):
+        # 1. Load from fallback file
+        self._load_sessions()
+
+        # 2. Migrate any local JSON sessions to PostgreSQL
+        try:
+            from app.database import SystemSessionLocal
+            if SystemSessionLocal is not None:
+                with SystemSessionLocal() as db:
+                    for sid, s in list(self._sessions.items()):
+                        try:
+                            existing = db.query(AgentRuntimeSessionDB).filter(AgentRuntimeSessionDB.id == sid).first()
+                            if not existing:
+                                db_row = AgentRuntimeSessionDB(
+                                    id=s.id,
+                                    workspace_id=s.workspace_id,
+                                    title=s.title,
+                                    agent_type=s.agent_type,
+                                    sandbox_id=s.sandbox_id,
+                                    status=s.status,
+                                    created_at=datetime.fromisoformat(s.created_at) if s.created_at else datetime.now(timezone.utc),
+                                    updated_at=datetime.fromisoformat(s.updated_at) if s.updated_at else datetime.now(timezone.utc),
+                                    messages=[m.model_dump() for m in s.messages],
+                                )
+                                db.add(db_row)
+                                db.commit()
+                        except Exception as sync_err:
+                            db.rollback()
+                            logger.debug("[AgentRuntimeService] Migration sync item non-fatal: %s", sync_err)
+        except Exception as e:
+            logger.debug("[AgentRuntimeService] Initial DB sync non-fatal: %s", e)
 
     def list_sessions(self, workspace_id: Optional[str] = None) -> List[AgentRuntimeSession]:
+        try:
+            from app.database import SystemSessionLocal
+            if SystemSessionLocal is not None:
+                with SystemSessionLocal() as db:
+                    query = db.query(AgentRuntimeSessionDB)
+                    if workspace_id:
+                        query = query.filter(
+                            (AgentRuntimeSessionDB.workspace_id == workspace_id) |
+                            (AgentRuntimeSessionDB.workspace_id.is_(None))
+                        )
+                    rows = query.order_by(AgentRuntimeSessionDB.updated_at.desc()).all()
+                    db_sessions = [r.to_pydantic() for r in rows]
+                    with self._lock:
+                        for s in db_sessions:
+                            self._sessions[s.id] = s
+                    return db_sessions
+        except Exception as e:
+            logger.warning("[AgentRuntimeService] Failed to query sessions from DB, falling back to memory: %s", e)
+
         with self._lock:
             sessions = list(self._sessions.values())
             if workspace_id:
                 sessions = [s for s in sessions if not s.workspace_id or s.workspace_id == workspace_id]
-            # Order by updated_at descending
             return sorted(sessions, key=lambda s: s.updated_at, reverse=True)
 
     def get_session(self, session_id: str) -> Optional[AgentRuntimeSession]:
+        try:
+            from app.database import SystemSessionLocal
+            if SystemSessionLocal is not None:
+                with SystemSessionLocal() as db:
+                    row = db.query(AgentRuntimeSessionDB).filter(AgentRuntimeSessionDB.id == session_id).first()
+                    if row:
+                        sess = row.to_pydantic()
+                        with self._lock:
+                            self._sessions[sess.id] = sess
+                        return sess
+        except Exception as e:
+            logger.warning("[AgentRuntimeService] Failed to get session from DB, falling back to memory: %s", e)
+
         with self._lock:
             return self._sessions.get(session_id)
 
@@ -122,6 +195,7 @@ class AgentRuntimeService:
                 if status_val in ("failed", "provisioning"):
                     init_status = status_val
 
+            now_utc = datetime.now(timezone.utc)
             session = AgentRuntimeSession(
                 id=session_id,
                 workspace_id=workspace_id,
@@ -129,8 +203,31 @@ class AgentRuntimeService:
                 agent_type=clean_agent,
                 sandbox_id=bound_sandbox_id,
                 status=init_status,
+                created_at=now_utc.isoformat(),
+                updated_at=now_utc.isoformat(),
                 messages=[welcome_msg],
             )
+
+            # Persist to PostgreSQL
+            try:
+                from app.database import SystemSessionLocal
+                if SystemSessionLocal is not None:
+                    with SystemSessionLocal() as db:
+                        db_row = AgentRuntimeSessionDB(
+                            id=session_id,
+                            workspace_id=workspace_id,
+                            title=clean_title,
+                            agent_type=clean_agent,
+                            sandbox_id=bound_sandbox_id,
+                            status=init_status,
+                            created_at=now_utc,
+                            updated_at=now_utc,
+                            messages=[welcome_msg.model_dump()],
+                        )
+                        db.add(db_row)
+                        db.commit()
+            except Exception as db_err:
+                logger.warning("[AgentRuntimeService] Failed to save session to DB: %s", db_err)
 
             self._sessions[session_id] = session
             self._persist_sessions()
@@ -138,15 +235,31 @@ class AgentRuntimeService:
 
     def delete_session(self, session_id: str) -> bool:
         with self._lock:
+            deleted = False
+            try:
+                from app.database import SystemSessionLocal
+                if SystemSessionLocal is not None:
+                    with SystemSessionLocal() as db:
+                        row = db.query(AgentRuntimeSessionDB).filter(AgentRuntimeSessionDB.id == session_id).first()
+                        if row:
+                            db.delete(row)
+                            db.commit()
+                            deleted = True
+            except Exception as db_err:
+                logger.warning("[AgentRuntimeService] Failed to delete session from DB: %s", db_err)
+
             if session_id in self._sessions:
                 del self._sessions[session_id]
                 self._persist_sessions()
-                return True
-            return False
+                deleted = True
+
+            return deleted
 
     def send_message(self, session_id: str, content: str) -> AgentChatMessage:
         with self._lock:
             session = self._sessions.get(session_id)
+            if not session:
+                session = self.get_session(session_id)
             if not session:
                 raise ValueError(f"Session '{session_id}' not found.")
 
@@ -159,13 +272,29 @@ class AgentRuntimeService:
             session.messages.append(user_msg)
 
             # 2. Generate agent response
-            # Note: For terminal-attached execution, commands can also be run via sandbox_service.exec_command
             agent_resp = self._generate_agent_reply(session, content.strip())
             session.messages.append(agent_resp)
-            session.updated_at = datetime.now(timezone.utc).isoformat()
+            now_utc = datetime.now(timezone.utc)
+            session.updated_at = now_utc.isoformat()
 
+            # 3. Persist updated messages to PostgreSQL
+            try:
+                from app.database import SystemSessionLocal
+                if SystemSessionLocal is not None:
+                    with SystemSessionLocal() as db:
+                        row = db.query(AgentRuntimeSessionDB).filter(AgentRuntimeSessionDB.id == session_id).first()
+                        if row:
+                            row.messages = [m.model_dump() for m in session.messages]
+                            row.updated_at = now_utc
+                            db.commit()
+            except Exception as db_err:
+                logger.warning("[AgentRuntimeService] Failed to persist messages to DB: %s", db_err)
+
+            self._sessions[session_id] = session
             self._persist_sessions()
             return agent_resp
+
+
 
     def _generate_agent_reply(self, session: AgentRuntimeSession, user_input: str) -> AgentChatMessage:
         agent_type = session.agent_type

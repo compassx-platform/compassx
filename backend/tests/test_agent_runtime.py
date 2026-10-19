@@ -104,6 +104,44 @@ class TestAgentRuntime(unittest.TestCase):
         self.assertTrue(self.service.delete_session(sess.id))
         self.assertIsNone(self.service.get_session(sess.id))
 
+    @patch("app.agent_runtime.service.sandbox_service")
+    def test_list_sessions_filter_by_workspace(self, mock_sb):
+        mock_instance = SandboxInstance(
+            id="sb-ws-test",
+            name="WS Test",
+            consumer_module="agent",
+            status=SandboxStatus.RUNNING,
+            runtime_mode="docker",
+        )
+        mock_sb.ensure_sandbox.return_value = mock_instance
+
+        # Create session in ws-alpha
+        req1 = CreateAgentSessionRequest(title="Alpha Session", agent_type="antigravity", sandbox_mode="new")
+        s1 = self.service.create_session(req1, workspace_id="ws-alpha")
+
+        # Create session in ws-beta
+        req2 = CreateAgentSessionRequest(title="Beta Session", agent_type="pi", sandbox_mode="new")
+        s2 = self.service.create_session(req2, workspace_id="ws-beta")
+
+        # Filter by ws-alpha
+        alpha_list = self.service.list_sessions(workspace_id="ws-alpha")
+        alpha_ids = [s.id for s in alpha_list]
+        self.assertIn(s1.id, alpha_ids)
+        self.assertNotIn(s2.id, alpha_ids)
+
+        # Filter by ws-beta
+        beta_list = self.service.list_sessions(workspace_id="ws-beta")
+        beta_ids = [s.id for s in beta_list]
+        self.assertIn(s2.id, beta_ids)
+        self.assertNotIn(s1.id, beta_ids)
+
+        # Unfiltered lists all
+        all_list = self.service.list_sessions(workspace_id=None)
+        all_ids = [s.id for s in all_list]
+        self.assertIn(s1.id, all_ids)
+        self.assertIn(s2.id, all_ids)
+
 
 if __name__ == "__main__":
     unittest.main()
+

@@ -14,11 +14,12 @@ router = APIRouter(prefix="/agent-runtime", tags=["agent-runtime"])
 
 
 @router.get("/sessions", response_model=List[AgentRuntimeSession])
-def list_sessions(request: Request):
+def list_sessions(request: Request, workspace_id: Optional[str] = Query(default=None)):
     """List all agent runtime sessions for the workspace."""
     ctx = getattr(request.state, "workspace", None)
-    ws_id = str(ctx.workspace_id) if ctx else None
+    ws_id = workspace_id or (str(ctx.workspace_id) if ctx else None)
     return agent_runtime_service.list_sessions(workspace_id=ws_id)
+
 
 
 @router.post("/sessions", response_model=AgentRuntimeSession, status_code=201)

@@ -3,5 +3,7 @@ from app.models.app_task import AppTask  # noqa: F401
 from app.models.dev_workspace import DevWorkspace  # noqa: F401
 from app.models.dev_session import DevSession  # noqa: F401
 from app.models.portal_config import PortalConfig  # noqa: F401
+from app.agent_runtime.models import AgentRuntimeSessionDB  # noqa: F401
 
-__all__ = ["App", "AppTask", "DevWorkspace", "DevSession", "PortalConfig"]
+__all__ = ["App", "AppTask", "DevWorkspace", "DevSession", "PortalConfig", "AgentRuntimeSessionDB"]
+

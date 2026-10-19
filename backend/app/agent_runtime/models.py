@@ -4,6 +4,12 @@ from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field
 
 
+from sqlalchemy import Column, DateTime, JSON, String
+from sqlalchemy.dialects.postgresql import JSONB
+
+from app.database import SystemBase
+
+
 class CreateAgentSessionRequest(BaseModel):
     """Payload to create an agent runtime session."""
     title: Optional[str] = Field(default="Agent Session", description="User-friendly session title")
@@ -37,3 +43,34 @@ class AgentRuntimeSession(BaseModel):
     created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     updated_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     messages: List[AgentChatMessage] = Field(default_factory=list)
+
+
+class AgentRuntimeSessionDB(SystemBase):
+    """SQLAlchemy model for agent runtime sessions in compassx_system database."""
+    __tablename__ = "agent_runtime_sessions"
+
+    id = Column(String(64), primary_key=True)
+    workspace_id = Column(String(64), nullable=True, index=True)
+    title = Column(String(255), nullable=False, default="Agent Session")
+    agent_type = Column(String(64), nullable=False, default="antigravity")
+    sandbox_id = Column(String(128), nullable=False, index=True)
+    status = Column(String(32), nullable=False, default="active")
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
+    updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc), nullable=False)
+    messages = Column(JSON().with_variant(JSONB, "postgresql"), nullable=False, default=list)
+
+    def to_pydantic(self) -> AgentRuntimeSession:
+        raw_msgs = self.messages or []
+        parsed_msgs = [AgentChatMessage(**m) if isinstance(m, dict) else m for m in raw_msgs]
+        return AgentRuntimeSession(
+            id=self.id,
+            workspace_id=self.workspace_id,
+            title=self.title,
+            agent_type=self.agent_type,
+            sandbox_id=self.sandbox_id,
+            status=self.status,
+            created_at=self.created_at.isoformat() if self.created_at else datetime.now(timezone.utc).isoformat(),
+            updated_at=self.updated_at.isoformat() if self.updated_at else datetime.now(timezone.utc).isoformat(),
+            messages=parsed_msgs,
+        )
+
