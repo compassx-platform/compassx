@@ -1477,11 +1477,19 @@ class OmnigentDevService:
             wrapped_cmd = (
                 "LOG_FILE='/tmp/workspace_setup.log'; "
                 "log() { echo \"[$(date +'%H:%M:%S')] $1\" | tee -a \"$LOG_FILE\"; }; "
+                "is_busy() { ps -eo pid,args 2>/dev/null | grep -v \"^ *$$ \" | grep -v 'bash -c' | grep -v 'workspace_setup.log' | grep -E '(\\b(npm|pnpm|yarn)\\s+(install|i\\b)|\\b(pip|pip3)\\s+install\\b)' | grep -v grep >/dev/null 2>&1; }; "
+                "if is_busy; then "
+                "  log '  ⏳ Active dependency installation detected in container. Waiting for ongoing process...'; "
+                "  W=0; "
+                "  while is_busy; do sleep 3; W=$((W + 3)); if [ $W -ge 270 ]; then log '  ⚠️ Wait timeout reached for active background process.'; break; fi; done; "
+                "  log '  ✓ Ongoing background installation process concluded.'; "
+                "fi; "
                 "log '──────────────────────────────────────────────────────────'; "
                 "log '=== Phase 3: Dependency Installation (app.yaml) ==='; "
                 f"log '  → Detected manifest: {manifest_file}'; "
                 f"log '  [1/1] Executing custom install command: {custom_install_cmd}...'; "
-                f"if ({full_install_cmd}) 2>&1 | tee -a \"$LOG_FILE\"; then "
+                f"({full_install_cmd}) 2>&1 | tee -a \"$LOG_FILE\"; "
+                "if [ \"${PIPESTATUS[0]}\" -eq 0 ]; then "
                 "  log '  ✓ Custom installation command completed successfully.'; "
                 "  log '✓ Phase 3 Complete: All libraries and dependencies installed.'; "
                 + (f"  echo '{current_hash}' > '{hash_file}'; " if current_hash else "")
@@ -1492,9 +1500,9 @@ class OmnigentDevService:
                 "fi; "
                 "log '──────────────────────────────────────────────────────────'"
             )
-            exec_res = dev_driver.exec_command_in_dev(app, command=wrapped_cmd, workspace_folder=folder_path)
-            output = exec_res.get("output", "")
-            success = ("__CX_INSTALL_SUCCESS__" in output) or exec_res.get("success", False)
+            exec_res = dev_driver.exec_command_in_dev(app, command=wrapped_cmd, workspace_folder=folder_path, timeout=300)
+            output = _sanitize_sensitive_output(exec_res.get("output", ""))
+            success = ("__CX_INSTALL_SUCCESS__" in output) and ("__CX_INSTALL_FAILED__" not in output)
 
             return {
                 "success": success,
@@ -1573,6 +1581,14 @@ class OmnigentDevService:
         install_script_lines = [
             "LOG_FILE='/tmp/workspace_setup.log';",
             "log() { echo \"[$(date +'%H:%M:%S')] $1\" | tee -a \"$LOG_FILE\"; };",
+            "is_busy() { ps -eo pid,args 2>/dev/null | grep -v \"^ *$$ \" | grep -v 'bash -c' | grep -v 'workspace_setup.log' | grep -E '(\\b(npm|pnpm|yarn)\\s+(install|i\\b)|\\b(pip|pip3)\\s+install\\b)' | grep -v grep >/dev/null 2>&1; };",
+            "if is_busy; then",
+            "  log '  ⏳ Active dependency installation detected in container. Waiting for ongoing process...';",
+            "  W=0;",
+            "  while is_busy; do sleep 3; W=$((W + 3)); if [ $W -ge 270 ]; then log '  ⚠️ Wait timeout reached for active background process.'; break; fi; done;",
+            "  log '  ✓ Ongoing background installation process concluded.';",
+            "fi;",
+            "INSTALL_FAILED=0;",
             "log '──────────────────────────────────────────────────────────';",
             "log '=== Phase 3: Dependency & Library Installation ===';",
             f"log '  [1/2] Discovered manifests: {manifests_str}';",
@@ -1585,7 +1601,13 @@ class OmnigentDevService:
                 suffix = " && cd -" if d else ""
                 install_script_lines.append(
                     f"log '    → Installing Python packages ({m}) via pip3...'; "
-                    f"({prefix}pip3 install --prefer-binary --timeout=300 -r requirements.txt{suffix}) 2>&1 | tee -a \"$LOG_FILE\";"
+                    f"({prefix}pip3 install --prefer-binary --timeout=300 -r requirements.txt{suffix}) 2>&1 | tee -a \"$LOG_FILE\"; "
+                    "if [ \"${PIPESTATUS[0]}\" -ne 0 ]; then "
+                    f"  log '    ✗ pip3 install failed for {m}.'; "
+                    "  INSTALL_FAILED=1; "
+                    "else "
+                    f"  log '    ✓ Python packages installed successfully for {m}.'; "
+                    "fi;"
                 )
             elif m.endswith("package.json"):
                 d = os.path.dirname(m)
@@ -1593,21 +1615,32 @@ class OmnigentDevService:
                 suffix = " && cd -" if d else ""
                 install_script_lines.append(
                     f"log '    → Installing Node.js packages ({m}) via npm...'; "
-                    f"({prefix}npm install --prefer-offline --no-audit --fetch-timeout=300000{suffix}) 2>&1 | tee -a \"$LOG_FILE\";"
+                    f"({prefix}npm install --prefer-offline --no-audit --fetch-timeout=300000{suffix}) 2>&1 | tee -a \"$LOG_FILE\"; "
+                    "if [ \"${PIPESTATUS[0]}\" -ne 0 ]; then "
+                    f"  log '    ✗ npm install failed for {m}.'; "
+                    "  INSTALL_FAILED=1; "
+                    "else "
+                    f"  log '    ✓ Node.js packages installed successfully for {m}.'; "
+                    "fi;"
                 )
 
         install_script_lines.append(
-            "log '  ✓ All dependency manifests processed successfully.'; "
-            "log '✓ Phase 3 Complete: Workspace environment fully prepared.'; "
-            + (f"echo '{current_hash}' > '{hash_file}'; " if current_hash else "")
-            + "echo '__CX_INSTALL_SUCCESS__'; "
+            "if [ \"$INSTALL_FAILED\" -eq 0 ]; then "
+            "  log '  ✓ All dependency manifests processed successfully.'; "
+            "  log '✓ Phase 3 Complete: Workspace environment fully prepared.'; "
+            + (f"  echo '{current_hash}' > '{hash_file}'; " if current_hash else "")
+            + "  echo '__CX_INSTALL_SUCCESS__'; "
+            "else "
+            "  log '  ✗ Dependency installation encountered errors.'; "
+            "  echo '__CX_INSTALL_FAILED__'; "
+            "fi; "
             "log '──────────────────────────────────────────────────────────'"
         )
 
         full_install_script = " ".join(install_script_lines)
-        exec_res = dev_driver.exec_command_in_dev(app, command=full_install_script, workspace_folder=folder_path)
+        exec_res = dev_driver.exec_command_in_dev(app, command=full_install_script, workspace_folder=folder_path, timeout=300)
         output = _sanitize_sensitive_output(exec_res.get("output", ""))
-        success = ("__CX_INSTALL_SUCCESS__" in output) or exec_res.get("success", False)
+        success = ("__CX_INSTALL_SUCCESS__" in output) and ("__CX_INSTALL_FAILED__" not in output)
 
         return {
             "success": success,

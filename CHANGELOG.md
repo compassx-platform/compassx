@@ -5,6 +5,25 @@ All notable changes to the CompassX Platform will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.14.9] - 2026-10-20
+
+### 🚀 Highlights
+
+CompassX `0.14.9` introduces **Sandbox Dev-Driver Execution Timeouts**, **Concurrent Dependency Lock Coordination**, **Piped Script Failure Detection**, and **Frontend Startup Wizard Dismissal Controls**.
+
+### ✨ Features & Enhancements
+
+#### Sandbox Dev-Driver Execution Timeouts & Lock Coordination
+- **Driver Execution Timeouts ([`base.py`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/backend/app/services/drivers/base.py), [`docker_driver.py`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/backend/app/services/drivers/docker_driver.py), [`kubernetes_driver.py`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/backend/app/services/drivers/kubernetes_driver.py), [`local_driver.py`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/backend/app/services/drivers/local_driver.py))**: Added configurable `timeout` support across all dev drivers for commands executed in developer sandboxes.
+- **Concurrent Dependency Installation Protection ([`omnigent_dev_service.py`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/backend/app/services/omnigent_dev_service.py))**: Implemented container process inspection (`is_busy`) in `OmnigentDevService` to detect background package installation (`npm install`, `pip install`) and wait gracefully up to 270s, preventing file lock corruption and duplicate parallel installs.
+- **Piped Install Return Code Validation ([`omnigent_dev_service.py`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/backend/app/services/omnigent_dev_service.py))**: Integrated `${PIPESTATUS[0]}` checks in installation scripts to ensure that pipe redirection to `/tmp/workspace_setup.log` does not mask install failures, setting explicit `__CX_INSTALL_FAILED__` markers.
+
+#### Frontend Startup Wizard & Timeout Handling
+- **Startup Wizard Close / Dismiss ([`LivePreviewCanvas.tsx`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/frontend/src/modules/apps/components/build/LivePreviewCanvas.tsx), [`AppBuildPage.tsx`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/frontend/src/modules/apps/pages/AppBuildPage.tsx))**: Added a dedicated "Close" button to the startup overlay, allowing developers to close the 4-step wizard at any time to inspect their workspace files, code, or terminal.
+- **Client-Side Timeout Extensions ([`useApps.ts`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/frontend/src/modules/apps/hooks/useApps.ts))**: Extended client Axios request timeouts to 300s for dependency installations and arbitrary command execution, and 120s for starting dev runtimes.
+
+---
+
 ## [0.14.8] - 2026-10-19
 
 ### 🚀 Highlights

@@ -926,6 +926,12 @@ export default function AppBuildPage() {
     setStep3Completed(true);
     setStep4Completed(true);
     setInitStep(3);
+    setStartError(null);
+  };
+
+  const handleDismissStartup = () => {
+    handleProceedToStudio();
+    toast.info('Startup wizard closed. You can now manage your app via the terminal or editor.');
   };
 
   // Reset errors and user stopped flag when container becomes active
@@ -1036,6 +1042,7 @@ export default function AppBuildPage() {
     installDepsTriggered.current = false;
     setInitStep(2);
     setStep3Completed(false);
+    void handleProceedToStep3();
   }
 
   // Retry Running Application on Step 4
@@ -1044,6 +1051,7 @@ export default function AppBuildPage() {
     runAppTriggered.current = false;
     setInitStep(3);
     setStep4Completed(false);
+    void handleProceedToStep4();
   }
 
   // Manual Stop Dev Sandbox
@@ -2011,6 +2019,7 @@ export default function AppBuildPage() {
                     onSwitchToCode={() => setCanvasViewMode('code')}
                     onProceedToStep3={handleProceedToStep3}
                     isProceedingToStep3={installDepsMutation.isPending}
+                    onDismissStartup={handleDismissStartup}
                   />
                 ) : (
                   <CodeEditorCanvas

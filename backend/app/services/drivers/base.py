@@ -92,6 +92,7 @@ class BaseDevDriver(ABC):
         app,
         command: str,
         workspace_folder: str = "",
+        timeout: int = 300,
     ) -> Dict[str, Any]:
         """Execute a single shell command inside the dev container / pod workspace."""
         return {"success": False, "exit_code": 1, "output": "Not implemented for this driver"}

@@ -766,6 +766,8 @@ export function useInstallDevDependencies() {
         workspace_id: workspaceId ?? null,
         workspace_name: workspaceName ?? null,
         force,
+      }, {
+        timeout: 300000, // 300 seconds (5 minutes) for library installation
       });
       return res.data;
     },
@@ -794,6 +796,8 @@ export function useRunDevApp() {
       const res = await api.post(`/apps/${appId}/dev/run-app`, {
         workspace_id: workspaceId ?? null,
         workspace_name: workspaceName ?? null,
+      }, {
+        timeout: 120000, // 120 seconds (2 minutes)
       });
       return res.data;
     },
@@ -824,6 +828,8 @@ export function useExecDevCommand() {
         command,
         workspace_id: workspaceId || null,
         workspace_name: workspaceName || null,
+      }, {
+        timeout: 300000, // 300 seconds (5 minutes)
       });
       return res.data;
     },

@@ -266,6 +266,7 @@ class LocalDevDriver(BaseDevDriver):
         app,
         command: str,
         workspace_folder: str = "",
+        timeout: int = 300,
     ) -> Dict[str, Any]:
         workdir = self._resolve_workdir(app, workspace_folder)
         bash_path = self._resolve_bash()
@@ -278,6 +279,7 @@ class LocalDevDriver(BaseDevDriver):
                     text=True,
                     encoding="utf-8",
                     errors="replace",
+                    timeout=timeout,
                 )
             else:
                 res = subprocess.run(
@@ -288,6 +290,7 @@ class LocalDevDriver(BaseDevDriver):
                     text=True,
                     encoding="utf-8",
                     errors="replace",
+                    timeout=timeout,
                 )
             return {
                 "success": res.returncode == 0,

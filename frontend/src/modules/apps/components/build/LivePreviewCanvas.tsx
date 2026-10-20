@@ -16,6 +16,7 @@ import {
   Copy,
   ArrowRight,
   Code2,
+  X,
 } from 'lucide-react';
 import { useToast } from '@/lib/toast';
 
@@ -44,6 +45,7 @@ interface LivePreviewCanvasProps {
   onSwitchToCode?: () => void;
   onProceedToStep3?: () => void;
   isProceedingToStep3?: boolean;
+  onDismissStartup?: () => void;
 }
 
 const STEP_DEFINITIONS = [
@@ -101,6 +103,7 @@ export function LivePreviewCanvas({
   onSwitchToCode,
   onProceedToStep3,
   isProceedingToStep3 = false,
+  onDismissStartup,
 }: LivePreviewCanvasProps) {
   const toast = useToast();
   const [isIframeLoading, setIsIframeLoading] = useState<boolean>(true);
@@ -136,9 +139,16 @@ export function LivePreviewCanvas({
   }, [startError]);
 
   // Probe target dev server endpoint using fetch (mode: 'no-cors')
-  // Only probe when the application server step is active or completed to prevent premature connection refused errors.
+  // Allows detecting if the user/agent manually started the dev server in the terminal
   useEffect(() => {
-    if (!isContainerRunning || !targetUrl || (!hasCompletedInit && !step4Completed)) {
+    if (!isContainerRunning || !targetUrl) {
+      setIsServerReachable(false);
+      setIsProbing(false);
+      return;
+    }
+
+    // Delay probing only while container/workspace code is not ready yet (Step 0 or 1 without error)
+    if (!hasCompletedInit && !step4Completed && (initStep ?? 0) < 2 && !startError) {
       setIsServerReachable(false);
       setIsProbing(false);
       return;
@@ -267,8 +277,8 @@ export function LivePreviewCanvas({
   }
 
   // ── View 2: Application Starting / 4-Step Progress View ───────────────────────
-  // Displayed until the dev server is fully booted and responsive
-  if (!isServerReachable || (!step4Completed && !hasCompletedInit)) {
+  // Displayed until initialization is complete/dismissed or the dev server is responsive
+  if (!hasCompletedInit && (!isServerReachable || !step4Completed)) {
     // Determine overall active step state
     const currentStepIndex = Math.min(Math.max(initStep, 0), 3);
     const isStep1Done = isContainerRunning;
@@ -307,74 +317,101 @@ export function LivePreviewCanvas({
           }}
         >
           {/* Card Header */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-            <div
-              style={{
-                width: 40,
-                height: 40,
-                borderRadius: 10,
-                background: startError
-                  ? '#fef2f2'
-                  : isWaitingAfterStep2
-                  ? 'rgba(16, 185, 129, 0.1)'
-                  : 'rgba(2, 132, 199, 0.1)',
-                border: `1px solid ${
-                  startError
-                    ? '#fecaca'
+          <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0, flex: 1 }}>
+              <div
+                style={{
+                  width: 40,
+                  height: 40,
+                  borderRadius: 10,
+                  background: startError
+                    ? '#fef2f2'
                     : isWaitingAfterStep2
-                    ? 'rgba(16, 185, 129, 0.25)'
-                    : 'rgba(2, 132, 199, 0.25)'
-                }`,
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                color: startError ? '#ef4444' : isWaitingAfterStep2 ? '#10b981' : '#0284c7',
-                flexShrink: 0,
-              }}
-            >
-              {startError ? (
-                <AlertCircle size={20} />
-              ) : isWaitingAfterStep2 ? (
-                <Check size={20} strokeWidth={2.5} />
-              ) : (
-                <Loader2 size={20} className="animate-spin" />
-              )}
-            </div>
-            <div style={{ minWidth: 0, flex: 1 }}>
-              <h3
-                style={{
-                  margin: 0,
-                  fontSize: '0.94rem',
-                  fontWeight: 600,
-                  color: '#0f172a',
-                  lineHeight: 1.3,
+                    ? 'rgba(16, 185, 129, 0.1)'
+                    : 'rgba(2, 132, 199, 0.1)',
+                  border: `1px solid ${
+                    startError
+                      ? '#fecaca'
+                      : isWaitingAfterStep2
+                      ? 'rgba(16, 185, 129, 0.25)'
+                      : 'rgba(2, 132, 199, 0.25)'
+                  }`,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  color: startError ? '#ef4444' : isWaitingAfterStep2 ? '#10b981' : '#0284c7',
+                  flexShrink: 0,
                 }}
               >
-                {startError
-                  ? 'Startup Paused • Error Detected'
-                  : isStep4Done
-                  ? 'Waiting for Application Server...'
-                  : isWaitingAfterStep2
-                  ? 'Step 2 Complete • Workspace Code Prepared'
-                  : 'Initializing Application Preview'}
-              </h3>
-              <p
-                style={{
-                  margin: '3px 0 0',
-                  fontSize: '0.78rem',
-                  color: '#64748b',
-                  lineHeight: 1.4,
-                }}
-              >
-                {startError
-                  ? 'An issue occurred during initialization. Review below to retry.'
-                  : isStep4Done
-                  ? 'Dev server process is starting up. Checking connection...'
-                  : isWaitingAfterStep2
-                  ? 'Codebase has been fetched and verified. Files are ready in the Code view.'
-                  : `Step ${currentStepIndex + 1} of 4 • ${STEP_DEFINITIONS[currentStepIndex].title}`}
-              </p>
+                {startError ? (
+                  <AlertCircle size={20} />
+                ) : isWaitingAfterStep2 ? (
+                  <Check size={20} strokeWidth={2.5} />
+                ) : (
+                  <Loader2 size={20} className="animate-spin" />
+                )}
+              </div>
+              <div style={{ minWidth: 0, flex: 1 }}>
+                <h3
+                  style={{
+                    margin: 0,
+                    fontSize: '0.94rem',
+                    fontWeight: 600,
+                    color: '#0f172a',
+                    lineHeight: 1.3,
+                  }}
+                >
+                  {startError
+                    ? 'Startup Paused • Error Detected'
+                    : isStep4Done
+                    ? 'Waiting for Application Server...'
+                    : isWaitingAfterStep2
+                    ? 'Step 2 Complete • Workspace Code Prepared'
+                    : 'Initializing Application Preview'}
+                </h3>
+                <p
+                  style={{
+                    margin: '3px 0 0',
+                    fontSize: '0.78rem',
+                    color: '#64748b',
+                    lineHeight: 1.4,
+                  }}
+                >
+                  {startError
+                    ? 'An issue occurred during initialization. Review below to retry.'
+                    : isStep4Done
+                    ? 'Dev server process is starting up. Checking connection...'
+                    : isWaitingAfterStep2
+                    ? 'Codebase has been fetched and verified. Files are ready in the Code view.'
+                    : `Step ${currentStepIndex + 1} of 4 • ${STEP_DEFINITIONS[currentStepIndex].title}`}
+                </p>
+              </div>
             </div>
+
+            {onDismissStartup && (
+              <button
+                type="button"
+                onClick={onDismissStartup}
+                title="Close startup wizard and open studio preview"
+                style={{
+                  background: 'transparent',
+                  border: 'none',
+                  cursor: 'pointer',
+                  padding: 4,
+                  color: '#94a3b8',
+                  borderRadius: 4,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  flexShrink: 0,
+                  transition: 'color 0.15s ease',
+                }}
+                onMouseEnter={(e) => (e.currentTarget.style.color = '#334155')}
+                onMouseLeave={(e) => (e.currentTarget.style.color = '#94a3b8')}
+              >
+                <X size={18} />
+              </button>
+            )}
           </div>
 
           {/* Segmented Horizontal Step Bar */}
@@ -867,6 +904,30 @@ export function LivePreviewCanvas({
                 >
                   <RefreshCw size={12} className={isRetrying ? 'animate-spin' : ''} />
                   <span>Retry Step 4</span>
+                </button>
+              )}
+
+              {onDismissStartup && (
+                <button
+                  type="button"
+                  onClick={onDismissStartup}
+                  title="Close startup wizard and switch to workspace"
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 6,
+                    background: '#ffffff',
+                    color: '#475569',
+                    border: '1px solid #cbd5e1',
+                    borderRadius: 6,
+                    padding: '6px 12px',
+                    fontSize: '0.78rem',
+                    fontWeight: 500,
+                    cursor: 'pointer',
+                  }}
+                >
+                  <X size={13} />
+                  <span>Close</span>
                 </button>
               )}
 

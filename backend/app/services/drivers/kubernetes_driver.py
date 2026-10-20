@@ -2148,6 +2148,7 @@ class KubernetesDevDriver(BaseDevDriver):
         app,
         command: str,
         workspace_folder: str = "",
+        timeout: int = 300,
     ) -> Dict[str, Any]:
         """Execute a single shell command inside the dev pod workspace directory."""
         from kubernetes import stream
@@ -2205,7 +2206,7 @@ class KubernetesDevDriver(BaseDevDriver):
                 stdin=False,
                 stdout=True,
                 tty=False,
-                _request_timeout=120,
+                _request_timeout=timeout,
             )
             raw_output = str(resp or "")
             exit_code = 0

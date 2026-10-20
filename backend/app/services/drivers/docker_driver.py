@@ -854,6 +854,7 @@ class DockerDevDriver(BaseDevDriver):
         app,
         command: str,
         workspace_folder: str = "",
+        timeout: int = 300,
     ) -> Dict[str, Any]:
         dev_container_name = self._get_dev_container_name(app)
         # Verify if workspace folder exists in container, otherwise default to /app
@@ -895,20 +896,29 @@ class DockerDevDriver(BaseDevDriver):
                 )
                 workdir = target_ws
 
-        res = subprocess.run(
-            ["docker", "exec", "-w", workdir, dev_container_name, "bash", "-c", command],
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            check=False,
-        )
-        return {
-            "success": res.returncode == 0,
-            "exit_code": res.returncode,
-            "output": (res.stdout or "") + (res.stderr or ""),
-            "workdir": workdir,
-        }
+        try:
+            res = subprocess.run(
+                ["docker", "exec", "-w", workdir, dev_container_name, "bash", "-c", command],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                check=False,
+                timeout=timeout,
+            )
+            return {
+                "success": res.returncode == 0,
+                "exit_code": res.returncode,
+                "output": (res.stdout or "") + (res.stderr or ""),
+                "workdir": workdir,
+            }
+        except subprocess.TimeoutExpired:
+            return {
+                "success": False,
+                "exit_code": 124,
+                "output": f"Command timed out after {timeout} seconds.",
+                "workdir": workdir,
+            }
 
     def get_live_branch(self, app, workspace_folder: str = "") -> Optional[str]:
         """Fetch active Git branch from inside the running Docker dev container."""
