@@ -649,6 +649,16 @@ while True:
                 if k.strip():
                     custom_env_dict[k.strip()] = v.strip()
 
+    from app.services.app_runner import app_runner_service
+    app_dir = app_runner_service.get_app_dir(app.id)
+    agent_storage_dir = os.path.join(app_dir, "agent_storage")
+    gemini_dir = os.path.join(agent_storage_dir, "gemini").replace("\\", "/")
+    pi_dir = os.path.join(agent_storage_dir, "pi").replace("\\", "/")
+    opencode_dir = os.path.join(agent_storage_dir, "opencode").replace("\\", "/")
+    os.makedirs(gemini_dir, exist_ok=True)
+    os.makedirs(pi_dir, exist_ok=True)
+    os.makedirs(opencode_dir, exist_ok=True)
+
     return SandboxSpec(
         sandbox_id=f"dev-app-{app.id}",
         consumer_key=f"app_{app.id}",
@@ -658,7 +668,12 @@ while True:
         image=os.environ.get("COMPASSX_SANDBOX_IMAGE") or "ghcr.io/compassx-platform/compassx-sandbox-host:latest",
         ports=[8080, 9201],
         env_vars=custom_env_dict,
-        storage_mounts=[StorageMount(source_path=repo_dir, mount_path="/workspace")],
+        storage_mounts=[
+            StorageMount(source_path=repo_dir, mount_path="/workspace"),
+            StorageMount(source_path=gemini_dir, mount_path="/root/.gemini"),
+            StorageMount(source_path=pi_dir, mount_path="/root/.pi"),
+            StorageMount(source_path=opencode_dir, mount_path="/root/.opencode"),
+        ],
         init_scripts=[
             InitScript(name="Restore & Sync Agent Auth", command=auth_sync_script, ignore_failure=True),
             InitScript(name="Configure Git Credentials", command=git_config_cmd, ignore_failure=True),

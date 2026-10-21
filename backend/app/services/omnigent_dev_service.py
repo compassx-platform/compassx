@@ -3134,16 +3134,91 @@ else:
         return session_info
 
     def _capture_tmux_session_messages(self, app, session_id: Optional[str] = None, workspace_id: Optional[str] = None) -> List[Dict[str, Any]]:
-        """Capture raw terminal buffer from running tmux session in container and parse into structured ChatMessage items."""
+        """Capture raw terminal buffer from running tmux session in container or read structured agent transcript."""
         import subprocess
         import re
         import uuid
+        import shlex
+        import json
         from datetime import datetime, timezone
 
-        from app.services.drivers.docker_driver import docker_dev_driver
-        dev_container_name = docker_dev_driver._get_dev_container_name(app)
+        dev_driver = driver_factory.get_dev_driver()
+        if not dev_driver:
+            return []
 
-        # 1. Resolve active tmux session name in container for this AI DevSession
+        # 1. If this is an Antigravity session and a structured transcript exists on persistent disk, read it directly
+        if session_id:
+            try:
+                sess_file_cmd = f"cat /root/.gemini/sessions/{session_id}.conv_id 2>/dev/null || true"
+                sf_res = dev_driver.exec_command_in_dev(app, command=sess_file_cmd, timeout=3.0)
+                conv_id = (sf_res.get("output", "") or "").strip() if sf_res else ""
+                if conv_id:
+                    py_script = """import json, os, re, uuid
+conv_id = %s
+conv_path = f'/root/.gemini/antigravity/brain/{conv_id}/.system_generated/logs/transcript.jsonl'
+if os.path.isfile(conv_path):
+    turns = []
+    with open(conv_path, 'r', encoding='utf-8', errors='replace') as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                obj = json.loads(line)
+                step_type = obj.get('type')
+                if step_type == 'USER_INPUT':
+                    raw_c = obj.get('content', '')
+                    m = re.search(r'<USER_REQUEST>(.*?)</USER_REQUEST>', raw_c, re.DOTALL)
+                    text = m.group(1).strip() if m else raw_c
+                    turns.append({
+                        'id': f"turn_{obj.get('step_index', len(turns))}",
+                        'role': 'user',
+                        'type': 'message',
+                        'content': text,
+                        'status': 'completed',
+                        'created_at': obj.get('created_at'),
+                    })
+                elif step_type == 'PLANNER_RESPONSE':
+                    content = obj.get('content', '') or ''
+                    tc = obj.get('tool_calls') or []
+                    for tool in tc:
+                        tname = tool.get('name', 'tool')
+                        targs = tool.get('args') or {}
+                        turns.append({
+                            'id': f"tc_{uuid.uuid4().hex[:6]}",
+                            'role': 'assistant',
+                            'type': 'tool_call',
+                            'content': f"{tname}({targs})",
+                            'tool': {'name': tname, 'input': targs, 'status': 'completed'},
+                            'status': 'completed',
+                            'created_at': obj.get('created_at'),
+                        })
+                    if content.strip():
+                        turns.append({
+                            'id': f"turn_{obj.get('step_index', len(turns))}",
+                            'role': 'assistant',
+                            'type': 'message',
+                            'content': content,
+                            'status': 'completed',
+                            'created_at': obj.get('created_at'),
+                        })
+            except Exception:
+                pass
+    print('__TRANSCRIPT_JSON_START__' + json.dumps(turns[-50:]) + '__TRANSCRIPT_JSON_END__')
+""" % json.dumps(conv_id)
+                    b64_py = base64.b64encode(py_script.encode("utf-8")).decode("ascii")
+                    tr_res = dev_driver.exec_command_in_dev(app, command=f"echo '{b64_py}' | base64 -d | python3", timeout=4.0)
+                    if tr_res and tr_res.get("exit_code") == 0:
+                        out = tr_res.get("output", "")
+                        if "__TRANSCRIPT_JSON_START__" in out and "__TRANSCRIPT_JSON_END__" in out:
+                            json_str = out.split("__TRANSCRIPT_JSON_START__")[1].split("__TRANSCRIPT_JSON_END__")[0]
+                            parsed_turns = json.loads(json_str)
+                            if parsed_turns:
+                                return parsed_turns
+            except Exception as tr_err:
+                logger.debug("Structured transcript capture notice: %s", tr_err)
+
+        # 2. Resolve active tmux session name in container for this AI DevSession
         target_tmux_name = None
         try:
             from app.services.dev_session_service import dev_session_service
@@ -3152,12 +3227,13 @@ else:
                 if sess_obj and sess_obj.tmux_session_name:
                     base_tmux = sess_obj.tmux_session_name
                     # Find running tmux sessions matching this base name
-                    ls_res = subprocess.run(
-                        ["docker", "exec", dev_container_name, "tmux", "list-sessions", "-F", "#{session_name}"],
-                        capture_output=True, text=True, encoding="utf-8", errors="replace", check=False, timeout=2.0
+                    ls_res = dev_driver.exec_command_in_dev(
+                        app,
+                        command="tmux list-sessions -F '#{session_name}' 2>/dev/null || true",
+                        timeout=3.0,
                     )
-                    if ls_res.returncode == 0 and ls_res.stdout:
-                        for s_name in ls_res.stdout.splitlines():
+                    if ls_res and ls_res.get("exit_code") == 0 and ls_res.get("output"):
+                        for s_name in ls_res.get("output", "").splitlines():
                             s_clean = s_name.strip()
                             if s_clean and (s_clean == base_tmux or s_clean.startswith(base_tmux) or (session_id and session_id in s_clean)):
                                 target_tmux_name = s_clean
@@ -3171,13 +3247,14 @@ else:
         if target_tmux_name.startswith("cx_shell_") or target_tmux_name.startswith("shell_"):
             return []
 
-        # 2. Capture terminal buffer from tmux pane
+        # 3. Capture terminal buffer from tmux pane
         try:
-            cap_res = subprocess.run(
-                ["docker", "exec", dev_container_name, "tmux", "capture-pane", "-p", "-t", target_tmux_name, "-S", "-1000"],
-                capture_output=True, text=True, encoding="utf-8", errors="replace", check=False, timeout=3.0
+            cap_res = dev_driver.exec_command_in_dev(
+                app,
+                command=f"tmux capture-pane -p -t {shlex.quote(target_tmux_name)} -S -1000",
+                timeout=4.0,
             )
-            raw_output = cap_res.stdout or ""
+            raw_output = cap_res.get("output", "") if cap_res else ""
             if not raw_output.strip():
                 return []
 
@@ -3368,35 +3445,32 @@ else:
 
         # 1. Forward prompt directly into active container tmux session
         delivered_to_tmux = False
-        from app.services.drivers.docker_driver import docker_dev_driver
-        dev_container_name = docker_dev_driver._get_dev_container_name(app)
+        dev_driver = driver_factory.get_dev_driver()
         try:
             target_tmux_name = None
             from app.services.dev_session_service import dev_session_service
-            if session_id:
+            if session_id and dev_driver:
                 sess_obj = dev_session_service.get_session(app, session_id)
                 if sess_obj and sess_obj.tmux_session_name:
                     base_tmux = sess_obj.tmux_session_name
-                    ls_res = subprocess.run(
-                        ["docker", "exec", dev_container_name, "tmux", "list-sessions", "-F", "#{session_name}"],
-                        capture_output=True, text=True, check=False, timeout=2.0
+                    ls_res = dev_driver.exec_command_in_dev(
+                        app,
+                        command="tmux list-sessions -F '#{session_name}' 2>/dev/null || true",
+                        timeout=3.0,
                     )
-                    if ls_res.returncode == 0 and ls_res.stdout:
-                        for s_name in ls_res.stdout.splitlines():
+                    if ls_res and ls_res.get("exit_code") == 0 and ls_res.get("output"):
+                        for s_name in ls_res.get("output", "").splitlines():
                             s_clean = s_name.strip()
                             if s_clean and (s_clean == base_tmux or s_clean.startswith(base_tmux) or (session_id and session_id in s_clean)):
                                 target_tmux_name = s_clean
                                 break
 
-            if target_tmux_name and not (target_tmux_name.startswith("cx_shell_") or target_tmux_name.startswith("shell_")):
+            if target_tmux_name and dev_driver and not (target_tmux_name.startswith("cx_shell_") or target_tmux_name.startswith("shell_")):
                 # Type prompt as literal text and send Enter to trigger execution
-                subprocess.run(
-                    ["docker", "exec", dev_container_name, "tmux", "send-keys", "-t", target_tmux_name, "-l", clean_prompt],
-                    capture_output=True, check=False, timeout=3.0
-                )
-                subprocess.run(
-                    ["docker", "exec", dev_container_name, "tmux", "send-keys", "-t", target_tmux_name, "Enter"],
-                    capture_output=True, check=False, timeout=2.0
+                dev_driver.exec_command_in_dev(
+                    app,
+                    command=f"tmux send-keys -t {shlex.quote(target_tmux_name)} -l {shlex.quote(clean_prompt)} && tmux send-keys -t {shlex.quote(target_tmux_name)} Enter",
+                    timeout=4.0,
                 )
                 delivered_to_tmux = True
         except Exception as tmux_err:

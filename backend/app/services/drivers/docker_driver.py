@@ -614,6 +614,17 @@ class DockerDevDriver(BaseDevDriver):
             else:
                 dev_host_image = os.environ.get("COMPASSX_SANDBOX_IMAGE") or "compassx-sandbox-host:latest"
 
+        # Ensure persistent agent session storage directories exist on host
+        from app.services.app_runner import app_runner_service
+        app_dir = app_runner_service.get_app_dir(app.id)
+        agent_storage_dir = os.path.join(app_dir, "agent_storage")
+        gemini_dir = os.path.join(agent_storage_dir, "gemini").replace("\\", "/")
+        pi_dir = os.path.join(agent_storage_dir, "pi").replace("\\", "/")
+        opencode_dir = os.path.join(agent_storage_dir, "opencode").replace("\\", "/")
+        os.makedirs(gemini_dir, exist_ok=True)
+        os.makedirs(pi_dir, exist_ok=True)
+        os.makedirs(opencode_dir, exist_ok=True)
+
         run_cmd = [
             "docker", "run", "-d",
             "--name", dev_container_name,
@@ -627,6 +638,9 @@ class DockerDevDriver(BaseDevDriver):
             "--label", f"compassx.workspace_id={getattr(app, 'workspace_id', None) or ''}",
             "-p", f"{dev_port}:8080",
             "-v", f"{repo_dir}:/app",
+            "-v", f"{gemini_dir}:/root/.gemini",
+            "-v", f"{pi_dir}:/root/.pi",
+            "-v", f"{opencode_dir}:/root/.opencode",
             "-w", "/app",
             "-e", "PORT=8080",
             "-e", "DEV_MODE=true",
@@ -1187,7 +1201,15 @@ class DockerDevDriver(BaseDevDriver):
             elif agent == "opencode":
                 cli_cmd = "opencode"
             elif agent in ("antigravity", "agy"):
-                cli_cmd = "export AGY_TRUST_ALL=true ANTIGRAVITY_TRUST_ALL_WORKSPACES=true AGY_NON_INTERACTIVE=true; agy --dangerously-skip-permissions"
+                sess_f = f"/root/.gemini/sessions/{session_name}.conv_id" if session_name else ""
+                cli_cmd = (
+                    "export AGY_TRUST_ALL=true ANTIGRAVITY_TRUST_ALL_WORKSPACES=true AGY_NON_INTERACTIVE=true; "
+                    f"if [ -n \"{sess_f}\" ] && [ -f \"{sess_f}\" ] && [ -n \"$(cat '{sess_f}' 2>/dev/null)\" ]; then "
+                    f"  exec agy --dangerously-skip-permissions --conversation \"$(cat '{sess_f}')\"; "
+                    f"else "
+                    f"  exec agy --dangerously-skip-permissions; "
+                    f"fi"
+                )
             elif agent in ("bash", "shell", "sh"):
                 cli_cmd = "exec /bin/bash -l"
 

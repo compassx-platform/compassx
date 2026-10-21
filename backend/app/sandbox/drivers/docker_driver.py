@@ -437,7 +437,15 @@ class DockerSandboxDriver(BaseSandboxDriver):
         cli_cmd = command
         if not cli_cmd:
             if resolved_agent in ("antigravity", "agy"):
-                cli_cmd = "export AGY_TRUST_ALL=true ANTIGRAVITY_TRUST_ALL_WORKSPACES=true AGY_NON_INTERACTIVE=true; agy --dangerously-skip-permissions"
+                sess_f = f"/root/.gemini/sessions/{session_id}.conv_id" if session_id else ""
+                cli_cmd = (
+                    "export AGY_TRUST_ALL=true ANTIGRAVITY_TRUST_ALL_WORKSPACES=true AGY_NON_INTERACTIVE=true; "
+                    f"if [ -n \"{sess_f}\" ] && [ -f \"{sess_f}\" ] && [ -n \"$(cat '{sess_f}' 2>/dev/null)\" ]; then "
+                    f"  exec agy --dangerously-skip-permissions --conversation \"$(cat '{sess_f}')\"; "
+                    f"else "
+                    f"  exec agy --dangerously-skip-permissions; "
+                    f"fi"
+                )
             elif resolved_agent == "pi":
                 cli_cmd = "pi --approve"
             elif resolved_agent == "opencode":

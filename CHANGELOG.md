@@ -5,6 +5,22 @@ All notable changes to the CompassX Platform will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.14.10] - 2026-10-21
+
+### 🚀 Highlights
+
+CompassX `0.14.10` introduces **Persistent AI Agent Session Storage & State Continuity**, **Automated Conversation Tracking & Brain Reattachment**, **Structured Transcript Log Ingestion**, and **Driver-Agnostic Tmux Execution**.
+
+### ✨ Features & Enhancements
+
+#### Persistent AI Agent Storage & Conversation Continuity
+- **Persistent Agent Volume Mounting ([`docker_driver.py`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/backend/app/services/drivers/docker_driver.py), [`kubernetes_driver.py`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/backend/app/services/drivers/kubernetes_driver.py), [`app_dev_routes.py`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/backend/app/routes/app_dev_routes.py))**: Added dedicated persistent storage mapping for agent homes (`/root/.gemini`, `/root/.pi`, `/root/.opencode`) across Docker sandbox containers and Kubernetes developer pods, ensuring OAuth credentials, brain artifacts, and conversation history survive container restarts.
+- **Conversation State Tracking & Seamless Reattachment ([`dev_session_service.py`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/backend/app/services/dev_session_service.py), [`docker_driver.py`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/backend/app/sandbox/drivers/docker_driver.py), [`k8s_driver.py`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/backend/app/sandbox/drivers/k8s_driver.py))**: Automatically captures and records the active conversation ID in `/root/.gemini/sessions/{session.id}.conv_id` upon session launch, automatically passing `--conversation <conv_id>` when resuming sessions to restore the exact agent state and conversation history.
+- **Structured Transcript Log Parsing ([`omnigent_dev_service.py`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/backend/app/services/omnigent_dev_service.py))**: Ingests Antigravity `transcript.jsonl` logs directly into structured user turns and assistant tool call event histories, providing accurate, high-fidelity message streams in Studio view.
+- **Driver-Agnostic Tmux Command Dispatch ([`omnigent_dev_service.py`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/backend/app/services/omnigent_dev_service.py))**: Replaced hardcoded Docker CLI subprocess invocations with `dev_driver.exec_command_in_dev`, enabling reliable tmux session management, prompt delivery, and pane capture across both Docker and Kubernetes cloud deployment profiles.
+
+---
+
 ## [0.14.9] - 2026-10-20
 
 ### 🚀 Highlights

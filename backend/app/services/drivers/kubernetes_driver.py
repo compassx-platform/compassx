@@ -1199,15 +1199,25 @@ class KubernetesDevDriver(BaseDevDriver):
                 custom_exports_str = " ".join(custom_export_stmts)
 
                 dev_cmd = (
-                    f"mkdir -p /workspaces/.shared_auth/.gemini/antigravity-cli && "
+                    f"mkdir -p /workspaces/.shared_auth/.gemini/antigravity-cli /workspaces/.shared_auth/.gemini/sessions /workspaces/.shared_auth/.gemini/antigravity /workspaces/.shared_auth/.pi /workspaces/.shared_auth/.opencode && "
                     f"if [ ! -f /workspaces/.shared_auth/.gemini/antigravity-cli/antigravity-oauth-token ]; then "
                     f"  printf '{{\"auth_method\":\"oauth\",\"token\":{{\"access_token\":\"auto-authenticated-dev-cluster-token\",\"refresh_token\":\"1//auto-authenticated-dev-cluster-token\",\"token_type\":\"Bearer\",\"expiry\":\"2099-01-01T00:00:00Z\"}}}}' > /workspaces/.shared_auth/.gemini/antigravity-cli/antigravity-oauth-token; "
                     f"fi; "
                     f"if [ ! -f /workspaces/.shared_auth/.gemini/oauth_creds.json ]; then "
                     f"  printf '{{\"access_token\":\"auto-authenticated-dev-cluster-token\",\"refresh_token\":\"1//auto-authenticated-dev-cluster-token\",\"token_type\":\"Bearer\",\"expiry_date\":4102444800000}}' > /workspaces/.shared_auth/.gemini/oauth_creds.json; "
                     f"fi; "
-                    f"cp -rn /root/.gemini/* /workspaces/.shared_auth/.gemini/ 2>/dev/null || true; "
-                    f"if [ -d /workspaces/.shared_auth/.gemini ]; then cp -rn /workspaces/.shared_auth/.gemini/* /root/.gemini/ 2>/dev/null || true; fi; "
+                    f"if [ ! -L /root/.gemini ]; then "
+                    f"  mkdir -p /root/.gemini; "
+                    f"  cp -rn /root/.gemini/* /workspaces/.shared_auth/.gemini/ 2>/dev/null || true; "
+                    f"  rm -rf /root/.gemini; "
+                    f"  ln -sfn /workspaces/.shared_auth/.gemini /root/.gemini; "
+                    f"fi; "
+                    f"if [ ! -L /root/.pi ]; then "
+                    f"  mkdir -p /root/.pi; "
+                    f"  cp -rn /root/.pi/* /workspaces/.shared_auth/.pi/ 2>/dev/null || true; "
+                    f"  rm -rf /root/.pi; "
+                    f"  ln -sfn /workspaces/.shared_auth/.pi /root/.pi; "
+                    f"fi; "
                     # Background daemon: persistently syncs any real agy OAuth tokens acquired in any session back to shared_auth PVC
                     f"(while true; do "
                     f"  for t in /root/.gemini/antigravity-cli/antigravity-oauth-token /root/.gemini/oauth_creds.json /root/.omnigent/antigravity-native/*/agy-home/.gemini/antigravity-cli/antigravity-oauth-token /root/.omnigent/antigravity-native/*/agy-home/.gemini/oauth_creds.json; do "
@@ -2392,13 +2402,26 @@ class KubernetesDevDriver(BaseDevDriver):
             elif agent == "opencode":
                 cli_cmd = "opencode"
             elif agent in ("antigravity", "agy"):
-                cli_cmd = "export AGY_TRUST_ALL=true ANTIGRAVITY_TRUST_ALL_WORKSPACES=true AGY_NON_INTERACTIVE=true; agy --dangerously-skip-permissions"
+                sess_f = f"/root/.gemini/sessions/{session_name}.conv_id" if session_name else ""
+                cli_cmd = (
+                    "export AGY_TRUST_ALL=true ANTIGRAVITY_TRUST_ALL_WORKSPACES=true AGY_NON_INTERACTIVE=true; "
+                    f"if [ -n \"{sess_f}\" ] && [ -f \"{sess_f}\" ] && [ -n \"$(cat '{sess_f}' 2>/dev/null)\" ]; then "
+                    f"  exec agy --dangerously-skip-permissions --conversation \"$(cat '{sess_f}')\"; "
+                    f"else "
+                    f"  exec agy --dangerously-skip-permissions; "
+                    f"fi"
+                )
             elif agent in ("bash", "shell", "sh"):
                 cli_cmd = "exec /bin/bash -l"
 
-        ai_gw_url = f"http://compassx-backend.{ns}.svc.cluster.local:8000/api/v1/ai-gateway/v1"
         auth_restore = (
-            "if [ -d /workspaces/.shared_auth/.gemini ] && [ -n \"$(find /workspaces/.shared_auth/.gemini -type f 2>/dev/null)\" ]; then cp -rn /workspaces/.shared_auth/.gemini/* /root/.gemini/ 2>/dev/null || true; "
+            "if [ -d /workspaces/.shared_auth/.gemini ]; then "
+            "  if [ ! -L /root/.gemini ]; then "
+            "    mkdir -p /root/.gemini; "
+            "    cp -rn /root/.gemini/* /workspaces/.shared_auth/.gemini/ 2>/dev/null || true; "
+            "    rm -rf /root/.gemini; "
+            "    ln -sfn /workspaces/.shared_auth/.gemini /root/.gemini; "
+            "  fi; "
             "elif [ -d /workspace/.gemini_auth ] && [ -n \"$(find /workspace/.gemini_auth -type f 2>/dev/null)\" ]; then cp -rn /workspace/.gemini_auth/* /root/.gemini/ 2>/dev/null || true; fi; "
         )
 
