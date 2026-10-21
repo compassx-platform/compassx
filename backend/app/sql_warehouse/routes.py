@@ -23,7 +23,18 @@ from app.sql_warehouse.schemas import (
     WarehouseCreate,
     WarehouseRead,
 )
-from app.sql_warehouse.warehouse.manager import create_warehouse, delete_warehouse, get_warehouse_by_id, list_warehouses, update_warehouse_status
+from datetime import datetime, timezone
+
+from app.sql_warehouse.warehouse.manager import (
+    create_warehouse,
+    delete_warehouse,
+    get_default_warehouse,
+    get_warehouse_by_id,
+    list_warehouses,
+    set_default_warehouse,
+    update_warehouse_status,
+)
+from app.sql_warehouse.warehouse.pod_orchestrator import WarehousePodOrchestrator
 
 router = APIRouter(prefix="/api/v1", tags=["sql-warehouse"])
 
@@ -83,9 +94,18 @@ def list_wh(request: Request, db: Session = Depends(get_system_db), user=Depends
 
 
 @router.post("/warehouses", response_model=WarehouseRead)
-def create_wh(request: Request, req: WarehouseCreate, db: Session = Depends(get_system_db), user=Depends(get_current_user)):
+async def create_wh(request: Request, req: WarehouseCreate, db: Session = Depends(get_system_db), user=Depends(get_current_user)):
     user_id, workspace_id = _resolve_user_and_workspace(request, user)
-    return create_warehouse(db, req, created_by=user_id, workspace_id=workspace_id)
+    wh = create_warehouse(db, req, created_by=user_id, workspace_id=workspace_id)
+    # Provision pod for the new warehouse
+    orchestrator = WarehousePodOrchestrator()
+    runtime_id, endpoint = await orchestrator.start_pod(wh)
+    wh.runtime_id = runtime_id
+    wh.endpoint_url = endpoint
+    wh.status = "running"
+    db.commit()
+    db.refresh(wh)
+    return wh
 
 
 @router.get("/warehouses/{warehouse_id}", response_model=WarehouseRead)
@@ -98,20 +118,54 @@ def get_wh(request: Request, warehouse_id: str, db: Session = Depends(get_system
 
 
 @router.post("/warehouses/{warehouse_id}/start", response_model=WarehouseRead)
-def start_wh(request: Request, warehouse_id: str, db: Session = Depends(get_system_db), user=Depends(get_current_user)):
+async def start_wh(request: Request, warehouse_id: str, db: Session = Depends(get_system_db), user=Depends(get_current_user)):
     _user_id, workspace_id = _resolve_user_and_workspace(request, user)
-    return update_warehouse_status(db, warehouse_id, "running", workspace_id=workspace_id)
+    wh = get_warehouse_by_id(db, warehouse_id, workspace_id=workspace_id)
+    if not wh:
+        raise HTTPException(404, "Warehouse not found")
+
+    wh.status = "starting"
+    wh.updated_at = datetime.now(timezone.utc)
+    db.commit()
+
+    orchestrator = WarehousePodOrchestrator()
+    runtime_id, endpoint = await orchestrator.start_pod(wh)
+    wh.runtime_id = runtime_id
+    wh.endpoint_url = endpoint
+    wh.status = "running"
+    wh.updated_at = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(wh)
+    return wh
 
 
 @router.post("/warehouses/{warehouse_id}/stop", response_model=WarehouseRead)
-def stop_wh(request: Request, warehouse_id: str, db: Session = Depends(get_system_db), user=Depends(get_current_user)):
+async def stop_wh(request: Request, warehouse_id: str, db: Session = Depends(get_system_db), user=Depends(get_current_user)):
     _user_id, workspace_id = _resolve_user_and_workspace(request, user)
+    wh = get_warehouse_by_id(db, warehouse_id, workspace_id=workspace_id)
+    if not wh:
+        raise HTTPException(404, "Warehouse not found")
+
+    orchestrator = WarehousePodOrchestrator()
+    await orchestrator.stop_pod(wh)
     return update_warehouse_status(db, warehouse_id, "stopped", workspace_id=workspace_id)
 
 
-@router.delete("/warehouses/{warehouse_id}")
-def delete_wh(request: Request, warehouse_id: str, db: Session = Depends(get_system_db), user=Depends(get_current_user)):
+@router.post("/warehouses/{warehouse_id}/set-default", response_model=WarehouseRead)
+def set_default_wh(request: Request, warehouse_id: str, db: Session = Depends(get_system_db), user=Depends(get_current_user)):
     _user_id, workspace_id = _resolve_user_and_workspace(request, user)
+    return set_default_warehouse(db, warehouse_id, workspace_id=workspace_id)
+
+
+@router.delete("/warehouses/{warehouse_id}")
+async def delete_wh(request: Request, warehouse_id: str, db: Session = Depends(get_system_db), user=Depends(get_current_user)):
+    _user_id, workspace_id = _resolve_user_and_workspace(request, user)
+    wh = get_warehouse_by_id(db, warehouse_id, workspace_id=workspace_id)
+    if not wh:
+        raise HTTPException(404, "Warehouse not found")
+
+    orchestrator = WarehousePodOrchestrator()
+    await orchestrator.delete_pod(wh)
     delete_warehouse(db, warehouse_id, workspace_id=workspace_id)
     return {"deleted": True}
 
@@ -125,11 +179,25 @@ async def run_query(
     user=Depends(get_current_user),
 ):
     user_id, workspace_id = _resolve_user_and_workspace(request, user)
-    warehouse = get_warehouse_by_id(db, req.warehouse_id, workspace_id=workspace_id)
+    warehouse = None
+    if req.warehouse_id:
+        warehouse = get_warehouse_by_id(db, req.warehouse_id, workspace_id=workspace_id)
     if not warehouse:
-        raise HTTPException(404, "Warehouse not found")
+        warehouse = get_default_warehouse(db, workspace_id=workspace_id)
+    if not warehouse:
+        raise HTTPException(404, "No active or default warehouse found for this workspace")
+
+    # Auto-resume warehouse pod if stopped or suspended
     if warehouse.status != "running":
-        raise HTTPException(400, f"Warehouse is {warehouse.status}, not running")
+        orchestrator = WarehousePodOrchestrator()
+        runtime_id, endpoint = await orchestrator.start_pod(warehouse)
+        warehouse.runtime_id = runtime_id
+        warehouse.endpoint_url = endpoint
+        warehouse.status = "running"
+        warehouse.updated_at = datetime.now(timezone.utc)
+        db.commit()
+        db.refresh(warehouse)
+
     try:
         result = await QueryExecutor(db, data_db).run(
             warehouse=warehouse,
@@ -147,11 +215,16 @@ async def run_query(
     except Exception as exc:
         raise HTTPException(status_code=400, detail={"error": "Query execution failed", "detail": str(exc)}) from exc
 
+
 @router.post("/sql/explain")
 async def explain_query(request: Request, req: ExplainRequest, db: Session = Depends(get_system_db), user=Depends(get_current_user)):
     del user
     workspace_id = getattr(request.state, "workspace", None) and request.state.workspace.workspace_id
-    warehouse = get_warehouse_by_id(db, req.warehouse_id, workspace_id=workspace_id)
+    warehouse = None
+    if req.warehouse_id:
+        warehouse = get_warehouse_by_id(db, req.warehouse_id, workspace_id=workspace_id)
+    if not warehouse:
+        warehouse = get_default_warehouse(db, workspace_id=workspace_id)
     if not warehouse:
         raise HTTPException(404, "Warehouse not found")
     return {"plan": await get_adapter(warehouse).explain(req.sql)}

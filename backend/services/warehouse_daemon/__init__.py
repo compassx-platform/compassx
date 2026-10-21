@@ -1,0 +1,1 @@
+"""CompassX Warehouse Daemon module."""

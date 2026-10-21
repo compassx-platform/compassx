@@ -65,7 +65,7 @@ class QueryExecutor:
                     rows_returned=cached.get("rows_returned", 0),
                     duration_ms=0,
                 )
-                return {**cached, "query_id": query_id, "cache_hit": True}
+                return {**cached, "query_id": query_id, "warehouse_id": str(warehouse.id), "cache_hit": True}
 
         query_id = str(uuid.uuid4())
         self.records.create(
@@ -144,4 +144,4 @@ class QueryExecutor:
             "query_completed",
             extra={"query_id": query_id, "warehouse_id": warehouse.id, "user_id": user_id, "engine": warehouse.engine, "status": "succeeded", "duration_ms": result.duration_ms, "rows_returned": len(rows), "cache_hit": False},
         )
-        return {**payload, "query_id": query_id, "cache_hit": False}
+        return {**payload, "query_id": query_id, "warehouse_id": str(warehouse.id), "cache_hit": False}

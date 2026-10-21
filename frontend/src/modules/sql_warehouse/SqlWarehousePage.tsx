@@ -32,6 +32,9 @@ type Warehouse = {
   description?: string | null;
   engine: 'clickhouse' | 'duckdb' | 'postgres';
   status: string;
+  is_default?: boolean;
+  runtime_id?: string | null;
+  endpoint_url?: string | null;
   config: Record<string, unknown>;
   resource_policy: Record<string, unknown>;
 };
@@ -350,6 +353,7 @@ const warehouseApi = {
   create: (body: Record<string, unknown>) => api.post<Warehouse>('/warehouses', body).then((r) => r.data),
   start: (id: string) => api.post<Warehouse>(`/warehouses/${id}/start`).then((r) => r.data),
   stop: (id: string) => api.post<Warehouse>(`/warehouses/${id}/stop`).then((r) => r.data),
+  setDefault: (id: string) => api.post<Warehouse>(`/warehouses/${id}/set-default`).then((r) => r.data),
   query: (warehouse_id: string, sql: string, catalog?: string, schema_name?: string, source?: string, max_rows?: number) => api.post<QueryResult>('/sql/query', { warehouse_id, sql, max_rows: max_rows ?? 1000, catalog, schema_name, source }).then((r) => r.data),
   validate: (sql: string) => api.post<{ valid: boolean; error?: string; statement_count?: number }>('/sql/validate', { sql }).then((r) => r.data),
   history: (warehouse_id?: string, scope: 'me' | 'all' = 'me') => api.get<{ records: HistoryRecord[] }>('/sql/history', { params: { warehouse_id, limit: 25, scope } }).then((r) => r.data.records),
@@ -689,7 +693,15 @@ export default function SqlWarehousePage() {
 
   const warehousesQuery = useQuery({ queryKey: ['sql-warehouses'], queryFn: warehouseApi.list });
   const warehouses = warehousesQuery.data || [];
-  const activeWarehouse = warehouses.find((w) => w.id === activeWarehouseId) || warehouses[0];
+  const defaultWarehouse = warehouses.find((w) => w.is_default);
+  const activeWarehouse = warehouses.find((w) => w.id === activeWarehouseId) || defaultWarehouse || warehouses[0];
+
+  useEffect(() => {
+    if (warehouses.length > 0 && !activeWarehouseId) {
+      const def = warehouses.find(w => w.is_default) || warehouses[0];
+      if (def) setActiveWarehouseId(def.id);
+    }
+  }, [warehouses, activeWarehouseId]);
   
   const catalogsQuery = useQuery({ queryKey: ['swh-catalogs'], queryFn: warehouseApi.catalogs });
   const schemasQuery = useQuery({ queryKey: ['swh-schemas', activeCatalog], queryFn: () => warehouseApi.schemas(activeCatalog), enabled: !!activeCatalog });
@@ -824,6 +836,7 @@ export default function SqlWarehousePage() {
 
   const startMutation = useMutation({ mutationFn: (id: string) => warehouseApi.start(id), onSuccess: () => qc.invalidateQueries({ queryKey: ['sql-warehouses'] }) });
   const stopMutation = useMutation({ mutationFn: (id: string) => warehouseApi.stop(id), onSuccess: () => qc.invalidateQueries({ queryKey: ['sql-warehouses'] }) });
+  const setDefaultMutation = useMutation({ mutationFn: (id: string) => warehouseApi.setDefault(id), onSuccess: () => qc.invalidateQueries({ queryKey: ['sql-warehouses'] }) });
   
   const runMutation = useMutation({
     mutationFn: (limit?: number) => warehouseApi.query(activeWarehouse!.id, sql, activeCatalog, activeSchema, 'sql_editor', limit ?? 1000),
@@ -846,6 +859,20 @@ export default function SqlWarehousePage() {
         <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
           <Server size={14} color="var(--color-text-muted)" />
           <span style={{ fontWeight: 500 }}>{w.name}</span>
+          {w.is_default && (
+            <span
+              style={{
+                fontSize: 10,
+                background: 'rgba(14, 165, 233, 0.15)',
+                color: 'var(--color-primary, #0ea5e9)',
+                padding: '1px 6px',
+                borderRadius: 4,
+                fontWeight: 600,
+              }}
+            >
+              DEFAULT
+            </span>
+          )}
         </span>
       ),
     },
@@ -868,7 +895,16 @@ export default function SqlWarehousePage() {
       align: 'right',
       className: 'app-table-actions',
       render: (w) => (
-        <>
+        <div style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+          {!w.is_default && (
+            <button
+              className="ghost-icon-btn"
+              title="Set as Default Warehouse"
+              onClick={(e) => { e.stopPropagation(); setDefaultMutation.mutate(w.id); }}
+            >
+              <Star size={13} />
+            </button>
+          )}
           {w.status === 'running' ? (
             <button
               className="ghost-icon-btn"
@@ -886,7 +922,7 @@ export default function SqlWarehousePage() {
               <Power size={13} />
             </button>
           )}
-        </>
+        </div>
       ),
     },
   ];

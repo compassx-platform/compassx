@@ -8,6 +8,7 @@ class WarehouseCreate(BaseModel):
     name: str
     description: str | None = None
     engine: str = "duckdb"
+    is_default: bool = False
     config: dict[str, Any] = Field(default_factory=dict)
     resource_policy: dict[str, Any] = Field(default_factory=dict)
 
@@ -18,6 +19,9 @@ class WarehouseRead(BaseModel):
     description: str | None = None
     engine: str
     status: str
+    is_default: bool = False
+    runtime_id: str | None = None
+    endpoint_url: str | None = None
     config: dict[str, Any]
     resource_policy: dict[str, Any]
     created_by: str
@@ -28,7 +32,7 @@ class WarehouseRead(BaseModel):
 
 
 class QueryRequest(BaseModel):
-    warehouse_id: str
+    warehouse_id: str | None = None
     sql: str
     session_id: str | None = None
     catalog: str | None = None
@@ -38,7 +42,7 @@ class QueryRequest(BaseModel):
 
 
 class ExplainRequest(BaseModel):
-    warehouse_id: str
+    warehouse_id: str | None = None
     sql: str
 
 

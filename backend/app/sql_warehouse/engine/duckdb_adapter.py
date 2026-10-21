@@ -1,12 +1,20 @@
 import asyncio
+import logging
+import os
 import time
+from urllib.parse import urlparse
+
+import httpx
 
 from .adapter_base import EngineAdapter, QueryResult
 
+logger = logging.getLogger(__name__)
+
 
 class DuckDBAdapter(EngineAdapter):
-    def __init__(self, database: str = ":memory:", **_: object):
+    def __init__(self, database: str = ":memory:", endpoint_url: str | None = None, **_: object):
         self._database = database
+        self._endpoint_url = endpoint_url
 
     async def execute(
         self,
@@ -17,8 +25,44 @@ class DuckDBAdapter(EngineAdapter):
         max_memory_mb: int | None,
         setup_sql: list[str] | None = None,
     ) -> QueryResult:
-        del query_id, timeout_sec
         start = time.monotonic()
+
+        # If endpoint_url is configured, dispatch to remote warehouse pod
+        if self._endpoint_url:
+            secret = os.environ.get("COMPASSX_INTERNAL_SECRET", "")
+            headers = {"X-Compassx-Internal-Secret": secret}
+            payload = {
+                "query_id": query_id,
+                "sql": sql,
+                "setup_sql": setup_sql,
+                "timeout_sec": timeout_sec,
+                "max_threads": max_threads,
+                "max_memory_mb": max_memory_mb,
+            }
+            try:
+                async with httpx.AsyncClient(timeout=float(timeout_sec) + 10.0) as client:
+                    resp = await client.post(
+                        f"{self._endpoint_url.rstrip('/')}/v1/query",
+                        json=payload,
+                        headers=headers,
+                    )
+                    resp.raise_for_status()
+                    data = resp.json()
+                    return QueryResult(
+                        columns=data.get("columns", []),
+                        rows=data.get("rows", []),
+                        rows_returned=data.get("rows_returned", 0),
+                        bytes_scanned=data.get("bytes_scanned", 0),
+                        duration_ms=data.get("duration_ms", int((time.monotonic() - start) * 1000)),
+                        query_analysis=data.get("query_analysis"),
+                        engine_query_id=query_id,
+                    )
+            except (httpx.ConnectError, httpx.ConnectTimeout) as net_err:
+                logger.warning(
+                    "Cannot reach remote DuckDB warehouse pod at %s (%s). Falling back to in-process execution.",
+                    self._endpoint_url,
+                    net_err,
+                )
 
         def _run():
             try:
@@ -81,9 +125,34 @@ class DuckDBAdapter(EngineAdapter):
         )
 
     async def cancel(self, engine_query_id: str) -> None:
-        del engine_query_id
+        if self._endpoint_url:
+            try:
+                secret = os.environ.get("COMPASSX_INTERNAL_SECRET", "")
+                headers = {"X-Compassx-Internal-Secret": secret}
+                async with httpx.AsyncClient(timeout=5.0) as client:
+                    await client.post(
+                        f"{self._endpoint_url.rstrip('/')}/v1/cancel/{engine_query_id}",
+                        headers=headers,
+                    )
+            except Exception:
+                pass
 
     async def explain(self, sql: str) -> str:
+        if self._endpoint_url:
+            try:
+                secret = os.environ.get("COMPASSX_INTERNAL_SECRET", "")
+                headers = {"X-Compassx-Internal-Secret": secret}
+                async with httpx.AsyncClient(timeout=30.0) as client:
+                    resp = await client.post(
+                        f"{self._endpoint_url.rstrip('/')}/v1/explain",
+                        json={"sql": sql},
+                        headers=headers,
+                    )
+                    if resp.status_code == 200:
+                        return resp.json().get("explanation", "")
+            except Exception:
+                pass
+
         def _run():
             try:
                 import duckdb
@@ -98,4 +167,11 @@ class DuckDBAdapter(EngineAdapter):
         return await asyncio.to_thread(_run)
 
     async def health_check(self) -> bool:
+        if self._endpoint_url:
+            try:
+                async with httpx.AsyncClient(timeout=3.0) as client:
+                    resp = await client.get(f"{self._endpoint_url.rstrip('/')}/healthz")
+                    return resp.status_code == 200
+            except Exception:
+                return False
         return True

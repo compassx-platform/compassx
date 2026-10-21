@@ -13,16 +13,22 @@ RUN pip install --no-cache-dir \
     requests \
     httpx \
     pandas \
+    fastapi \
+    uvicorn \
+    pydantic \
     mlflow
 
 COPY services/__init__.py /opt/compassx/services/__init__.py
 COPY services/fsspec_cx /opt/compassx/services/fsspec_cx
 COPY services/compassx_sql /opt/compassx/services/compassx_sql
 COPY services/compassx_tools /opt/compassx/services/compassx_tools
+COPY services/warehouse_daemon /opt/compassx/services/warehouse_daemon
 
 ENV IPYTHONDIR=/opt/compassx/.ipython
 RUN mkdir -p /opt/compassx/.ipython/profile_default/startup && \
     echo "import services.compassx_sql as cx" > /opt/compassx/.ipython/profile_default/startup/00-compassx.py && \
     echo "try:\n    get_ipython().run_line_magic('load_ext', 'services.compassx_sql')\nexcept:\n    pass" >> /opt/compassx/.ipython/profile_default/startup/00-compassx.py
 
-CMD ["tail", "-f", "/dev/null"]
+EXPOSE 8080
+
+CMD ["uvicorn", "services.warehouse_daemon.server:app", "--host", "0.0.0.0", "--port", "8080"]

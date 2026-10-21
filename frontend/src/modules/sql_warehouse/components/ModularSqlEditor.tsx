@@ -26,6 +26,7 @@ export interface SqlWarehouseItem {
   name: string;
   status: string;
   engine?: string;
+  is_default?: boolean;
 }
 
 export interface CatalogItem {
@@ -103,7 +104,15 @@ export const ModularSqlEditor: React.FC<ModularSqlEditorProps> = ({
     return Array.from({ length: Math.max(lines, 1) }, (_, i) => i + 1);
   }, [sql]);
 
-  const activeWarehouse = warehouses.find(w => w.id === activeWarehouseId) || warehouses[0];
+  const defaultWarehouse = warehouses.find(w => w.is_default);
+  const activeWarehouse = warehouses.find(w => w.id === activeWarehouseId) || defaultWarehouse || warehouses[0];
+
+  useEffect(() => {
+    if (warehouses.length > 0 && !activeWarehouseId) {
+      const def = warehouses.find(w => w.is_default) || warehouses[0];
+      if (def) onWarehouseChange(def.id);
+    }
+  }, [warehouses, activeWarehouseId, onWarehouseChange]);
 
   const handleExecute = (mode?: '1000' | 'all') => {
     const targetMode = mode || runMode;
@@ -241,7 +250,11 @@ export const ModularSqlEditor: React.FC<ModularSqlEditorProps> = ({
             <div className="swh-wh-selector-db">
               <div className={`swh-dot ${activeWarehouse?.status === 'running' ? 'is-running' : ''}`} />
               <select value={activeWarehouseId} onChange={e => onWarehouseChange(e.target.value)} title="Select Compute Warehouse">
-                {warehouses.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
+                {warehouses.map(w => (
+                  <option key={w.id} value={w.id}>
+                    {w.name} ({w.engine || 'duckdb'}){w.is_default ? ' [Default]' : ''}
+                  </option>
+                ))}
               </select>
             </div>
           )}

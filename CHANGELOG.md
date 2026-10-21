@@ -5,6 +5,32 @@ All notable changes to the CompassX Platform will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.15.0] - 2026-10-21
+
+### 🚀 Highlights
+
+CompassX `0.15.0` introduces **Containerized Multi-Engine SQL Warehouses (DuckDB Compute Daemon & ClickHouse)**, **Automated Warehouse Pod Lifecycle Management & Readiness Polling**, **Workspace Default Warehouse Scoping & Auto-Resolution**, and **Interactive Studio & Editor Default Indicators**.
+
+### ✨ Features & Enhancements
+
+#### Containerized SQL Warehouse Architecture & Daemon Service
+- **FastAPI DuckDB Warehouse Daemon ([`server.py`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/backend/services/warehouse_daemon/server.py), [`Dockerfile.compute-duckdb`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/backend/Dockerfile.compute-duckdb))**: Introduces a high-performance REST execution interface for isolated DuckDB compute containers, exposing `/healthz`, `/v1/query` with execution timeouts, dynamic thread/memory limits, JSON query profiling, and live query cancellation handles.
+- **Remote Warehouse Dispatch with In-Process Fallback ([`duckdb_adapter.py`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/backend/app/sql_warehouse/engine/duckdb_adapter.py), [`router.py`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/backend/app/sql_warehouse/engine/router.py))**: Updated `DuckDBAdapter` to route query execution, query explanation, health checking, and query cancellation to containerized warehouse endpoints via HTTP, while falling back gracefully to in-process execution if pods are unreachable.
+
+#### Warehouse Pod Orchestration & Lifecycle Automation
+- **Platform Driver Pod Orchestration ([`pod_orchestrator.py`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/backend/app/sql_warehouse/warehouse/pod_orchestrator.py), [`routes.py`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/backend/app/sql_warehouse/routes.py))**: Implemented `WarehousePodOrchestrator` to automatically build `RuntimeSpec` configurations, allocate memory/CPU resource policies, and provision, start, stop, delete, and health-poll warehouse pods across Docker Compose and Kubernetes cloud profiles.
+- **On-Demand Auto-Resumption ([`routes.py`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/backend/app/sql_warehouse/routes.py))**: SQL execution automatically wakes up and provisions suspended or stopped warehouses on demand before running queries.
+
+#### Database Persistence & Default Warehouse Auto-Resolution
+- **Alembic Schema Migration ([`0010_sql_warehouse_container_support.py`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/backend/alembic_system/versions/0010_sql_warehouse_container_support.py), [`models.py`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/backend/app/sql_warehouse/models.py))**: Added `is_default`, `runtime_id`, and `endpoint_url` columns to `sql_warehouse_warehouses` with schema inspection for both compute and default schemas.
+- **Default Warehouse Management ([`manager.py`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/backend/app/sql_warehouse/warehouse/manager.py), [`workspace_defaults.py`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/backend/app/compute/services/workspace_defaults.py))**: First created warehouse in any workspace automatically becomes default; allows setting default via `POST /api/v1/warehouses/{id}/set-default`; queries without `warehouse_id` automatically resolve to the workspace default warehouse.
+
+#### Frontend SQL Studio & Editor Enhancements
+- **Default Warehouse UI & Action ([`SqlWarehousePage.tsx`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/frontend/src/modules/sql_warehouse/SqlWarehousePage.tsx))**: Added visual "DEFAULT" pill badge in warehouse lists and one-click star action to designate any warehouse as the active workspace default.
+- **Modular Editor Selector ([`ModularSqlEditor.tsx`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/frontend/src/modules/sql_warehouse/components/ModularSqlEditor.tsx))**: Enhanced warehouse dropdown selector with engine type display and `[Default]` tags, automatically syncing with the default warehouse on workspace load.
+
+---
+
 ## [0.14.10] - 2026-10-21
 
 ### 🚀 Highlights

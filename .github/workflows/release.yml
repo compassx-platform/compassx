@@ -92,7 +92,7 @@ jobs:
             fi
 
             # 4. DuckDB Compute
-            if echo "$CHANGED_FILES" | grep -qE "^backend/Dockerfile\.compute-duckdb|^backend/services/__init__\.py|^backend/services/compassx_sql/|^backend/services/fsspec_cx/|^backend/services/compassx_tools/"; then
+            if echo "$CHANGED_FILES" | grep -qE "^backend/Dockerfile\.compute-duckdb|^backend/services/__init__\.py|^backend/services/compassx_sql/|^backend/services/fsspec_cx/|^backend/services/compassx_tools/|^backend/services/warehouse_daemon/"; then
               echo "build_duckdb=true" >> "$GITHUB_OUTPUT"
             else
               echo "build_duckdb=false" >> "$GITHUB_OUTPUT"
@@ -260,7 +260,7 @@ jobs:
             sed -i -E "s|(ghcr.io/${{ env.OWNER }}/airflow-notebook-runner):[a-zA-Z0-9._-]+|\1:${TAG}|g" backend/compassx/runtime/spec_builders.py
           fi
           if [ "${{ needs.detect-changes.outputs.build_duckdb }}" = "true" ]; then
-            sed -i -E "s|(ghcr.io/${{ env.OWNER }}/compute-duckdb):[a-zA-Z0-9._-]+|\1:${TAG}|g" backend/app/compute/services/runtimes.py backend/compassx/runtime/spec_builders.py
+            sed -i -E "s|(ghcr.io/${{ env.OWNER }}/compute-duckdb):[a-zA-Z0-9._-]+|\1:${TAG}|g" backend/app/compute/services/runtimes.py backend/compassx/runtime/spec_builders.py backend/app/sql_warehouse/warehouse/pod_orchestrator.py
           fi
 
           # 2. Update Helm Chart.yaml and values.yaml

@@ -103,6 +103,7 @@ def ensure_workspace_default_resources(
                 description="Default DuckDB SQL Warehouse",
                 engine="duckdb",
                 status="running",
+                is_default=True,
                 config={},
                 resource_policy={},
                 created_by=eff_created_by,
