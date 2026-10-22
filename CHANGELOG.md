@@ -5,6 +5,27 @@ All notable changes to the CompassX Platform will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.15.1] - 2026-10-22
+
+### 🚀 Highlights
+
+CompassX `0.15.1` introduces **Kubernetes Service Auto-Provisioning for Containerized Warehouses**, **Eager Pod Readiness Polling**, **Fault-Tolerant Daemon Setup SQL Execution**, **Lazy Catalog Table Resolution**, and **Enhanced Query Explain Error Bubbling**.
+
+### ✨ Features & Enhancements
+
+#### Kubernetes Service Auto-Provisioning & DNS Routing
+- **Automatic ClusterIP Service Management ([`pod_orchestrator.py`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/backend/app/sql_warehouse/warehouse/pod_orchestrator.py))**: Automatically creates and cleans up namespaced `compassx-{runtime_id}` ClusterIP Kubernetes Services with port mappings (8080 for DuckDB, 8123/9000 for ClickHouse), ensuring reliable intra-cluster DNS routing (`http://compassx-{runtime_id}.{ns}.svc.cluster.local`) across Kubernetes cloud environments.
+- **Boot Readiness Synchronization ([`pod_orchestrator.py`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/backend/app/sql_warehouse/warehouse/pod_orchestrator.py))**: Implemented eager readiness health polling upon warehouse pod creation, preventing immediate user queries from encountering connection drops while the daemon container initializes.
+
+#### Warehouse Compute Daemon Fault Tolerance
+- **Resilient Setup SQL Ingestion ([`server.py`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/backend/services/warehouse_daemon/server.py))**: Wrapped per-statement table registrations and extensions in `try...except` error handlers, ensuring non-fatal setup warnings do not fail query execution or explanation.
+
+#### Query Execution & Catalog Performance
+- **Lazy Catalog Table Resolution ([`duckdb_resolver.py`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/backend/app/sql_warehouse/catalog/duckdb_resolver.py), [`executor.py`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/backend/app/sql_warehouse/query/executor.py))**: Optimized `build_duckdb_catalog_plan` to accept the query string and only construct scan plans for Iceberg/Delta tables actually referenced in the query, significantly reducing cold query latency and remote metadata scans.
+- **Robust Explain Error Bubbling ([`duckdb_adapter.py`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/backend/app/sql_warehouse/engine/duckdb_adapter.py))**: Surfaced explicit JSON error payloads and HTTP error details when explaining query execution plans via remote warehouse pods.
+
+---
+
 ## [0.15.0] - 2026-10-21
 
 ### 🚀 Highlights

@@ -156,7 +156,7 @@ def _file_scan_sql(uri: str, filename: str, file_format: str | None) -> str:
     )
 
 
-def build_duckdb_catalog_plan(db: Session) -> DuckDBCatalogPlan:
+def build_duckdb_catalog_plan(db: Session, sql: str | None = None) -> DuckDBCatalogPlan:
     """
     Build the list of DuckDB SQL statements needed before executing a user query.
 
@@ -231,6 +231,8 @@ def build_duckdb_catalog_plan(db: Session) -> DuckDBCatalogPlan:
                 for table in schema.tables:
                     table_type = table.table_type.value if hasattr(table.table_type, "value") else table.table_type
                     if table_type != "iceberg":
+                        continue
+                    if sql and table.name.lower() not in sql.lower():
                         continue
                     data_file = (table.properties or {}).get("data_file")
                     if data_file and table.storage_location:

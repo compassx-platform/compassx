@@ -87,7 +87,10 @@ async def execute_query(
                 conn.execute(f"SET memory_limit = '{int(req.max_memory_mb)}MB'")
 
             for stmt in req.setup_sql or []:
-                conn.execute(stmt)
+                try:
+                    conn.execute(stmt)
+                except Exception as stmt_err:
+                    logger.warning("Setup statement skipped in query %s: %s (%s)", req.query_id, stmt, stmt_err)
 
             if req.enable_profiling:
                 try:
@@ -168,7 +171,10 @@ async def explain_query(
         conn = duckdb.connect(_database_path)
         try:
             for stmt in req.setup_sql or []:
-                conn.execute(stmt)
+                try:
+                    conn.execute(stmt)
+                except Exception as stmt_err:
+                    logger.warning("Setup statement skipped in explain: %s (%s)", stmt, stmt_err)
             rows = conn.execute(f"EXPLAIN {req.sql}").fetchall()
             return "\n".join(str(row) for row in rows)
         finally:

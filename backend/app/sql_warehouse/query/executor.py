@@ -91,7 +91,7 @@ class QueryExecutor:
         try:
             setup_sql = None
             if warehouse.engine == "duckdb":
-                setup_sql = build_duckdb_catalog_plan(self.records.db).setup_sql
+                setup_sql = build_duckdb_catalog_plan(self.records.db, sql=sql).setup_sql
                 if catalog:
                     if catalog.lower() in {"main", "temp", "system", "memory"}:
                         if schema_name:

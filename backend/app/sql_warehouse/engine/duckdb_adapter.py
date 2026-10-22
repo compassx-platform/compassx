@@ -150,8 +150,12 @@ class DuckDBAdapter(EngineAdapter):
                     )
                     if resp.status_code == 200:
                         return resp.json().get("explanation", "")
-            except Exception:
-                pass
+                    error_detail = resp.json().get("detail", resp.text) if resp.headers.get("content-type", "").startswith("application/json") else resp.text
+                    raise RuntimeError(f"Explain failed: {error_detail}")
+            except Exception as exc:
+                if "Explain failed" in str(exc):
+                    raise
+                logger.warning("Remote explain failed: %s, falling back to local DuckDB", exc)
 
         def _run():
             try:

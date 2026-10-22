@@ -40,9 +40,9 @@ class WarehousePodOrchestrator:
         if not platform:
             return None
         try:
-            driver_name = compute_settings.COMPASSX_PLATFORM_DRIVER or (
-                "kubernetes" if compute_settings.is_cloud() else "docker"
-            )
+            driver_env = os.environ.get("COMPASSX_PLATFORM_DRIVER") or getattr(compute_settings, "COMPASSX_PLATFORM_DRIVER", None)
+            is_k8s = compute_settings.is_k8s() if hasattr(compute_settings, "is_k8s") else not getattr(compute_settings, "is_local", lambda: True)()
+            driver_name = driver_env or ("kubernetes" if is_k8s else "docker")
             return platform.driver_registry.get(driver_name)
         except Exception as exc:
             logger.debug("Driver unavailable in WarehousePodOrchestrator: %s", exc)
@@ -91,7 +91,7 @@ class WarehousePodOrchestrator:
         if engine == "duckdb":
             image = os.environ.get(
                 "COMPASSX_DUCKDB_WAREHOUSE_IMAGE",
-                "ghcr.io/compassx-platform/compute-duckdb:v0.15.0",
+                "ghcr.io/compassx-platform/compute-duckdb:v0.15.1",
             )
             ports = [PortMapping(name="http", container_port=8080)]
             command = ["uvicorn", "services.warehouse_daemon.server:app", "--host", "0.0.0.0", "--port", "8080"]
@@ -119,6 +119,7 @@ class WarehousePodOrchestrator:
             env=env,
             ports=ports,
             labels=labels,
+            namespace=os.environ.get("COMPASSX_K8S_NAMESPACE", getattr(compute_settings, "COMPASSX_NAMESPACE", "compassx")),
             workspace_id=str(warehouse.workspace_id or ""),
             metadata={"warehouse_id": str(warehouse.id), "resource_name": f"wh-{warehouse.name}"},
         )
@@ -128,14 +129,80 @@ class WarehousePodOrchestrator:
         port = 8123 if engine == "clickhouse" else 8080
 
         # In Kubernetes, the deployment has a service: <deployment-name>.<namespace>.svc.cluster.local
-        if compute_settings.is_cloud():
-            ns = os.environ.get("COMPASSX_K8S_NAMESPACE", "compassx-jobs")
+        is_k8s = compute_settings.is_k8s() if hasattr(compute_settings, "is_k8s") else not getattr(compute_settings, "is_local", lambda: True)()
+        if is_k8s:
+            ns = os.environ.get("COMPASSX_K8S_NAMESPACE", getattr(compute_settings, "COMPASSX_NAMESPACE", "compassx"))
             return f"http://compassx-{runtime_id}.{ns}.svc.cluster.local:{port}"
 
         # In Docker Compose, the container name is accessible on the compose network
         platform = self._get_platform()
         proj = platform.profile.compose_project if platform and hasattr(platform, "profile") else "compassx"
         return f"http://{proj}-{runtime_id}:{port}"
+
+    def _ensure_k8s_service(self, runtime_id: str, port: int, ns: str, warehouse):
+        try:
+            from kubernetes import client
+            from app.compute.services.k8s_client import get_k8s_client
+            k8s = get_k8s_client()
+            core = k8s.core() if hasattr(k8s, "core") else client.CoreV1Api()
+            svc_name = f"compassx-{runtime_id}"
+
+            svc_ports = [
+                client.V1ServicePort(
+                    name="http",
+                    port=port,
+                    target_port=port,
+                    protocol="TCP",
+                )
+            ]
+            if (warehouse.engine or "").lower() == "clickhouse":
+                svc_ports.append(
+                    client.V1ServicePort(
+                        name="native",
+                        port=9000,
+                        target_port=9000,
+                        protocol="TCP",
+                    )
+                )
+
+            labels = {
+                "compassx/resource-type": "warehouse",
+                "compassx/runtime-id": runtime_id,
+                "compassx/warehouse-id": str(warehouse.id),
+                "compassx/engine": (warehouse.engine or "duckdb").lower(),
+            }
+
+            body = client.V1Service(
+                metadata=client.V1ObjectMeta(
+                    name=svc_name,
+                    namespace=ns,
+                    labels=labels,
+                ),
+                spec=client.V1ServiceSpec(
+                    selector={"compassx/runtime-id": runtime_id},
+                    ports=svc_ports,
+                    type="ClusterIP",
+                ),
+            )
+            try:
+                core.read_namespaced_service(name=svc_name, namespace=ns)
+            except Exception:
+                core.create_namespaced_service(namespace=ns, body=body)
+                logger.info("Created K8s Service %s in namespace %s", svc_name, ns)
+        except Exception as exc:
+            logger.warning("Could not ensure K8s Service %s: %s", runtime_id, exc)
+
+    def _delete_k8s_service(self, runtime_id: str, ns: str):
+        try:
+            from kubernetes import client
+            from app.compute.services.k8s_client import get_k8s_client
+            k8s = get_k8s_client()
+            core = k8s.core() if hasattr(k8s, "core") else client.CoreV1Api()
+            svc_name = f"compassx-{runtime_id}"
+            core.delete_namespaced_service(name=svc_name, namespace=ns)
+            logger.info("Deleted K8s Service %s in namespace %s", svc_name, ns)
+        except Exception:
+            pass
 
     async def start_pod(self, warehouse) -> tuple[str, str]:
         """Provisions and starts the warehouse pod/container.
@@ -155,6 +222,17 @@ class WarehousePodOrchestrator:
             # Create runtime
             await driver.create_runtime(spec)
             logger.info("Created warehouse runtime %s (engine=%s)", runtime_id, warehouse.engine)
+
+            # If running on Kubernetes, ensure Service exists for cluster DNS routing
+            is_k8s = compute_settings.is_k8s() if hasattr(compute_settings, "is_k8s") else not getattr(compute_settings, "is_local", lambda: True)()
+            if is_k8s:
+                ns = os.environ.get("COMPASSX_K8S_NAMESPACE", getattr(compute_settings, "COMPASSX_NAMESPACE", "compassx"))
+                port = 8123 if (warehouse.engine or "").lower() == "clickhouse" else 8080
+                self._ensure_k8s_service(runtime_id=runtime_id, port=port, ns=ns, warehouse=warehouse)
+
+            # Wait briefly for readiness (up to 15s) so first query doesn't hit a booting container
+            await self.poll_readiness(endpoint, warehouse.engine or "duckdb", timeout_sec=15)
+
             return runtime_id, endpoint
         except Exception as exc:
             logger.error("Failed to provision warehouse runtime %s: %s", runtime_id, exc)
@@ -178,6 +256,11 @@ class WarehousePodOrchestrator:
         """Deletes the warehouse pod/container."""
         driver = self._get_driver()
         runtime_id = warehouse.runtime_id or self._build_runtime_id(warehouse.id)
+        is_k8s = compute_settings.is_k8s() if hasattr(compute_settings, "is_k8s") else not getattr(compute_settings, "is_local", lambda: True)()
+        if is_k8s:
+            ns = os.environ.get("COMPASSX_K8S_NAMESPACE", getattr(compute_settings, "COMPASSX_NAMESPACE", "compassx"))
+            self._delete_k8s_service(runtime_id=runtime_id, ns=ns)
+
         if not driver:
             return True
         try:
