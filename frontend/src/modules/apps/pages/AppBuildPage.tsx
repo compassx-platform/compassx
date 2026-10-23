@@ -365,6 +365,7 @@ export default function AppBuildPage() {
   const handleSelectSession = (sessionId: string) => {
     if (sessionId !== activeSessionId) {
       setIsSwitchingSession(true);
+      setTimeout(() => setIsSwitchingSession(false), 500);
     }
     setActiveSessionId(sessionId);
     try {
@@ -390,8 +391,9 @@ export default function AppBuildPage() {
       const modelSuffix = created.model ? ` (${created.model})` : '';
       toast.success(`Session "${created.title}" started with ${created.agent}${modelSuffix}.`);
     } catch (err: any) {
-      setIsSwitchingSession(false);
       toast.error(err?.response?.data?.detail || err?.message || 'Failed to create session');
+    } finally {
+      setIsSwitchingSession(false);
     }
   };
 

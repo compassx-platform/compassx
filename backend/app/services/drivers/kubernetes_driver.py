@@ -2405,8 +2405,8 @@ class KubernetesDevDriver(BaseDevDriver):
                 sess_f = f"/root/.gemini/sessions/{session_name}.conv_id" if session_name else ""
                 cli_cmd = (
                     "export AGY_TRUST_ALL=true ANTIGRAVITY_TRUST_ALL_WORKSPACES=true AGY_NON_INTERACTIVE=true; "
-                    f"if [ -n \"{sess_f}\" ] && [ -f \"{sess_f}\" ] && [ -n \"$(cat '{sess_f}' 2>/dev/null)\" ]; then "
-                    f"  exec agy --dangerously-skip-permissions --conversation \"$(cat '{sess_f}')\"; "
+                    f"if [ -n \"{sess_f}\" ] && [ -f \"{sess_f}\" ] && [ -n \"$(cat \"{sess_f}\" 2>/dev/null)\" ]; then "
+                    f"  exec agy --dangerously-skip-permissions --conversation \"$(cat \"{sess_f}\")\"; "
                     f"else "
                     f"  exec agy --dangerously-skip-permissions; "
                     f"fi"

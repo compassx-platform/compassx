@@ -88,8 +88,20 @@ export function DevTerminal({
         onSessionReady?.();
       }, 1800);
       return () => clearTimeout(timer);
+    } else if (connState?.kind === 'error' || connState?.kind === 'closed') {
+      setIsSessionLoading(false);
     }
   }, [connState?.kind, sessionId, onSessionReady]);
+
+  // Global safety watchdog: ensure spinner is dismissed after at most 6s
+  useEffect(() => {
+    if (isSessionLoading) {
+      const timer = setTimeout(() => {
+        setIsSessionLoading(false);
+      }, 6000);
+      return () => clearTimeout(timer);
+    }
+  }, [isSessionLoading]);
 
   const sendCommandToTerminal = useCallback(
     (cmd: string) => {
@@ -151,7 +163,8 @@ export function DevTerminal({
   }
 
   const isConnected = connState?.kind === 'connected';
-  const showLoader = isSessionLoading || isSwitchingSession || connState?.kind === 'connecting';
+  const isTermFailed = connState?.kind === 'closed' || connState?.kind === 'error';
+  const showLoader = !isTermFailed && (isSessionLoading || isSwitchingSession || connState?.kind === 'connecting');
 
   return (
     <div

@@ -5,6 +5,24 @@ All notable changes to the CompassX Platform will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.15.3] - 2026-10-23
+
+### 🚀 Highlights
+
+CompassX `0.15.3` introduces **Hardened Dev Session Agent CLI & Shell Quoting**, **Robust Conversation Directory Fallback Resolution**, **Terminal Connection Failure Recovery & 6s Watchdog**, and **Safe Multi-Session Switching State Lifecycle**.
+
+### ✨ Features & Enhancements
+
+#### Dev Session & Agent CLI Resilience
+- **Robust Python PTY Launcher Quoting ([`docker_driver.py`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/backend/app/services/drivers/docker_driver.py))**: Used Python `repr()` interpolation for commands executed inside `pty.fork()` POSIX PTY sessions (`cmd_arg = repr(f"{clean_cmd} || bash")`), completely preventing single-quote syntax corruption when launching persistent tmux sessions or interactive AI agent CLIs.
+- **Double-Quoted Session Path & Conversation Fallback ([`dev_session_service.py`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/backend/app/services/dev_session_service.py), [`kubernetes_driver.py`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/backend/app/services/drivers/kubernetes_driver.py))**: Replaced complex `sed` pipelines with direct `basename` extraction to reliably capture conversation directory IDs from `/root/.gemini/antigravity/brain/*/`, and consistently double-quoted `{sess_file}` paths across drivers to avoid subshell evaluation failures.
+
+#### Terminal UI & Dev Session Switching Lifecycle
+- **Terminal Connection Error Handling & Safety Watchdog ([`DevTerminal.tsx`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/frontend/src/modules/apps/components/DevTerminal.tsx))**: Dismisses the session loader immediately if the WebSocket terminal connection closes or encounters an error (`connState?.kind === 'closed' || connState?.kind === 'error'`), and added an unconditional 6-second safety watchdog timer to prevent UI loaders from getting stuck indefinitely.
+- **Fail-Safe Session Selection Lifecycle ([`AppBuildPage.tsx`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/frontend/src/modules/apps/pages/AppBuildPage.tsx))**: Wrapped session creation in `try...finally` ensuring switching loaders always reset, supplemented by a 500ms fallback auto-reset when switching between active dev sessions.
+
+---
+
 ## [0.15.2] - 2026-10-23
 
 ### 🚀 Highlights

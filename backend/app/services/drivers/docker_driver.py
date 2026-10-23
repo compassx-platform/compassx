@@ -1204,8 +1204,8 @@ class DockerDevDriver(BaseDevDriver):
                 sess_f = f"/root/.gemini/sessions/{session_name}.conv_id" if session_name else ""
                 cli_cmd = (
                     "export AGY_TRUST_ALL=true ANTIGRAVITY_TRUST_ALL_WORKSPACES=true AGY_NON_INTERACTIVE=true; "
-                    f"if [ -n \"{sess_f}\" ] && [ -f \"{sess_f}\" ] && [ -n \"$(cat '{sess_f}' 2>/dev/null)\" ]; then "
-                    f"  exec agy --dangerously-skip-permissions --conversation \"$(cat '{sess_f}')\"; "
+                    f"if [ -n \"{sess_f}\" ] && [ -f \"{sess_f}\" ] && [ -n \"$(cat \"{sess_f}\" 2>/dev/null)\" ]; then "
+                    f"  exec agy --dangerously-skip-permissions --conversation \"$(cat \"{sess_f}\")\"; "
                     f"else "
                     f"  exec agy --dangerously-skip-permissions; "
                     f"fi"
@@ -1216,8 +1216,9 @@ class DockerDevDriver(BaseDevDriver):
         try:
             if session_name and cli_cmd:
                 # Persistent tmux session inside container: attaches if existing (-A -D detaches stale clients), creates if not
-                clean_cmd = f"export OPENAI_BASE_URL=http://host.docker.internal:8000/api/v1/ai-gateway/v1 OPENAI_API_KEY=cx_gw_app_{app.id}; {cli_cmd}".replace("'", "'\\''")
+                clean_cmd = f"export OPENAI_BASE_URL=http://host.docker.internal:8000/api/v1/ai-gateway/v1 OPENAI_API_KEY=cx_gw_app_{app.id}; {cli_cmd}"
                 tmux_target = session_name.replace("'", "")
+                cmd_arg = repr(f"{clean_cmd} || bash")
                 py_pty_script = (
                     "import pty, os, sys, fcntl, termios, struct; "
                     f"cols = int(os.environ.get('COLUMNS', {cols})); "
@@ -1225,7 +1226,7 @@ class DockerDevDriver(BaseDevDriver):
                     "pid, m = pty.fork(); "
                     "("
                     "    (os.system('tmux source-file /root/.tmux.conf 2>/dev/null'), "
-                    f"    os.execlp('tmux', 'tmux', 'new-session', '-A', '-D', '-s', '{tmux_target}', '-c', '{workdir}', '{clean_cmd} || bash'))[1] if pid == 0 else ("
+                    f"    os.execlp('tmux', 'tmux', 'new-session', '-A', '-D', '-s', '{tmux_target}', '-c', '{workdir}', {cmd_arg}))[1] if pid == 0 else ("
                     "        fcntl.ioctl(m, termios.TIOCSWINSZ, struct.pack('HHHH', rows, cols, 0, 0)), "
                     "        pty._copy(m, pty._read, pty._read), "
                     "        os.close(m), "
@@ -1244,14 +1245,15 @@ class DockerDevDriver(BaseDevDriver):
                 ]
             elif cli_cmd:
                 # Launch interactive agent CLI in a genuine POSIX pseudo-terminal (PTY) inside Linux container
-                clean_cmd = f"export OPENAI_BASE_URL=http://host.docker.internal:8000/api/v1/ai-gateway/v1 OPENAI_API_KEY=cx_gw_app_{app.id}; {cli_cmd}".replace("'", "'\\''")
+                clean_cmd = f"export OPENAI_BASE_URL=http://host.docker.internal:8000/api/v1/ai-gateway/v1 OPENAI_API_KEY=cx_gw_app_{app.id}; {cli_cmd}"
+                cmd_arg = repr(f"{clean_cmd} || bash")
                 py_pty_script = (
                     "import pty, os, sys, fcntl, termios, struct; "
                     "cols = int(os.environ.get('COLUMNS', 100)); "
                     "rows = int(os.environ.get('LINES', 30)); "
                     "pid, m = pty.fork(); "
                     "("
-                    f"    os.execlp('bash', 'bash', '-c', '{clean_cmd} || bash') if pid == 0 else ("
+                    f"    os.execlp('bash', 'bash', '-c', {cmd_arg}) if pid == 0 else ("
                     "        fcntl.ioctl(m, termios.TIOCSWINSZ, struct.pack('HHHH', rows, cols, 0, 0)), "
                     "        pty._copy(m, pty._read, pty._read), "
                     "        os.close(m), "
