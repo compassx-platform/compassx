@@ -5,6 +5,27 @@ All notable changes to the CompassX Platform will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.15.2] - 2026-10-23
+
+### 🚀 Highlights
+
+CompassX `0.15.2` introduces **Airflow Scheduler Dynamic Polling & Storage Cost Optimization**, **Live Scheduler Tuning Patching**, **Interactive Account Settings Profile Controls**, and **Enhanced SQL Warehouse Remote Error Formatting**.
+
+### ✨ Features & Enhancements
+
+#### Airflow Scheduler Storage Cost & Polling Optimization
+- **Dynamic Scheduler Interval Tuning ([`manager.py`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/backend/services/airflow/manager.py), [`manifests.py`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/backend/services/airflow/manifests.py))**: Added configurable DAG directory list intervals (`AIRFLOW__SCHEDULER__DAG_DIR_LIST_INTERVAL`, default 300s), min file processing intervals (`AIRFLOW__SCHEDULER__MIN_FILE_PROCESS_INTERVAL`, default 120s), and parsing process concurrency (`AIRFLOW__SCHEDULER__PARSING_PROCESSES`, default 2) to drastically cut Azure Files transaction costs and IOPS load.
+- **Live Deployment Patching ([`manager.py`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/backend/services/airflow/manager.py), [`account_routes.py`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/backend/app/workspace/account_routes.py))**: Added `update_scheduler_tuning` to dynamically patch running Airflow scheduler deployments on Kubernetes in real time without downtime.
+
+#### Account Settings UI & Profiles
+- **Tuning Profiles & Progressive Disclosure ([`AccountSettingsPage.tsx`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/frontend/src/pages/account/AccountSettingsPage.tsx), [`accountSettingsApi.ts`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/frontend/src/lib/accountSettingsApi.ts))**: Introduced dedicated "Airflow Scheduler & Storage Optimization" section with 4 tuning presets (Cost-Optimized, Balanced, High-Frequency, Custom) and fine-grained controls for file scan frequency and parsing worker concurrency.
+
+#### Compute & SQL Warehouse Improvements
+- **Compute DuckDB Runtime Packaging ([`Dockerfile.compute-duckdb`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/backend/Dockerfile.compute-duckdb))**: Baked `pytz` into `compute-duckdb` container image for timezone-aware query transformations.
+- **Remote Query Error Detail Extraction ([`duckdb_adapter.py`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/backend/app/sql_warehouse/engine/duckdb_adapter.py))**: Extracts structured backend exception payloads (`detail`) when remote warehouse daemon queries encounter failures, providing clearer feedback in SQL Studio.
+
+---
+
 ## [0.15.1] - 2026-10-22
 
 ### 🚀 Highlights

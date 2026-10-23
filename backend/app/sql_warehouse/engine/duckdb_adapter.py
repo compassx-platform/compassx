@@ -46,7 +46,13 @@ class DuckDBAdapter(EngineAdapter):
                         json=payload,
                         headers=headers,
                     )
-                    resp.raise_for_status()
+                    if resp.status_code != 200:
+                        error_detail = (
+                            resp.json().get("detail", resp.text)
+                            if resp.headers.get("content-type", "").startswith("application/json")
+                            else resp.text
+                        )
+                        raise RuntimeError(error_detail)
                     data = resp.json()
                     return QueryResult(
                         columns=data.get("columns", []),

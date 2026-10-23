@@ -10,6 +10,10 @@ export interface AirflowAccountSettings {
   webserver_replicas?: number;
   webserver_available_replicas?: number;
   webserver_url?: string | null;
+  tuning_profile?: 'cost_optimized' | 'balanced' | 'high_frequency' | 'custom';
+  dag_dir_list_interval?: number;
+  min_file_process_interval?: number;
+  parsing_processes?: number;
 }
 
 export interface VmSizeOption {

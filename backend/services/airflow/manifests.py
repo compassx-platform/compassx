@@ -64,7 +64,11 @@ def build_airflow_role_binding(namespace: str) -> client.V1RoleBinding:
     )
 
 
-def _build_airflow_env(dags_mount_path: str) -> list[client.V1EnvVar]:
+def _build_airflow_env(dags_mount_path: str, tuning: dict | None = None) -> list[client.V1EnvVar]:
+    tuning = tuning or {}
+    dag_dir_interval = str(tuning.get("dag_dir_list_interval") or 300)
+    min_proc_interval = str(tuning.get("min_file_process_interval") or 120)
+    parsing_procs = str(tuning.get("parsing_processes") or 2)
     return [
         client.V1EnvVar(name="AIRFLOW_HOME", value="/opt/airflow"),
         client.V1EnvVar(name="AIRFLOW__CORE__EXECUTOR", value="CeleryExecutor"),
@@ -74,10 +78,11 @@ def _build_airflow_env(dags_mount_path: str) -> list[client.V1EnvVar]:
         client.V1EnvVar(name="AIRFLOW__LOGGING__BASE_LOG_FOLDER", value=airflow_settings.AIRFLOW_LOGS_DIR),
         client.V1EnvVar(name="AIRFLOW__LOGGING__WORKER_LOG_SERVER_PORT", value="8793"),
         client.V1EnvVar(name="AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION", value="False"),
-        client.V1EnvVar(name="AIRFLOW__SCHEDULER__DAG_DIR_LIST_INTERVAL", value="10"),
-        client.V1EnvVar(name="AIRFLOW__SCHEDULER__MIN_FILE_PROCESS_INTERVAL", value="5"),
-        client.V1EnvVar(name="AIRFLOW__CORE__MIN_SERIALIZED_DAG_UPDATE_INTERVAL", value="0"),
-        client.V1EnvVar(name="AIRFLOW__CORE__MIN_SERIALIZED_DAG_FETCH_INTERVAL", value="0"),
+        client.V1EnvVar(name="AIRFLOW__SCHEDULER__DAG_DIR_LIST_INTERVAL", value=dag_dir_interval),
+        client.V1EnvVar(name="AIRFLOW__SCHEDULER__MIN_FILE_PROCESS_INTERVAL", value=min_proc_interval),
+        client.V1EnvVar(name="AIRFLOW__SCHEDULER__PARSING_PROCESSES", value=parsing_procs),
+        client.V1EnvVar(name="AIRFLOW__CORE__MIN_SERIALIZED_DAG_UPDATE_INTERVAL", value=min_proc_interval),
+        client.V1EnvVar(name="AIRFLOW__CORE__MIN_SERIALIZED_DAG_FETCH_INTERVAL", value=min_proc_interval),
         client.V1EnvVar(name="AIRFLOW__CORE__PARALLELISM", value="4"),
         client.V1EnvVar(name="AIRFLOW__CORE__DAG_CONCURRENCY", value="2"),
         client.V1EnvVar(

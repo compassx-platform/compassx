@@ -46,6 +46,20 @@ export default function AccountSettingsPage() {
   const airflow = settings.airflow || { webserver_enabled: false, webserver_status: 'stopped' };
   const isWebserverEnabled = Boolean(airflow.webserver_enabled);
   const webserverStatus = airflow.webserver_status || (isWebserverEnabled ? 'starting' : 'stopped');
+  const [tuningProfile, setTuningProfile] = useState<string>(airflow.tuning_profile || 'cost_optimized');
+  const [dagDirListInterval, setDagDirListInterval] = useState<number>(airflow.dag_dir_list_interval || 300);
+  const [minFileProcessInterval, setMinFileProcessInterval] = useState<number>(airflow.min_file_process_interval || 120);
+  const [parsingProcesses, setParsingProcesses] = useState<number>(airflow.parsing_processes || 2);
+  const [isApplyingTuning, setIsApplyingTuning] = useState<boolean>(false);
+
+  useEffect(() => {
+    if (airflow) {
+      if (airflow.tuning_profile) setTuningProfile(airflow.tuning_profile);
+      if (airflow.dag_dir_list_interval !== undefined) setDagDirListInterval(airflow.dag_dir_list_interval);
+      if (airflow.min_file_process_interval !== undefined) setMinFileProcessInterval(airflow.min_file_process_interval);
+      if (airflow.parsing_processes !== undefined) setParsingProcesses(airflow.parsing_processes);
+    }
+  }, [airflow.tuning_profile, airflow.dag_dir_list_interval, airflow.min_file_process_interval, airflow.parsing_processes]);
 
   // App Node Pool settings
   const appNodePool = settings.app_node_pool || {
@@ -274,6 +288,48 @@ export default function AccountSettingsPage() {
         },
         onError: (err: any) => {
           toast.error(err.response?.data?.detail || err.message || 'Failed to update Airflow Webserver state.');
+        },
+      }
+    );
+  };
+
+  const handleProfileChange = (profile: string) => {
+    setTuningProfile(profile);
+    if (profile === 'cost_optimized') {
+      setDagDirListInterval(300);
+      setMinFileProcessInterval(120);
+      setParsingProcesses(2);
+    } else if (profile === 'balanced') {
+      setDagDirListInterval(120);
+      setMinFileProcessInterval(60);
+      setParsingProcesses(2);
+    } else if (profile === 'high_frequency') {
+      setDagDirListInterval(30);
+      setMinFileProcessInterval(30);
+      setParsingProcesses(2);
+    }
+  };
+
+  const handleApplyAirflowTuning = () => {
+    setIsApplyingTuning(true);
+    updateSettingsMutation.mutate(
+      {
+        airflow: {
+          webserver_enabled: isWebserverEnabled,
+          tuning_profile: tuningProfile as any,
+          dag_dir_list_interval: Number(dagDirListInterval),
+          min_file_process_interval: Number(minFileProcessInterval),
+          parsing_processes: Number(parsingProcesses),
+        },
+      },
+      {
+        onSuccess: () => {
+          setIsApplyingTuning(false);
+          toast.success('Airflow Scheduler tuning updated and patched on cluster.');
+        },
+        onError: (err: any) => {
+          setIsApplyingTuning(false);
+          toast.error(err.response?.data?.detail || err.message || 'Failed to update Airflow tuning.');
         },
       }
     );
@@ -1037,6 +1093,200 @@ export default function AccountSettingsPage() {
                   />
                 </span>
               </label>
+            </div>
+          </div>
+
+          {/* Airflow Scheduler Storage & Cost Tuning Row */}
+          <div className="ws-setting-item" style={{ flexDirection: 'column', alignItems: 'stretch', gap: '14px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', width: '100%' }}>
+              <div className="ws-setting-info" style={{ flex: 1, paddingRight: '16px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
+                  <Sliders size={17} style={{ color: 'var(--color-primary, #1b6ef3)' }} />
+                  <span className="ws-setting-label" style={{ margin: 0 }}>
+                    Scheduler Performance &amp; Storage Cost Tuning
+                  </span>
+                  <span
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: 4,
+                      padding: '2px 8px',
+                      borderRadius: 999,
+                      fontSize: '0.72rem',
+                      fontWeight: 600,
+                      background: 'var(--color-surface-hover, #f3f4f6)',
+                      color: 'var(--color-text-muted, #4b5563)',
+                      border: '1px solid var(--color-border, #e5e7eb)',
+                    }}
+                  >
+                    DIR: {dagDirListInterval}s / FILE: {minFileProcessInterval}s
+                  </span>
+                </div>
+                <div className="ws-setting-desc" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <span>
+                    Controls Airflow DAG directory scan frequency, file parsing interval, and background worker concurrency on shared storage.
+                  </span>
+                  <span
+                    title="Default Airflow intervals (10s/5s) can generate millions of file transactions per day on Azure Files, creating sudden cost spikes. Cost-Optimized (300s/120s) significantly slashes transaction fees while maintaining reliable workflow triggering."
+                    style={{ cursor: 'pointer', display: 'inline-flex', color: 'var(--color-text-muted, #6b7280)' }}
+                  >
+                    <Info size={14} />
+                  </span>
+                </div>
+              </div>
+
+              <div className="ws-setting-control" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <button
+                  type="button"
+                  onClick={handleApplyAirflowTuning}
+                  disabled={isApplyingTuning || updateSettingsMutation.isPending}
+                  className="ws-btn ws-btn-primary"
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 6,
+                    padding: '6px 14px',
+                    borderRadius: 8,
+                    fontSize: '0.82rem',
+                    fontWeight: 600,
+                    cursor: isApplyingTuning ? 'not-allowed' : 'pointer',
+                    opacity: isApplyingTuning ? 0.7 : 1,
+                  }}
+                >
+                  {isApplyingTuning ? (
+                    <>
+                      <Loader2 size={13} className="spin" style={{ animation: 'spin 1s linear infinite' }} />
+                      <span>Applying...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Zap size={13} />
+                      <span>Apply Tuning</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+
+            {/* Profile Selection & Progressive Disclosure */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', width: '100%', background: 'var(--color-surface-hover, #f9fafb)', padding: '12px 14px', borderRadius: '8px', border: '1px solid var(--color-border, #e5e7eb)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+                <span style={{ fontSize: '0.78rem', fontWeight: 600, color: 'var(--color-text-muted, #4b5563)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                  Tuning Profile:
+                </span>
+                {[
+                  { id: 'cost_optimized', label: 'Cost-Optimized (300s / 120s)', desc: 'Lowest Azure Files transaction costs. Recommended.' },
+                  { id: 'balanced', label: 'Balanced (120s / 60s)', desc: 'Medium file scan frequency.' },
+                  { id: 'high_frequency', label: 'High-Frequency (30s / 30s)', desc: 'Fast local dev scans; higher storage I/O.' },
+                  { id: 'custom', label: 'Custom', desc: 'Manual interval and process overrides.' },
+                ].map((prof) => (
+                  <label
+                    key={prof.id}
+                    title={prof.desc}
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '6px',
+                      fontSize: '0.82rem',
+                      cursor: 'pointer',
+                      padding: '4px 10px',
+                      borderRadius: '6px',
+                      background: tuningProfile === prof.id ? 'var(--color-primary-bg, rgba(27, 110, 243, 0.08))' : '#ffffff',
+                      border: tuningProfile === prof.id ? '1px solid var(--color-primary, #1b6ef3)' : '1px solid var(--color-border, #d1d5db)',
+                      color: tuningProfile === prof.id ? 'var(--color-primary, #1b6ef3)' : 'var(--color-text, #374151)',
+                      fontWeight: tuningProfile === prof.id ? 600 : 400,
+                      transition: 'all 0.15s ease',
+                    }}
+                  >
+                    <input
+                      type="radio"
+                      name="airflowTuningProfile"
+                      value={prof.id}
+                      checked={tuningProfile === prof.id}
+                      onChange={() => handleProfileChange(prof.id)}
+                      style={{ margin: 0, cursor: 'pointer' }}
+                    />
+                    <span>{prof.label}</span>
+                  </label>
+                ))}
+              </div>
+
+              {/* Progressive Disclosure: Custom parameters */}
+              {tuningProfile === 'custom' && (
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '12px', marginTop: '8px', paddingTop: '10px', borderTop: '1px dashed var(--color-border, #d1d5db)' }}>
+                  <div>
+                    <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: 'var(--color-text-muted, #4b5563)', marginBottom: '4px' }}>
+                      DAG Dir Scan Interval (sec)
+                    </label>
+                    <input
+                      type="number"
+                      min={10}
+                      max={1800}
+                      value={dagDirListInterval}
+                      onChange={(e) => setDagDirListInterval(Math.max(10, parseInt(e.target.value) || 10))}
+                      style={{
+                        width: '100%',
+                        padding: '6px 10px',
+                        fontSize: '0.82rem',
+                        borderRadius: '6px',
+                        border: '1px solid var(--color-border, #d1d5db)',
+                        background: '#ffffff',
+                      }}
+                    />
+                    <span style={{ fontSize: '0.7rem', color: 'var(--color-text-muted, #6b7280)', marginTop: '2px', display: 'block' }}>
+                      How often Airflow checks for new DAG files.
+                    </span>
+                  </div>
+
+                  <div>
+                    <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: 'var(--color-text-muted, #4b5563)', marginBottom: '4px' }}>
+                      Min File Process Interval (sec)
+                    </label>
+                    <input
+                      type="number"
+                      min={10}
+                      max={600}
+                      value={minFileProcessInterval}
+                      onChange={(e) => setMinFileProcessInterval(Math.max(10, parseInt(e.target.value) || 10))}
+                      style={{
+                        width: '100%',
+                        padding: '6px 10px',
+                        fontSize: '0.82rem',
+                        borderRadius: '6px',
+                        border: '1px solid var(--color-border, #d1d5db)',
+                        background: '#ffffff',
+                      }}
+                    />
+                    <span style={{ fontSize: '0.7rem', color: 'var(--color-text-muted, #6b7280)', marginTop: '2px', display: 'block' }}>
+                      Minimum time between parsing the same DAG file.
+                    </span>
+                  </div>
+
+                  <div>
+                    <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: 'var(--color-text-muted, #4b5563)', marginBottom: '4px' }}>
+                      Parsing Concurrency (Processes)
+                    </label>
+                    <input
+                      type="number"
+                      min={1}
+                      max={8}
+                      value={parsingProcesses}
+                      onChange={(e) => setParsingProcesses(Math.max(1, parseInt(e.target.value) || 1))}
+                      style={{
+                        width: '100%',
+                        padding: '6px 10px',
+                        fontSize: '0.82rem',
+                        borderRadius: '6px',
+                        border: '1px solid var(--color-border, #d1d5db)',
+                        background: '#ffffff',
+                      }}
+                    />
+                    <span style={{ fontSize: '0.7rem', color: 'var(--color-text-muted, #6b7280)', marginTop: '2px', display: 'block' }}>
+                      Concurrent parsing worker processes (CPU/IO load).
+                    </span>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </div>

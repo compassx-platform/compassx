@@ -336,6 +336,153 @@ class AirflowManager(BaseServiceManager):
 
         return self.get_webserver_status()
 
+    def _resolve_scheduler_deployment_name(self, namespace: str) -> str:
+        """Find the existing scheduler deployment name or default."""
+        k8s = get_k8s_client()
+        candidate_names = [
+            airflow_settings.AIRFLOW_SCHEDULER_DEPLOYMENT_NAME,
+            f"{airflow_settings.AIRFLOW_SERVICE_NAME}-scheduler",
+            "compassx-airflow-scheduler",
+            "airflow-scheduler",
+        ]
+        for name in candidate_names:
+            try:
+                k8s.apps().read_namespaced_deployment(name=name, namespace=namespace)
+                return name
+            except ApiException:
+                continue
+        return airflow_settings.AIRFLOW_SCHEDULER_DEPLOYMENT_NAME
+
+    def get_scheduler_tuning(self) -> dict:
+        """Read the current Airflow scheduler polling and parse intervals from the active deployment."""
+        namespace = airflow_settings.AIRFLOW_NAMESPACE
+        k8s = get_k8s_client()
+        dep_name = self._resolve_scheduler_deployment_name(namespace)
+        default_tuning = {
+            "tuning_profile": "cost_optimized",
+            "dag_dir_list_interval": 300,
+            "min_file_process_interval": 120,
+            "parsing_processes": 2,
+        }
+        try:
+            dep = k8s.apps().read_namespaced_deployment(name=dep_name, namespace=namespace)
+            containers = dep.spec.template.spec.containers or []
+            for c in containers:
+                if c.name in ("scheduler", "airflow-scheduler"):
+                    env_map = {e.name: e.value for e in (c.env or []) if e.value is not None}
+                    dag_dir = int(env_map.get("AIRFLOW__SCHEDULER__DAG_DIR_LIST_INTERVAL", 300))
+                    min_proc = int(env_map.get("AIRFLOW__SCHEDULER__MIN_FILE_PROCESS_INTERVAL", 120))
+                    procs = int(env_map.get("AIRFLOW__SCHEDULER__PARSING_PROCESSES", 2))
+                    # Determine profile
+                    if dag_dir == 300 and min_proc == 120 and procs == 2:
+                        profile = "cost_optimized"
+                    elif dag_dir == 120 and min_proc == 60:
+                        profile = "balanced"
+                    elif dag_dir == 30 and min_proc == 30:
+                        profile = "high_frequency"
+                    else:
+                        profile = "custom"
+                    return {
+                        "tuning_profile": profile,
+                        "dag_dir_list_interval": dag_dir,
+                        "min_file_process_interval": min_proc,
+                        "parsing_processes": procs,
+                    }
+        except Exception as exc:
+            logger.debug("Could not read Airflow scheduler tuning from deployment: %s", exc)
+        return default_tuning
+
+    def update_scheduler_tuning(
+        self,
+        dag_dir_list_interval: int = 300,
+        min_file_process_interval: int = 120,
+        parsing_processes: int = 2,
+        tuning_profile: str | None = None,
+    ) -> dict:
+        """Update polling and parse intervals on the live Airflow scheduler deployment to control Azure Files IOPS."""
+        namespace = airflow_settings.AIRFLOW_NAMESPACE
+        k8s = get_k8s_client()
+        apps = k8s.apps()
+        dep_name = self._resolve_scheduler_deployment_name(namespace)
+
+        tuning_envs = {
+            "AIRFLOW__SCHEDULER__DAG_DIR_LIST_INTERVAL": str(dag_dir_list_interval),
+            "AIRFLOW__SCHEDULER__MIN_FILE_PROCESS_INTERVAL": str(min_file_process_interval),
+            "AIRFLOW__SCHEDULER__PARSING_PROCESSES": str(parsing_processes),
+            "AIRFLOW__CORE__MIN_SERIALIZED_DAG_UPDATE_INTERVAL": str(min_file_process_interval),
+            "AIRFLOW__CORE__MIN_SERIALIZED_DAG_FETCH_INTERVAL": str(min_file_process_interval),
+        }
+
+        try:
+            dep = apps.read_namespaced_deployment(name=dep_name, namespace=namespace)
+            containers = dep.spec.template.spec.containers or []
+            patched_containers = []
+            for c in containers:
+                if c.name in ("scheduler", "airflow-scheduler"):
+                    existing_envs = c.env or []
+                    updated_map = {e.name: e for e in existing_envs}
+                    for k, v in tuning_envs.items():
+                        updated_map[k] = client.V1EnvVar(name=k, value=v)
+                    c.env = list(updated_map.values())
+                patched_containers.append(c)
+
+            patch_body = {
+                "spec": {
+                    "template": {
+                        "spec": {
+                            "containers": [
+                                {
+                                    "name": c.name,
+                                    "env": [
+                                        {"name": e.name, "value": e.value}
+                                        for e in (c.env or [])
+                                        if e.value is not None
+                                    ]
+                                }
+                                for c in patched_containers
+                                if c.name in ("scheduler", "airflow-scheduler")
+                            ]
+                        }
+                    }
+                }
+            }
+            apps.patch_namespaced_deployment(name=dep_name, namespace=namespace, body=patch_body)
+            logger.info(
+                "Successfully tuned Airflow scheduler deployment %s: scan_interval=%ss, parse_interval=%ss",
+                dep_name,
+                dag_dir_list_interval,
+                min_file_process_interval,
+            )
+            return {
+                "applied": True,
+                "deployment_name": dep_name,
+                "tuning_profile": tuning_profile or ("cost_optimized" if dag_dir_list_interval == 300 and min_file_process_interval == 120 else "custom"),
+                "dag_dir_list_interval": dag_dir_list_interval,
+                "min_file_process_interval": min_file_process_interval,
+                "parsing_processes": parsing_processes,
+            }
+        except ApiException as exc:
+            if exc.status == 404:
+                logger.info("Airflow scheduler deployment %s not found on cluster; skipping live patch", dep_name)
+                return {
+                    "applied": False,
+                    "error": "Deployment not found",
+                    "dag_dir_list_interval": dag_dir_list_interval,
+                    "min_file_process_interval": min_file_process_interval,
+                    "parsing_processes": parsing_processes,
+                }
+            logger.error("Failed to patch Airflow scheduler deployment: %s", exc)
+            raise
+        except Exception as exc:
+            logger.error("Unexpected error tuning Airflow scheduler: %s", exc)
+            return {
+                "applied": False,
+                "error": str(exc),
+                "dag_dir_list_interval": dag_dir_list_interval,
+                "min_file_process_interval": min_file_process_interval,
+                "parsing_processes": parsing_processes,
+            }
+
     def stop(self) -> ServiceStatus:
         namespace = airflow_settings.AIRFLOW_NAMESPACE
         apps = get_k8s_client().apps()

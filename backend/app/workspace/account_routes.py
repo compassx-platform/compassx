@@ -71,6 +71,10 @@ def patch_account(
 DEFAULT_ACCOUNT_SETTINGS = {
     "airflow": {
         "webserver_enabled": False,
+        "tuning_profile": "cost_optimized",
+        "dag_dir_list_interval": 300,
+        "min_file_process_interval": 120,
+        "parsing_processes": 2,
     },
     "app_node_pool": {
         "dedicated_pool_enabled": False,
@@ -110,7 +114,7 @@ def get_account_settings(
         if k in DEFAULT_ACCOUNT_SETTINGS and isinstance(DEFAULT_ACCOUNT_SETTINGS[k], dict):
             merged[k] = {**DEFAULT_ACCOUNT_SETTINGS[k], **saved.get(k, {})}
 
-    # Enrich with live Airflow Webserver status
+    # Enrich with live Airflow Webserver and Scheduler Tuning status
     try:
         from services.airflow.manager import get_airflow_manager
         mgr = get_airflow_manager()
@@ -119,8 +123,13 @@ def get_account_settings(
         merged["airflow"]["webserver_replicas"] = live_status.get("replicas", 0)
         merged["airflow"]["webserver_available_replicas"] = live_status.get("available_replicas", 0)
         merged["airflow"]["webserver_url"] = live_status.get("url")
+
+        live_tuning = mgr.get_scheduler_tuning()
+        for tk, tv in live_tuning.items():
+            if tk not in saved.get("airflow", {}):
+                merged["airflow"][tk] = tv
     except Exception as exc:
-        logger.debug("Could not query live Airflow webserver status: %s", exc)
+        logger.debug("Could not query live Airflow webserver and tuning status: %s", exc)
         merged["airflow"]["webserver_status"] = "stopped" if not merged["airflow"].get("webserver_enabled") else "unknown"
 
     # Enrich with live App Node Pool status
@@ -168,18 +177,38 @@ def update_account_settings(
     db.commit()
     db.refresh(account)
 
-    # 1. Apply Airflow webserver on-demand start/stop if requested
-    if "airflow" in body and isinstance(body["airflow"], dict) and "webserver_enabled" in body["airflow"]:
-        enable_ws = bool(body["airflow"]["webserver_enabled"])
+    # 1. Apply Airflow webserver on-demand start/stop & scheduler tuning if requested
+    if "airflow" in body and isinstance(body["airflow"], dict):
+        airflow_body = body["airflow"]
         try:
             from services.airflow.manager import get_airflow_manager
             mgr = get_airflow_manager()
-            if enable_ws:
-                mgr.start_webserver()
-            else:
-                mgr.stop_webserver()
+
+            # Handle webserver enable/disable
+            if "webserver_enabled" in airflow_body:
+                enable_ws = bool(airflow_body["webserver_enabled"])
+                if enable_ws:
+                    mgr.start_webserver()
+                else:
+                    mgr.stop_webserver()
+
+            # Handle scheduler tuning
+            dag_dir = airflow_body.get("dag_dir_list_interval")
+            min_proc = airflow_body.get("min_file_process_interval")
+            procs = airflow_body.get("parsing_processes")
+            tuning_prof = airflow_body.get("tuning_profile")
+            if any(x is not None for x in [dag_dir, min_proc, procs, tuning_prof]):
+                final_dag_dir = int(dag_dir if dag_dir is not None else existing.get("airflow", {}).get("dag_dir_list_interval", 300))
+                final_min_proc = int(min_proc if min_proc is not None else existing.get("airflow", {}).get("min_file_process_interval", 120))
+                final_procs = int(procs if procs is not None else existing.get("airflow", {}).get("parsing_processes", 2))
+                mgr.update_scheduler_tuning(
+                    dag_dir_list_interval=final_dag_dir,
+                    min_file_process_interval=final_min_proc,
+                    parsing_processes=final_procs,
+                    tuning_profile=tuning_prof,
+                )
         except Exception as exc:
-            logger.warning("Could not apply Airflow webserver state change: %s", exc)
+            logger.warning("Could not apply Airflow configuration change: %s", exc)
 
     # 2. Apply App Node Pool configuration & pod switchover if requested
     if "app_node_pool" in body and isinstance(body["app_node_pool"], dict):
