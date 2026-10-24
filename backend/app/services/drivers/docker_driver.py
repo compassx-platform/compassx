@@ -1205,9 +1205,9 @@ class DockerDevDriver(BaseDevDriver):
                 cli_cmd = (
                     "export AGY_TRUST_ALL=true ANTIGRAVITY_TRUST_ALL_WORKSPACES=true AGY_NON_INTERACTIVE=true; "
                     f"if [ -n \"{sess_f}\" ] && [ -f \"{sess_f}\" ] && [ -n \"$(cat \"{sess_f}\" 2>/dev/null)\" ]; then "
-                    f"  exec agy --dangerously-skip-permissions --conversation \"$(cat \"{sess_f}\")\"; "
+                    f"  agy --dangerously-skip-permissions --conversation \"$(cat \"{sess_f}\")\" || exec /bin/bash -l; "
                     f"else "
-                    f"  exec agy --dangerously-skip-permissions; "
+                    f"  agy --dangerously-skip-permissions || exec /bin/bash -l; "
                     f"fi"
                 )
             elif agent in ("bash", "shell", "sh"):

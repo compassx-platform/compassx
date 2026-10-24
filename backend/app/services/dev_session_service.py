@@ -50,13 +50,12 @@ class DevSessionService:
         if session.agent == "bash":
             return "exec /bin/bash -l"
         ext_id = session.external_session_id or self._generate_external_session_id(session.agent)
-        model = getattr(session, "model", None) or "gpt-5.4-mini"
         if session.agent == "pi":
-            return f"pi --session-id {ext_id} --provider compassx --approve --model {model}"
+            return f"pi --session-id {ext_id} --provider compassx --approve"
         elif session.agent == "antigravity":
-            model_flag = f" --model {model}" if getattr(session, "model", None) else ""
             sess_file = f"/root/.gemini/sessions/{session.id}.conv_id"
             return (
+                f"export AGY_TRUST_ALL=true ANTIGRAVITY_TRUST_ALL_WORKSPACES=true AGY_NON_INTERACTIVE=true; "
                 f"mkdir -p /root/.gemini/sessions /root/.gemini/antigravity/brain; "
                 f"SESS_CONV=\"\"; "
                 f"if [ -f \"{sess_file}\" ] && [ -n \"$(cat \"{sess_file}\" 2>/dev/null)\" ]; then "
@@ -66,7 +65,7 @@ class DevSessionService:
                 f"  echo \"{ext_id}\" > \"{sess_file}\"; "
                 f"fi; "
                 f"if [ -n \"$SESS_CONV\" ] && ( [ -d \"/root/.gemini/antigravity/brain/$SESS_CONV\" ] || [ -f \"/root/.gemini/antigravity/conversations/$SESS_CONV.db\" ] ); then "
-                f"  exec agy --dangerously-skip-permissions --conversation \"$SESS_CONV\"{model_flag}; "
+                f"  agy --dangerously-skip-permissions --conversation \"$SESS_CONV\" || exec /bin/bash -l; "
                 f"else "
                 f"  KNOWN=$(ls -1d /root/.gemini/antigravity/brain/*/ 2>/dev/null); "
                 f"  (for _i in $(seq 1 15); do "
@@ -89,11 +88,11 @@ class DevSessionService:
                 f"     FALLBACK_DIR=$(ls -1td /root/.gemini/antigravity/brain/*/ 2>/dev/null | head -n 1); "
                 f"     if [ -n \"$FALLBACK_DIR\" ]; then echo \"$(basename \"$FALLBACK_DIR\")\" > \"{sess_file}\"; fi; "
                 f"   fi) & "
-                f"  exec agy --dangerously-skip-permissions{model_flag}; "
+                f"  agy --dangerously-skip-permissions || exec /bin/bash -l; "
                 f"fi"
             )
         else:  # opencode
-            return f"OPENCODE_MODEL={model} opencode -m compassx/{model}"
+            return "opencode"
 
     def serialize_session(self, session: DevSession) -> Dict[str, Any]:
         return {

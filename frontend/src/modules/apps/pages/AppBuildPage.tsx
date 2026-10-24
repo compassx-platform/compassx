@@ -373,14 +373,13 @@ export default function AppBuildPage() {
     } catch (_) {}
   };
 
-  const handleCreateSession = async (title: string, agent: SupportedAgent, model?: string) => {
+  const handleCreateSession = async (title: string, agent: SupportedAgent) => {
     try {
       setIsSwitchingSession(true);
       const created = await createDevSessionMutation.mutateAsync({
         title,
         agent,
         workspace_id: activeWorkspace?.id || devStatus?.workspace_id,
-        model,
       });
       setJustCreatedSession(created);
       setActiveSessionId(created.id);
@@ -388,8 +387,7 @@ export default function AppBuildPage() {
         localStorage.setItem(`compassx_active_session_${resolvedAppId}`, created.id);
       } catch (_) {}
       setIsNewSessionModalOpen(false);
-      const modelSuffix = created.model ? ` (${created.model})` : '';
-      toast.success(`Session "${created.title}" started with ${created.agent}${modelSuffix}.`);
+      toast.success(`Session "${created.title}" started with ${created.agent}.`);
     } catch (err: any) {
       toast.error(err?.response?.data?.detail || err?.message || 'Failed to create session');
     } finally {

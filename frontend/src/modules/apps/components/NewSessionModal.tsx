@@ -3,15 +3,13 @@ import {
   X,
   Terminal,
   Loader2,
-  Cpu,
 } from 'lucide-react';
 import { AGENT_OPTIONS, type SupportedAgent } from '../pages/AppBuildPage';
-import { useAppDevModels } from '../hooks/useApps';
 
 interface NewSessionModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onSubmit: (title: string, agent: SupportedAgent, model?: string) => Promise<void> | void;
+  onSubmit: (title: string, agent: SupportedAgent) => Promise<void> | void;
   appId?: string;
   isCreating?: boolean;
 }
@@ -20,30 +18,17 @@ export function NewSessionModal({
   isOpen,
   onClose,
   onSubmit,
-  appId,
+  appId: _appId,
   isCreating = false,
 }: NewSessionModalProps) {
   const [selectedAgent, setSelectedAgent] = useState<SupportedAgent>('opencode');
   const [title, setTitle] = useState('');
   const [isCustomTitle, setIsCustomTitle] = useState(false);
-  const [selectedModel, setSelectedModel] = useState<string>('');
-
-  const { data: models = [], isLoading: isLoadingModels } = useAppDevModels(appId);
 
   const getDefaultTitleForAgent = (agentId: SupportedAgent) => {
     const agentObj = AGENT_OPTIONS.find((a) => a.id === agentId);
     return `Session with ${agentObj?.name || 'Agent'}`;
   };
-
-  // Set default model when models load
-  useEffect(() => {
-    if (models.length > 0 && !selectedModel) {
-      const defaultMod = models.find((m) => m.is_default) || models[0];
-      if (defaultMod) {
-        setSelectedModel(defaultMod.id);
-      }
-    }
-  }, [models, selectedModel]);
 
   // Reset to default title for current agent when modal opens
   useEffect(() => {
@@ -65,7 +50,7 @@ export function NewSessionModal({
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     const cleanTitle = title.trim() || getDefaultTitleForAgent(selectedAgent);
-    onSubmit(cleanTitle, selectedAgent, selectedModel || undefined);
+    onSubmit(cleanTitle, selectedAgent);
   };
 
   return (
@@ -283,101 +268,6 @@ export function NewSessionModal({
                 ))}
               </select>
             </div>
-
-            {/* AI Model Selection */}
-            <div>
-                <div
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    marginBottom: 6,
-                  }}
-                >
-                  <label
-                    style={{
-                      fontSize: '0.78rem',
-                      fontWeight: 600,
-                      color: '#334155',
-                      margin: 0,
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: 6,
-                    }}
-                  >
-                    <Cpu size={14} color="#64748b" />
-                    AI Gateway Model
-                  </label>
-                  <span
-                    style={{
-                      fontSize: '0.7rem',
-                      color: '#64748b',
-                    }}
-                  >
-                    Governed via CompassX AI Gateway
-                  </span>
-                </div>
-
-                {isLoadingModels ? (
-                  <div
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: 8,
-                      padding: '9px 12px',
-                      borderRadius: 7,
-                      background: '#f8fafc',
-                      border: '1px solid #e2e8f0',
-                      color: '#64748b',
-                      fontSize: '0.8rem',
-                    }}
-                  >
-                    <Loader2 size={13} className="spin" />
-                    <span>Loading available models...</span>
-                  </div>
-                ) : (
-                  <div style={{ position: 'relative' }}>
-                    <select
-                      value={selectedModel}
-                      onChange={(e) => setSelectedModel(e.target.value)}
-                      disabled={isCreating}
-                      style={{
-                        width: '100%',
-                        padding: '9px 12px',
-                        borderRadius: 7,
-                        border: '1px solid #d1d5db',
-                        background: '#ffffff',
-                        color: '#0f172a',
-                        fontSize: '0.84rem',
-                        outline: 'none',
-                        boxSizing: 'border-box',
-                        cursor: isCreating ? 'not-allowed' : 'pointer',
-                        transition: 'border-color 0.15s ease, box-shadow 0.15s ease',
-                      }}
-                      onFocus={(e) => {
-                        e.currentTarget.style.borderColor = '#1B6EF3';
-                        e.currentTarget.style.boxShadow = '0 0 0 3px rgba(27, 110, 243, 0.12)';
-                      }}
-                      onBlur={(e) => {
-                        e.currentTarget.style.borderColor = '#d1d5db';
-                        e.currentTarget.style.boxShadow = 'none';
-                      }}
-                    >
-                      {models.map((m) => (
-                        <option key={m.id} value={m.id} style={{ background: '#ffffff', color: '#0f172a' }}>
-                          {m.name} {m.is_default ? '(Default)' : ''} {m.provider ? `• ${m.provider}` : ''}
-                        </option>
-                      ))}
-                      {models.length === 0 && (
-                        <option value="gpt-5.4-mini" style={{ background: '#ffffff', color: '#0f172a' }}>
-                          gpt-5.4-mini (Default)
-                        </option>
-                      )}
-                    </select>
-                  </div>
-                )}
-              </div>
-
           </div>
 
           {/* Footer Actions */}

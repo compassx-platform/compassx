@@ -5,6 +5,23 @@ All notable changes to the CompassX Platform will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.15.4] - 2026-10-23
+
+### 🚀 Highlights
+
+CompassX `0.15.4` introduces **Interactive Terminal Shell Fallback on Agent Exit**, **Streamlined Agent CLI Commands**, and **Simplified New Session Creation UX**.
+
+### ✨ Features & Enhancements
+
+#### Dev Session & Terminal Shell Resilience
+- **Interactive Bash Fallback on CLI Termination ([`dev_session_service.py`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/backend/app/services/dev_session_service.py), [`docker_driver.py`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/backend/app/services/drivers/docker_driver.py), [`kubernetes_driver.py`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/backend/app/services/drivers/kubernetes_driver.py))**: Configured `|| exec /bin/bash -l` on agent command execution (`agy`, `pi`, `opencode`), ensuring that if an agent CLI exits or encounters an unexpected termination, developers are smoothly dropped into an interactive login bash shell rather than closing the terminal session.
+- **Streamlined Agent CLI Command Execution ([`dev_session_service.py`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/backend/app/services/dev_session_service.py))**: Streamlined CLI execution parameters for `opencode`, `pi`, and `antigravity`, delegating model routing to the platform's AI Gateway configuration.
+
+#### Dev Session UI & Modal Optimization
+- **Streamlined Session Creation Modal ([`NewSessionModal.tsx`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/frontend/src/modules/apps/components/NewSessionModal.tsx), [`AppBuildPage.tsx`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/frontend/src/modules/apps/pages/AppBuildPage.tsx))**: Removed redundant AI model selection picker from the New Session modal, aligning session launch with platform AI Gateway defaults and reducing creation friction.
+
+---
+
 ## [0.15.3] - 2026-10-23
 
 ### 🚀 Highlights
