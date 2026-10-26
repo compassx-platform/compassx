@@ -91,7 +91,7 @@ class WarehousePodOrchestrator:
         if engine == "duckdb":
             image = os.environ.get(
                 "COMPASSX_DUCKDB_WAREHOUSE_IMAGE",
-                "ghcr.io/compassx-platform/compute-duckdb:v0.15.4",
+                "ghcr.io/compassx-platform/compute-duckdb:v0.15.5",
             )
             ports = [PortMapping(name="http", container_port=8080)]
             command = ["uvicorn", "services.warehouse_daemon.server:app", "--host", "0.0.0.0", "--port", "8080"]

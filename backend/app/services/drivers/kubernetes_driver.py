@@ -2414,6 +2414,7 @@ class KubernetesDevDriver(BaseDevDriver):
             elif agent in ("bash", "shell", "sh"):
                 cli_cmd = "exec /bin/bash -l"
 
+        ai_gw_url = f"http://compassx-backend.{ns}.svc.cluster.local:8000/api/v1/ai-gateway/v1"
         auth_restore = (
             "if [ -d /workspaces/.shared_auth/.gemini ]; then "
             "  if [ ! -L /root/.gemini ]; then "

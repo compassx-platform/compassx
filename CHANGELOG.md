@@ -5,6 +5,21 @@ All notable changes to the CompassX Platform will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.15.5] - 2026-10-26
+
+### 🚀 Highlights
+
+CompassX `0.15.5` introduces **Dev Terminal WebSocket Error Recovery & Logging**, **In-Cluster AI Gateway DNS Injection for Kubernetes Dev Pods**, and **Reinforced Shell Fallbacks**.
+
+### ✨ Features & Enhancements
+
+#### Dev Session & Terminal Reliability
+- **Terminal WebSocket Client Stream Error Handling ([`dev_terminal_service.py`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/backend/app/services/dev_terminal_service.py))**: Wrapped `driver.open_terminal_ws_client` in exception handling to intercept stream connection and attach failures, write diagnostic server logs, transmit colored ANSI error messages to the frontend terminal, and safely close the WebSocket (`code=1011`).
+- **In-Cluster AI Gateway DNS Endpoint Injection ([`kubernetes_driver.py`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/backend/app/services/drivers/kubernetes_driver.py))**: Resolved and exported cluster-internal AI Gateway URL (`http://compassx-backend.{ns}.svc.cluster.local:8000/api/v1/ai-gateway/v1`) in Kubernetes dev container shell sessions, ensuring reliable communication with the AI Gateway.
+- **Reinforced Interactive Shell Fallback ([`kubernetes_driver.py`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/backend/app/services/drivers/kubernetes_driver.py))**: Added fallback login bash shells to tmux session creation and command pipelines to guarantee terminal accessibility even if agent commands encounter faults.
+
+---
+
 ## [0.15.4] - 2026-10-23
 
 ### 🚀 Highlights

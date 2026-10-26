@@ -131,16 +131,26 @@ class DevTerminalService:
             except Exception:
                 return
 
-        client_stream = driver.open_terminal_ws_client(
-            app,
-            workspace_folder=ws_folder,
-            cols=cols,
-            rows=rows,
-            agent=resolved_agent,
-            session_name=session_name,
-            cli_cmd=cli_cmd,
-            model=getattr(session_obj, "model", None) if session_obj else None,
-        )
+        try:
+            client_stream = driver.open_terminal_ws_client(
+                app,
+                workspace_folder=ws_folder,
+                cols=cols,
+                rows=rows,
+                agent=resolved_agent,
+                session_name=session_name,
+                cli_cmd=cli_cmd,
+                model=getattr(session_obj, "model", None) if session_obj else None,
+            )
+        except Exception as exc:
+            logger.error("Failed to open terminal client stream for app %s: %s", app.id, exc, exc_info=True)
+            err_msg = f"\r\n\x1b[1;31m[ERROR] Failed to open interactive terminal: {exc}\x1b[0m\r\n"
+            try:
+                await websocket.send_text(err_msg)
+                await websocket.close(code=1011, reason=str(exc)[:100])
+            except Exception:
+                pass
+            return
         if not client_stream:
             err_msg = "\r\n\x1b[1;31m[ERROR] Failed to attach interactive terminal. Is the Dev Pod running?\x1b[0m\r\n"
             try:
