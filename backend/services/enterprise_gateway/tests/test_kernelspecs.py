@@ -42,14 +42,20 @@ class TestGenerateKernelJson:
         with pytest.raises(ValueError, match="Unknown runtime"):
             generate_kernel_json("unknown_runtime")
 
+    def test_mlflow_env_vars_present(self):
+        spec = generate_kernel_json("duckdb")
+        assert "MLFLOW_TRACKING_URI" in spec["env"]
+        assert "MLFLOW_S3_ENDPOINT_URL" in spec["env"]
+        assert spec["env"]["MLFLOW_TRACKING_URI"].endswith(":5000")
+
 
 class TestBuildKernelspecConfigmap:
     def test_has_all_four_runtimes(self):
         cm = build_kernelspec_configmap("compassx-services")
-        assert "spark_python/kernel.json" in cm.data
-        assert "ray_python/kernel.json" in cm.data
-        assert "flink_python/kernel.json" in cm.data
-        assert "duckdb_python/kernel.json" in cm.data
+        assert "spark_python--kernel.json" in cm.data
+        assert "ray_python--kernel.json" in cm.data
+        assert "flink_python--kernel.json" in cm.data
+        assert "duckdb_python--kernel.json" in cm.data
 
     def test_values_are_valid_json(self):
         cm = build_kernelspec_configmap("compassx-services")

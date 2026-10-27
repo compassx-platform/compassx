@@ -512,6 +512,30 @@ async def proxy_kernels_start(
         payload["env"].setdefault("KERNEL_WORKSPACE_SLUG", ws_slug_str)
         payload["env"].setdefault("WORKSPACE_SLUG", ws_slug_str)
 
+    # Ambient MLflow Tracking & Storage credentials injection
+    try:
+        from compassx.lookup import try_resolve_url_container
+        mlflow_url = try_resolve_url_container("mlflow", "http://mlflow:5000")
+        minio_url = try_resolve_url_container("minio", "http://minio:9000")
+    except Exception:
+        mlflow_url = "http://mlflow:5000"
+        minio_url = "http://minio:9000"
+
+    storage_key = os.environ.get("STORAGE_ACCESS_KEY", "minioadmin")
+    storage_secret = os.environ.get("STORAGE_SECRET_KEY", "minioadmin")
+    storage_region = os.environ.get("STORAGE_REGION", "us-east-1")
+
+    payload["env"].setdefault("MLFLOW_TRACKING_URI", mlflow_url)
+    payload["env"].setdefault("KERNEL_MLFLOW_TRACKING_URI", mlflow_url)
+    payload["env"].setdefault("MLFLOW_S3_ENDPOINT_URL", minio_url)
+    payload["env"].setdefault("KERNEL_MLFLOW_S3_ENDPOINT_URL", minio_url)
+    payload["env"].setdefault("AWS_ACCESS_KEY_ID", storage_key)
+    payload["env"].setdefault("KERNEL_AWS_ACCESS_KEY_ID", storage_key)
+    payload["env"].setdefault("AWS_SECRET_ACCESS_KEY", storage_secret)
+    payload["env"].setdefault("KERNEL_AWS_SECRET_ACCESS_KEY", storage_secret)
+    payload["env"].setdefault("AWS_DEFAULT_REGION", storage_region)
+    payload["env"].setdefault("KERNEL_AWS_DEFAULT_REGION", storage_region)
+
     modified_body = json.dumps(payload).encode("utf-8")
 
     # Forward to upstream EG

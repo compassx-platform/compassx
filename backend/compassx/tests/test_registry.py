@@ -154,3 +154,25 @@ class TestBundledFiles:
     def test_profile_env_var(self, monkeypatch):
         monkeypatch.setenv("COMPASSX_PLATFORM_PROFILE", "docker")
         assert load_profile().name == "docker"
+
+    def test_mlflow_service_resolution_all_modes(self):
+        # 1. Local-dev profile (host perspective reaches docker mlflow on localhost:5555)
+        local_dev = load_profile("local-dev")
+        reg_local = YamlServiceRegistry.from_files(local_dev, perspective="host")
+        mlflow_local = reg_local.get_service("mlflow")
+        assert mlflow_local.host == "localhost"
+        assert mlflow_local.port == 5555
+
+        # 2. Docker compose container perspective reaches mlflow:5000
+        docker_profile = load_profile("docker")
+        reg_docker = YamlServiceRegistry.from_files(docker_profile, perspective="container")
+        mlflow_docker = reg_docker.get_service("mlflow")
+        assert mlflow_docker.host == "mlflow"
+        assert mlflow_docker.port == 5000
+
+        # 3. Kubernetes profile cluster perspective reaches cluster DNS
+        k8s_profile = load_profile("kubernetes-cloud")
+        reg_k8s = YamlServiceRegistry.from_files(k8s_profile, perspective="container")
+        mlflow_k8s = reg_k8s.get_service("mlflow")
+        assert mlflow_k8s.host == "compassx-mlflow.compassx.svc.cluster.local"
+        assert mlflow_k8s.port == 5000

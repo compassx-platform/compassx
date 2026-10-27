@@ -5,6 +5,29 @@ All notable changes to the CompassX Platform will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.16.0] - 2026-10-27
+
+### 🚀 Highlights
+
+CompassX `0.16.0` introduces **Ambient MLflow Experiment Tracking & Model Registry**, **Interactive Notebook Experiments Panel & Auto-Logging**, **Enterprise Gateway MLflow-Aware Kernel Specs**, and **Unified Notebook Asset Cataloging**.
+
+### ✨ Features & Enhancements
+
+#### Ambient MLflow Platform Architecture
+- **In-Cluster MLflow Tracking Server ([`deployments/helm/compassx/templates/mlflow/`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/deployments/helm/compassx/templates/mlflow/), [`values.yaml`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/deployments/helm/compassx/values.yaml))**: Added native MLflow deployment templates and configuration supporting Postgres metadata storage (`mlflow` database) and remote object storage artifact logging (`mlflow-artifacts` bucket).
+- **Platform Profile Integration ([`services.yaml`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/backend/compassx/services.yaml), [`profiles/`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/backend/compassx/profiles/))**: Registered MLflow as a core platform service with automated health checking across `docker`, `kubernetes-cloud`, `kubernetes-local`, and `local-dev` execution profiles.
+
+#### Interactive Notebooks & Ambient Tracking UI
+- **Notebook Experiments & Runs Panel ([`ExperimentsPanel.tsx`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/frontend/src/modules/notebooks/components/Sidebar/ExperimentsPanel.tsx), [`NotebookRightSidebar.tsx`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/frontend/src/modules/notebooks/components/Sidebar/NotebookRightSidebar.tsx))**: Introduced an Experiments sidebar tab in Notebook Studio for exploring MLflow runs, metrics, parameters, and logged models in real time without leaving the notebook.
+- **Ambient Kernel Auto-Logging ([`kernelspecs.py`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/backend/services/enterprise_gateway/kernelspecs.py), [`compassx_process_proxy.py`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/backend/services/enterprise_gateway/compassx_process_proxy.py))**: Configured Enterprise Gateway process proxies to inject active workspace MLflow tracking URIs and experiment context automatically into spawned kernel pods.
+- **Notebook Toolbar & State Integration ([`NotebookToolbar.tsx`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/frontend/src/modules/notebooks/components/Toolbar/NotebookToolbar.tsx), [`useKernel.ts`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/frontend/src/modules/notebooks/hooks/useKernel.ts))**: Added quick links to the MLflow UI directly from the notebook header and synchronized kernel lifecycle tracking.
+
+#### Notebook API & Catalog Asset Management
+- **Notebook Route Expansion ([`notebook_routes.py`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/backend/app/notebooks/routes/notebook_routes.py), [`jupyter_proxy.py`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/backend/app/notebooks/routes/jupyter_proxy.py))**: Added endpoints for querying runs, metrics, parameters, and artifact trees directly through the CompassX backend API.
+- **Asset Type Registration ([`asset_type.py`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/backend/app/catalog/asset_type.py))**: Registered notebook and experiment asset definitions in the unified data and model catalog.
+
+---
+
 ## [0.15.5] - 2026-10-26
 
 ### 🚀 Highlights

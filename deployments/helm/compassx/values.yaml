@@ -56,7 +56,7 @@ backend:
   image:
     repository: ghcr.io/compassx-platform/backend
     pullPolicy: IfNotPresent
-    tag: \"v0.15.5\"
+    tag: "v0.16.0"
 
   service:
     type: ClusterIP
@@ -126,7 +126,7 @@ frontend:
   image:
     repository: ghcr.io/compassx-platform/frontend
     pullPolicy: IfNotPresent
-    tag: \"v0.15.5\"
+    tag: "v0.16.0"
 
   service:
     type: ClusterIP
@@ -372,6 +372,7 @@ minio:
     - compassx-dags
     - compassx-outputs
     - compassx-notebooks
+    - mlflow-artifacts
 
   resources:
     limits:
@@ -421,6 +422,36 @@ prometheus:
     requests:
       cpu: "100m"
       memory: "256Mi"
+
+# ------------------------------------------------------------------------------
+# MLflow Tracking & Model Registry
+# ------------------------------------------------------------------------------
+mlflow:
+  enabled: true
+
+  image:
+    repository: ghcr.io/mlflow/mlflow
+    pullPolicy: IfNotPresent
+    tag: "v3.16.0"
+
+  service:
+    type: ClusterIP
+    port: 5000
+    targetPort: 5000
+
+  database:
+    name: "mlflow"
+
+  artifacts:
+    bucket: "mlflow-artifacts"
+
+  resources:
+    limits:
+      cpu: "1000m"
+      memory: "2Gi"
+    requests:
+      cpu: "250m"
+      memory: "512Mi"
 
 # ------------------------------------------------------------------------------
 # Ingress Routing

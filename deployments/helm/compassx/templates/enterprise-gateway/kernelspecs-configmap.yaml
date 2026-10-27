@@ -16,7 +16,9 @@ data:
         }
       },
       "env": {
-        "KERNEL_RUNTIME": "duckdb"
+        "KERNEL_RUNTIME": "duckdb",
+        "MLFLOW_TRACKING_URI": "http://{{ include "compassx.mlflowFullname" . }}:5000",
+        "MLFLOW_S3_ENDPOINT_URL": "{{ include "compassx.storageEndpoint" . }}"
       },
       "argv": [
         "python",
@@ -36,7 +38,9 @@ data:
       },
       "env": {
         "KERNEL_RUNTIME": "spark",
-        "SPARK_HOME": "/opt/spark"
+        "SPARK_HOME": "/opt/spark",
+        "MLFLOW_TRACKING_URI": "http://{{ include "compassx.mlflowFullname" . }}:5000",
+        "MLFLOW_S3_ENDPOINT_URL": "{{ include "compassx.storageEndpoint" . }}"
       },
       "argv": [
         "python",
@@ -55,7 +59,9 @@ data:
         }
       },
       "env": {
-        "KERNEL_RUNTIME": "ray"
+        "KERNEL_RUNTIME": "ray",
+        "MLFLOW_TRACKING_URI": "http://{{ include "compassx.mlflowFullname" . }}:5000",
+        "MLFLOW_S3_ENDPOINT_URL": "{{ include "compassx.storageEndpoint" . }}"
       },
       "argv": [
         "python",
@@ -74,7 +80,9 @@ data:
         }
       },
       "env": {
-        "KERNEL_RUNTIME": "flink"
+        "KERNEL_RUNTIME": "flink",
+        "MLFLOW_TRACKING_URI": "http://{{ include "compassx.mlflowFullname" . }}:5000",
+        "MLFLOW_S3_ENDPOINT_URL": "{{ include "compassx.storageEndpoint" . }}"
       },
       "argv": [
         "python",

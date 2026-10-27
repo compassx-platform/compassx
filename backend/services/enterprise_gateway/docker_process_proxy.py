@@ -73,6 +73,15 @@ class DockerCompassXProcessProxy(CompassXProcessProxy):
         catalog_url = env.get("KERNEL_CATALOG_API_URL") or env.get("CATALOG_API_URL") or ""
         workspace_id = env.get("KERNEL_WORKSPACE_ID") or env.get("WORKSPACE_ID") or ""
         workspace_slug = env.get("KERNEL_WORKSPACE_SLUG") or env.get("WORKSPACE_SLUG") or ""
+        notebook_path = env.get("KERNEL_NOTEBOOK_PATH") or env.get("NOTEBOOK_PATH") or env.get("COMPASSX_NOTEBOOK_PATH") or ""
+        notebook_id = env.get("KERNEL_NOTEBOOK_ID") or env.get("NOTEBOOK_ID") or ""
+        mlflow_tracking_uri = env.get("KERNEL_MLFLOW_TRACKING_URI") or env.get("MLFLOW_TRACKING_URI") or os.environ.get("MLFLOW_TRACKING_URI", "http://mlflow:5000")
+        mlflow_s3_endpoint = env.get("KERNEL_MLFLOW_S3_ENDPOINT_URL") or env.get("MLFLOW_S3_ENDPOINT_URL") or os.environ.get("MLFLOW_S3_ENDPOINT_URL", "http://minio:9000")
+        aws_access_key = env.get("KERNEL_AWS_ACCESS_KEY_ID") or env.get("AWS_ACCESS_KEY_ID") or os.environ.get("AWS_ACCESS_KEY_ID", "minioadmin")
+        aws_secret_key = env.get("KERNEL_AWS_SECRET_ACCESS_KEY") or env.get("AWS_SECRET_ACCESS_KEY") or os.environ.get("AWS_SECRET_ACCESS_KEY", "minioadmin")
+        aws_region = env.get("KERNEL_AWS_DEFAULT_REGION") or env.get("AWS_DEFAULT_REGION") or os.environ.get("AWS_DEFAULT_REGION", "us-east-1")
+        exp_name = (notebook_path if notebook_path.startswith("/") else f"/{notebook_path}") if notebook_path else ""
+
         if catalog_url.startswith(("http://localhost", "https://localhost", "http://127.0.0.1", "https://127.0.0.1")):
             host_gateway = os.environ.get("COMPASSX_HOST_GATEWAY", "host.docker.internal")
             catalog_url = catalog_url.replace("localhost", host_gateway).replace("127.0.0.1", host_gateway)
@@ -88,7 +97,13 @@ class DockerCompassXProcessProxy(CompassXProcessProxy):
                 f"os.environ['KERNEL_WORKSPACE_ID'] = {workspace_id!r}; "
                 f"os.environ['WORKSPACE_SLUG'] = {workspace_slug!r}; "
                 f"os.environ['KERNEL_WORKSPACE_SLUG'] = {workspace_slug!r}; "
-                f"sys.argv = ['ipykernel_launcher', '--ip=0.0.0.0', '--InteractiveShellApp.exec_lines', 'import services.compassx_sql as cx', '--InteractiveShellApp.exec_lines', '%load_ext services.compassx_sql', '-f', '{conn_file}']; "
+                f"os.environ['MLFLOW_TRACKING_URI'] = {mlflow_tracking_uri!r}; "
+                f"os.environ['MLFLOW_S3_ENDPOINT_URL'] = {mlflow_s3_endpoint!r}; "
+                f"os.environ['AWS_ACCESS_KEY_ID'] = {aws_access_key!r}; "
+                f"os.environ['AWS_SECRET_ACCESS_KEY'] = {aws_secret_key!r}; "
+                f"os.environ['AWS_DEFAULT_REGION'] = {aws_region!r}; "
+                + (f"os.environ['NOTEBOOK_PATH'] = {notebook_path!r}; os.environ['COMPASSX_NOTEBOOK_PATH'] = {notebook_path!r}; os.environ['NOTEBOOK_ID'] = {notebook_id!r}; os.environ['MLFLOW_EXPERIMENT_NAME'] = {exp_name!r}; " if exp_name else "")
+                + f"sys.argv = ['ipykernel_launcher', '--ip=0.0.0.0', '--InteractiveShellApp.exec_lines', 'import services.compassx_sql as cx', '--InteractiveShellApp.exec_lines', '%load_ext services.compassx_sql', '-f', '{conn_file}']; "
                 "import services.fsspec_cx; "
                 "from ipykernel import kernelapp; kernelapp.main()"
             ),

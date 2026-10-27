@@ -12,6 +12,7 @@
 #   - MinIO Console  : http://localhost:9001
 #   - Airflow UI     : http://localhost:8080
 #   - Prometheus     : http://localhost:9090
+#   - MLflow UI      : http://localhost:5555
 #
 # ── Bring your own infrastructure ────────────────────────────────────────────
 # Add any service to kubernetes.external_services to skip deploying it
@@ -41,6 +42,7 @@ services:
   enterprise-gateway: { mode: kubernetes }
   jupyter-server:     { mode: kubernetes }
   prometheus:         { mode: kubernetes }
+  mlflow:             { mode: kubernetes }
 
 compute:
   driver: kubernetes
@@ -66,6 +68,7 @@ kubernetes:
     # - minio-console  # localhost:9001  (MinIO Console)
     # - airflow        # localhost:8080  (Airflow UI)
     # - prometheus     # localhost:9090  (Prometheus)
+    # - mlflow         # localhost:5555  (MLflow UI)
 
   # ── External / bring-your-own services ───────────────────────────────────
   # Services listed here are NOT deployed in-cluster.
@@ -85,6 +88,7 @@ startup_order:
   - minio-console
   - airflow
   - prometheus
+  - mlflow
   - enterprise-gateway
   - jupyter-server
   - backend

@@ -29,6 +29,7 @@ DEFAULT_HTTP_HEALTH_PATHS: dict[str, str] = {
     "prometheus": "/-/healthy",
     "frontend": "/",
     "omnigent-server": "/health",
+    "mlflow": "/health",
 }
 
 

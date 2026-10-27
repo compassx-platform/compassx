@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { Play, RotateCcw, Square, Trash2, Plus, Hash, CalendarClock, MoreVertical, Check, X } from 'lucide-react';
+import { Play, RotateCcw, Square, Trash2, Plus, Hash, CalendarClock, MoreVertical, Check, X, FlaskConical } from 'lucide-react';
 import { useScopedNavigate } from '@/lib/appNavigation';
 import api from '@/lib/api';
 import { useNotebookStore } from '../../store/notebookStore';
@@ -19,6 +19,9 @@ export default function NotebookToolbar({ notebookPath, onDelete }: { notebookPa
   const isDirty = useNotebookStore((s) => s.isDirty);
   const acceptAllAgentEdits = useNotebookStore((s) => s.acceptAllAgentEdits);
   const rejectAllAgentEdits = useNotebookStore((s) => s.rejectAllAgentEdits);
+  const toggleRightSidebarTab = useNotebookStore((s) => s.toggleRightSidebarTab);
+  const activeRightSidebarTab = useNotebookStore((s) => s.activeRightSidebarTab);
+  const isRightSidebarOpen = useNotebookStore((s) => s.isRightSidebarOpen);
   const { executeCell } = useExecuteCell();
   const navigate = useScopedNavigate();
 
@@ -194,6 +197,15 @@ export default function NotebookToolbar({ notebookPath, onDelete }: { notebookPa
           )}
 
           <PodSelector />
+          {notebookPath && (
+            <button
+              className={`notebook-toolbar-btn ${isRightSidebarOpen && activeRightSidebarTab === 'experiments' ? 'is-active' : ''}`}
+              onClick={() => toggleRightSidebarTab('experiments')}
+              title="MLflow Experiments & Runs"
+            >
+              <FlaskConical size={14} /> <span>Experiments</span>
+            </button>
+          )}
           {notebookPath && (
             <button
               className="notebook-toolbar-btn"

@@ -5,6 +5,7 @@ import {
   Terminal,
   X,
   Info,
+  FlaskConical,
 } from 'lucide-react';
 import { useNotebookStore, type RightSidebarTab } from '../../store/notebookStore';
 import ComputeConfigPanel from './ComputeConfigPanel';
@@ -12,6 +13,7 @@ import ComputeMetricsPanel from './ComputeMetricsPanel';
 import VariablesPanel from './VariablesPanel';
 import PodLogsPanel from './PodLogsPanel';
 import InfoPanel from './InfoPanel';
+import ExperimentsPanel from './ExperimentsPanel';
 
 interface TabConfig {
   id: RightSidebarTab;
@@ -66,6 +68,12 @@ export default function NotebookRightSidebar() {
       icon: Activity,
     },
     {
+      id: 'experiments',
+      label: 'MLflow Experiments',
+      title: 'MLflow Experiments',
+      icon: FlaskConical,
+    },
+    {
       id: 'info',
       label: 'Information',
       title: 'Information',
@@ -99,6 +107,7 @@ export default function NotebookRightSidebar() {
           <div className="dbx-drawer-body">
             {activeRightSidebarTab === 'config' && <ComputeConfigPanel />}
             {activeRightSidebarTab === 'metrics' && <ComputeMetricsPanel />}
+            {activeRightSidebarTab === 'experiments' && <ExperimentsPanel />}
             {activeRightSidebarTab === 'variables' && <VariablesPanel />}
             {activeRightSidebarTab === 'logs' && <PodLogsPanel />}
             {activeRightSidebarTab === 'info' && <InfoPanel />}

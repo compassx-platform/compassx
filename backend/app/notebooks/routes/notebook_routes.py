@@ -446,3 +446,311 @@ async def save_notebook(
     await _write_notebook_content(db, schema, notebook.blob_path, request_body)
     return {"saved": True, "path": path}
 
+
+# ── MLflow Experiments & Runs ──────────────────────────────────────────────────
+
+@router.get("/experiments/runs")
+async def get_notebook_experiment_runs(
+    path: str,
+    max_results: int = 50,
+    guard: Guard = Depends(get_guard),
+):
+    """Fetch MLflow experiment details and recent runs for a notebook."""
+    import httpx
+    from compassx.lookup import try_resolve_url
+
+    clean_path = path.replace("\\", "/").strip("/")
+    exp_candidates = [
+        f"/{clean_path}",
+        clean_path,
+        f"/notebooks/{clean_path}",
+    ]
+
+    mlflow_url = try_resolve_url("mlflow", "http://localhost:5555").rstrip("/")
+    public_ui_url = os.environ.get("COMPASSX_MLFLOW_PUBLIC_URL", "http://localhost:5555").rstrip("/")
+
+    async with httpx.AsyncClient(timeout=4.0) as client:
+        # Check health/reachability
+        try:
+            health_resp = await client.get(f"{mlflow_url}/health")
+            if health_resp.status_code != 200:
+                return {
+                    "connected": False,
+                    "message": f"MLflow server returned status {health_resp.status_code}",
+                    "runs": [],
+                }
+        except Exception as exc:
+            return {
+                "connected": False,
+                "message": f"MLflow tracking server is not reachable at {mlflow_url}",
+                "runs": [],
+            }
+
+        # Try to find experiment by candidate names
+        experiment = None
+        for name in exp_candidates:
+            try:
+                resp = await client.get(
+                    f"{mlflow_url}/api/2.0/mlflow/experiments/get-by-name",
+                    params={"experiment_name": name},
+                )
+                if resp.status_code == 200:
+                    experiment = resp.json().get("experiment")
+                    break
+            except Exception:
+                pass
+
+        if not experiment:
+            return {
+                "connected": True,
+                "experiment": None,
+                "ui_url": public_ui_url,
+                "message": f"No MLflow experiment found for notebook '{clean_path}' yet.",
+                "runs": [],
+            }
+
+        exp_id = experiment["experiment_id"]
+        exp_ui_url = f"{public_ui_url}/#/experiments/{exp_id}"
+
+        # Fetch runs
+        runs_data = []
+        try:
+            search_resp = await client.post(
+                f"{mlflow_url}/api/2.0/mlflow/runs/search",
+                json={
+                    "experiment_ids": [exp_id],
+                    "max_results": max_results,
+                    "order_by": ["attributes.start_time DESC"],
+                },
+            )
+            if search_resp.status_code == 200:
+                raw_runs = search_resp.json().get("runs", [])
+                for r in raw_runs:
+                    info = r.get("info", {})
+                    data = r.get("data", {})
+                    start_ms = info.get("start_time")
+                    end_ms = info.get("end_time")
+                    duration_ms = (end_ms - start_ms) if (start_ms and end_ms and end_ms >= start_ms) else None
+
+                    metrics_map = {m["key"]: m["value"] for m in data.get("metrics", []) if "key" in m}
+                    params_map = {p["key"]: p["value"] for p in data.get("params", []) if "key" in p}
+                    tags_map = {t["key"]: t["value"] for t in data.get("tags", []) if "key" in t}
+
+                    run_id = info.get("run_id")
+                    runs_data.append({
+                        "run_id": run_id,
+                        "run_name": info.get("run_name") or run_id,
+                        "status": info.get("status", "UNKNOWN"),
+                        "start_time": start_ms,
+                        "end_time": end_ms,
+                        "duration_ms": duration_ms,
+                        "artifact_uri": info.get("artifact_uri"),
+                        "metrics": metrics_map,
+                        "params": params_map,
+                        "tags": tags_map,
+                        "ui_url": f"{public_ui_url}/#/experiments/{exp_id}/runs/{run_id}",
+                    })
+        except Exception as exc:
+            logger.warning("Failed to search MLflow runs for experiment %s: %s", exp_id, exc)
+
+        return {
+            "connected": True,
+            "experiment": {
+                "experiment_id": exp_id,
+                "name": experiment.get("name"),
+                "artifact_location": experiment.get("artifact_location"),
+                "lifecycle_stage": experiment.get("lifecycle_stage"),
+            },
+            "ui_url": exp_ui_url,
+            "total_runs": len(runs_data),
+            "runs": runs_data,
+        }
+
+
+@router.get("/experiments/runs/{run_id}/artifacts")
+async def get_run_artifacts(
+    run_id: str,
+    path: str = "",
+    guard: Guard = Depends(get_guard),
+):
+    """List artifacts for an MLflow run."""
+    import httpx
+    from compassx.lookup import try_resolve_url
+
+    mlflow_url = try_resolve_url("mlflow", "http://localhost:5555").rstrip("/")
+
+    async with httpx.AsyncClient(timeout=4.0) as client:
+        try:
+            resp = await client.get(
+                f"{mlflow_url}/api/2.0/mlflow/artifacts/list",
+                params={"run_id": run_id, "path": path},
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                return {
+                    "connected": True,
+                    "root_uri": data.get("root_uri"),
+                    "files": data.get("files", []),
+                }
+            return {
+                "connected": False,
+                "message": f"MLflow returned status {resp.status_code}",
+                "files": [],
+            }
+        except Exception as exc:
+            return {
+                "connected": False,
+                "message": f"Failed to fetch artifacts: {exc}",
+                "files": [],
+            }
+
+
+class RegisterModelRequest(BaseModel):
+    run_id: str
+    model_name: str
+    artifact_path: str = "model"
+    description: str = ""
+
+
+@router.get("/experiments/models")
+async def list_registered_models(
+    max_results: int = 50,
+    guard: Guard = Depends(get_guard),
+):
+    """List models registered in the MLflow Model Registry."""
+    import httpx
+    from compassx.lookup import try_resolve_url
+
+    mlflow_url = try_resolve_url("mlflow", "http://localhost:5555").rstrip("/")
+    public_ui_url = os.environ.get("COMPASSX_MLFLOW_PUBLIC_URL", "http://localhost:5555").rstrip("/")
+
+    async with httpx.AsyncClient(timeout=4.0) as client:
+        try:
+            health_resp = await client.get(f"{mlflow_url}/health")
+            if health_resp.status_code != 200:
+                return {
+                    "connected": False,
+                    "message": f"MLflow tracking server returned status {health_resp.status_code}",
+                    "models": [],
+                }
+        except Exception:
+            return {
+                "connected": False,
+                "message": f"MLflow tracking server is not reachable at {mlflow_url}",
+                "models": [],
+            }
+
+        try:
+            resp = await client.get(
+                f"{mlflow_url}/api/2.0/mlflow/registered-models/search",
+                params={"max_results": max_results},
+            )
+            if resp.status_code != 200:
+                return {
+                    "connected": True,
+                    "models": [],
+                    "message": f"Failed to retrieve models: {resp.text}",
+                }
+
+            raw_models = resp.json().get("registered_models", [])
+            models_data = []
+            for m in raw_models:
+                name = m.get("name")
+                versions = []
+                for v in m.get("latest_versions", []):
+                    versions.append({
+                        "version": v.get("version"),
+                        "creation_timestamp": v.get("creation_timestamp"),
+                        "last_updated_timestamp": v.get("last_updated_timestamp"),
+                        "current_stage": v.get("current_stage"),
+                        "aliases": v.get("aliases", []),
+                        "status": v.get("status"),
+                        "source": v.get("source"),
+                        "run_id": v.get("run_id"),
+                        "ui_url": f"{public_ui_url}/#/models/{name}/versions/{v.get('version')}",
+                    })
+                tags_map = {t["key"]: t["value"] for t in m.get("tags", []) if "key" in t}
+                models_data.append({
+                    "name": name,
+                    "creation_timestamp": m.get("creation_timestamp"),
+                    "last_updated_timestamp": m.get("last_updated_timestamp"),
+                    "description": m.get("description"),
+                    "latest_versions": versions,
+                    "tags": tags_map,
+                    "ui_url": f"{public_ui_url}/#/models/{name}",
+                })
+
+            return {
+                "connected": True,
+                "models": models_data,
+                "total_models": len(models_data),
+            }
+        except Exception as exc:
+            return {
+                "connected": False,
+                "message": f"Error querying models: {exc}",
+                "models": [],
+            }
+
+
+@router.post("/experiments/models/register")
+async def register_model_version(
+    payload: RegisterModelRequest,
+    guard: Guard = Depends(get_guard),
+):
+    """Register a model artifact from an active or past run into the Model Registry."""
+    import httpx
+    from compassx.lookup import try_resolve_url
+
+    mlflow_url = try_resolve_url("mlflow", "http://localhost:5555").rstrip("/")
+    public_ui_url = os.environ.get("COMPASSX_MLFLOW_PUBLIC_URL", "http://localhost:5555").rstrip("/")
+
+    clean_path = payload.artifact_path.strip("/")
+    source = f"runs:/{payload.run_id}/{clean_path}" if clean_path else f"runs:/{payload.run_id}"
+
+    async with httpx.AsyncClient(timeout=6.0) as client:
+        # Step 1: Ensure registered model exists
+        try:
+            await client.post(
+                f"{mlflow_url}/api/2.0/mlflow/registered-models/create",
+                json={"name": payload.model_name, "description": payload.description},
+            )
+        except Exception:
+            pass
+
+        # Step 2: Create model version
+        try:
+            resp = await client.post(
+                f"{mlflow_url}/api/2.0/mlflow/model-versions/create",
+                json={
+                    "name": payload.model_name,
+                    "source": source,
+                    "run_id": payload.run_id,
+                    "description": payload.description,
+                },
+            )
+            if resp.status_code in (200, 201):
+                version_info = resp.json().get("model_version", {})
+                version_num = version_info.get("version")
+                return {
+                    "success": True,
+                    "model_name": payload.model_name,
+                    "version": version_num,
+                    "source": source,
+                    "ui_url": f"{public_ui_url}/#/models/{payload.model_name}/versions/{version_num}",
+                    "model_version": version_info,
+                }
+            else:
+                raise HTTPException(
+                    status_code=resp.status_code,
+                    detail=f"MLflow error creating model version: {resp.text}",
+                )
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to communicate with MLflow Model Registry: {exc}",
+            )
+
+

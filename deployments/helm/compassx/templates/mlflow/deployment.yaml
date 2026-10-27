@@ -1,0 +1,77 @@
+{{- if .Values.mlflow.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "compassx.mlflowFullname" . }}
+  labels:
+    {{- include "compassx.labels" . | nindent 4 }}
+    app.kubernetes.io/component: mlflow
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "compassx.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: mlflow
+  template:
+    metadata:
+      labels:
+        {{- include "compassx.labels" . | nindent 8 }}
+        app.kubernetes.io/component: mlflow
+    spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: mlflow
+          image: "{{ .Values.global.imageRegistry | default "" }}{{ if .Values.global.imageRegistry }}/{{ end }}{{ .Values.mlflow.image.repository }}:{{ .Values.mlflow.image.tag }}"
+          imagePullPolicy: {{ .Values.mlflow.image.pullPolicy }}
+          command:
+            - mlflow
+            - server
+            - --host=0.0.0.0
+            - --port={{ .Values.mlflow.service.targetPort | default 5000 }}
+            - --backend-store-uri=postgresql://{{ include "compassx.postgresUser" . }}:$(PG_PASSWORD)@{{ include "compassx.postgresHost" . }}:{{ include "compassx.postgresPort" . }}/{{ .Values.mlflow.database.name | default "mlflow" }}
+            - --artifacts-destination=s3://{{ .Values.mlflow.artifacts.bucket | default "mlflow-artifacts" }}
+            - --serve-artifacts
+            - --allowed-hosts=*
+          env:
+            - name: PG_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "compassx.postgresSecretName" . }}
+                  key: {{ include "compassx.postgresSecretKey" . }}
+            - name: MLFLOW_S3_ENDPOINT_URL
+              value: {{ include "compassx.storageEndpoint" . }}
+            - name: AWS_ACCESS_KEY_ID
+              value: {{ if .Values.minio.enabled }}{{ .Values.minio.auth.rootUser | quote }}{{ else }}{{ .Values.externalStorage.accessKey | quote }}{{ end }}
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "compassx.storageSecretName" . }}
+                  key: {{ include "compassx.storageSecretKey" . }}
+            - name: AWS_DEFAULT_REGION
+              value: {{ if .Values.minio.enabled }}"us-east-1"{{ else }}{{ .Values.externalStorage.region | default "us-east-1" | quote }}{{ end }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.mlflow.service.targetPort | default 5000 }}
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: {{ .Values.mlflow.service.targetPort | default 5000 }}
+            initialDelaySeconds: 30
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: {{ .Values.mlflow.service.targetPort | default 5000 }}
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.mlflow.resources | nindent 12 }}
+      nodeSelector:
+        {{- toYaml (.Values.mlflow.nodeSelector | default (dict "kubernetes.azure.com/agentpool" "systempoolv2")) | nindent 8 }}
+{{- end }}

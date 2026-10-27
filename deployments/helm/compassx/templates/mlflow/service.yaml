@@ -1,0 +1,19 @@
+{{- if .Values.mlflow.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "compassx.mlflowFullname" . }}
+  labels:
+    {{- include "compassx.labels" . | nindent 4 }}
+    app.kubernetes.io/component: mlflow
+spec:
+  type: {{ .Values.mlflow.service.type | default "ClusterIP" }}
+  ports:
+    - port: {{ .Values.mlflow.service.port | default 5000 }}
+      targetPort: {{ .Values.mlflow.service.targetPort | default 5000 }}
+      protocol: TCP
+      name: http
+  selector:
+    {{- include "compassx.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: mlflow
+{{- end }}

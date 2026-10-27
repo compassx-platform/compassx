@@ -86,6 +86,10 @@ Component fullname helpers
 {{- printf "%s-prometheus" (include "compassx.fullname" .) | trunc 63 | trimSuffix "-" }}
 {{- end }}
 
+{{- define "compassx.mlflowFullname" -}}
+{{- printf "%s-mlflow" (include "compassx.fullname" .) | trunc 63 | trimSuffix "-" }}
+{{- end }}
+
 {{/*
 Service Account names
 */}}

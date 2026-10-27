@@ -25,6 +25,8 @@ def generate_kernel_json(
     proxy_class_path: str = PROXY_CLASS_PATH,
     session_token: str = None,
     catalog_api_url: str = None,
+    mlflow_tracking_uri: str = None,
+    mlflow_s3_endpoint_url: str = None,
 ) -> dict:
     """Return kernel.json dict for the given runtime.
 
@@ -33,6 +35,8 @@ def generate_kernel_json(
         proxy_class_path: Process proxy class path
         session_token: Notebook session JWT token for volume access
         catalog_api_url: Catalog API base URL (e.g. http://catalog-service:5000/api/v1)
+        mlflow_tracking_uri: MLflow tracking server URI
+        mlflow_s3_endpoint_url: MLflow S3/MinIO artifact endpoint URL
     """
     runtime_configs = {
         "spark": {
@@ -79,6 +83,27 @@ def generate_kernel_json(
     env.setdefault("CATALOG_API_URL", catalog_api_url or "")
     env.setdefault("KERNEL_CATALOG_API_URL", catalog_api_url or "")
 
+    try:
+        resolved_mlflow_url = try_resolve_url_container("mlflow", "http://mlflow:5000")
+        resolved_minio_url = try_resolve_url_container("minio", "http://minio:9000")
+    except Exception:
+        resolved_mlflow_url = "http://mlflow:5000"
+        resolved_minio_url = "http://minio:9000"
+
+    tracking_uri = mlflow_tracking_uri or resolved_mlflow_url
+    s3_endpoint = mlflow_s3_endpoint_url or resolved_minio_url
+
+    env.setdefault("MLFLOW_TRACKING_URI", tracking_uri)
+    env.setdefault("KERNEL_MLFLOW_TRACKING_URI", tracking_uri)
+    env.setdefault("MLFLOW_S3_ENDPOINT_URL", s3_endpoint)
+    env.setdefault("KERNEL_MLFLOW_S3_ENDPOINT_URL", s3_endpoint)
+    env.setdefault("AWS_ACCESS_KEY_ID", "minioadmin")
+    env.setdefault("KERNEL_AWS_ACCESS_KEY_ID", "minioadmin")
+    env.setdefault("AWS_SECRET_ACCESS_KEY", "minioadmin")
+    env.setdefault("KERNEL_AWS_SECRET_ACCESS_KEY", "minioadmin")
+    env.setdefault("AWS_DEFAULT_REGION", "us-east-1")
+    env.setdefault("KERNEL_AWS_DEFAULT_REGION", "us-east-1")
+
     init_cmd = (
         "import sys; "
         "sys.argv = ['ipykernel_launcher', '--InteractiveShellApp.exec_lines', 'import services.compassx_sql as cx', '--InteractiveShellApp.exec_lines', '%load_ext services.compassx_sql', '-f', sys.argv[-1]]; "
@@ -107,7 +132,13 @@ def configmap_key(runtime: str) -> str:
     return f"{runtime}_python--kernel.json"
 
 
-def build_kernelspec_configmap(namespace: str, session_token: str = None, catalog_api_url: str = None) -> client.V1ConfigMap:
+def build_kernelspec_configmap(
+    namespace: str,
+    session_token: str = None,
+    catalog_api_url: str = None,
+    mlflow_tracking_uri: str = None,
+    mlflow_s3_endpoint_url: str = None,
+) -> client.V1ConfigMap:
     """Build K8s ConfigMap containing all runtime kernel.json files."""
     import os
 
@@ -115,11 +146,27 @@ def build_kernelspec_configmap(namespace: str, session_token: str = None, catalo
         session_token = os.environ.get("NOTEBOOK_SESSION_TOKEN") or os.environ.get("JUPYTER_TOKEN")
     if not catalog_api_url:
         catalog_api_url = try_resolve_url_container("backend", "http://localhost:8000") + "/api/v1/catalog"
+    if not mlflow_tracking_uri:
+        try:
+            mlflow_tracking_uri = try_resolve_url_container("mlflow", "http://mlflow:5000")
+        except Exception:
+            mlflow_tracking_uri = "http://mlflow:5000"
+    if not mlflow_s3_endpoint_url:
+        try:
+            mlflow_s3_endpoint_url = try_resolve_url_container("minio", "http://minio:9000")
+        except Exception:
+            mlflow_s3_endpoint_url = "http://minio:9000"
 
     data = {}
     for runtime in RUNTIMES:
         data[configmap_key(runtime)] = json.dumps(
-            generate_kernel_json(runtime, session_token=session_token, catalog_api_url=catalog_api_url),
+            generate_kernel_json(
+                runtime,
+                session_token=session_token,
+                catalog_api_url=catalog_api_url,
+                mlflow_tracking_uri=mlflow_tracking_uri,
+                mlflow_s3_endpoint_url=mlflow_s3_endpoint_url,
+            ),
             indent=2,
         )
 

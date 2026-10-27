@@ -133,7 +133,7 @@ services:
       start_period: 30s
 
   backend:
-    image: ghcr.io/compassx-platform/backend:v0.15.5
+    image: ghcr.io/compassx-platform/backend:v0.16.0
     depends_on:
       postgres:
         condition: service_healthy
@@ -169,7 +169,7 @@ services:
       start_period: 30s
 
   frontend:
-    image: ghcr.io/compassx-platform/frontend:v0.15.5
+    image: ghcr.io/compassx-platform/frontend:v0.16.0
     depends_on:
       backend:
         condition: service_started
@@ -235,9 +235,6 @@ services:
 
   mlflow-init:
     image: minio/mc:latest
-    profiles:
-      - mlflow
-      - on-demand
     depends_on:
       minio:
         condition: service_healthy
@@ -251,9 +248,6 @@ services:
 
   mlflow:
     image: ghcr.io/mlflow/mlflow:v3.16.0
-    profiles:
-      - mlflow
-      - on-demand
     command:
       - mlflow
       - server

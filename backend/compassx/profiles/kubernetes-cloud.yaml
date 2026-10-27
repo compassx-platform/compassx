@@ -17,6 +17,7 @@ services:
   enterprise-gateway: { mode: kubernetes }
   jupyter-server: { mode: kubernetes }
   prometheus: { mode: kubernetes }
+  mlflow: { mode: kubernetes }
 
 compute:
   driver: kubernetes
@@ -40,6 +41,8 @@ startup_order:
   - minio
   - airflow
   - enterprise-gateway
+  - prometheus
+  - mlflow
   - backend
   - frontend
 

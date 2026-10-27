@@ -38,6 +38,8 @@ startup_order:
   - minio
   - airflow
   - enterprise-gateway
+  - prometheus
+  - mlflow
   - backend
   - frontend
 

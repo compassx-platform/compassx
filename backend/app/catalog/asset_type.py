@@ -188,6 +188,18 @@ class QueryAssetType:
         pass
 
 
+class ModelAssetType:
+    """Registered ML models under <schema>/models/<name>."""
+
+    kind = "model"
+
+    def storage_sub_path(self, asset_name: str) -> str:
+        return f"models/{asset_name}"
+
+    async def on_delete(self, ctx: "StorageContext", asset_name: str) -> None:
+        pass
+
+
 # Register built-in types
 register_asset_type(TableAssetType())
 register_asset_type(VolumeAssetType())
@@ -196,4 +208,5 @@ register_asset_type(DashboardAssetType())
 register_asset_type(ToolAssetType())
 register_asset_type(ConnectionAssetType())
 register_asset_type(QueryAssetType())
+register_asset_type(ModelAssetType())
 

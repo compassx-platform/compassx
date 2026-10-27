@@ -188,6 +188,7 @@ DEFAULT_K8S_SERVICE_NAMES: dict[str, tuple[str, int]] = {
     "jupyter-server":     ("compassx-jupyter-server",     8889),
     "backend":            ("compassx-backend",            8000),
     "prometheus":         ("compassx-prometheus",         9090),
+    "mlflow":             ("compassx-mlflow",             5000),
     # frontend: handled specially below (port-forward to ingress-nginx-controller)
 }
 
@@ -202,6 +203,7 @@ _DEPLOYMENT_NAMES: dict[str, str] = {
     "backend":            "compassx-backend",
     "frontend":           "compassx-frontend",
     "prometheus":         "compassx-prometheus",
+    "mlflow":             "compassx-mlflow",
 }
 
 
@@ -219,7 +221,7 @@ class KubernetesLauncher(Launcher):
         self._repo_root = repo_root
         self._backend_dir = repo_root / "backend"
         self._namespace = profile.k8s_namespace
-        self._local_ports = local_ports or {}
+        self._local_ports = {"mlflow": 5555, **(local_ports or {})}
         self._pf_processes: dict[str, subprocess.Popen] = {}
         self._pf_tasks: dict[str, asyncio.Task] = {}
 
