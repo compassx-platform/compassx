@@ -36,7 +36,7 @@ SPARK_IMAGE = "apache/spark:3.5.0"
 FLINK_IMAGE = "flink:1.18-scala_2.12"
 RAY_IMAGE = "rayproject/ray:2.9.0"
 DUCKDB_IMAGE = os.environ.get("COMPASSX_DUCKDB_IMAGE", "ghcr.io/compassx-platform/compute-duckdb:v0.16.0")
-NOTEBOOK_JOB_IMAGE = os.environ.get("COMPASSX_NOTEBOOK_JOB_IMAGE", "ghcr.io/compassx-platform/airflow-notebook-runner:v0.11.10")
+NOTEBOOK_JOB_IMAGE = os.environ.get("COMPASSX_NOTEBOOK_JOB_IMAGE", "ghcr.io/compassx-platform/airflow-notebook-runner:v0.16.0")
 
 DUCKDB_VALID_PROFILES = {"local", "cloud-xs", "cloud-s"}
 
