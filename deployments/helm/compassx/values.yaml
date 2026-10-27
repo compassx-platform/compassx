@@ -428,6 +428,7 @@ prometheus:
 # ------------------------------------------------------------------------------
 mlflow:
   enabled: true
+  workers: 1
 
   image:
     repository: ghcr.io/mlflow/mlflow

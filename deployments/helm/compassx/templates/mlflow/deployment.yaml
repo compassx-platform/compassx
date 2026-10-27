@@ -39,7 +39,8 @@ spec:
                 --backend-store-uri=postgresql://{{ include "compassx.postgresUser" . }}:$(PG_PASSWORD)@{{ include "compassx.postgresHost" . }}:{{ include "compassx.postgresPort" . }}/{{ .Values.mlflow.database.name | default "mlflow" }} \
                 --artifacts-destination=s3://{{ .Values.mlflow.artifacts.bucket | default "mlflow-artifacts" }} \
                 --serve-artifacts \
-                --allowed-hosts=*
+                --allowed-hosts=* \
+                --workers={{ .Values.mlflow.workers | default 1 }}
           env:
             - name: PG_PASSWORD
               valueFrom:
