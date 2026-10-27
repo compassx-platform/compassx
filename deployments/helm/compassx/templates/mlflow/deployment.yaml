@@ -29,14 +29,17 @@ spec:
           image: "{{ .Values.global.imageRegistry | default "" }}{{ if .Values.global.imageRegistry }}/{{ end }}{{ .Values.mlflow.image.repository }}:{{ .Values.mlflow.image.tag }}"
           imagePullPolicy: {{ .Values.mlflow.image.pullPolicy }}
           command:
-            - mlflow
-            - server
-            - --host=0.0.0.0
-            - --port={{ .Values.mlflow.service.targetPort | default 5000 }}
-            - --backend-store-uri=postgresql://{{ include "compassx.postgresUser" . }}:$(PG_PASSWORD)@{{ include "compassx.postgresHost" . }}:{{ include "compassx.postgresPort" . }}/{{ .Values.mlflow.database.name | default "mlflow" }}
-            - --artifacts-destination=s3://{{ .Values.mlflow.artifacts.bucket | default "mlflow-artifacts" }}
-            - --serve-artifacts
-            - --allowed-hosts=*
+            - /bin/sh
+            - -c
+            - |
+              pip install --no-cache-dir psycopg2-binary boto3
+              exec mlflow server \
+                --host=0.0.0.0 \
+                --port={{ .Values.mlflow.service.targetPort | default 5000 }} \
+                --backend-store-uri=postgresql://{{ include "compassx.postgresUser" . }}:$(PG_PASSWORD)@{{ include "compassx.postgresHost" . }}:{{ include "compassx.postgresPort" . }}/{{ .Values.mlflow.database.name | default "mlflow" }} \
+                --artifacts-destination=s3://{{ .Values.mlflow.artifacts.bucket | default "mlflow-artifacts" }} \
+                --serve-artifacts \
+                --allowed-hosts=*
           env:
             - name: PG_PASSWORD
               valueFrom:
