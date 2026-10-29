@@ -231,10 +231,12 @@ export function OmnigentChatPanel({
   const [expandedTools, setExpandedTools] = useState<Record<string, boolean>>({});
   const [copiedCodeId, setCopiedCodeId] = useState<string | null>(null);
   const [isSending, setIsSending] = useState(false);
+  const [followTerminal, setFollowTerminal] = useState(false);
   const [optimisticMessages, setOptimisticMessages] = useState<ChatMessage[]>([]);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const followTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
     if (agentName) {
@@ -243,16 +245,20 @@ export function OmnigentChatPanel({
   }, [agentName]);
 
   const { data: serverAgents = [] } = useOmnigentAgents(resolvedAppId);
+  const runnableAgents = useMemo(
+    () => DEFAULT_AGENTS.filter((agent) => agent.name === 'pi' || agent.name === 'opencode' || agent.name === 'antigravity'),
+    [],
+  );
   const allAgents: OmnigentAgent[] = useMemo(() => {
+    if (propSessionId) return runnableAgents;
     if (serverAgents && serverAgents.length > 0) {
-      // Merge with default details for richer UI
       return DEFAULT_AGENTS.map((def) => {
         const found = serverAgents.find((s: OmnigentAgent) => s.name === def.name || s.id === def.id);
         return found ? { ...def, ...found } : def;
       });
     }
     return DEFAULT_AGENTS;
-  }, [serverAgents]);
+  }, [serverAgents, propSessionId, runnableAgents]);
 
   const activeAgent = useMemo(() => {
     return (
@@ -283,23 +289,35 @@ export function OmnigentChatPanel({
   const resolvedWorkspaceId = propWorkspaceId || session?.workspace_id || devStatus?.workspace_id;
   const resolvedWorkspaceName = propWorkspaceName || session?.workspace_name || devStatus?.workspace_name;
 
+  const chatVisible = viewMode === 'chat' || viewMode === 'split';
   const {
     data: serverMessages = [],
     refetch: refetchMessages,
-  } = useOmnigentMessages(resolvedAppId, resolvedSessionId, isSending);
+  } = useOmnigentMessages(
+    resolvedAppId,
+    resolvedSessionId,
+    isSending || followTerminal || (chatVisible && !!isDevPodRunning),
+  );
 
   const sendPromptMutation = useSendOmnigentPrompt();
   const clearSessionMutation = useClearOmnigentSession();
 
   const allMessages: ChatMessage[] = useMemo(() => {
-    if (propMessages && propMessages.length > 0) {
-      return [...propMessages, ...optimisticMessages];
-    }
-    if (!serverMessages || serverMessages.length === 0) {
-      return optimisticMessages;
-    }
-    return serverMessages;
+    const base = (propMessages && propMessages.length > 0 ? propMessages : serverMessages) || [];
+    const seenUser = new Set(
+      base.filter((message) => message.role === 'user').map((message) => message.content.trim()),
+    );
+    const pending = optimisticMessages.filter((message) => !seenUser.has(message.content.trim()));
+    return [...base, ...pending];
   }, [propMessages, serverMessages, optimisticMessages]);
+
+  useEffect(() => {
+    if (!optimisticMessages.length || !serverMessages.length) return;
+    const seenUser = new Set(
+      serverMessages.filter((message) => message.role === 'user').map((message) => message.content.trim()),
+    );
+    setOptimisticMessages((prev) => prev.filter((message) => !seenUser.has(message.content.trim())));
+  }, [serverMessages, optimisticMessages.length]);
 
   const prevToolCallCountRef = useRef<number>(0);
   useEffect(() => {
@@ -349,12 +367,17 @@ export function OmnigentChatPanel({
           workspaceId: resolvedWorkspaceId,
         });
 
+        setFollowTerminal(true);
+        if (followTimerRef.current) window.clearTimeout(followTimerRef.current);
+        followTimerRef.current = window.setTimeout(() => setFollowTerminal(false), 25000);
         refetchMessages();
         if (onCodeUpdated) {
           setTimeout(onCodeUpdated, 2000);
         }
       }
     } catch (err: any) {
+      setOptimisticMessages((prev) => prev.filter((message) => message.id !== tempUserMsg.id));
+      setPromptText(finalPrompt);
       toast.error(err?.response?.data?.detail || err?.message || 'Failed to send prompt to AI agent.');
     } finally {
       setIsSending(false);
@@ -1275,7 +1298,7 @@ export function OmnigentChatPanel({
                 workspaceId={resolvedWorkspaceId}
                 workspaceName={resolvedWorkspaceName}
                 isDevPodRunning={isDevPodRunning ?? false}
-                agent={activeAgent.name}
+                agent={agentName || activeAgent.name}
                 sessionId={resolvedSessionId}
                 sessionTitle={sessionTitle || session?.title}
                 fullHeight={true}
@@ -1388,6 +1411,13 @@ export function OmnigentChatPanel({
                   <div
                     key={agent.id || agent.name}
                     onClick={() => {
+                      const boundName = (agentName || '').trim().toLowerCase();
+                      const nextName = (agent.name || '').trim().toLowerCase();
+                      const sameAgent = !boundName || nextName === boundName || nextName.startsWith(boundName) || boundName.startsWith(nextName);
+                      if (propSessionId && boundName && !sameAgent) {
+                        toast.error(`This session is bound to ${agentName}. Start a new session to use another agent.`);
+                        return;
+                      }
                       setSelectedAgentName(agent.name);
                       setIsAgentModalOpen(false);
                       propOnAgentChange?.(agent.name);

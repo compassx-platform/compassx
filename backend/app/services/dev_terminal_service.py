@@ -50,6 +50,20 @@ class DevTerminalService:
                 pass
         return f"{clean_id}/{ws_name}"
 
+    def resolve_agent_tmux_target(
+        self,
+        app: App,
+        tmux_session_name: str,
+        workspace_id: Optional[str] = None,
+        workspace_name: Optional[str] = None,
+    ) -> Tuple[str, str, str]:
+        """Return (tmux session name, workspace folder, workdir) shared by chat and the terminal."""
+        ws_folder = self._resolve_workspace_folder(app, workspace_id=workspace_id, workspace_name=workspace_name)
+        leaf = ws_folder.split("/")[-1]
+        clean_ws = re.sub(r"[^a-zA-Z0-9_-]", "_", leaf).strip("_") or "default"
+        session_name = f"{tmux_session_name}_{clean_ws}"[:60]
+        return session_name, ws_folder, f"/workspaces/{ws_folder}"
+
     def exec_command(
         self,
         app: App,
@@ -107,9 +121,12 @@ class DevTerminalService:
 
         if session_obj:
             resolved_agent = session_obj.agent
-            base_tmux_name = session_obj.tmux_session_name
-            # Scope tmux target to include active workspace folder so agent works in that worktree
-            session_name = f"{base_tmux_name}_{clean_ws}"[:60]
+            session_name, _, _ = self.resolve_agent_tmux_target(
+                app,
+                session_obj.tmux_session_name,
+                workspace_id=workspace_id,
+                workspace_name=workspace_name or leaf_ws,
+            )
             cli_cmd = dev_session_service.get_session_cli_command(session_obj)
             dev_session_service.touch_session(app.id, session_obj.id)
         elif is_shell:

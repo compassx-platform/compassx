@@ -1,6 +1,7 @@
 import os
 import base64
 import logging
+import yaml
 from typing import Optional, List, Dict, Any
 from pydantic import BaseModel
 from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect, status
@@ -9,13 +10,24 @@ from sqlalchemy.orm import Session
 from app.database import get_system_db
 from app.governance.dependencies import Guard, get_guard
 from app.models.app import App
+from app.services.app_manifest_service import app_manifest_service
 from app.services.omnigent_dev_service import omnigent_dev_service
+from app.services.studio.workspace_files import get_workspace_file_service
 from app.services.dev_terminal_service import dev_terminal_service
 from app.services.sandbox_reaper_service import unified_reaper_service
 from app.sandbox.service import sandbox_service
 from app.sandbox.models import SandboxSpec, StorageMount, InitScript, SandboxStatus
 
 logger = logging.getLogger(__name__)
+
+
+def _sync_agent_login(app, *, force: bool = False) -> None:
+    """Capture or restore the workspace Antigravity login. Never fails the request."""
+    try:
+        from app.services.sandbox_credentials import sync_antigravity_for_app
+        sync_antigravity_for_app(app, force=force)
+    except Exception:
+        logger.debug("Agent login sync failed for %s", getattr(app, "id", ""), exc_info=True)
 
 
 router = APIRouter(prefix="/api/v1/apps/{app_id}/dev", tags=["Apps Development & Omnigent"])
@@ -486,7 +498,11 @@ else:
             continue
         if not b_cmd and any(f in files for f in ('app.py', 'main.py', 'server.py')):
             b_dir = root
-            b_cmd = 'uvicorn main:app --host 0.0.0.0 --port 8000 --reload' if 'main.py' in files else 'python3 app.py'
+            if 'main.py' in files:
+                b_cmd = 'uvicorn main:app --host 0.0.0.0 --port 8000 --reload'
+                b_port = 8000
+            else:
+                b_cmd = 'python3 app.py'
         if not f_cmd and 'package.json' in files:
             f_dir = root
             f_cmd = 'npm run dev -- --port 4000 --host 0.0.0.0'
@@ -513,15 +529,67 @@ for check_dir in ['/workspace']:
                     except Exception:
                         pass
 
+def _supervise(label, command, cwd, log_path):
+    # Restart a dev server that exits. A one-shot start left the preview on the splash page.
+    def _run():
+        while True:
+            print(f"[auto_start] {label} starting", flush=True)
+            proc = subprocess.Popen(
+                command,
+                shell=True,
+                cwd=cwd,
+                stdout=open(log_path, 'a'),
+                stderr=subprocess.STDOUT,
+            )
+            code = proc.wait()
+            print(f"[auto_start] {label} exited {code}; restarting", flush=True)
+            time.sleep(2)
+    threading.Thread(target=_run, daemon=True).start()
+
 if b_cmd:
     b_str = ' '.join(b_cmd) if isinstance(b_cmd, list) else str(b_cmd)
-    subprocess.Popen(b_str, shell=True, cwd=b_dir, stdout=open('/tmp/app_backend.log', 'a'), stderr=subprocess.STDOUT)
+    _supervise('backend', b_str, b_dir, '/tmp/app_backend.log')
 
 if f_cmd:
     f_str = ' '.join(f_cmd) if isinstance(f_cmd, list) else str(f_cmd)
-    subprocess.Popen(f_str, shell=True, cwd=f_dir, stdout=open('/tmp/app_frontend.log', 'a'), stderr=subprocess.STDOUT)
+    os.environ['PORT'] = str(f_port)
+    os.environ['HOST'] = '0.0.0.0'
+    _supervise('frontend', f_str, f_dir, '/tmp/app_frontend.log')
 
-time.sleep(0.5)
+def _port_open(port):
+    probe = socket.socket()
+    probe.settimeout(0.3)
+    try:
+        probe.connect(('127.0.0.1', int(port)))
+        return True
+    except Exception:
+        return False
+    finally:
+        try:
+            probe.close()
+        except Exception:
+            pass
+
+if f_cmd:
+    deadline = time.time() + 25
+    while time.time() < deadline and not _port_open(f_port):
+        time.sleep(0.4)
+    if not _port_open(f_port):
+        for candidate in (3000, 5173, 4173, 4000, 8081, 5000):
+            if candidate in (8080,):
+                continue
+            if _port_open(candidate):
+                print(f"[auto_start] Frontend is listening on {candidate}", flush=True)
+                f_port = candidate
+                break
+if b_cmd and not _port_open(b_port):
+    for candidate in (8000, 8877, 8081, 5000):
+        if candidate == 8080 or candidate == f_port:
+            continue
+        if _port_open(candidate):
+            print(f"[auto_start] Backend is listening on {candidate}", flush=True)
+            b_port = candidate
+            break
 GATEWAY_PORT = 8080
 SPLASH_HTML = b'HTTP/1.1 200 OK\\r\\nContent-Type: text/html; charset=utf-8\\r\\nConnection: close\\r\\n\\r\\n<!DOCTYPE html><html><head><meta charset="utf-8"><meta http-equiv="refresh" content="2"><title>Live Sandbox Starting</title><style>body{background:#0b0f19;color:#f1f5f9;font-family:-apple-system,BlinkMacSystemFont,sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;}.card{background:#111827;border:1px solid #1e293b;border-radius:12px;padding:2.5rem;text-align:center;max-width:440px;box-shadow:0 20px 25px -5px rgba(0,0,0,0.5);}.spinner{width:38px;height:38px;border:3px solid rgba(59,130,246,0.2);border-top-color:#3b82f6;border-radius:50%;animation:spin 0.8s linear infinite;margin:0 auto 1.25rem;}@keyframes spin{to{transform:rotate(360deg);}}h2{font-size:1.2rem;font-weight:600;margin-bottom:0.5rem;color:#f8fafc;}p{font-size:0.875rem;color:#94a3b8;line-height:1.5;}</style></head><body><div class="card"><div class="spinner"></div><h2>Live Sandbox Starting...</h2><p>Application dev server is compiling and starting. This preview will automatically refresh once ready.</p></div></body></html>'
 
@@ -591,17 +659,7 @@ while True:
     auto_start_script = f"echo '{b64_auto_start}' | base64 -d > /tmp/compassx_auto_start.py && python3 /tmp/compassx_auto_start.py"
 
     auth_sync_script = (
-        "mkdir -p /root/.gemini/antigravity-cli /root/.gemini/config /workspace/.gemini_auth/antigravity-cli /workspace/.gemini_auth/config 2>/dev/null || true; "
-        "if [ -d /workspaces/.shared_auth/.gemini ] && [ -n \"$(find /workspaces/.shared_auth/.gemini -type f 2>/dev/null)\" ]; then "
-        "  cp -rn /workspaces/.shared_auth/.gemini/* /root/.gemini/ 2>/dev/null || true; "
-        "  cp -rn /workspaces/.shared_auth/.gemini/* /workspace/.gemini_auth/ 2>/dev/null || true; "
-        "elif [ -d /workspace/.gemini_auth ] && [ -n \"$(find /workspace/.gemini_auth -type f 2>/dev/null)\" ]; then "
-        "  cp -rn /workspace/.gemini_auth/* /root/.gemini/ 2>/dev/null || true; "
-        "  if [ -d /workspaces ]; then "
-        "    mkdir -p /workspaces/.shared_auth/.gemini 2>/dev/null || true; "
-        "    cp -rn /workspace/.gemini_auth/* /workspaces/.shared_auth/.gemini/ 2>/dev/null || true; "
-        "  fi; "
-        "fi; "
+        "mkdir -p /root/.gemini/antigravity-cli /root/.gemini/config 2>/dev/null || true; "
         "if [ -f /workspace/.env ]; then "
         "  mkdir -p /etc/profile.d 2>/dev/null || true; "
         "  cp -f /workspace/.env /etc/profile.d/compassx_env.sh 2>/dev/null || true; "
@@ -611,22 +669,18 @@ while True:
         "  grep -q 'compassx_env.sh' /etc/profile 2>/dev/null || echo '[ -f /etc/profile.d/compassx_env.sh ] && source /etc/profile.d/compassx_env.sh' >> /etc/profile; "
         "fi; "
         "(while true; do "
-        "  for src in /root/.gemini /root/.omnigent/antigravity-native/*/agy-home/.gemini; do "
+        "  for src in /root/.omnigent/antigravity-native/*/agy-home/.gemini; do "
         "    if [ -d \"$src\" ]; then "
-        "      for f in antigravity-cli/antigravity-oauth-token oauth_creds.json antigravity-cli/jetski_state.pbtxt antigravity-cli/installation_id config/config.json config/projects/default-cli-project.json config/mcp_config.json; do "
-        "        if [ -f \"$src/$f\" ] && [ -s \"$src/$f\" ]; then "
-        "          mkdir -p \"/workspace/.gemini_auth/$(dirname \"$f\")\" 2>/dev/null || true; "
-        "          cp -u \"$src/$f\" \"/workspace/.gemini_auth/$f\" 2>/dev/null || cp -f \"$src/$f\" \"/workspace/.gemini_auth/$f\" 2>/dev/null || true; "
-        "          if [ -d /workspaces/.shared_auth/.gemini ]; then "
-        "            mkdir -p \"/workspaces/.shared_auth/.gemini/$(dirname \"$f\")\" 2>/dev/null || true; "
-        "            cp -u \"$src/$f\" \"/workspaces/.shared_auth/.gemini/$f\" 2>/dev/null || cp -f \"$src/$f\" \"/workspaces/.shared_auth/.gemini/$f\" 2>/dev/null || true; "
-        "          fi; "
+        "      for f in antigravity-cli/antigravity-oauth-token oauth_creds.json antigravity-cli/jetski_state.pbtxt antigravity-cli/installation_id; do "
+        "        if [ -f \"$src/$f\" ] && [ -s \"$src/$f\" ] && ! grep -q auto-authenticated \"$src/$f\" 2>/dev/null; then "
+        "          mkdir -p \"/root/.gemini/$(dirname \"$f\")\" 2>/dev/null || true; "
+        "          cp -f \"$src/$f\" \"/root/.gemini/$f\" 2>/dev/null || true; "
         "        fi; "
         "      done; "
         "    fi; "
         "  done; "
         "  sleep 3; "
-        "done) &"
+        "done) >/dev/null 2>&1 &"
     )
 
     # App-configured custom environment variables (from app.config)
@@ -658,6 +712,10 @@ while True:
     os.makedirs(gemini_dir, exist_ok=True)
     os.makedirs(pi_dir, exist_ok=True)
     os.makedirs(opencode_dir, exist_ok=True)
+
+    from app.services.sandbox_credentials import gateway_api_key_for_app, gateway_base_url
+    custom_env_dict["OPENAI_API_KEY"] = gateway_api_key_for_app(app)
+    custom_env_dict["OPENAI_BASE_URL"] = gateway_base_url()
 
     return SandboxSpec(
         sandbox_id=f"dev-app-{app.id}",
@@ -713,6 +771,8 @@ def start_dev_session(
     unified_reaper_service.touch_app_activity(app.id)
     spec = _build_app_sandbox_spec(app)
     instance = sandbox_service.ensure_sandbox(spec)
+    if instance.status in (SandboxStatus.READY, SandboxStatus.RUNNING):
+        _sync_agent_login(app, force=True)
     return {
         "app_id": app.id,
         "status": "active" if instance.status in (SandboxStatus.READY, SandboxStatus.RUNNING) else str(instance.status.value),
@@ -748,6 +808,8 @@ def restart_dev_sandbox(
 
     spec = _build_app_sandbox_spec(app)
     instance = sandbox_service.ensure_sandbox(spec)
+    if instance.status in (SandboxStatus.READY, SandboxStatus.RUNNING):
+        _sync_agent_login(app, force=True)
     return {
         "app_id": app.id,
         "status": "active" if instance.status in (SandboxStatus.READY, SandboxStatus.RUNNING) else str(instance.status.value),
@@ -775,6 +837,8 @@ def ensure_app_sandbox(
     unified_reaper_service.touch_app_activity(app.id)
     spec = _build_app_sandbox_spec(app)
     instance = sandbox_service.ensure_sandbox(spec)
+    if instance.status in (SandboxStatus.READY, SandboxStatus.RUNNING):
+        _sync_agent_login(app)
     return instance
 
 
@@ -938,7 +1002,7 @@ def list_workspace_files(
     db.close()
 
     unified_reaper_service.touch_app_activity(app_id_val)
-    return omnigent_dev_service.list_workspace_files(app, workspace_id=workspace_id)
+    return get_workspace_file_service().list_workspace_files(app, workspace_id=workspace_id)
 
 
 
@@ -957,11 +1021,32 @@ def read_workspace_file(
 
     try:
         unified_reaper_service.touch_app_activity(app.id)
-        return omnigent_dev_service.read_workspace_file(app, path, workspace_id=workspace_id)
+        return get_workspace_file_service().read_workspace_file(app, path, workspace_id=workspace_id)
     except FileNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/file/diff")
+def diff_workspace_file(
+    app_id: str,
+    path: str = Query(..., description="Relative file path in workspace"),
+    workspace_id: Optional[str] = Query(None, description="Active sandbox workspace ID or name"),
+    db: Session = Depends(get_system_db),
+    guard: Guard = Depends(get_guard),
+):
+    """Unified diff of one sandbox file against the last commit."""
+    app = db.query(App).filter(App.id == app_id).first()
+    if not app:
+        raise HTTPException(status_code=404, detail=f"App '{app_id}' not found.")
+    if guard.workspace_id and app.workspace_id != guard.workspace_id:
+        raise HTTPException(status_code=403, detail="Cannot access app in another workspace.")
+    try:
+        unified_reaper_service.touch_app_activity(app.id)
+        return get_workspace_file_service().diff_workspace_file(app, path, workspace_id=workspace_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
 
 @router.put("/file")
@@ -980,7 +1065,7 @@ def write_workspace_file(
     try:
         unified_reaper_service.touch_app_activity(app.id)
         target_ws = body.workspace_id or workspace_id
-        return omnigent_dev_service.write_workspace_file(app, body.path, body.content, workspace_id=target_ws)
+        return get_workspace_file_service().write_workspace_file(app, body.path, body.content, workspace_id=target_ws)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
@@ -1013,8 +1098,13 @@ def publish_dev_changes(
             workspace_name=ws_name,
         )
         return res
+    except HTTPException:
+        raise
     except Exception as e:
         logger.exception("Failed to publish dev changes for app %s: %s", app.name, e)
+        raise HTTPException(status_code=500, detail=str(e) or "Failed to publish sandbox changes.") from e
+
+
 @router.get("/commits")
 def get_git_commits(
     app_id: str,
@@ -1133,6 +1223,7 @@ def get_build_session_messages(
     if guard.workspace_id and app.workspace_id != guard.workspace_id:
         raise HTTPException(status_code=403, detail="Cannot access app in another workspace.")
     unified_reaper_service.touch_app_activity(app.id)
+    _sync_agent_login(app)
     return omnigent_dev_service.get_build_session_messages(app, session_id=session_id)
 
 
@@ -1153,18 +1244,22 @@ def send_build_prompt(
         raise HTTPException(status_code=400, detail="Prompt cannot be empty.")
 
     unified_reaper_service.touch_app_activity(app.id)
+    _sync_agent_login(app, force=True)
     session_id = body.session_id
     if not session_id:
         sess = omnigent_dev_service.get_build_session(app, workspace_id=body.workspace_id)
         session_id = sess.get("session_id")
 
-    return omnigent_dev_service.send_build_session_prompt(
+    result = omnigent_dev_service.send_build_session_prompt(
         app,
         session_id=session_id,
         prompt=body.prompt.strip(),
         agent_name=body.agent_name,
         workspace_id=body.workspace_id,
     )
+    if result.get("status") == "error":
+        raise HTTPException(status_code=409, detail=result.get("message") or "Agent terminal is not ready.")
+    return result
 
 
 @router.post("/build/clear")
@@ -1181,8 +1276,9 @@ def clear_build_session(
     if guard.workspace_id and app.workspace_id != guard.workspace_id:
         raise HTTPException(status_code=403, detail="Cannot access app in another workspace.")
     ws_id = body.workspace_id if body else None
+    session_id = body.session_id if body else None
     unified_reaper_service.touch_app_activity(app.id)
-    return omnigent_dev_service.clear_build_session(app, workspace_id=ws_id)
+    return omnigent_dev_service.clear_build_session(app, workspace_id=ws_id, session_id=session_id)
 
 
 @router.get("/logs")
@@ -1324,6 +1420,7 @@ def record_dev_heartbeat(
         raise HTTPException(status_code=403, detail="Cannot access app in another workspace.")
 
     unified_reaper_service.touch_app_activity(app.id)
+    _sync_agent_login(app)
     return {"status": "ok", "app_id": app.id}
 
 
@@ -1341,6 +1438,8 @@ async def dev_terminal_websocket(
 ):
     """Interactive real-time WebSocket terminal inside the dev pod/container."""
     from app.database import SystemSessionLocal
+    from app.workspace.middleware import WorkspaceAuthError, resolve_workspace_context
+
     with SystemSessionLocal() as db:
         app = db.query(App).filter(App.id == app_id).first()
         if not app:
@@ -1348,8 +1447,30 @@ async def dev_terminal_websocket(
             await websocket.send_text(f"\r\n\x1b[1;31mApp '{app_id}' not found.\x1b[0m\r\n")
             await websocket.close(code=4404, reason=f"App '{app_id}' not found")
             return
+        workspace_key = str(app.workspace_id) if app.workspace_id else None
+        db.expunge(app)
+
+    try:
+        if workspace_key:
+            resolve_workspace_context(workspace_key, token)
+        elif not token:
+            raise WorkspaceAuthError(401, "missing auth token")
+        else:
+            from app.user_manager.auth_utils import decode_access_token
+            decode_access_token(token)
+    except WorkspaceAuthError as exc:
+        await websocket.accept()
+        await websocket.send_text(f"\r\n\x1b[1;31m{exc.message}\x1b[0m\r\n")
+        await websocket.close(code=4401 if exc.status_code == 401 else 4403, reason=exc.message[:120])
+        return
+    except Exception:
+        await websocket.accept()
+        await websocket.send_text("\r\n\x1b[1;31mInvalid or expired token.\x1b[0m\r\n")
+        await websocket.close(code=4401, reason="invalid or expired token")
+        return
 
     unified_reaper_service.touch_app_activity(app.id)
+    _sync_agent_login(app, force=True)
     await dev_terminal_service.handle_terminal_websocket(
         websocket=websocket,
         app=app,

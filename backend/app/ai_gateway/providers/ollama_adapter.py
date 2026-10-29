@@ -5,6 +5,8 @@ from __future__ import annotations
 import logging
 import httpx
 
+from app.ai_gateway.providers.http_client import gateway_http_client
+
 from app.ai_gateway.providers.base import ProviderCredentials
 from app.ai_gateway.providers.openai_adapter import OpenAIAdapter
 
@@ -26,7 +28,7 @@ class OllamaAdapter(OpenAIAdapter):
         timeout = httpx.Timeout(5.0, connect=3.0)
 
         try:
-            async with httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
+            async with gateway_http_client(timeout) as client:
                 resp = await client.get(f"{base_url}/models")
                 if resp.status_code == 200:
                     data = resp.json()

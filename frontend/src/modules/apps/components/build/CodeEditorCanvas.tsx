@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   X,
   ChevronLeft,
@@ -35,55 +35,50 @@ export function CodeEditorCanvas({
   selectedFilePath,
   onSelectFilePath,
 }: CodeEditorCanvasProps) {
-  // Track open file tabs
-  const [openFiles, setOpenFiles] = useState<string[]>(() => {
-    const initial: string[] = [];
-    if (files.some((f) => f.path.endsWith('.mcp.json'))) initial.push('.mcp.json');
-    if (files.some((f) => f.path.endsWith('database.db'))) initial.push('database.db');
-    if (files.some((f) => f.path.endsWith('package.json'))) initial.push('package.json');
-    return initial;
-  });
+  const [openFiles, setOpenFiles] = useState<string[]>([]);
+  const [openPath, setOpenPath] = useState<string | null>(selectedFilePath);
 
   const [isExplorerCollapsed, setIsExplorerCollapsed] = useState<boolean>(false);
   const [explorerWidth] = useState<number>(230);
 
-  // Auto-open first prominent file or first available file if no files are open yet
-  useEffect(() => {
-    if (files.length > 0 && openFiles.length === 0 && !selectedFilePath) {
-      const preferred =
-        files.find((f) => f.name === 'package.json') ||
-        files.find((f) => f.name === 'index.html') ||
-        files.find((f) => f.name === 'mcp.json' || f.name === '.mcp.json') ||
-        files.find((f) => f.name.endsWith('.py') && !f.name.startsWith('.')) ||
-        files.find((f) => !f.name.startsWith('.'));
-      if (preferred) {
-        setOpenFiles([preferred.path]);
-        onSelectFilePath(preferred.path);
-      }
-    }
-  }, [files, openFiles.length, selectedFilePath, onSelectFilePath]);
+  const fallbackPath = useMemo(() => {
+    const preferred =
+      files.find((file) => file.name === 'README.md') ||
+      files.find((file) => file.name === 'index.html') ||
+      files.find((file) => file.name.endsWith('.py') && !file.name.startsWith('.')) ||
+      files.find((file) => !file.name.startsWith('.') && !file.path.includes('/'));
+    return preferred?.path ?? null;
+  }, [files]);
+  const knownPaths = useMemo(() => new Set(files.map((file) => file.path)), [files]);
+  // Show a real file on the first paint. Waiting for an effect left a tab over an empty editor.
+  const activePath = openPath && knownPaths.has(openPath) ? openPath : fallbackPath;
+  const tabs = activePath && !openFiles.includes(activePath) ? [activePath, ...openFiles] : openFiles;
 
-  // When selectedFilePath changes, add to openFiles if not present
+  const chooseFile = (path: string | null) => {
+    setOpenPath(path);
+    if (path && !openFiles.includes(path)) setOpenFiles((current) => [...current, path]);
+    if (path !== selectedFilePath) onSelectFilePath(path);
+  };
+
   useEffect(() => {
-    if (selectedFilePath && !openFiles.includes(selectedFilePath)) {
-      setOpenFiles((prev) => [...prev, selectedFilePath]);
-    }
-  }, [selectedFilePath]);
+    if (selectedFilePath && knownPaths.has(selectedFilePath)) setOpenPath(selectedFilePath);
+  }, [selectedFilePath, knownPaths]);
 
   const handleCloseTab = (path: string, e?: React.MouseEvent) => {
     e?.stopPropagation();
     const next = openFiles.filter((p) => p !== path);
     setOpenFiles(next);
-    if (selectedFilePath === path) {
-      onSelectFilePath(next.length > 0 ? next[next.length - 1] : null);
-    }
+    const nextPath = selectedFilePath === path || openPath === path
+      ? (next.length > 0 ? next[next.length - 1] : null)
+      : openPath;
+    if (selectedFilePath === path || openPath === path) chooseFile(nextPath);
   };
 
   const handleFileSelect = (path: string) => {
     if (!openFiles.includes(path)) {
       setOpenFiles((prev) => [...prev, path]);
     }
-    onSelectFilePath(path);
+    chooseFile(path);
   };
 
   const cleanAppId = appId.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/^-+|-+$/g, '');
@@ -153,7 +148,7 @@ export function CodeEditorCanvas({
               isLoading={isLoading}
               onRefresh={onRefresh}
               onFileSelect={handleFileSelect}
-              selectedPath={selectedFilePath}
+              selectedPath={activePath}
               workspaceName={activeSandboxName}
               workspacePath={workingFolderPath}
               cleanExplorerMode={true}
@@ -210,14 +205,21 @@ export function CodeEditorCanvas({
       >
         {/* Open Files Tabs Strip */}
         <div className="flex items-stretch h-8 border-b border-neutral-200 bg-[#f9fafb] overflow-x-auto shrink-0 select-none [&::-webkit-scrollbar]:h-1 [&::-webkit-scrollbar-thumb]:bg-neutral-300 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-track]:bg-transparent">
-          {openFiles.map((path) => {
+          {tabs.map((path) => {
             const name = path.split('/').filter(Boolean).pop() ?? path;
-            const isActive = selectedFilePath === path;
+            const isActive = activePath === path;
+            const gitStatus = files.find((file) => file.path === path)?.git_status;
+            const gitMark =
+              gitStatus === 'modified' ? 'M'
+              : gitStatus === 'untracked' ? 'U'
+              : gitStatus === 'added' ? 'A'
+              : gitStatus === 'deleted' ? 'D'
+              : '';
 
             return (
               <div
                 key={path}
-                onClick={() => onSelectFilePath(path)}
+                onClick={() => chooseFile(path)}
                 className={cn(
                   'group flex items-center gap-1.5 h-full px-3 cursor-pointer text-[12px] font-sans transition-colors shrink-0 border-r border-neutral-200',
                   isActive
@@ -230,6 +232,11 @@ export function CodeEditorCanvas({
                 <span className="whitespace-nowrap select-none">
                   {name}
                 </span>
+                {gitMark && (
+                  <span className="font-mono text-[10px] font-semibold text-amber-700" title={gitStatus || undefined}>
+                    {gitMark}
+                  </span>
+                )}
                 <button
                   type="button"
                   onClick={(e) => handleCloseTab(path, e)}
@@ -245,13 +252,14 @@ export function CodeEditorCanvas({
 
         {/* Editor Body */}
         <div style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
-          {selectedFilePath ? (
+          {activePath ? (
             <FileViewer
               appId={appId}
-              path={selectedFilePath}
+              path={activePath}
               workspaceId={workspaceId}
-              onClose={() => onSelectFilePath(null)}
+              onClose={() => chooseFile(null)}
               hideHeader={true}
+              gitStatus={files.find((file) => file.path === activePath)?.git_status ?? null}
             />
           ) : (
             <div

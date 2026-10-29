@@ -263,11 +263,15 @@ def delete_app(
     return None
 
 
+_GIT_REF = re.compile(r"^[A-Za-z0-9._/-]{1,128}$")
+
+
 @router.post("/{app_id}/deploy", response_model=AppDeployResponse)
 def deploy_app(
     app_id: str,
     background_tasks: BackgroundTasks,
     runner_mode: Optional[str] = Query(None, description="Execution target mode: docker | local"),
+    git_ref: Optional[str] = Query(None, description="Branch or tag to build. Defaults to the app git ref."),
     db: Session = Depends(get_system_db),
     guard: Guard = Depends(get_guard),
 ):
@@ -278,18 +282,20 @@ def deploy_app(
 
     if guard.workspace_id and app.workspace_id != guard.workspace_id:
         raise HTTPException(status_code=403, detail="Cannot deploy app from another workspace.")
+    if git_ref and not _GIT_REF.match(git_ref):
+        raise HTTPException(status_code=400, detail="Invalid git ref.")
 
     deployment_id = f"dep_{uuid.uuid4().hex[:10]}"
     now_iso = datetime.now(timezone.utc).isoformat()
     start_time = datetime.now(timezone.utc)
 
     # Fetch real latest Git commit info
-    git_info = app_runner_service.get_latest_git_commit(app)
+    git_info = app_runner_service.get_latest_git_commit(app, git_ref=git_ref)
     commit_sha = git_info.get("sha") or "latest"
     commit_msg = git_info.get("message")
 
     try:
-        runner_res = app_runner_service.deploy_app(app, runner_mode=runner_mode)
+        runner_res = app_runner_service.deploy_app(app, runner_mode=runner_mode, git_ref=git_ref)
         runtime_info = runner_res["runtime_info"]
         logs = runner_res["build_logs"]
         deploy_status = "in_progress" if runtime_info.get("mode") == "kubernetes" else "success"
@@ -309,7 +315,7 @@ def deploy_app(
         "status": deploy_status,
         "commit_sha": commit_sha,
         "commit_message": commit_msg,
-        "git_ref": app.git_ref or app.git_branch or "main",
+        "git_ref": git_ref or app.git_ref or app.git_branch or "main",
         "duration_seconds": duration,
         "triggered_by": str(guard.principal.id) if guard.principal else "system",
         "created_at": now_iso,

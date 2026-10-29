@@ -8,7 +8,10 @@ from contextlib import asynccontextmanager
 import certifi
 
 # Ensure SSL CA certs and CURL environment paths are set for DuckDB and libcurl in Linux containers
-ca_path = certifi.where() if os.path.exists(certifi.where()) else "/etc/ssl/certs/ca-certificates.crt"
+# Prefer the OS trust store. It includes corporate intercept CAs installed at startup.
+# certifi does not, so pointing SSL_CERT_FILE at it breaks provider calls.
+system_bundle = "/etc/ssl/certs/ca-certificates.crt"
+ca_path = system_bundle if os.path.isfile(system_bundle) else (certifi.where() if os.path.exists(certifi.where()) else system_bundle)
 if os.path.exists(ca_path):
     os.environ.setdefault("CURL_CA_INFO", ca_path)
     os.environ.setdefault("CURL_CA_BUNDLE", ca_path)

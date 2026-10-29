@@ -10,6 +10,8 @@ from typing import Any, AsyncIterator
 
 import httpx
 
+from app.ai_gateway.providers.http_client import gateway_http_client
+
 from app.ai_gateway.providers.base import BaseProviderAdapter, ProviderCredentials
 from app.ai_gateway.schemas.chat import (
     ChatCompletionChoice,
@@ -152,7 +154,7 @@ class OpenAIAdapter(BaseProviderAdapter):
         payload["stream_options"] = {"include_usage": True}
 
         timeout = httpx.Timeout(120.0, connect=10.0)
-        async with httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
+        async with gateway_http_client(timeout) as client:
             async with client.stream("POST", url, headers=headers, json=payload) as response:
                 if response.status_code >= 400:
                     error_body = await response.aread()
@@ -197,7 +199,7 @@ class OpenAIAdapter(BaseProviderAdapter):
         payload["stream"] = False
 
         timeout = httpx.Timeout(120.0, connect=10.0)
-        async with httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
+        async with gateway_http_client(timeout) as client:
             resp = await client.post(url, headers=headers, json=payload)
             if resp.status_code >= 400:
                 raise RuntimeError(f"OpenAI API error ({resp.status_code}): {resp.text}")
@@ -225,7 +227,7 @@ class OpenAIAdapter(BaseProviderAdapter):
 
         payload = {"model": upstream_model, "input": texts}
         timeout = httpx.Timeout(60.0, connect=10.0)
-        async with httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
+        async with gateway_http_client(timeout) as client:
             resp = await client.post(url, headers=headers, json=payload)
             if resp.status_code >= 400:
                 raise RuntimeError(f"OpenAI embedding error ({resp.status_code}): {resp.text}")
@@ -276,7 +278,7 @@ class OpenAIAdapter(BaseProviderAdapter):
         # Standard OpenAI / OpenAI-compatible Ping
         if not is_azure:
             try:
-                async with httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
+                async with gateway_http_client(timeout) as client:
                     models_url = f"{base_url}/models"
                     resp = await client.get(models_url, headers=headers)
                     if resp.status_code == 200:
@@ -321,7 +323,7 @@ class OpenAIAdapter(BaseProviderAdapter):
 
         last_error = ""
         try:
-            async with httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
+            async with gateway_http_client(timeout) as client:
                 # 1. Primary check: Query /deployments endpoint (discovering real, active Azure deployments)
                 for ver in candidate_versions:
                     deployments_urls = [

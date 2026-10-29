@@ -2,6 +2,7 @@
 import os
 import re
 import sys
+import time
 import shutil
 import logging
 import subprocess
@@ -15,6 +16,7 @@ from typing import Dict, List, Optional, Any, Tuple
 from contextlib import contextmanager
 
 from app.services.app_runner import app_runner_service, BASE_APPS_STORAGE
+from app.services.sandbox_credentials import gateway_api_key_for_app, gateway_base_url, sync_antigravity_for_app
 from app.services.drivers.factory import driver_factory
 from app.services.ingress_service import ingress_service
 from app.services.app_manifest_service import app_manifest_service
@@ -44,6 +46,66 @@ def _sanitize_workspace_name(raw_name: str) -> str:
     """Sanitize workspace name to be a clean, valid folder and identifier (lowercase alphanumeric, dashes, underscores)."""
     cleaned = re.sub(r"[^a-zA-Z0-9_-]", "-", (raw_name or "").strip()).strip("-").lower()
     return cleaned or "default"
+
+
+def safe_repo_path(file_path: str) -> str:
+    """Repo-relative path with no parent traversal."""
+    rel = (file_path or "").replace("\\", "/").lstrip("/")
+    parts = [part for part in rel.split("/") if part not in ("", ".")]
+    if not parts or any(part == ".." for part in parts):
+        raise ValueError("Invalid file path")
+    return "/".join(parts)
+
+
+def git_status_from_porcelain(text: str) -> Dict[str, str]:
+    """Map repo-relative paths to modified, added, untracked, or deleted.
+
+    Porcelain lines keep a leading space for unstaged edits (`` M path``).
+    Stripping the line before reading the path drops the first character.
+    """
+    statuses: Dict[str, str] = {}
+    for raw in (text or "").splitlines():
+        if not raw or raw.startswith("##") or len(raw) < 4:
+            continue
+        code = raw[:2]
+        rest = raw[3:] if raw[2] == " " else raw[2:]
+        if " -> " in rest:
+            rest = rest.split(" -> ", 1)[1]
+        path = rest.strip().strip('"').replace("\\", "/")
+        if not path:
+            continue
+        if "?" in code:
+            label = "untracked"
+        elif "D" in code:
+            label = "deleted"
+        elif "A" in code or "R" in code or "C" in code:
+            label = "added"
+        else:
+            label = "modified"
+        statuses[path] = label
+    return statuses
+
+
+def include_git_only_files(files: List[Dict[str, Any]], statuses: Dict[str, str]) -> List[Dict[str, Any]]:
+    """Add git paths that are not on disk, so a deletion still appears in the tree."""
+    seen = {item.get("path") for item in files}
+    for path, label in statuses.items():
+        if path in seen:
+            continue
+        name = path.replace("\\", "/").rstrip("/").split("/")[-1] or path
+        ext = ""
+        if "." in name and not name.startswith("."):
+            ext = name.rsplit(".", 1)[-1]
+        files.append({
+            "path": path,
+            "name": name,
+            "size": 0,
+            "bytes": 0,
+            "ext": ext,
+            "modified_at": None,
+            "git_status": label,
+        })
+    return files
 
 
 def _sanitize_sensitive_output(text: str) -> str:
@@ -676,34 +738,8 @@ class OmnigentDevService:
             dev_driver = driver_factory.get_dev_driver(sess.get("mode"))
             status = dev_driver.get_dev_status(app)
             if status.get("status") == "active":
+                sess["dev_url"] = ingress_service.preview_url_for_app(app)
                 return sess
-
-        # Enforce single active dev pod per CompassX workspace to conserve cluster compute
-        try:
-            current_ws_id = getattr(app, "workspace_id", None)
-            if current_ws_id:
-                from app.models.app import App
-                with _get_system_db() as db:
-                    sibling_apps = db.query(App).filter(
-                        App.workspace_id == current_ws_id,
-                        App.id != app.id,
-                    ).all()
-                    dev_driver_instance = driver_factory.get_dev_driver()
-                    for sib in sibling_apps:
-                        try:
-                            st = dev_driver_instance.get_dev_status(sib)
-                            if st.get("status") == "active":
-                                logger.info(
-                                    "Auto-suspending sibling app dev pod for '%s' (%s) to enforce single active dev pod in workspace '%s'",
-                                    sib.name,
-                                    sib.id,
-                                    current_ws_id,
-                                )
-                                self.suspend_dev_session(sib)
-                        except Exception as sib_err:
-                            logger.debug("Sibling app dev suspend check error: %s", sib_err)
-        except Exception as auto_susp_err:
-            logger.debug("Error checking sibling app dev pods: %s", auto_susp_err)
 
         # 1. Ensure Omnigent Server is up
         self.ensure_omnigent_server()
@@ -715,8 +751,8 @@ class OmnigentDevService:
             app, repo_dir, omnigent_internal_url, workspace_folder=folder_path, workspace_branch=ws_branch, host_type=host_type
         )
 
-        dev_port = raw_driver_res.get("dev_port") or 9201
-        dev_url = raw_driver_res.get("dev_url") or ingress_service.get_app_dev_url(app, dev_port)
+        dev_port = raw_driver_res.get("dev_port") or 8080
+        dev_url = ingress_service.preview_url_for_app(app)
 
         # Automatically ensure Ingress with Let's Encrypt TLS for both main and dev domains
         try:
@@ -796,7 +832,7 @@ class OmnigentDevService:
         dev_status = dev_driver.get_dev_status(app)
         is_active = dev_status.get("status") == "active"
 
-        dev_url = ingress_service.get_app_dev_url(app, 9201)
+        dev_url = ingress_service.preview_url_for_app(app)
         sess_id = f"sess_omnigent_{app.id}"
         session_url = ingress_service.get_omnigent_session_url(sess_id)
 
@@ -879,6 +915,7 @@ class OmnigentDevService:
                 sess["host_type"] = dev_status.get("host_type")
             if dev_status.get("host_image"):
                 sess["host_image"] = dev_status.get("host_image")
+            sess["dev_url"] = dev_url
             return sess
 
         return {
@@ -2070,11 +2107,15 @@ class OmnigentDevService:
             "  fi; "
             "fi; "
             "READY=0; "
-            "for i in $(seq 1 10); do "
-            "  if (curl -fsSL --connect-timeout 2 http://localhost:8080 >/dev/null 2>&1 || wget -q -O - http://localhost:8080 >/dev/null 2>&1); then "
+            "for i in $(seq 1 20); do "
+            "  BODY=$(curl -fsSL --connect-timeout 2 --max-time 3 http://localhost:8080 2>/dev/null || true); "
+            "  if [ -n \"$BODY\" ] && ! printf '%s' \"$BODY\" | grep -q 'Live Sandbox Starting\\|No Application Service'; then "
             "    log '  ✓ Application responding on port 8080 (Web UI ready).'; "
             "    READY=1; break; "
-            "  elif (curl -fsSL --connect-timeout 2 http://localhost:8000 >/dev/null 2>&1 || wget -q -O - http://localhost:8000 >/dev/null 2>&1); then "
+            "  elif (curl -fsSL --connect-timeout 2 http://localhost:4000 >/dev/null 2>&1); then "
+            "    log '  ✓ Application responding on port 4000 (Frontend ready).'; "
+            "    READY=1; break; "
+            "  elif (curl -fsSL --connect-timeout 2 http://localhost:8000 >/dev/null 2>&1); then "
             "    log '  ✓ Application responding on port 8000 (Backend API ready).'; "
             "    READY=1; break; "
             "  elif (curl -fsSL --connect-timeout 2 http://localhost:3000 >/dev/null 2>&1 || wget -q -O - http://localhost:3000 >/dev/null 2>&1); then "
@@ -2199,421 +2240,25 @@ class OmnigentDevService:
 
         return target_dir
 
-    def list_workspace_files(self, app, workspace_id: Optional[str] = None) -> List[Dict[str, Any]]:
-        """List source code files in the specified app sandbox workspace."""
-        dev_driver = driver_factory.get_dev_driver()
-        is_running = False
-        try:
-            if hasattr(dev_driver, "is_dev_running"):
-                is_running = dev_driver.is_dev_running(app)
-            else:
-                chk = dev_driver.exec_command_in_dev(app, command="echo '__RUNNING__'")
-                is_running = "__RUNNING__" in (chk.get("output") or "")
-        except Exception:
-            is_running = False
+    def list_workspace_files(self, app, workspace_id=None):
+        """List source files. Owned by WorkspaceFileService."""
+        from app.services.studio.workspace_files import get_workspace_file_service
+        return get_workspace_file_service().list_workspace_files(app, workspace_id=workspace_id)
 
-        if is_running:
-            try:
-                target_dir = self.ensure_workspace_worktree(app, workspace_id)
-                ws_id, ws_name, folder_path, _ = self._resolve_workspace_info(app, workspace_id)
-                clean_app_id = _clean_id(app.id)
-                py_code = f"""
-import os, json, subprocess
-root_dir = '{target_dir}'
-if not os.path.exists(root_dir) or not os.path.isdir(root_dir) or not any(f for f in os.listdir(root_dir) if f != '.git'):
-    candidates = [
-        '{target_dir}',
-        '/workspaces/{clean_app_id}/{ws_name}',
-        '/workspaces/{clean_app_id}/default',
-        '/workspaces/{clean_app_id}/main',
-        '/workspaces/{clean_app_id}',
-        '/workspaces/default',
-        '/workspace/app',
-        '/workspaces/app',
-        '/workspace/default',
-        '/workspace/main',
-        '/workspace',
-        '/app',
-    ]
-    for base in ['/workspaces', '/workspace']:
-        if os.path.exists(base) and os.path.isdir(base):
-            try:
-                for sub in sorted(os.listdir(base)):
-                    p = os.path.join(base, sub)
-                    if os.path.isdir(p) and any(f for f in os.listdir(p) if f != '.git'):
-                        candidates.append(p)
-                        try:
-                            for sub2 in sorted(os.listdir(p)):
-                                p2 = os.path.join(p, sub2)
-                                if os.path.isdir(p2) and any(f for f in os.listdir(p2) if f != '.git'):
-                                    candidates.append(p2)
-                        except Exception: pass
-            except Exception: pass
-    for c in candidates:
-        if os.path.exists(c) and os.path.isdir(c) and any(f for f in os.listdir(c) if f != '.git'):
-            root_dir = c
-            break
-if not os.path.exists(root_dir):
-    root_dir = '/workspaces' if os.path.exists('/workspaces') else '/workspace'
+    def read_workspace_file(self, app, file_path: str, workspace_id=None):
+        """Read one workspace file. Owned by WorkspaceFileService."""
+        from app.services.studio.workspace_files import get_workspace_file_service
+        return get_workspace_file_service().read_workspace_file(app, file_path, workspace_id=workspace_id)
 
-git_statuses = {{}}
-try:
-    p = subprocess.run(
-        ['git', 'status', '--porcelain', '-uall'],
-        cwd=root_dir,
-        capture_output=True,
-        text=True,
-        timeout=1.5
-    )
-    if p.returncode == 0 and p.stdout:
-        for line in p.stdout.splitlines():
-            line = line.strip()
-            if len(line) >= 3:
-                code = line[:2].strip()
-                fpath = line[3:].strip().strip('"').replace('\\\\', '/')
-                st_label = 'modified'
-                if '?' in code:
-                    st_label = 'untracked'
-                elif 'A' in code:
-                    st_label = 'added'
-                elif 'D' in code:
-                    st_label = 'deleted'
-                elif 'M' in code:
-                    st_label = 'modified'
-                git_statuses[fpath] = st_label
-except Exception:
-    pass
+    def diff_workspace_file(self, app, file_path: str, workspace_id=None):
+        """Diff one workspace file. Owned by WorkspaceFileService."""
+        from app.services.studio.workspace_files import get_workspace_file_service
+        return get_workspace_file_service().diff_workspace_file(app, file_path, workspace_id=workspace_id)
 
-ign = {{'.git', 'node_modules', '__pycache__', '.venv', '.pytest_cache', '.DS_Store', '.mypy_cache', '.coverage'}}
-res = []
-for r, dirs, files in os.walk(root_dir):
-    dirs[:] = [d for d in dirs if d not in ign]
-    for f in files:
-        if f in ign: continue
-        p = os.path.join(r, f)
-        try:
-            st = os.stat(p)
-            sz = st.st_size
-            mt = int(st.st_mtime * 1000)
-            rel = os.path.relpath(p, root_dir).replace('\\\\', '/')
-            ext = f.split('.')[-1] if '.' in f else ''
-            git_st = git_statuses.get(rel)
-            res.append({{'path': rel, 'name': f, 'size': sz, 'bytes': sz, 'ext': ext, 'modified_at': mt, 'git_status': git_st}})
-        except Exception: pass
-print('__JSON_START__' + json.dumps(res) + '__JSON_END__')
-"""
-                b64_code = base64.b64encode(py_code.encode("utf-8")).decode("ascii")
-                exec_res = dev_driver.exec_command_in_dev(app, command=f"echo '{b64_code}' | base64 -d | python3", workspace_folder=folder_path)
-                out = exec_res.get("output") or ""
-                if "__JSON_START__" in out and "__JSON_END__" in out:
-                    raw_json = out.split("__JSON_START__", 1)[1].split("__JSON_END__", 1)[0]
-                    file_tree = json.loads(raw_json)
-                    return sorted(file_tree, key=lambda x: x["path"])
-            except Exception as e:
-                logger.warning("Failed listing container files for app %s ws %s: %s", app.id, workspace_id, e)
-
-        # Fallback to host repository
-        repo_dir = self.get_repo_dir(app)
-        ws_id, ws_name, folder_path, _ = self._resolve_workspace_info(app, workspace_id)
-        if ws_name and ws_name != "default":
-            ws_host_dir = os.path.join(app_runner_service.get_app_dir(app.id), "workspaces", ws_name)
-            if os.path.exists(ws_host_dir):
-                repo_dir = ws_host_dir
-
-        git_statuses = {}
-        try:
-            p = subprocess.run(
-                ['git', 'status', '--porcelain', '-uall'],
-                cwd=repo_dir,
-                capture_output=True,
-                text=True,
-                timeout=1.5
-            )
-            if p.returncode == 0 and p.stdout:
-                for line in p.stdout.splitlines():
-                    line = line.strip()
-                    if len(line) >= 3:
-                        code = line[:2].strip()
-                        fpath = line[3:].strip().strip('"').replace('\\', '/')
-                        st_label = 'modified'
-                        if '?' in code:
-                            st_label = 'untracked'
-                        elif 'A' in code:
-                            st_label = 'added'
-                        elif 'D' in code:
-                            st_label = 'deleted'
-                        elif 'M' in code:
-                            st_label = 'modified'
-                        git_statuses[fpath] = st_label
-        except Exception:
-            pass
-
-        file_tree = []
-        ignored = {".git", "node_modules", "__pycache__", ".venv", ".pytest_cache", ".DS_Store"}
-
-        for root, dirs, files in os.walk(repo_dir):
-            dirs[:] = [d for d in dirs if d not in ignored]
-            for file in files:
-                if file in ignored:
-                    continue
-                full_path = os.path.join(root, file)
-                rel_path = os.path.relpath(full_path, repo_dir).replace("\\", "/")
-                try:
-                    stat = os.stat(full_path)
-                    size = stat.st_size
-                    mtime = int(stat.st_mtime * 1000)
-                except Exception:
-                    size = 0
-                    mtime = 0
-                file_tree.append({
-                    "path": rel_path,
-                    "name": file,
-                    "size": size,
-                    "bytes": size,
-                    "ext": os.path.splitext(file)[1].lstrip("."),
-                    "modified_at": mtime,
-                    "git_status": git_statuses.get(rel_path),
-                })
-
-        return sorted(file_tree, key=lambda x: x["path"])
-
-    def read_workspace_file(self, app, file_path: str, workspace_id: Optional[str] = None) -> Dict[str, Any]:
-        """Read text content of a workspace file."""
-        self.touch_workspace_activity(app.id)
-        dev_driver = driver_factory.get_dev_driver()
-        clean_rel = file_path.lstrip("/\\")
-
-        is_running = False
-        try:
-            if hasattr(dev_driver, "is_dev_running"):
-                is_running = dev_driver.is_dev_running(app)
-            else:
-                chk = dev_driver.exec_command_in_dev(app, command="echo '__RUNNING__'")
-                is_running = "__RUNNING__" in (chk.get("output") or "")
-        except Exception:
-            is_running = False
-
-        if is_running:
-            try:
-                target_dir = self.ensure_workspace_worktree(app, workspace_id)
-                ws_id, ws_name, folder_path, _ = self._resolve_workspace_info(app, workspace_id)
-                clean_app_id = _clean_id(app.id)
-                py_code = f"""
-import os, base64
-root_dir = '{target_dir}'
-if not os.path.exists(root_dir) or not os.path.isdir(root_dir) or not any(f for f in os.listdir(root_dir) if f != '.git'):
-    candidates = [
-        '{target_dir}',
-        '/workspaces/{clean_app_id}/{ws_name}',
-        '/workspaces/{clean_app_id}/default',
-        '/workspaces/{clean_app_id}/main',
-        '/workspaces/{clean_app_id}',
-        '/workspaces/default',
-        '/workspace/app',
-        '/workspaces/app',
-        '/workspace/default',
-        '/workspace/main',
-        '/workspace',
-        '/app',
-    ]
-    for base in ['/workspaces', '/workspace']:
-        if os.path.exists(base) and os.path.isdir(base):
-            try:
-                for sub in sorted(os.listdir(base)):
-                    p = os.path.join(base, sub)
-                    if os.path.isdir(p) and any(f for f in os.listdir(p) if f != '.git'):
-                        candidates.append(p)
-                        try:
-                            for sub2 in sorted(os.listdir(p)):
-                                p2 = os.path.join(p, sub2)
-                                if os.path.isdir(p2) and any(f for f in os.listdir(p2) if f != '.git'):
-                                    candidates.append(p2)
-                        except Exception: pass
-            except Exception: pass
-    for c in candidates:
-        if os.path.exists(c) and os.path.isdir(c) and any(f for f in os.listdir(c) if f != '.git'):
-            root_dir = c
-            break
-
-p = os.path.normpath(os.path.join(root_dir, '{clean_rel}'))
-if not p.startswith(root_dir) or not os.path.exists(p) or not os.path.isfile(p):
-    print('__NOT_FOUND__')
-else:
-    with open(p, 'rb') as f:
-        print('__FILE_B64__' + base64.b64encode(f.read()).decode('ascii') + '__FILE_END__')
-"""
-                b64_code = base64.b64encode(py_code.encode("utf-8")).decode("ascii")
-                exec_res = dev_driver.exec_command_in_dev(app, command=f"echo {b64_code} | base64 -d | python3")
-                out = exec_res.get("output") or ""
-                if "__NOT_FOUND__" in out:
-                    raise FileNotFoundError(f"File '{file_path}' not found in workspace.")
-                if "__FILE_B64__" in out and "__FILE_END__" in out:
-                    b64_str = out.split("__FILE_B64__", 1)[1].split("__FILE_END__", 1)[0].strip()
-                    content_bytes = base64.b64decode(b64_str)
-                    content = content_bytes.decode("utf-8", errors="replace")
-                    return {
-                        "path": file_path,
-                        "content": content,
-                        "size": len(content),
-                        "ext": os.path.splitext(file_path)[1].lstrip("."),
-                    }
-            except FileNotFoundError:
-                raise
-            except Exception as e:
-                logger.warning("Failed reading file from container for %s: %s", file_path, e)
-
-        # Fallback to host repository
-        repo_dir = self.get_repo_dir(app)
-        ws_id, ws_name, folder_path, _ = self._resolve_workspace_info(app, workspace_id)
-        if ws_name and ws_name != "default":
-            ws_host_dir = os.path.join(app_runner_service.get_app_dir(app.id), "workspaces", ws_name)
-            if os.path.exists(ws_host_dir):
-                repo_dir = ws_host_dir
-
-        safe_path = os.path.normpath(os.path.join(repo_dir, clean_rel))
-        if not safe_path.startswith(repo_dir) or not os.path.exists(safe_path) or not os.path.isfile(safe_path):
-            raise FileNotFoundError(f"File '{file_path}' not found in app repository.")
-
-        with open(safe_path, "r", encoding="utf-8", errors="replace") as f:
-            content = f.read()
-
-        return {
-            "path": file_path,
-            "content": content,
-            "size": len(content),
-            "ext": os.path.splitext(file_path)[1].lstrip("."),
-        }
-
-    def write_workspace_file(self, app, file_path: str, content: str, workspace_id: Optional[str] = None) -> Dict[str, Any]:
-        """Write content to a file in the workspace (triggering hot reload)."""
-        self.touch_workspace_activity(app.id)
-        dev_driver = driver_factory.get_dev_driver()
-        clean_rel = file_path.lstrip("/\\")
-
-        is_running = False
-        try:
-            if hasattr(dev_driver, "is_dev_running"):
-                is_running = dev_driver.is_dev_running(app)
-            else:
-                chk = dev_driver.exec_command_in_dev(app, command="echo '__RUNNING__'")
-                is_running = "__RUNNING__" in (chk.get("output") or "")
-        except Exception:
-            is_running = False
-
-        if is_running:
-            try:
-                target_dir = self.ensure_workspace_worktree(app, workspace_id)
-                ws_id, ws_name, folder_path, _ = self._resolve_workspace_info(app, workspace_id)
-                clean_app_id = _clean_id(app.id)
-                content_bytes = content.encode("utf-8")
-                b64_content = base64.b64encode(content_bytes).decode("ascii")
-                py_code = f"""
-import os, base64
-root_dir = '{target_dir}'
-if not os.path.exists(root_dir) or not os.path.isdir(root_dir) or not any(f for f in os.listdir(root_dir) if f != '.git'):
-    candidates = [
-        '{target_dir}',
-        '/workspaces/{clean_app_id}/{ws_name}',
-        '/workspaces/{clean_app_id}/default',
-        '/workspaces/{clean_app_id}/main',
-        '/workspaces/{clean_app_id}',
-        '/workspaces/default',
-        '/workspace/app',
-        '/workspaces/app',
-        '/workspace/default',
-        '/workspace/main',
-        '/workspace',
-        '/app',
-    ]
-    for base in ['/workspaces', '/workspace']:
-        if os.path.exists(base) and os.path.isdir(base):
-            try:
-                for sub in sorted(os.listdir(base)):
-                    p = os.path.join(base, sub)
-                    if os.path.isdir(p) and any(f for f in os.listdir(p) if f != '.git'):
-                        candidates.append(p)
-                        try:
-                            for sub2 in sorted(os.listdir(p)):
-                                p2 = os.path.join(p, sub2)
-                                if os.path.isdir(p2) and any(f for f in os.listdir(p2) if f != '.git'):
-                                    candidates.append(p2)
-                        except Exception: pass
-            except Exception: pass
-    for c in candidates:
-        if os.path.exists(c) and os.path.isdir(c) and any(f for f in os.listdir(c) if f != '.git'):
-            root_dir = c
-            break
-
-p = os.path.normpath(os.path.join(root_dir, '{clean_rel}'))
-if not p.startswith(root_dir):
-    print('__ERROR_PATH__')
-else:
-    old = ''
-    if os.path.exists(p):
-        with open(p, 'rb') as f: old = base64.b64encode(f.read()).decode('ascii')
-    os.makedirs(os.path.dirname(p), exist_ok=True)
-    with open(p, 'wb') as f: f.write(base64.b64decode('{b64_content}'))
-    print('__SAVED__' + old + '__OLD_END__')
-"""
-                b64_code = base64.b64encode(py_code.encode("utf-8")).decode("ascii")
-                exec_res = dev_driver.exec_command_in_dev(app, command=f"echo {b64_code} | base64 -d | python3")
-                out = exec_res.get("output") or ""
-                if "__ERROR_PATH__" in out:
-                    raise ValueError("Invalid file path outside workspace root.")
-                if "__SAVED__" in out:
-                    old_b64 = out.split("__SAVED__", 1)[1].split("__OLD_END__", 1)[0].strip()
-                    old_content = base64.b64decode(old_b64).decode("utf-8", errors="replace") if old_b64 else ""
-                    diff = "".join(difflib.unified_diff(
-                        old_content.splitlines(keepends=True),
-                        content.splitlines(keepends=True),
-                        fromfile=f"a/{file_path}",
-                        tofile=f"b/{file_path}",
-                    ))
-                    return {
-                        "path": file_path,
-                        "diff": diff,
-                        "saved": True,
-                        "timestamp": datetime.now(timezone.utc).isoformat(),
-                    }
-            except ValueError:
-                raise
-            except Exception as e:
-                logger.warning("Failed writing file to container for %s: %s", file_path, e)
-
-        # Fallback to host repository
-        repo_dir = self.get_repo_dir(app)
-        ws_id, ws_name, folder_path, _ = self._resolve_workspace_info(app, workspace_id)
-        if ws_name and ws_name != "default":
-            ws_host_dir = os.path.join(app_runner_service.get_app_dir(app.id), "workspaces", ws_name)
-            if os.path.exists(ws_host_dir):
-                repo_dir = ws_host_dir
-
-        safe_path = os.path.normpath(os.path.join(repo_dir, clean_rel))
-        if not safe_path.startswith(repo_dir):
-            raise ValueError("Invalid file path outside workspace root.")
-
-        os.makedirs(os.path.dirname(safe_path), exist_ok=True)
-        old_content = ""
-        if os.path.exists(safe_path):
-            with open(safe_path, "r", encoding="utf-8", errors="replace") as f:
-                old_content = f.read()
-
-        with open(safe_path, "w", encoding="utf-8") as f:
-            f.write(content)
-
-        diff = "".join(difflib.unified_diff(
-            old_content.splitlines(keepends=True),
-            content.splitlines(keepends=True),
-            fromfile=f"a/{file_path}",
-            tofile=f"b/{file_path}",
-        ))
-
-        return {
-            "path": file_path,
-            "diff": diff,
-            "saved": True,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-        }
+    def write_workspace_file(self, app, file_path: str, content: str, workspace_id=None):
+        """Write one workspace file. Owned by WorkspaceFileService."""
+        from app.services.studio.workspace_files import get_workspace_file_service
+        return get_workspace_file_service().write_workspace_file(app, file_path, content, workspace_id=workspace_id)
 
     # ── Git Publish (Per-Workspace Push to Remote) ─────────────────────────
 
@@ -3121,7 +2766,7 @@ else:
         existing = (_DEV_SESSIONS.get(app.id) or {}).get("build_session")
         if existing and existing.get("session_id"):
             existing["dev_status"] = dev_status.get("status", "inactive")
-            existing["dev_url"] = dev_status.get("dev_url") or ingress_service.get_app_dev_url(app, 9201)
+            existing["dev_url"] = dev_status.get("dev_url") or ingress_service.preview_url_for_app(app)
             existing["is_running"] = is_pod_running
             existing["host_online"] = dev_status.get("host_online", False)
             return existing
@@ -3129,7 +2774,7 @@ else:
         # Create new session
         session_info = self.create_omnigent_chat_session(app, workspace_id=workspace_id)
         session_info["dev_status"] = dev_status.get("status", "inactive")
-        session_info["dev_url"] = dev_status.get("dev_url") or ingress_service.get_app_dev_url(app, 9201)
+        session_info["dev_url"] = dev_status.get("dev_url") or ingress_service.preview_url_for_app(app)
         session_info["is_running"] = is_pod_running
         return session_info
 
@@ -3369,10 +3014,237 @@ if os.path.isfile(conv_path):
             logger.debug("Tmux buffer capture error: %s", err)
             return []
 
+    @staticmethod
+    def merge_chat_turns(recorded: List[Dict[str, Any]], scraped: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Append user turns the terminal scrape has not echoed yet, without reordering the pane."""
+        seen = {
+            (item.get("content") or "").strip()
+            for item in scraped
+            if item.get("role") == "user" and (item.get("content") or "").strip()
+        }
+        merged = list(scraped)
+        for item in recorded:
+            text = (item.get("content") or "").strip()
+            if not text or text in seen:
+                continue
+            merged.append(item)
+            seen.add(text)
+        return merged
+
+    def _chat_log_path(self, app, session_id: str) -> str:
+        safe = re.sub(r"[^a-zA-Z0-9_-]", "", session_id or "")[:64] or "session"
+        base = os.path.join(app_runner_service.get_app_dir(app.id), "agent_storage", "chat")
+        os.makedirs(base, exist_ok=True)
+        return os.path.join(base, f"{safe}.jsonl")
+
+    def _load_chat_log(self, app, session_id: str) -> List[Dict[str, Any]]:
+        path = self._chat_log_path(app, session_id)
+        if not os.path.isfile(path):
+            return []
+        turns: List[Dict[str, Any]] = []
+        try:
+            with open(path, "r", encoding="utf-8") as handle:
+                for line in handle:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        item = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if isinstance(item, dict) and item.get("content"):
+                        turns.append(item)
+        except OSError as err:
+            logger.debug("Could not read chat log %s: %s", path, err)
+        return turns
+
+    def _append_chat_turn(self, app, session_id: str, prompt: str) -> Dict[str, Any]:
+        turn = {
+            "id": f"user_{uuid.uuid4().hex[:12]}",
+            "role": "user",
+            "type": "message",
+            "content": prompt,
+            "status": "completed",
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }
+        path = self._chat_log_path(app, session_id)
+        with open(path, "a", encoding="utf-8") as handle:
+            handle.write(json.dumps(turn) + "\n")
+        return turn
+
+    def _clear_chat_log(self, app, session_id: str) -> None:
+        path = self._chat_log_path(app, session_id)
+        try:
+            if os.path.isfile(path):
+                os.remove(path)
+        except OSError as err:
+            logger.debug("Could not clear chat log %s: %s", path, err)
+
+    def _gateway_base_url(self, driver) -> str:
+        return gateway_base_url()
+
+    def _ensure_dev_tmux(
+        self,
+        app,
+        session_id: str,
+        workspace_id: Optional[str] = None,
+    ) -> Optional[str]:
+        """Start the session agent in a detached tmux session if the terminal has not already."""
+        from app.services.dev_session_service import dev_session_service
+        from app.services.dev_terminal_service import dev_terminal_service
+
+        sess = dev_session_service.get_session(app, session_id)
+        if not sess or not sess.tmux_session_name or sess.agent in ("bash", "shell", "sh"):
+            return None
+
+        dev_driver = driver_factory.get_dev_driver()
+        if not dev_driver:
+            return None
+        sync_antigravity_for_app(app, force=True)
+
+        tmux_name, ws_folder, workdir = dev_terminal_service.resolve_agent_tmux_target(
+            app,
+            sess.tmux_session_name,
+            workspace_id=workspace_id or sess.workspace_id,
+        )
+        cli = dev_session_service.get_session_cli_command(sess)
+        gateway = self._gateway_base_url(dev_driver)
+        launch = f"export OPENAI_BASE_URL={gateway} OPENAI_API_KEY={gateway_api_key_for_app(app)}; {cli}"
+        quoted_name = shlex.quote(tmux_name)
+        existing = dev_driver.exec_command_in_dev(
+            app,
+            command=f"tmux has-session -t {quoted_name} 2>/dev/null",
+            workspace_folder=ws_folder,
+            timeout=8,
+        )
+        created = not (existing and existing.get("success"))
+        if created:
+            result = dev_driver.exec_command_in_dev(
+                app,
+                command=(
+                    f"tmux new-session -d -s {quoted_name} -c {shlex.quote(workdir)} "
+                    f"bash -lc {shlex.quote(launch)}"
+                ),
+                workspace_folder=ws_folder,
+                timeout=20,
+            )
+            if not result or not result.get("success", False):
+                names = self._list_tmux_sessions(dev_driver, app, ws_folder)
+                if tmux_name not in names:
+                    time.sleep(0.5)
+                    names = self._list_tmux_sessions(dev_driver, app, ws_folder)
+                if tmux_name not in names:
+                    logger.info(
+                        "Could not start agent tmux %s (exit %s)",
+                        tmux_name,
+                        (result or {}).get("exit_code"),
+                    )
+                    return None
+            if not self._wait_for_agent_pane(dev_driver, app, tmux_name, ws_folder):
+                logger.info("Agent pane for %s was not ready", tmux_name)
+                return None
+        elif not self._pane_has_content(self._agent_pane_text(dev_driver, app, tmux_name, ws_folder)):
+            if not self._wait_for_agent_pane(dev_driver, app, tmux_name, ws_folder):
+                logger.info("Agent pane for %s was not ready", tmux_name)
+                return None
+        return tmux_name
+
+    def _list_tmux_sessions(self, dev_driver, app, workspace_folder: str) -> List[str]:
+        listed = dev_driver.exec_command_in_dev(
+            app,
+            command="tmux list-sessions -F '#{session_name}' 2>/dev/null || true",
+            workspace_folder=workspace_folder,
+            timeout=5,
+        )
+        return ((listed or {}).get("output") or "").split()
+
+    def _agent_pane_text(self, dev_driver, app, tmux_name: str, workspace_folder: str) -> str:
+        captured = dev_driver.exec_command_in_dev(
+            app,
+            command=f"tmux capture-pane -p -t {shlex.quote(tmux_name)} -S -40",
+            workspace_folder=workspace_folder,
+            timeout=5,
+        )
+        return (captured or {}).get("output") or ""
+
+    def _pane_has_content(self, text: str) -> bool:
+        return len(re.sub(r"\s+", "", text or "")) >= 20
+
+    def _wait_for_agent_pane(self, dev_driver, app, tmux_name: str, workspace_folder: str, timeout: float = 35.0) -> bool:
+        """Give a newly started agent TUI time to draw its input before keystrokes."""
+        deadline = time.monotonic() + timeout
+        previous = None
+        seen_content = False
+        while time.monotonic() < deadline:
+            text = self._agent_pane_text(dev_driver, app, tmux_name, workspace_folder).strip()
+            has_content = self._pane_has_content(text)
+            # A blinking cursor changes the pane every sample. Two contentful
+            # captures are enough; they do not have to be identical.
+            if has_content and (text == previous or seen_content):
+                return True
+            seen_content = seen_content or has_content
+            previous = text
+            time.sleep(0.5)
+        return False
+
+    def _deliver_prompt_to_tmux(
+        self,
+        dev_driver,
+        app,
+        tmux_name: str,
+        workspace_folder: str,
+        prompt: str,
+    ) -> bool:
+        """Type a prompt into the agent pane and confirm it is visible before returning."""
+        needle = prompt[:24]
+        quoted_name = shlex.quote(tmux_name)
+        command = (
+            f"tmux send-keys -t {quoted_name} -l {shlex.quote(prompt)} && "
+            f"tmux send-keys -t {quoted_name} Enter"
+        )
+        for _ in range(2):
+            dev_driver.exec_command_in_dev(
+                app,
+                command=command,
+                workspace_folder=workspace_folder,
+                timeout=8,
+            )
+            deadline = time.monotonic() + 4
+            while time.monotonic() < deadline:
+                pane = self._agent_pane_text(dev_driver, app, tmux_name, workspace_folder)
+                if needle and needle in pane:
+                    return True
+                time.sleep(0.4)
+        return False
+
+    def _is_compassx_dev_session(self, app, session_id: Optional[str]) -> bool:
+        """True when this id is a CompassX DevSession row.
+
+        Omnigent chat ids, including the ``sess_build_`` fallback, stay on the
+        Omnigent HTTP path.
+        """
+        if not session_id:
+            return False
+        sid = str(session_id)
+        if not sid.startswith("sess_") or sid.startswith("sess_build_"):
+            return False
+        from app.services.dev_session_service import dev_session_service
+
+        try:
+            return dev_session_service.get_session(app, sid) is not None
+        except Exception:
+            logger.debug("Dev session lookup failed for %s", sid, exc_info=True)
+            return False
+
     def get_build_session_messages(self, app, session_id: str) -> List[Dict[str, Any]]:
-        """Fetch items/messages from Omnigent Server or fallback to live container tmux session capture."""
+        """Fetch the live agent transcript. CompassX dev sessions read the shared tmux session."""
         import urllib.request
         import json
+
+        if self._is_compassx_dev_session(app, session_id):
+            scraped = self._capture_tmux_session_messages(app, session_id=session_id)
+            recorded = self._load_chat_log(app, session_id)
+            return self.merge_chat_turns(recorded, scraped)
 
         urls = []
         int_url = self.get_omnigent_internal_url()
@@ -3443,38 +3315,45 @@ if os.path.isfile(conv_path):
         if not clean_prompt:
             return {"status": "error", "message": "Prompt cannot be empty"}
 
-        # 1. Forward prompt directly into active container tmux session
+        # 1. Forward prompt into the same tmux session the terminal attaches to.
         delivered_to_tmux = False
         dev_driver = driver_factory.get_dev_driver()
+        is_dev_session = self._is_compassx_dev_session(app, session_id)
         try:
             target_tmux_name = None
-            from app.services.dev_session_service import dev_session_service
-            if session_id and dev_driver:
-                sess_obj = dev_session_service.get_session(app, session_id)
-                if sess_obj and sess_obj.tmux_session_name:
-                    base_tmux = sess_obj.tmux_session_name
-                    ls_res = dev_driver.exec_command_in_dev(
-                        app,
-                        command="tmux list-sessions -F '#{session_name}' 2>/dev/null || true",
-                        timeout=3.0,
-                    )
-                    if ls_res and ls_res.get("exit_code") == 0 and ls_res.get("output"):
-                        for s_name in ls_res.get("output", "").splitlines():
-                            s_clean = s_name.strip()
-                            if s_clean and (s_clean == base_tmux or s_clean.startswith(base_tmux) or (session_id and session_id in s_clean)):
-                                target_tmux_name = s_clean
-                                break
+            if is_dev_session and dev_driver:
+                target_tmux_name = self._ensure_dev_tmux(app, session_id, workspace_id=workspace_id)
 
             if target_tmux_name and dev_driver and not (target_tmux_name.startswith("cx_shell_") or target_tmux_name.startswith("shell_")):
-                # Type prompt as literal text and send Enter to trigger execution
-                dev_driver.exec_command_in_dev(
+                delivered_to_tmux = self._deliver_prompt_to_tmux(
+                    dev_driver,
                     app,
-                    command=f"tmux send-keys -t {shlex.quote(target_tmux_name)} -l {shlex.quote(clean_prompt)} && tmux send-keys -t {shlex.quote(target_tmux_name)} Enter",
-                    timeout=4.0,
+                    target_tmux_name,
+                    "",
+                    clean_prompt,
                 )
-                delivered_to_tmux = True
+                if delivered_to_tmux:
+                    self._append_chat_turn(app, session_id, clean_prompt)
         except Exception as tmux_err:
             logger.debug("Prompt tmux delivery: %s", tmux_err)
+
+        if is_dev_session:
+            if not delivered_to_tmux:
+                return {
+                    "status": "error",
+                    "session_id": session_id,
+                    "delivered_to_tmux": False,
+                    "message": "Agent terminal is not ready. Open the terminal once the sandbox is running, then send again.",
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                }
+            return {
+                "status": "sent",
+                "session_id": session_id,
+                "prompt": clean_prompt,
+                "delivered_to_tmux": True,
+                "message": "Prompt delivered to the agent terminal session",
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            }
 
         # 2. Also notify Omnigent server HTTP if available
         urls = []
@@ -3516,8 +3395,41 @@ if os.path.isfile(conv_path):
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
 
-    def clear_build_session(self, app, workspace_id: Optional[str] = None) -> Dict[str, Any]:
-        """Reset conversation history by generating a new session for the current workspace."""
+    def clear_build_session(self, app, workspace_id: Optional[str] = None, session_id: Optional[str] = None) -> Dict[str, Any]:
+        """Reset the shared agent session. Dev sessions keep their id and restart the same tmux agent."""
+        if self._is_compassx_dev_session(app, session_id):
+            self._clear_chat_log(app, session_id)
+            tmux_name = self._ensure_dev_tmux(app, session_id, workspace_id=workspace_id)
+            if tmux_name:
+                from app.services.dev_session_service import dev_session_service
+                from app.services.dev_terminal_service import dev_terminal_service
+
+                sess = dev_session_service.get_session(app, session_id)
+                dev_driver = driver_factory.get_dev_driver()
+                if sess and dev_driver:
+                    _, ws_folder, _ = dev_terminal_service.resolve_agent_tmux_target(
+                        app,
+                        sess.tmux_session_name,
+                        workspace_id=workspace_id or sess.workspace_id,
+                    )
+                    cli = dev_session_service.get_session_cli_command(sess)
+                    gateway = self._gateway_base_url(dev_driver)
+                    launch = f"export OPENAI_BASE_URL={gateway} OPENAI_API_KEY={gateway_api_key_for_app(app)}; {cli}"
+                    dev_driver.exec_command_in_dev(
+                        app,
+                        command=(
+                            f"tmux respawn-pane -k -t {shlex.quote(tmux_name)} "
+                            f"bash -lc {shlex.quote(launch)}"
+                        ),
+                        workspace_folder=ws_folder,
+                        timeout=15,
+                    )
+            return {
+                "session_id": session_id,
+                "cleared": True,
+                "workspace_id": workspace_id,
+            }
+
         new_session = self.create_omnigent_chat_session(app, workspace_id=workspace_id)
         return new_session
 

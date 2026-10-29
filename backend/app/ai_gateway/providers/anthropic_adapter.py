@@ -10,6 +10,8 @@ from typing import Any, AsyncIterator
 
 import httpx
 
+from app.ai_gateway.providers.http_client import gateway_http_client
+
 from app.ai_gateway.providers.base import BaseProviderAdapter, ProviderCredentials
 from app.ai_gateway.schemas.chat import (
     ChatCompletionChoice,
@@ -128,7 +130,7 @@ class AnthropicAdapter(BaseProviderAdapter):
         created = int(time.time())
 
         timeout = httpx.Timeout(120.0, connect=10.0)
-        async with httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
+        async with gateway_http_client(timeout) as client:
             async with client.stream("POST", f"{base_url}/messages", headers=headers, json=payload) as response:
                 if response.status_code >= 400:
                     error_body = await response.aread()
@@ -253,7 +255,7 @@ class AnthropicAdapter(BaseProviderAdapter):
             payload["top_p"] = request.top_p
 
         timeout = httpx.Timeout(120.0, connect=10.0)
-        async with httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
+        async with gateway_http_client(timeout) as client:
             resp = await client.post(f"{base_url}/messages", headers=headers, json=payload)
             if resp.status_code >= 400:
                 raise RuntimeError(f"Anthropic API error ({resp.status_code}): {resp.text}")
@@ -320,7 +322,7 @@ class AnthropicAdapter(BaseProviderAdapter):
 
         # 1. Try GET /models endpoint
         try:
-            async with httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
+            async with gateway_http_client(timeout) as client:
                 models_resp = await client.get(f"{base_url}/models", headers=headers)
                 if models_resp.status_code == 200:
                     data = models_resp.json()
@@ -341,7 +343,7 @@ class AnthropicAdapter(BaseProviderAdapter):
             "max_tokens": 1,
         }
         try:
-            async with httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
+            async with gateway_http_client(timeout) as client:
                 resp = await client.post(f"{base_url}/messages", headers=headers, json=payload)
                 if resp.status_code in (200, 201):
                     return True, "Successfully connected to Anthropic API", [

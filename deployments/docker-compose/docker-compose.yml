@@ -157,10 +157,15 @@ services:
       REDIS_URL: redis://redis:6379/0
       COMPASSX_ENV: local
       DOCKER_HOST: unix:///var/run/docker.sock
+      COMPASSX_EXTRA_CA_DIR: /usr/local/share/ca-certificates/extra
+      COMPASSX_SANDBOX_NETWORK: compassx_default
+      COMPASSX_GATEWAY_INTERNAL_URL: http://backend:8000/api/v1/ai-gateway/v1
     ports:
       - "8000:8000"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+      - ../../backend:/ms-home
+      - ./certs:/usr/local/share/ca-certificates/extra:ro
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/healthcheck', timeout=3)\" || exit 1"]
       interval: 15s
@@ -169,7 +174,10 @@ services:
       start_period: 30s
 
   frontend:
-    image: ghcr.io/compassx-platform/frontend:v0.16.0
+    build:
+      context: ../../frontend
+      dockerfile: Dockerfile
+    image: compassx-frontend:local
     depends_on:
       backend:
         condition: service_started

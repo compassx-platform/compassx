@@ -9,6 +9,7 @@ from typing import Dict, List, Optional, Any, Callable
 
 from app.config import settings
 from app.services.drivers.base import BaseAppDriver, BaseDevDriver
+from app.services.sandbox_credentials import gateway_api_key_for_app, sync_antigravity_for_app
 from app.services.ingress_service import ingress_service
 
 try:
@@ -1204,44 +1205,19 @@ class KubernetesDevDriver(BaseDevDriver):
                     f"mkdir -p /root/.gemini && "
                     f"if [ -L /root/.pi ]; then rm -f /root/.pi; fi; "
                     f"mkdir -p /root/.pi && "
-                    # Purge legacy dummy placeholder tokens on shared storage
-                    f"for f in /workspaces/.shared_auth/.gemini/antigravity-cli/antigravity-oauth-token /workspaces/.shared_auth/.gemini/oauth_creds.json; do "
-                    f"  if [ -f \"$f\" ] && grep -q 'auto-authenticated-dev-cluster-token' \"$f\" 2>/dev/null; then rm -f \"$f\"; fi; "
-                    f"done; "
-                    # Initial restore from shared PVC if genuine credentials exist
-                    f"if [ -d /workspaces/.shared_auth/.gemini ]; then "
-                    f"  for f in antigravity-cli/antigravity-oauth-token oauth_creds.json antigravity-cli/jetski_state.pbtxt antigravity-cli/installation_id config/config.json config/projects/default-cli-project.json config/mcp_config.json; do "
-                    f"    if [ -f \"/workspaces/.shared_auth/.gemini/$f\" ] && ! grep -q 'auto-authenticated-dev-cluster-token' \"/workspaces/.shared_auth/.gemini/$f\" 2>/dev/null; then "
-                    f"      mkdir -p \"/root/.gemini/$(dirname \"$f\")\" 2>/dev/null || true; "
-                    f"      cp -f \"/workspaces/.shared_auth/.gemini/$f\" \"/root/.gemini/$f\" 2>/dev/null || true; "
-                    f"    fi; "
-                    f"  done; "
-                    f"  cp -rn /workspaces/.shared_auth/.gemini/* /root/.gemini/ 2>/dev/null || true; "
-                    f"fi; "
-                    # Continuous background daemon: syncs tokens and state bidirectionally between /root/.gemini, sessions, and shared PVC
+                    # Copy a login from this pod's nested agy home into /root/.gemini.
+                    # Workspace sharing is done by CompassX, not by the shared volume.
                     f"(while true; do "
-                    f"  for src in /root/.gemini /root/.omnigent/antigravity-native/*/agy-home/.gemini; do "
+                    f"  for src in /root/.omnigent/antigravity-native/*/agy-home/.gemini; do "
                     f"    if [ -d \"$src\" ]; then "
-                    f"      for f in antigravity-cli/antigravity-oauth-token oauth_creds.json antigravity-cli/jetski_state.pbtxt antigravity-cli/installation_id config/config.json config/projects/default-cli-project.json config/mcp_config.json; do "
-                    f"        if [ -f \"$src/$f\" ] && [ -s \"$src/$f\" ] && ! grep -q 'auto-authenticated-dev-cluster-token' \"$src/$f\" 2>/dev/null; then "
-                    f"          mkdir -p \"/workspaces/.shared_auth/.gemini/$(dirname \"$f\")\" 2>/dev/null || true; "
-                    f"          cp -f \"$src/$f\" \"/workspaces/.shared_auth/.gemini/$f\" 2>/dev/null || true; "
-                    f"          if [ \"$src\" != \"/root/.gemini\" ]; then "
-                    f"            mkdir -p \"/root/.gemini/$(dirname \"$f\")\" 2>/dev/null || true; "
-                    f"            cp -f \"$src/$f\" \"/root/.gemini/$f\" 2>/dev/null || true; "
-                    f"          fi; "
+                    f"      for f in antigravity-cli/antigravity-oauth-token oauth_creds.json antigravity-cli/jetski_state.pbtxt antigravity-cli/installation_id; do "
+                    f"        if [ -f \"$src/$f\" ] && [ -s \"$src/$f\" ] && ! grep -q 'auto-authenticated' \"$src/$f\" 2>/dev/null; then "
+                    f"          mkdir -p \"/root/.gemini/$(dirname \"$f\")\" 2>/dev/null || true; "
+                    f"          cp -f \"$src/$f\" \"/root/.gemini/$f\" 2>/dev/null || true; "
                     f"        fi; "
                     f"      done; "
                     f"    fi; "
                     f"  done; "
-                    f"  if [ -f /workspaces/.shared_auth/.gemini/antigravity-cli/antigravity-oauth-token ] && ! grep -q 'auto-authenticated-dev-cluster-token' /workspaces/.shared_auth/.gemini/antigravity-cli/antigravity-oauth-token 2>/dev/null; then "
-                    f"    for f in antigravity-cli/antigravity-oauth-token oauth_creds.json antigravity-cli/jetski_state.pbtxt antigravity-cli/installation_id config/config.json config/projects/default-cli-project.json config/mcp_config.json; do "
-                    f"      if [ -f \"/workspaces/.shared_auth/.gemini/$f\" ] && [ ! -f \"/root/.gemini/$f\" ]; then "
-                    f"        mkdir -p \"/root/.gemini/$(dirname \"$f\")\" 2>/dev/null || true; "
-                    f"        cp -f \"/workspaces/.shared_auth/.gemini/$f\" \"/root/.gemini/$f\" 2>/dev/null || true; "
-                    f"      fi; "
-                    f"    done; "
-                    f"  fi; "
                     f"  sleep 3; "
                     f"done) & "
                     f"(which agy >/dev/null 2>&1 || (curl -k -fsSL -o /tmp/agy.tar.gz 'https://github.com/google-antigravity/antigravity-cli/releases/download/1.0.10/agy_cli_linux_x64.tar.gz' 2>/dev/null && tar -xzf /tmp/agy.tar.gz -C /tmp antigravity 2>/dev/null && install -m 0755 /tmp/antigravity /usr/local/bin/agy 2>/dev/null && rm -f /tmp/agy.tar.gz /tmp/antigravity) || (curl -k -fsSL https://antigravity.google/install.sh | bash 2>/dev/null || true)); "
@@ -2254,6 +2230,10 @@ class KubernetesDevDriver(BaseDevDriver):
 
     def ensure_agent_configs(self, app: Any, active_model: Optional[str] = None) -> None:
         """Seed or update agent configuration files (OpenCode, Pi) and tmux configs inside the dev pod."""
+        try:
+            sync_antigravity_for_app(app, force=True)
+        except Exception:
+            logger.debug("Antigravity credential sync skipped for %s", getattr(app, "id", ""), exc_info=True)
         import json
         models = ["gpt-5.4-mini", "gpt-5.6-sol"]
         try:
@@ -2273,7 +2253,7 @@ class KubernetesDevDriver(BaseDevDriver):
         if active_model and active_model not in models:
             models.append(active_model)
 
-        api_key = f"cx_gw_app_{app.id}"
+        api_key = f"{gateway_api_key_for_app(app)}"
         ns = settings.K8S_NAMESPACE
         base_url = f"http://compassx-backend.{ns}.svc.cluster.local:8000/api/v1/ai-gateway/v1"
         oc_models = {m: {"name": m} for m in models}
@@ -2294,7 +2274,7 @@ class KubernetesDevDriver(BaseDevDriver):
             "                with open(p, 'r') as f: doc = json.load(f)\n"
             "            except Exception: pass\n"
             "        doc.setdefault('provider', {})\n"
-            "        doc['provider']['compassx'] = {'name': 'CompassX AI Gateway', 'type': 'openai', 'options': {'baseURL': base_url, 'apiKey': api_key}, 'models': oc_models}\n"
+            "        doc['provider']['compassx'] = {'name': 'CompassX AI Gateway', 'npm': '@ai-sdk/openai-compatible', 'options': {'baseURL': base_url, 'apiKey': api_key}, 'models': oc_models}\n"
             "        with open(p, 'w') as f: json.dump(doc, f, indent=2)\n"
             "    except Exception:\n"
             "        pass\n"
@@ -2303,30 +2283,6 @@ class KubernetesDevDriver(BaseDevDriver):
             "        try: os.unlink('/root/.gemini')\n"
             "        except Exception: pass\n"
             "    os.makedirs('/root/.gemini', exist_ok=True)\n"
-            "    def is_valid_token(p):\n"
-            "        if not os.path.isfile(p): return False\n"
-            "        try:\n"
-            "            with open(p, 'r') as fp:\n"
-            "                txt = fp.read()\n"
-            "                return bool(txt.strip() and 'auto-authenticated' not in txt)\n"
-            "        except Exception: return False\n"
-            "    auth_dirs = ['/workspaces/.shared_auth/.gemini', '/workspace/.gemini_auth']\n"
-            "    has_root_token = is_valid_token('/root/.gemini/antigravity-cli/antigravity-oauth-token') or is_valid_token('/root/.gemini/oauth_creds.json')\n"
-            "    if not has_root_token:\n"
-            "        for ad in auth_dirs:\n"
-            "            if os.path.isdir(ad) and os.listdir(ad):\n"
-            "                token_in_ad = is_valid_token(os.path.join(ad, 'antigravity-cli', 'antigravity-oauth-token')) or is_valid_token(os.path.join(ad, 'oauth_creds.json'))\n"
-            "                if token_in_ad:\n"
-            "                    shutil.copytree(ad, '/root/.gemini', dirs_exist_ok=True)\n"
-            "                    break\n"
-            "    elif os.path.isdir('/root/.gemini') and os.listdir('/root/.gemini'):\n"
-            "        for ad in auth_dirs:\n"
-            "            try:\n"
-            "                parent = os.path.dirname(ad)\n"
-            "                if os.path.isdir(parent) or parent in ('/workspace', '/workspaces', '/workspaces/.shared_auth'):\n"
-            "                    os.makedirs(ad, exist_ok=True)\n"
-            "                    shutil.copytree('/root/.gemini', ad, dirs_exist_ok=True)\n"
-            "            except Exception: pass\n"
             "except Exception:\n"
             "    pass\n"
             "try:\n"
@@ -2440,37 +2396,31 @@ class KubernetesDevDriver(BaseDevDriver):
         ai_gw_url = f"http://compassx-backend.{ns}.svc.cluster.local:8000/api/v1/ai-gateway/v1"
         auth_restore = (
             "if [ -L /root/.gemini ]; then rm -f /root/.gemini; mkdir -p /root/.gemini; fi; "
-            "if [ -d /workspaces/.shared_auth/.gemini ]; then "
-            "  for f in antigravity-cli/antigravity-oauth-token oauth_creds.json antigravity-cli/jetski_state.pbtxt antigravity-cli/installation_id config/config.json config/projects/default-cli-project.json config/mcp_config.json; do "
-            "    if [ -f \"/workspaces/.shared_auth/.gemini/$f\" ] && ! grep -q 'auto-authenticated-dev-cluster-token' \"/workspaces/.shared_auth/.gemini/$f\" 2>/dev/null; then "
-            "      mkdir -p \"/root/.gemini/$(dirname \"$f\")\" 2>/dev/null || true; "
-            "      cp -f \"/workspaces/.shared_auth/.gemini/$f\" \"/root/.gemini/$f\" 2>/dev/null || true; "
-            "    fi; "
-            "  done; "
-            "  cp -rn /workspaces/.shared_auth/.gemini/* /root/.gemini/ 2>/dev/null || true; "
-            "elif [ -d /workspace/.gemini_auth ] && [ -n \"$(find /workspace/.gemini_auth -type f 2>/dev/null)\" ]; then "
-            "  cp -rn /workspace/.gemini_auth/* /root/.gemini/ 2>/dev/null || true; "
-            "fi; "
+            "mkdir -p /root/.gemini/antigravity-cli 2>/dev/null || true; "
             "export AGY_TRUST_ALL=true ANTIGRAVITY_TRUST_ALL_WORKSPACES=true AGY_NON_INTERACTIVE=true; "
         )
 
         if session_name and cli_cmd:
             tmux_target = session_name.replace("'", "")
-            clean_cmd = f"export OPENAI_BASE_URL={ai_gw_url} OPENAI_API_KEY=cx_gw_app_{app.id}; {cli_cmd}".replace("'", "'\\''")
+            clean_cmd = f"export OPENAI_BASE_URL={ai_gw_url} OPENAI_API_KEY={gateway_api_key_for_app(app)}; {cli_cmd}".replace("'", "'\\''")
             tmux_init = (
                 "printf 'set -g mouse on\\nset -s set-clipboard on\\nset -g allow-passthrough on\\nbind -T copy-mode-vi y send-keys -X copy-selection-and-cancel\\nbind -T copy-mode-vi MouseDragEnd1Pane send-keys -X copy-selection-and-cancel\\nbind -T copy-mode MouseDragEnd1Pane send-keys -X copy-selection-and-cancel\\nbind -T copy-mode y send-keys -X copy-selection-and-cancel\\n' > /root/.tmux.conf; "
                 "tmux source-file /root/.tmux.conf 2>/dev/null; "
             )
+            # Create the agent detached so it survives this attach client closing.
+            # Chat prompts and a later terminal attach then share the same session.
             shell_cmd = [
                 "/bin/sh", "-c",
                 f"cd {workdir} 2>/dev/null; "
                 f"export TERM=xterm-256color; "
                 f"{auth_restore}"
                 f"{tmux_init}"
-                f"tmux new-session -A -D -s '{tmux_target}' -c '{workdir}' '{clean_cmd} || exec /bin/bash -l' || exec /bin/bash -l"
+                f"tmux has-session -t '{tmux_target}' 2>/dev/null || "
+                f"tmux new-session -d -s '{tmux_target}' -c '{workdir}' '{clean_cmd} || exec /bin/bash -l'; "
+                f"exec tmux attach -d -t '{tmux_target}'"
             ]
         elif cli_cmd:
-            clean_cmd = f"export OPENAI_BASE_URL={ai_gw_url} OPENAI_API_KEY=cx_gw_app_{app.id}; {cli_cmd}".replace("'", "'\\''")
+            clean_cmd = f"export OPENAI_BASE_URL={ai_gw_url} OPENAI_API_KEY={gateway_api_key_for_app(app)}; {cli_cmd}".replace("'", "'\\''")
             shell_cmd = [
                 "/bin/sh", "-c",
                 f"cd {workdir} 2>/dev/null; "
@@ -2803,23 +2753,31 @@ class KubernetesDevDriver(BaseDevDriver):
             f'echo \'{detector_b64}\' | base64 -d > /tmp/detect_framework.py && chmod +x /tmp/detect_framework.py\n'
             'python3 /tmp/detect_framework.py "$ACTIVE_DIR" > /tmp/cx_framework_report.json 2>/dev/null\n'
             '\n'
-            'eval $(python3 -c "\n'
+            'cat > /tmp/cx_emit_env.py << \'PY\'\n'
             'import json\n'
-            'try: r = json.load(open(\'/tmp/cx_framework_report.json\'))\n'
-            'except Exception: r = {}\n'
-            'detected = \'true\' if r.get(\'detected\') else \'false\'\n'
-            'has_f = \'true\' if r.get(\'has_frontend\') else \'false\'\n'
-            'has_b = \'true\' if r.get(\'has_backend\') else \'false\'\n'
-            'has_m = \'true\' if r.get(\'manifest_found\') else \'false\'\n'
-            'f = r.get(\'frontend\') or {}\n'
-            'b = r.get(\'backend\') or {}\n'
-            'm = r.get(\'manifest\') or {}\n'
-            'env_exports = [f\'export {k}={v}\' for k, v in (m.get(\'env\') or {}).items()]\n'
-            'print(f\'DETECTED={detected}; HAS_FRONTEND={has_f}; HAS_BACKEND={has_b}; HAS_MANIFEST={has_m};\')\n'
-            'print(f\'FRONTEND_DIR={json.dumps(f.get(\"directory\") or \"\")}; FRONTEND_CMD={json.dumps(f.get(\"dev_command\") or \"\")}; FRONTEND_PORT={f.get(\"port\") or 8080};\')\n'
-            'print(f\'BACKEND_DIR={json.dumps(b.get(\"directory\") or \"\")}; BACKEND_CMD={json.dumps(b.get(\"dev_command\") or \"\")}; BACKEND_PORT={b.get(\"port\") or 8000}; BACKEND_PATH={json.dumps(b.get(\"api_prefix\") or \"/api\")};\')\n'
-            'print(f\'MANIFEST_INSTALL={json.dumps(m.get(\"install_command\") or \"\")}; MANIFEST_ENV={json.dumps(\"; \".join(env_exports))};\')\n'
-            '")\n'
+            'try:\n'
+            '    r = json.load(open("/tmp/cx_framework_report.json"))\n'
+            'except Exception:\n'
+            '    r = {}\n'
+            'detected = "true" if r.get("detected") else "false"\n'
+            'has_f = "true" if r.get("has_frontend") else "false"\n'
+            'has_b = "true" if r.get("has_backend") else "false"\n'
+            'has_m = "true" if r.get("manifest_found") else "false"\n'
+            'f = r.get("frontend") or {}\n'
+            'b = r.get("backend") or {}\n'
+            'm = r.get("manifest") or {}\n'
+            'env_exports = ["export {0}={1}".format(k, v) for k, v in (m.get("env") or {}).items()]\n'
+            'f_port = f.get("port") or 4000\n'
+            'f_cmd = f.get("dev_command") or ""\n'
+            'if has_b == "true" and int(f_port) == 8080:\n'
+            '    f_port = 4000\n'
+            '    f_cmd = f_cmd.replace("--port 8080", "--port 4000").replace("-p 8080", "-p 4000")\n'
+            'print("DETECTED={0}; HAS_FRONTEND={1}; HAS_BACKEND={2}; HAS_MANIFEST={3};".format(detected, has_f, has_b, has_m))\n'
+            'print("FRONTEND_DIR={0}; FRONTEND_CMD={1}; FRONTEND_PORT={2};".format(json.dumps(f.get("directory") or ""), json.dumps(f_cmd), f_port))\n'
+            'print("BACKEND_DIR={0}; BACKEND_CMD={1}; BACKEND_PORT={2}; BACKEND_PATH={3};".format(json.dumps(b.get("directory") or ""), json.dumps(b.get("dev_command") or ""), b.get("port") or 8000, json.dumps(b.get("api_prefix") or "/api")))\n'
+            'print("MANIFEST_INSTALL={0}; MANIFEST_ENV={1};".format(json.dumps(m.get("install_command") or ""), json.dumps("; ".join(env_exports))))\n'
+            'PY\n'
+            'eval "$(python3 /tmp/cx_emit_env.py)"\n'
             '\n'
             'if [ -n "$MANIFEST_ENV" ]; then eval "$MANIFEST_ENV"; fi\n'
             'if [ -n "$MANIFEST_INSTALL" ]; then\n'

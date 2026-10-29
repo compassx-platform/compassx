@@ -46,7 +46,9 @@ import {
   useDevWorkspaces,
   useActivateDevWorkspace,
   useDeployApp,
+  usePublishDevChanges,
   useAppDeployments,
+  useDevHeartbeat,
   useEnsureAppSandbox,
   useAppSandboxStatus,
   type DevSession,
@@ -287,14 +289,46 @@ export default function AppBuildPage() {
 
   // ── Deployment State & Handler ───────────────────────────────────────────────
   const deployMutation = useDeployApp();
+  const publishMutation = usePublishDevChanges();
+  const heartbeatMutation = useDevHeartbeat();
   const { data: appDeployments = [] } = useAppDeployments(resolvedAppId, stage === 'running');
   const latestDeployment = appDeployments?.[0];
 
+  useEffect(() => {
+    if (stage !== 'running' || !resolvedAppId) return;
+    const workspaceId = activeWorkspace?.id || devStatus?.workspace_id;
+    const beat = () => heartbeatMutation.mutate({ appId: resolvedAppId, workspaceId });
+    beat();
+    const interval = window.setInterval(beat, 45_000);
+    return () => window.clearInterval(interval);
+  }, [stage, resolvedAppId, activeWorkspace?.id, devStatus?.workspace_id]);
+
   const handleDeployApp = async () => {
     if (!resolvedAppId) return;
+    const branch = activeWorkspace?.git_branch || devStatus?.git_branch || app?.git_branch || app?.git_ref;
     try {
-      toast.info('Starting deployment to cluster...');
-      await deployMutation.mutateAsync(resolvedAppId);
+      toast.info('Publishing sandbox changes...');
+      try {
+        const published = await publishMutation.mutateAsync({
+          appId: resolvedAppId,
+          workspaceId: activeWorkspace?.id || devStatus?.workspace_id,
+          workspaceName: activeWorkspace?.name || devStatus?.workspace_name,
+          commitMessage: 'Publish Build Studio changes',
+        });
+        toast.success(`Pushed ${published?.git_branch || branch || 'the sandbox branch'}.`);
+      } catch (err: any) {
+        const msg = String(err?.response?.data?.detail || err?.message || '');
+        const nothingToPublish = /nothing to commit|working tree clean|no changes added/i.test(msg);
+        if (!nothingToPublish) {
+          toast.error(msg || 'Could not publish sandbox changes');
+          return;
+        }
+      }
+      toast.info('Starting deployment...');
+      await deployMutation.mutateAsync({
+        appId: resolvedAppId,
+        gitRef: branch || undefined,
+      });
       toast.success('Deployment initiated successfully!');
     } catch (err: any) {
       toast.error(err?.response?.data?.detail || err?.message || 'Deployment failed');
@@ -489,10 +523,8 @@ export default function AppBuildPage() {
     outputHeightRef.current = outputHeight;
   }, [outputHeight]);
 
-  // Clear selected file when switching active sandbox/workspace
-  useEffect(() => {
-    setSelectedFilePath(null);
-  }, [activeWorkspace?.id]);
+  // Remount the editor when the sandbox changes. The canvas picks a file itself.
+  const workspaceFileKey = activeWorkspace?.id ?? '';
 
   // User-adjustable widths for Tree view vs Viewer mode (persisted to localStorage)
   const [treeWidth, setTreeWidth] = useState<number>(() => {
@@ -695,13 +727,19 @@ export default function AppBuildPage() {
 
   // Preview URL for the running application sandbox
   const previewUrl = useMemo(() => {
-    return (
-      devStatus?.dev_url ||
-      (devStatus?.dev_port ? `http://localhost:${devStatus.dev_port}` : '') ||
-      (app?.slug ? `https://${app.slug}-dev.135.13.180.167.nip.io` : '') ||
-      'http://localhost:9201'
-    );
-  }, [devStatus?.dev_url, devStatus?.dev_port, app?.slug]);
+    const endpoints = sandboxStatus?.endpoints || {};
+    const gateway = endpoints['8080'];
+    if (typeof gateway === 'string' && gateway.startsWith('http')) return gateway.replace(/\/$/, '');
+    if (devStatus?.dev_url && !devStatus.dev_url.includes(':9201')) return devStatus.dev_url;
+    const endpoint =
+      endpoints.dev ||
+      endpoints.preview ||
+      Object.values(endpoints).find((value) => typeof value === 'string' && value.startsWith('http'));
+    if (endpoint) return endpoint;
+    if (devStatus?.dev_url) return devStatus.dev_url;
+    if (devStatus?.dev_port) return `http://localhost:${devStatus.dev_port}`;
+    return '';
+  }, [devStatus?.dev_url, devStatus?.dev_port, sandboxStatus?.endpoints]);
 
   // Combined stdout/stderr output for Dev Server log viewer
   const combinedLogs = useMemo(() => {
@@ -864,6 +902,10 @@ export default function AppBuildPage() {
       !startError &&
       !verifyGitMutation.isPending
     ) {
+      const progress = sandboxStatus?.progress;
+      if (sandboxStatus && progress && progress.stage !== 'ready' && (progress.percent ?? 0) < 100) {
+        return;
+      }
       verifyGitTriggered.current = true;
       setInitStep(1);
       verifyGitMutation.mutate(
@@ -892,7 +934,20 @@ export default function AppBuildPage() {
             refetchDevFiles();
             toast.success('Step 2 Complete: Workspace code prepared & ready.');
 
-            // Automatically move directly to Step 3 (dependencies) & Step 4 (server start)
+            const initScriptsFinished =
+              sandboxStatus?.progress?.stage === 'ready' ||
+              (sandboxStatus?.progress?.percent ?? 0) >= 100;
+            if (initScriptsFinished) {
+              setInstallOutput('Dependencies were installed while the sandbox started.');
+              setRunAppOutput('Application server was started while the sandbox started.');
+              setStep3Completed(true);
+              setStep4Completed(true);
+              setHasCompletedInit(true);
+              setInitStep(3);
+              setPreviewReloadKey(Date.now());
+              return;
+            }
+
             void handleProceedToStep3();
           },
           onError: (err: any) => {
@@ -913,6 +968,8 @@ export default function AppBuildPage() {
     activeWorkspace?.name,
     devStatus?.workspace_id,
     devStatus?.workspace_name,
+    sandboxStatus?.progress?.stage,
+    sandboxStatus?.progress?.percent,
     handleProceedToStep3,
     qc,
     refetchDevFiles,
@@ -2023,6 +2080,7 @@ export default function AppBuildPage() {
                   />
                 ) : (
                   <CodeEditorCanvas
+                    key={workspaceFileKey || 'default'}
                     appId={resolvedAppId!}
                     appName={app?.name}
                     workspaceId={activeWorkspace?.id || devStatus?.workspace_id}

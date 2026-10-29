@@ -103,7 +103,11 @@ class DockerSandboxDriver(BaseSandboxDriver):
             "labels": labels,
             "working_dir": spec.working_dir or "/workspace",
             "command": ["tail", "-f", "/dev/null"],  # Keep alive for interactive exec
+            "extra_hosts": {"host.docker.internal": "host-gateway"},
         }
+        sandbox_network = os.environ.get("COMPASSX_SANDBOX_NETWORK", "").strip()
+        if sandbox_network:
+            kwargs["network"] = sandbox_network
         if spec.memory_limit:
             kwargs["mem_limit"] = spec.memory_limit
         if spec.cpu_limit:

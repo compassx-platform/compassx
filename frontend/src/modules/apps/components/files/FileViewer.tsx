@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowLeft,
   Check,
@@ -21,6 +21,7 @@ import { css } from '@codemirror/lang-css';
 import { markdown } from '@codemirror/lang-markdown';
 import { cn } from '@/lib/utils';
 import { useDevFileContent, useWriteDevFile } from '../../hooks/useApps';
+import { FileDiffView } from './FileDiffView';
 import { formatBytes } from './fileStatusUtils';
 
 export interface FileViewerProps {
@@ -29,6 +30,7 @@ export interface FileViewerProps {
   workspaceId?: string;
   onClose: () => void;
   hideHeader?: boolean;
+  gitStatus?: string | null;
 }
 
 const codeHighlightStyle = HighlightStyle.define([
@@ -84,7 +86,7 @@ const editorTheme = EditorView.theme(
   { dark: false }
 );
 
-export function FileViewer({ appId, path, workspaceId, onClose, hideHeader = false }: FileViewerProps) {
+export function FileViewer({ appId, path, workspaceId, onClose, hideHeader = false, gitStatus = null }: FileViewerProps) {
   const { data: fileData, isLoading, isError, error, refetch } = useDevFileContent(appId, path, workspaceId);
   const writeMutation = useWriteDevFile();
 
@@ -92,12 +94,21 @@ export function FileViewer({ appId, path, workspaceId, onClose, hideHeader = fal
   const [isModified, setIsModified] = useState<boolean>(false);
   const [copied, setCopied] = useState<boolean>(false);
   const [saveSuccess, setSaveSuccess] = useState<boolean>(false);
+  const [mode, setMode] = useState<'edit' | 'diff'>('edit');
+  const dirtyRef = useRef(false);
 
-  // Sync content when file data loads
   useEffect(() => {
-    if (fileData) {
+    setMode(gitStatus ? 'diff' : 'edit');
+  }, [path, gitStatus]);
+
+  useEffect(() => {
+    dirtyRef.current = isModified;
+  }, [isModified]);
+
+  // Follow sandbox edits. Leave an unsaved editor buffer alone.
+  useEffect(() => {
+    if (fileData && !dirtyRef.current) {
       setContent(fileData.content);
-      setIsModified(false);
     }
   }, [fileData]);
 
@@ -294,9 +305,34 @@ export function FileViewer({ appId, path, workspaceId, onClose, hideHeader = fal
         </>
       )}
 
+      {gitStatus && (
+        <div className="flex h-8 shrink-0 items-center gap-1 border-b border-neutral-200 bg-neutral-50 px-2">
+          <button
+            type="button"
+            onClick={() => setMode('diff')}
+            className={`rounded px-2 py-0.5 text-[11px] font-medium ${mode === 'diff' ? 'bg-white text-neutral-900 shadow-sm' : 'text-neutral-500'}`}
+          >
+            Diff
+          </button>
+          <button
+            type="button"
+            onClick={() => setMode('edit')}
+            className={`rounded px-2 py-0.5 text-[11px] font-medium ${mode === 'edit' ? 'bg-white text-neutral-900 shadow-sm' : 'text-neutral-500'}`}
+          >
+            Edit
+          </button>
+        </div>
+      )}
+
       {/* Editor Body — Clean white CodeMirror with light gutters */}
       <div className="flex-1 min-h-0 overflow-auto bg-white [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-thumb]:bg-neutral-300 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-track]:bg-transparent">
-        {isLoading ? (
+        {mode === 'diff' && gitStatus ? (
+          <FileDiffView appId={appId} path={path} workspaceId={workspaceId} />
+        ) : gitStatus === 'deleted' ? (
+          <div className="flex h-48 flex-col items-center justify-center gap-2 px-4 text-center">
+            <span className="text-xs font-mono text-rose-600">This file was deleted in the sandbox.</span>
+          </div>
+        ) : isLoading ? (
           <div className="flex h-48 flex-col items-center justify-center gap-2 text-neutral-400">
             <Loader2 className="size-5 animate-spin text-neutral-500" />
             <span className="text-xs font-mono">Loading file content...</span>

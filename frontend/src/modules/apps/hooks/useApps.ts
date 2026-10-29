@@ -139,11 +139,17 @@ export function useDeployApp() {
   const wsId = workspace?.id;
 
   return useMutation({
-    mutationFn: async (appId: string) => {
-      const res = await api.post<DeploymentItem>(`/apps/${appId}/deploy`, null, { timeout: 120000 });
+    mutationFn: async (input: string | { appId: string; gitRef?: string }) => {
+      const appId = typeof input === 'string' ? input : input.appId;
+      const gitRef = typeof input === 'string' ? undefined : input.gitRef;
+      const res = await api.post<DeploymentItem>(`/apps/${appId}/deploy`, null, {
+        timeout: 120000,
+        params: gitRef ? { git_ref: gitRef } : undefined,
+      });
       return res.data;
     },
-    onSuccess: (_, appId) => {
+    onSuccess: (_, input) => {
+      const appId = typeof input === 'string' ? input : input.appId;
       qc.invalidateQueries({ queryKey: ['app-detail', appId] });
       qc.invalidateQueries({ queryKey: ['app-deployments', appId] });
       qc.invalidateQueries({ queryKey: ['app-logs', appId] });
@@ -325,6 +331,7 @@ export interface DevSessionStatus {
   workspace_id?: string;
   workspace_name?: string;
   workspace_folder?: string;
+  git_branch?: string;
   omnigent_attached?: boolean;
   omnigent_server_available?: boolean;
   omnigent_server_url?: string;
@@ -962,6 +969,27 @@ export function useDevFileContent(appId?: string, filePath?: string | null, work
     },
     enabled: !!appId && !!filePath && enabled,
     staleTime: 5000,
+    refetchInterval: enabled ? 5000 : false,
+  });
+}
+
+export interface WorkspaceFileDiff {
+  path: string;
+  patch: string;
+}
+
+export function useDevFileDiff(appId?: string, filePath?: string | null, workspaceId?: string, enabled = true) {
+  return useQuery({
+    queryKey: ['app-dev-file-diff', appId, filePath, workspaceId],
+    queryFn: async () => {
+      if (!appId || !filePath) throw new Error('App ID and File path required');
+      const params: Record<string, string> = { path: filePath };
+      if (workspaceId) params.workspace_id = workspaceId;
+      const res = await api.get<WorkspaceFileDiff>(`/apps/${appId}/dev/file/diff`, { params });
+      return res.data;
+    },
+    enabled: !!appId && !!filePath && enabled,
+    refetchInterval: enabled ? 5000 : false,
   });
 }
 

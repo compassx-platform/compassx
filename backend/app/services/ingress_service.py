@@ -10,6 +10,19 @@ from app.config import settings
 logger = logging.getLogger(__name__)
 
 
+def preview_url_from_endpoints(endpoints: Optional[Dict[str, Any]], fallback: str) -> str:
+    """Pick the published gateway URL. Port 8080 is the in-sandbox preview proxy."""
+    endpoints = endpoints or {}
+    for key in ("8080", "9201"):
+        url = endpoints.get(key)
+        if isinstance(url, str) and url.startswith("http"):
+            return url.rstrip("/") + "/"
+    for url in endpoints.values():
+        if isinstance(url, str) and url.startswith("http"):
+            return url.rstrip("/") + "/"
+    return fallback if fallback.endswith("/") else fallback + "/"
+
+
 class IngressService:
     """Centralized URL, domain, and ingress resolution for applications and Omnigent Dev Studio."""
 
@@ -42,6 +55,14 @@ class IngressService:
         if explicit in ("local", "local-dev"):
             return "local"
 
+        # Compose sets this even when the backend image has no docker CLI.
+        # The Python Docker SDK talks to the socket; mode must not depend on the CLI.
+        profile = os.getenv("COMPASSX_PLATFORM_PROFILE", "").strip().lower()
+        if profile in ("docker", "compose", "docker-compose"):
+            return "docker"
+        if profile in ("kubernetes", "k8s", "kubernetes-local", "kubernetes-cloud"):
+            return "kubernetes"
+
         # Check CompassX compute environment
         try:
             from app.compute.services.config import compute_settings
@@ -50,6 +71,9 @@ class IngressService:
         except Exception:
             if os.getenv("KUBERNETES_SERVICE_HOST"):
                 return "kubernetes"
+
+        if os.path.exists("/var/run/docker.sock") or os.getenv("DOCKER_HOST"):
+            return "docker"
 
         # Check Docker availability
         try:
@@ -136,6 +160,28 @@ class IngressService:
 
         port = dev_port or 9201
         return f"http://localhost:{port}"
+
+    def preview_url_for_app(self, app) -> str:
+        """Browser URL for the sandbox gateway.
+
+        Docker publishes container port 8080 on a host port. That mapping is
+        the preview. A fixed ``localhost:9201`` is only the fallback when no
+        sandbox endpoint has been published yet.
+        """
+        endpoints: Dict[str, Any] = {}
+        try:
+            from app.sandbox.service import sandbox_service
+
+            inst = sandbox_service.find_active_sandbox(
+                sandbox_id=f"dev-app-{getattr(app, 'id', '')}",
+                consumer_key=f"app_{getattr(app, 'id', '')}",
+                consumer_module="app",
+            )
+            if inst is not None and inst.endpoints:
+                endpoints = dict(inst.endpoints)
+        except Exception:
+            logger.debug("Could not read sandbox endpoints for preview", exc_info=True)
+        return preview_url_from_endpoints(endpoints, self.get_app_dev_url(app, 9201))
 
     # ── Omnigent Server URL Resolution ──────────────────────────────────────
 

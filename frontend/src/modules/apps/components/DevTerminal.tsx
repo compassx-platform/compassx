@@ -179,13 +179,14 @@ export function DevTerminal({
         gap: 0,
       }}
     >
-      {/* ── Omnigent TerminalView Surface (Clean Light Canvas) ── */}
+      {/* OpenCode draws a dark TUI. A white canvas hides that text. */}
       <div
         style={{
           height: '100%',
           flex: 1,
+          minHeight: 240,
           width: '100%',
-          background: '#ffffff',
+          background: '#090d16',
           border: 'none',
           borderRadius: 0,
           overflow: 'hidden',
@@ -231,7 +232,7 @@ export function DevTerminal({
             onStateChange={setConnState}
             onActivity={handleTerminalActivity}
             adaptCodexPalette={true}
-            isDark={false}
+            isDark={true}
             className="w-full h-full"
           />
         )}

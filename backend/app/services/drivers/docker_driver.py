@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from typing import Dict, List, Optional, Any, Tuple
 
 from app.services.drivers.base import BaseAppDriver, BaseDevDriver
+from app.services.sandbox_credentials import gateway_api_key_for_app, gateway_base_url, sync_antigravity_for_app
 from app.services.ingress_service import ingress_service
 
 logger = logging.getLogger(__name__)
@@ -462,10 +463,10 @@ class DockerDevDriver(BaseDevDriver):
             f"  \"provider\": {{\n"
             f"    \"compassx\": {{\n"
             f"      \"name\": \"CompassX AI Gateway\",\n"
-            f"      \"type\": \"openai\",\n"
+            f"      \"npm\": \"@ai-sdk/openai-compatible\",\n"
             f"      \"options\": {{\n"
-            f"        \"baseURL\": \"http://host.docker.internal:8000/api/v1/ai-gateway/v1\",\n"
-            f"        \"apiKey\": \"cx_gw_app_{app.id}\"\n"
+            f"        \"baseURL\": \"{gateway_base_url()}\",\n"
+            f"        \"apiKey\": \"{gateway_api_key_for_app(app)}\"\n"
             f"      }},\n"
             f"      \"models\": {{\n"
             f"        \"gpt-5.4-mini\": {{\"name\": \"gpt-5.4-mini\"}},\n"
@@ -484,8 +485,8 @@ class DockerDevDriver(BaseDevDriver):
             f"pi_doc = {{\n"
             f"  \"providers\": {{\n"
             f"    \"compassx\": {{\n"
-            f"      \"baseUrl\": \"http://host.docker.internal:8000/api/v1/ai-gateway/v1\",\n"
-            f"      \"apiKey\": \"cx_gw_app_{app.id}\",\n"
+            f"      \"baseUrl\": \"{gateway_base_url()}\",\n"
+            f"      \"apiKey\": \"{gateway_api_key_for_app(app)}\",\n"
             f"      \"api\": \"openai-completions\",\n"
             f"      \"models\": [\n"
             f"        {{\"id\": \"gpt-5.4-mini\", \"name\": \"gpt-5.4-mini\", \"contextWindow\": 128000, \"maxTokens\": 8192}},\n"
@@ -649,8 +650,8 @@ class DockerDevDriver(BaseDevDriver):
             "-e", "POSTGRES_DSN=postgresql://postgres:postgres@postgres:5432/autonomic",
             "-e", "REDIS_URL=redis://redis:6379/0",
             "-e", "JWT_SECRET=dev-jwt-secret-change-me-for-production-use-min-32-chars",
-            "-e", "OPENAI_BASE_URL=http://host.docker.internal:8000/api/v1/ai-gateway/v1",
-            "-e", f"OPENAI_API_KEY=cx_gw_app_{app.id}",
+            "-e", f"OPENAI_BASE_URL={gateway_base_url()}",
+            "-e", f"OPENAI_API_KEY={gateway_api_key_for_app(app)}",
             "-e", f"OMNIGENT_HOST_ID={host_id}",
             "-e", f"OMNIGENT_HOST_NAME={host_name}",
             "-e", f"HOST_ID={host_id}",
@@ -863,6 +864,27 @@ class DockerDevDriver(BaseDevDriver):
         }
 
 
+    def _existing_exec_workdir(self, container_name: str) -> str:
+        """Pick a working directory that exists so docker exec -w does not fail."""
+        probe = subprocess.run(
+            [
+                "docker", "exec", container_name, "bash", "-c",
+                "if test -d /workspace; then echo WORKSPACE; elif test -d /app; then echo APP; fi",
+            ],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+            timeout=8,
+        )
+        found = probe.stdout or ""
+        if "WORKSPACE" in found:
+            return "/workspace"
+        if "APP" in found:
+            return "/app"
+        return "/"
+
     def exec_command_in_dev(
         self,
         app,
@@ -871,9 +893,9 @@ class DockerDevDriver(BaseDevDriver):
         timeout: int = 300,
     ) -> Dict[str, Any]:
         dev_container_name = self._get_dev_container_name(app)
-        # Verify if workspace folder exists in container, otherwise default to /app
+        # App sandboxes use /workspace. Older containers used /app, which is absent here.
         target_ws = f"/workspaces/{workspace_folder}" if workspace_folder else ""
-        workdir = "/app"
+        workdir = "/workspace"
         if target_ws:
             chk = subprocess.run(
                 ["docker", "exec", dev_container_name, "bash", "-c", f"test -d '{target_ws}' && echo 'EXISTS'"],
@@ -909,6 +931,8 @@ class DockerDevDriver(BaseDevDriver):
                     check=False,
                 )
                 workdir = target_ws
+        else:
+            workdir = self._existing_exec_workdir(dev_container_name)
 
         try:
             res = subprocess.run(
@@ -955,6 +979,10 @@ class DockerDevDriver(BaseDevDriver):
     def ensure_agent_configs(self, app, active_model: Optional[str] = None) -> None:
         """Seed or update agent configuration files (OpenCode, Pi) and root CA certificates inside the dev container."""
         dev_container_name = self._get_dev_container_name(app)
+        try:
+            sync_antigravity_for_app(app, force=True)
+        except Exception:
+            logger.debug("Antigravity credential sync skipped for %s", getattr(app, "id", ""), exc_info=True)
 
         # 0. Ensure corporate / host root CA certificates are installed so Go (agy) and TLS work behind corporate proxies
         try:
@@ -974,60 +1002,6 @@ class DockerDevDriver(BaseDevDriver):
                     timeout=5.0,
                 )
 
-            # Ensure Antigravity OAuth token persistence across containers and restarts
-            token_storage_dir = os.path.join(backend_dir, "storage", "credentials", "antigravity")
-            host_token_file = os.path.join(token_storage_dir, "antigravity-oauth-token")
-            host_creds_file = os.path.join(token_storage_dir, "oauth_creds.json")
-            os.makedirs(token_storage_dir, exist_ok=True)
-
-            # Check if container has an active valid OAuth token
-            chk = subprocess.run(
-                ["docker", "exec", dev_container_name, "bash", "-c", "test -f /root/.gemini/antigravity-cli/antigravity-oauth-token && cat /root/.gemini/antigravity-cli/antigravity-oauth-token"],
-                capture_output=True, text=True, check=False, timeout=3.0,
-            )
-            container_token_content = (chk.stdout or "").strip() if chk.returncode == 0 else ""
-
-            if container_token_content and "refresh_token" in container_token_content and "auto-authenticated" not in container_token_content:
-                # Container has genuine token; persist to host storage and workspace
-                with open(host_token_file, "w", encoding="utf-8") as f:
-                    f.write(container_token_content)
-                with open(host_creds_file, "w", encoding="utf-8") as f:
-                    f.write(container_token_content)
-                subprocess.run(
-                    ["docker", "exec", dev_container_name, "bash", "-c",
-                     "for d in /workspace/.gemini_auth /app/.gemini_auth; do "
-                     "  mkdir -p \"$d/antigravity-cli\"; "
-                     "  cp -f /root/.gemini/antigravity-cli/antigravity-oauth-token \"$d/antigravity-cli/\" 2>/dev/null || true; "
-                     "  cp -f /root/.gemini/oauth_creds.json \"$d/\" 2>/dev/null || true; "
-                     "done"],
-                    capture_output=True, check=False, timeout=3.0,
-                )
-            elif os.path.isfile(host_token_file):
-                # Container is missing or has stale token; seed from host storage
-                subprocess.run(
-                    ["docker", "exec", dev_container_name, "mkdir", "-p", "/root/.gemini/antigravity-cli"],
-                    capture_output=True, check=False, timeout=3.0,
-                )
-                subprocess.run(
-                    ["docker", "cp", host_token_file, f"{dev_container_name}:/root/.gemini/antigravity-cli/antigravity-oauth-token"],
-                    capture_output=True, check=False, timeout=3.0,
-                )
-                subprocess.run(
-                    ["docker", "cp", host_token_file, f"{dev_container_name}:/root/.gemini/oauth_creds.json"],
-                    capture_output=True, check=False, timeout=3.0,
-                )
-                # Also propagate to any running omnigent antigravity session home directories
-                subprocess.run(
-                    ["docker", "exec", dev_container_name, "bash", "-c",
-                     "for d in /root/.omnigent/antigravity-native/*/agy-home/.gemini /workspace/.gemini_auth /app/.gemini_auth; do "
-                     "  if [ -d \"$d\" ] || [ \"$d\" = \"/workspace/.gemini_auth\" ]; then "
-                     "    mkdir -p \"$d/antigravity-cli\"; "
-                     "    cp -f /root/.gemini/antigravity-cli/antigravity-oauth-token \"$d/antigravity-cli/\" 2>/dev/null || true; "
-                     "    cp -f /root/.gemini/oauth_creds.json \"$d/\" 2>/dev/null || true; "
-                     "  fi; "
-                     "done"],
-                    capture_output=True, check=False, timeout=3.0,
-                )
         except Exception:
             pass
 
@@ -1049,8 +1023,8 @@ class DockerDevDriver(BaseDevDriver):
         if active_model and active_model not in models:
             models.append(active_model)
 
-        api_key = f"cx_gw_app_{app.id}"
-        base_url = "http://host.docker.internal:8000/api/v1/ai-gateway/v1"
+        api_key = f"{gateway_api_key_for_app(app)}"
+        base_url = gateway_base_url()
         oc_models = {m: {"name": m} for m in models}
         pi_models = [{"id": m, "name": m, "contextWindow": 128000, "maxTokens": 8192} for m in models]
 
@@ -1069,7 +1043,7 @@ class DockerDevDriver(BaseDevDriver):
             "                with open(p, 'r') as f: doc = json.load(f)\n"
             "            except Exception: pass\n"
             "        doc.setdefault('provider', {})\n"
-            "        doc['provider']['compassx'] = {'name': 'CompassX AI Gateway', 'type': 'openai', 'options': {'baseURL': base_url, 'apiKey': api_key}, 'models': oc_models}\n"
+            "        doc['provider']['compassx'] = {'name': 'CompassX AI Gateway', 'npm': '@ai-sdk/openai-compatible', 'options': {'baseURL': base_url, 'apiKey': api_key}, 'models': oc_models}\n"
             "        with open(p, 'w') as f: json.dump(doc, f, indent=2)\n"
             "    except Exception:\n"
             "        pass\n"
@@ -1215,10 +1189,12 @@ class DockerDevDriver(BaseDevDriver):
 
         try:
             if session_name and cli_cmd:
-                # Persistent tmux session inside container: attaches if existing (-A -D detaches stale clients), creates if not
-                clean_cmd = f"export OPENAI_BASE_URL=http://host.docker.internal:8000/api/v1/ai-gateway/v1 OPENAI_API_KEY=cx_gw_app_{app.id}; {cli_cmd}"
+                # Detached tmux server plus a client that only attaches. Closing the
+                # terminal view drops the client and leaves the agent session running.
+                clean_cmd = f"export OPENAI_BASE_URL={gateway_base_url()} OPENAI_API_KEY={gateway_api_key_for_app(app)}; {cli_cmd}"
                 tmux_target = session_name.replace("'", "")
                 cmd_arg = repr(f"{clean_cmd} || bash")
+                workdir_arg = repr(workdir)
                 py_pty_script = (
                     "import pty, os, sys, fcntl, termios, struct; "
                     f"cols = int(os.environ.get('COLUMNS', {cols})); "
@@ -1226,7 +1202,8 @@ class DockerDevDriver(BaseDevDriver):
                     "pid, m = pty.fork(); "
                     "("
                     "    (os.system('tmux source-file /root/.tmux.conf 2>/dev/null'), "
-                    f"    os.execlp('tmux', 'tmux', 'new-session', '-A', '-D', '-s', '{tmux_target}', '-c', '{workdir}', {cmd_arg}))[1] if pid == 0 else ("
+                    f"    os.system('tmux has-session -t {tmux_target} 2>/dev/null || tmux new-session -d -s {tmux_target} -c ' + {workdir_arg} + ' ' + {cmd_arg}), "
+                    f"    os.execlp('tmux', 'tmux', 'attach', '-d', '-t', '{tmux_target}'))[1] if pid == 0 else ("
                     "        fcntl.ioctl(m, termios.TIOCSWINSZ, struct.pack('HHHH', rows, cols, 0, 0)), "
                     "        pty._copy(m, pty._read, pty._read), "
                     "        os.close(m), "
@@ -1238,14 +1215,14 @@ class DockerDevDriver(BaseDevDriver):
                     "docker", "exec", "-i", "-w", workdir,
                     "-e", f"COLUMNS={cols}", "-e", f"LINES={rows}",
                     "-e", "TERM=xterm-256color",
-                    "-e", "OPENAI_BASE_URL=http://host.docker.internal:8000/api/v1/ai-gateway/v1",
-                    "-e", f"OPENAI_API_KEY=cx_gw_app_{app.id}",
+                    "-e", f"OPENAI_BASE_URL={gateway_base_url()}",
+                    "-e", f"OPENAI_API_KEY={gateway_api_key_for_app(app)}",
                     dev_container_name,
                     "python3", "-c", py_pty_script,
                 ]
             elif cli_cmd:
                 # Launch interactive agent CLI in a genuine POSIX pseudo-terminal (PTY) inside Linux container
-                clean_cmd = f"export OPENAI_BASE_URL=http://host.docker.internal:8000/api/v1/ai-gateway/v1 OPENAI_API_KEY=cx_gw_app_{app.id}; {cli_cmd}"
+                clean_cmd = f"export OPENAI_BASE_URL={gateway_base_url()} OPENAI_API_KEY={gateway_api_key_for_app(app)}; {cli_cmd}"
                 cmd_arg = repr(f"{clean_cmd} || bash")
                 py_pty_script = (
                     "import pty, os, sys, fcntl, termios, struct; "
@@ -1265,8 +1242,8 @@ class DockerDevDriver(BaseDevDriver):
                     "docker", "exec", "-i", "-w", workdir,
                     "-e", f"COLUMNS={cols}", "-e", f"LINES={rows}",
                     "-e", "TERM=xterm-256color",
-                    "-e", "OPENAI_BASE_URL=http://host.docker.internal:8000/api/v1/ai-gateway/v1",
-                    "-e", f"OPENAI_API_KEY=cx_gw_app_{app.id}",
+                    "-e", f"OPENAI_BASE_URL={gateway_base_url()}",
+                    "-e", f"OPENAI_API_KEY={gateway_api_key_for_app(app)}",
                     dev_container_name,
                     "python3", "-c", py_pty_script,
                 ]
@@ -1275,8 +1252,8 @@ class DockerDevDriver(BaseDevDriver):
                     "docker", "exec", "-i", "-w", workdir,
                     "-e", f"COLUMNS={cols}", "-e", f"LINES={rows}",
                     "-e", "TERM=xterm-256color",
-                    "-e", "OPENAI_BASE_URL=http://host.docker.internal:8000/api/v1/ai-gateway/v1",
-                    "-e", f"OPENAI_API_KEY=cx_gw_app_{app.id}",
+                    "-e", f"OPENAI_BASE_URL={gateway_base_url()}",
+                    "-e", f"OPENAI_API_KEY={gateway_api_key_for_app(app)}",
                     dev_container_name,
                     "bash", "-l",
                 ]

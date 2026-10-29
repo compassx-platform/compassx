@@ -409,6 +409,8 @@ const TreeItem = memo(function TreeItem({
                     ? '#dcfce7'
                     : node.file.git_status === 'added'
                     ? '#e0f2fe'
+                    : node.file.git_status === 'deleted'
+                    ? '#fee2e2'
                     : '#f1f5f9',
                 color:
                   node.file.git_status === 'modified'
@@ -417,6 +419,8 @@ const TreeItem = memo(function TreeItem({
                     ? '#16a34a'
                     : node.file.git_status === 'added'
                     ? '#0284c7'
+                    : node.file.git_status === 'deleted'
+                    ? '#dc2626'
                     : '#64748b',
               }}
               title={`Git status: ${node.file.git_status}`}
@@ -427,6 +431,8 @@ const TreeItem = memo(function TreeItem({
                 ? 'U'
                 : node.file.git_status === 'added'
                 ? 'A'
+                : node.file.git_status === 'deleted'
+                ? 'D'
                 : node.file.git_status.slice(0, 1).toUpperCase()}
             </span>
           )}

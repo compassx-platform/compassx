@@ -40,7 +40,7 @@ class AppRunnerService:
         os.makedirs(app_dir, exist_ok=True)
         return app_dir
 
-    def clone_or_update_repo(self, app) -> str:
+    def clone_or_update_repo(self, app, git_ref: Optional[str] = None) -> str:
         """Clone or pull the Git repository for the app."""
         app_dir = self.get_app_dir(app.id)
         repo_dir = os.path.join(app_dir, "repo")
@@ -64,7 +64,7 @@ class AppRunnerService:
             else:
                 auth_url = git_url.replace("https://", f"https://oauth2:{git_token}@")
 
-        git_ref = app.git_ref or app.git_branch or "main"
+        git_ref = git_ref or app.git_ref or app.git_branch or "main"
 
         git_env = dict(os.environ, GIT_TERMINAL_PROMPT="0", GCM_INTERACTIVE="never")
         try:
@@ -103,7 +103,7 @@ class AppRunnerService:
 
         return repo_dir
 
-    def get_latest_git_commit(self, app) -> Dict[str, Any]:
+    def get_latest_git_commit(self, app, git_ref: Optional[str] = None) -> Dict[str, Any]:
         """Fetch true latest commit SHA, commit message, and author from GitHub API or git ls-remote."""
         import json
         import re
@@ -113,7 +113,7 @@ class AppRunnerService:
         if not git_url:
             return {"sha": "local", "message": "Manual deployment", "author": "system"}
 
-        git_ref = getattr(app, "git_ref", None) or getattr(app, "git_branch", None) or "main"
+        git_ref = git_ref or getattr(app, "git_ref", None) or getattr(app, "git_branch", None) or "main"
         git_token = None
         if hasattr(app, "git_pat_enc") and app.git_pat_enc:
             try:
@@ -254,9 +254,10 @@ CMD ["python", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080
         with open(dockerfile_path, "w", encoding="utf-8") as f:
             f.write(content)
 
-    def deploy_app(self, app, runner_mode: Optional[str] = None) -> Dict[str, Any]:
+    def deploy_app(self, app, runner_mode: Optional[str] = None, git_ref: Optional[str] = None) -> Dict[str, Any]:
         """Build and deploy the application using the active runtime driver."""
-        repo_dir = self.clone_or_update_repo(app)
+        resolved_ref = git_ref or app.git_ref or app.git_branch or "main"
+        repo_dir = self.clone_or_update_repo(app, git_ref=resolved_ref)
         self.ensure_dockerfile(repo_dir, app)
 
         driver = driver_factory.get_app_driver(runner_mode)
@@ -265,7 +266,7 @@ CMD ["python", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080
             f"[{now_ts}] [BUILD] ========================================================",
             f"[{now_ts}] [BUILD] Initiating deployment for app '{app.name}' ({app.slug})",
             f"[{now_ts}] [BUILD] Active runtime driver: {driver.__class__.__name__}",
-            f"[{now_ts}] [BUILD] Git reference: {app.git_ref or 'main'}",
+            f"[{now_ts}] [BUILD] Git reference: {resolved_ref}",
             f"[{now_ts}] [BUILD] Container rollout dispatched to cluster...",
             f"[{now_ts}] [BUILD] ========================================================",
         ]

@@ -197,3 +197,39 @@ class CatalogPermission(AccountBase):
     privilege: Mapped[str] = mapped_column(String(20), nullable=False)
     granted_by: Mapped[str | None] = mapped_column(UUID(as_uuid=False), ForeignKey("principals.id"), nullable=True)
     granted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class WorkspaceGatewaySecret(AccountBase):
+    """Random AI gateway bearer for every sandbox in one workspace."""
+
+    __tablename__ = "workspace_gateway_secrets"
+
+    workspace_id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False), ForeignKey("workspaces.id", ondelete="CASCADE"), primary_key=True
+    )
+    token_enc: Mapped[str] = mapped_column(Text, nullable=False)
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+
+class WorkspaceAgentCredential(AccountBase):
+    """Encrypted agent login files shared by every sandbox in the workspace."""
+
+    __tablename__ = "workspace_agent_credentials"
+    __table_args__ = (
+        UniqueConstraint("workspace_id", "agent", name="uq_workspace_agent_credential"),
+    )
+
+    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=_uuid)
+    workspace_id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False), ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False
+    )
+    agent: Mapped[str] = mapped_column(String(32), nullable=False)
+    files_enc: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )

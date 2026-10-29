@@ -10,6 +10,8 @@ from typing import Any, AsyncIterator
 
 import httpx
 
+from app.ai_gateway.providers.http_client import gateway_http_client
+
 from app.ai_gateway.providers.base import BaseProviderAdapter, ProviderCredentials
 from app.ai_gateway.schemas.chat import (
     ChatCompletionChoice,
@@ -112,7 +114,7 @@ class GeminiAdapter(BaseProviderAdapter):
         created = int(time.time())
 
         timeout = httpx.Timeout(120.0, connect=10.0)
-        async with httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
+        async with gateway_http_client(timeout) as client:
             async with client.stream("POST", url, json=payload) as response:
                 if response.status_code >= 400:
                     error_body = await response.aread()
@@ -190,7 +192,7 @@ class GeminiAdapter(BaseProviderAdapter):
             payload["tools"] = tools
 
         timeout = httpx.Timeout(120.0, connect=10.0)
-        async with httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
+        async with gateway_http_client(timeout) as client:
             resp = await client.post(url, json=payload)
             if resp.status_code >= 400:
                 raise RuntimeError(f"Gemini API error ({resp.status_code}): {resp.text}")
@@ -255,7 +257,7 @@ class GeminiAdapter(BaseProviderAdapter):
         payload = {"requests": requests}
 
         timeout = httpx.Timeout(60.0, connect=10.0)
-        async with httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
+        async with gateway_http_client(timeout) as client:
             resp = await client.post(url, json=payload)
             if resp.status_code >= 400:
                 raise RuntimeError(f"Gemini embedding error ({resp.status_code}): {resp.text}")
@@ -276,7 +278,7 @@ class GeminiAdapter(BaseProviderAdapter):
         timeout = httpx.Timeout(10.0, connect=5.0)
 
         try:
-            async with httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
+            async with gateway_http_client(timeout) as client:
                 resp = await client.get(url)
                 if resp.status_code == 200:
                     data = resp.json()
