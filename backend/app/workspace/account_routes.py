@@ -2,16 +2,21 @@
 
 All endpoints require account admin token.
 """
+
 from __future__ import annotations
 
 import logging
+
 from uuid import uuid4
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
+
 from sqlalchemy.orm import Session
 
 from app.database import get_account_db
+
 from app.workspace.auth import hash_password, require_account_admin
+
 from app.workspace.models import (
     Account,
     CatalogObject,
@@ -19,6 +24,7 @@ from app.workspace.models import (
     Workspace,
     WorkspaceMembership,
 )
+
 from app.workspace.schemas import (
     AccountOut,
     AccountPatch,
@@ -31,42 +37,14 @@ from app.workspace.schemas import (
     WorkspaceOut,
     WorkspacePatch,
 )
+
 from app.workspace.storage_validator import validate_storage_config, encrypt_storage_config
+
 from app.config import settings
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("app.workspace.account_routes")
+
 router = APIRouter(prefix="/api/account", tags=["account-admin"])
-
-
-# ── Account ──────────────────────────────────────────────────────────────────
-
-@router.get("", response_model=AccountOut)
-def get_account(
-    db: Session = Depends(get_account_db),
-    _admin: Principal = Depends(require_account_admin),
-):
-    account = db.query(Account).first()
-    if account is None:
-        raise HTTPException(status_code=404, detail="Account not found")
-    return account
-
-
-@router.patch("", response_model=AccountOut)
-def patch_account(
-    body: AccountPatch,
-    db: Session = Depends(get_account_db),
-    _admin: Principal = Depends(require_account_admin),
-):
-    account = db.query(Account).first()
-    if account is None:
-        raise HTTPException(status_code=404, detail="Account not found")
-    account.name = body.name
-    db.commit()
-    db.refresh(account)
-    return account
-
-
-# ── Account Settings ─────────────────────────────────────────────────────────
 
 DEFAULT_ACCOUNT_SETTINGS = {
     "airflow": {
@@ -97,597 +75,6 @@ DEFAULT_ACCOUNT_SETTINGS = {
         "is_provisioned": True,
     },
 }
-
-
-@router.get("/settings")
-def get_account_settings(
-    db: Session = Depends(get_account_db),
-    _admin: Principal = Depends(require_account_admin),
-):
-    account = db.query(Account).first()
-    if account is None:
-        raise HTTPException(status_code=404, detail="Account not found")
-
-    saved = getattr(account, "settings", None) or {}
-    merged = {**DEFAULT_ACCOUNT_SETTINGS, **saved}
-    for k in ["airflow", "app_node_pool", "compute"]:
-        if k in DEFAULT_ACCOUNT_SETTINGS and isinstance(DEFAULT_ACCOUNT_SETTINGS[k], dict):
-            merged[k] = {**DEFAULT_ACCOUNT_SETTINGS[k], **saved.get(k, {})}
-
-    # Enrich with live Airflow Webserver and Scheduler Tuning status
-    try:
-        from services.airflow.manager import get_airflow_manager
-        mgr = get_airflow_manager()
-        live_status = mgr.get_webserver_status()
-        merged["airflow"]["webserver_status"] = live_status.get("status", "stopped")
-        merged["airflow"]["webserver_replicas"] = live_status.get("replicas", 0)
-        merged["airflow"]["webserver_available_replicas"] = live_status.get("available_replicas", 0)
-        merged["airflow"]["webserver_url"] = live_status.get("url")
-
-        live_tuning = mgr.get_scheduler_tuning()
-        for tk, tv in live_tuning.items():
-            if tk not in saved.get("airflow", {}):
-                merged["airflow"][tk] = tv
-    except Exception as exc:
-        logger.debug("Could not query live Airflow webserver and tuning status: %s", exc)
-        merged["airflow"]["webserver_status"] = "stopped" if not merged["airflow"].get("webserver_enabled") else "unknown"
-
-    # Enrich with live App Node Pool status
-    try:
-        from app.services.node_pool_manager import node_pool_manager
-        pool_status = node_pool_manager.get_node_pool_status()
-        merged["app_node_pool"] = {**merged.get("app_node_pool", {}), **pool_status}
-    except Exception as exc:
-        logger.debug("Could not query live node pool status: %s", exc)
-
-    # Enrich with live Compute Node Pool status
-    try:
-        from app.services.node_pool_manager import node_pool_manager
-        comp_status = node_pool_manager.get_compute_pool_status()
-        merged["compute"] = {**merged.get("compute", {}), **comp_status}
-    except Exception as exc:
-        logger.debug("Could not query live compute node pool status: %s", exc)
-
-    return {
-        "account_id": str(account.id),
-        "account_name": account.name,
-        "account_slug": account.slug,
-        "settings": merged,
-    }
-
-
-@router.patch("/settings")
-def update_account_settings(
-    body: dict,
-    db: Session = Depends(get_account_db),
-    _admin: Principal = Depends(require_account_admin),
-):
-    account = db.query(Account).first()
-    if account is None:
-        raise HTTPException(status_code=404, detail="Account not found")
-
-    existing = dict(getattr(account, "settings", None) or {})
-    for key, value in body.items():
-        if isinstance(value, dict) and key in existing and isinstance(existing[key], dict):
-            existing[key] = {**existing[key], **value}
-        else:
-            existing[key] = value
-
-    account.settings = existing
-    db.commit()
-    db.refresh(account)
-
-    # 1. Apply Airflow webserver on-demand start/stop & scheduler tuning if requested
-    if "airflow" in body and isinstance(body["airflow"], dict):
-        airflow_body = body["airflow"]
-        try:
-            from services.airflow.manager import get_airflow_manager
-            mgr = get_airflow_manager()
-
-            # Handle webserver enable/disable
-            if "webserver_enabled" in airflow_body:
-                enable_ws = bool(airflow_body["webserver_enabled"])
-                if enable_ws:
-                    mgr.start_webserver()
-                else:
-                    mgr.stop_webserver()
-
-            # Handle scheduler tuning
-            dag_dir = airflow_body.get("dag_dir_list_interval")
-            min_proc = airflow_body.get("min_file_process_interval")
-            procs = airflow_body.get("parsing_processes")
-            tuning_prof = airflow_body.get("tuning_profile")
-            if any(x is not None for x in [dag_dir, min_proc, procs, tuning_prof]):
-                final_dag_dir = int(dag_dir if dag_dir is not None else existing.get("airflow", {}).get("dag_dir_list_interval", 300))
-                final_min_proc = int(min_proc if min_proc is not None else existing.get("airflow", {}).get("min_file_process_interval", 120))
-                final_procs = int(procs if procs is not None else existing.get("airflow", {}).get("parsing_processes", 2))
-                mgr.update_scheduler_tuning(
-                    dag_dir_list_interval=final_dag_dir,
-                    min_file_process_interval=final_min_proc,
-                    parsing_processes=final_procs,
-                    tuning_profile=tuning_prof,
-                )
-        except Exception as exc:
-            logger.warning("Could not apply Airflow configuration change: %s", exc)
-
-    # 2. Apply App Node Pool configuration & pod switchover if requested
-    if "app_node_pool" in body and isinstance(body["app_node_pool"], dict):
-        pool_cfg = body["app_node_pool"]
-        try:
-            from app.services.node_pool_manager import node_pool_manager
-            dedicated = bool(pool_cfg.get("dedicated_pool_enabled", existing.get("app_node_pool", {}).get("dedicated_pool_enabled", False)))
-            vm_size = str(pool_cfg.get("vm_size") or existing.get("app_node_pool", {}).get("vm_size") or "Standard_B2s_v2")
-            min_count = int(pool_cfg.get("min_count") or 1)
-            max_count = int(pool_cfg.get("max_count") or 5)
-            auto_scale = bool(pool_cfg.get("auto_scale", True))
-            pool_name = str(pool_cfg.get("pool_name") or "apppool")
-            default_pool_name = str(pool_cfg.get("default_pool_name") or "systempoolv2")
-
-            if dedicated:
-                # Trigger AKS nodepool provision/update in background
-                node_pool_manager.trigger_provision_nodepool_async(
-                    vm_size=vm_size, min_count=min_count, max_count=max_count, auto_scale=auto_scale
-                )
-                # Immediately roll over app workloads to target dedicated pool
-                target = pool_name
-            else:
-                # Roll over app workloads to default user pool
-                target = default_pool_name
-
-            node_pool_manager.switchover_app_workloads(target_pool=target)
-        except Exception as exc:
-            logger.warning("Could not apply App Node Pool configuration change: %s", exc)
-
-    # 3. Apply Compute Node Pool configuration if requested
-    if "compute" in body and isinstance(body["compute"], dict):
-        comp_cfg = body["compute"]
-        try:
-            from app.services.node_pool_manager import node_pool_manager
-            dedicated = bool(comp_cfg.get("dedicated_pool_enabled", existing.get("compute", {}).get("dedicated_pool_enabled", True)))
-            vm_size = str(comp_cfg.get("vm_size") or existing.get("compute", {}).get("vm_size") or "Standard_D4ads_v5")
-            min_count = int(comp_cfg.get("min_count") if comp_cfg.get("min_count") is not None else 0)
-            max_count = int(comp_cfg.get("max_count") or 10)
-            auto_scale = bool(comp_cfg.get("auto_scale", True))
-            pool_name = str(comp_cfg.get("pool_name") or "computepool")
-            default_pool_name = str(comp_cfg.get("default_pool_name") or settings.AZURE_DEFAULT_USER_NODEPOOL)
-
-            if dedicated:
-                node_pool_manager.trigger_provision_compute_nodepool_async(
-                    pool_name=pool_name, vm_size=vm_size, min_count=min_count, max_count=max_count, auto_scale=auto_scale
-                )
-            else:
-                # Dedicated compute disabled: gracefully move compute pods to default user pool and deprovision AKS compute pool
-                node_pool_manager.trigger_deprovision_compute_nodepool_async(
-                    pool_name=pool_name, fallback_pool=default_pool_name
-                )
-        except Exception as exc:
-            logger.warning("Could not apply Compute Node Pool configuration change: %s", exc)
-
-    return get_account_settings(db=db, _admin=_admin)
-
-
-@router.post("/settings/nodepool/switchover")
-def trigger_nodepool_switchover(
-    target_pool: Optional[str] = None,
-    _admin: Principal = Depends(require_account_admin),
-):
-    """Trigger manual/forced rolling switchover of all app pods to the target node pool."""
-    from app.services.node_pool_manager import node_pool_manager
-    res = node_pool_manager.switchover_app_workloads(target_pool=target_pool)
-    return res
-
-
-@router.get("/settings/nodepool/status")
-def get_nodepool_status(
-    _admin: Principal = Depends(require_account_admin),
-):
-    """Return live node pool status, cluster pools, and app workloads."""
-    from app.services.node_pool_manager import node_pool_manager
-    return node_pool_manager.get_node_pool_status()
-
-
-@router.post("/settings/compute/provision")
-def trigger_compute_provision(
-    body: Optional[dict] = None,
-    db: Session = Depends(get_account_db),
-    _admin: Principal = Depends(require_account_admin),
-):
-    """Explicitly provision or update compute node pool."""
-    from app.services.node_pool_manager import node_pool_manager
-    account = db.query(Account).first()
-    saved = (getattr(account, "settings", None) or {}).get("compute", {}) if account else {}
-    req = body or {}
-    vm_size = str(req.get("vm_size") or saved.get("vm_size") or "Standard_D4ads_v5")
-    min_count = int(req.get("min_count") if req.get("min_count") is not None else saved.get("min_count", 0))
-    max_count = int(req.get("max_count") or saved.get("max_count", 10))
-    pool_name = str(req.get("pool_name") or saved.get("pool_name", "computepool"))
-
-    # Persist provisioning state to DB
-    if account:
-        existing = dict(getattr(account, "settings", None) or {})
-        comp_existing = dict(existing.get("compute", {}))
-        comp_existing.update({
-            "dedicated_pool_enabled": True,
-            "pool_name": pool_name,
-            "vm_size": vm_size,
-            "min_count": min_count,
-            "max_count": max_count,
-            "is_provisioned": True,
-        })
-        existing["compute"] = comp_existing
-        account.settings = existing
-        db.commit()
-
-    node_pool_manager.trigger_provision_compute_nodepool_async(
-        pool_name=pool_name, vm_size=vm_size, min_count=min_count, max_count=max_count, auto_scale=True
-    )
-    return {"status": "provisioning", "message": f"Provisioning '{pool_name}' ({vm_size}, Min: {min_count}, Max: {max_count}) initiated."}
-
-
-@router.post("/settings/compute/deprovision")
-def trigger_compute_deprovision(
-    body: Optional[dict] = None,
-    db: Session = Depends(get_account_db),
-    _admin: Principal = Depends(require_account_admin),
-):
-    """Gracefully migrate compute pods to shared user pool and deprovision compute node pool."""
-    from app.services.node_pool_manager import node_pool_manager
-    account = db.query(Account).first()
-    saved = (getattr(account, "settings", None) or {}).get("compute", {}) if account else {}
-    req = body or {}
-    pool_name = str(req.get("pool_name") or saved.get("pool_name", "computepool"))
-    fallback_pool = str(req.get("fallback_pool") or saved.get("default_pool_name", settings.AZURE_DEFAULT_USER_NODEPOOL))
-
-    # Mark dedicated_pool_enabled as False and is_provisioned as False in account settings
-    if account:
-        existing = dict(getattr(account, "settings", None) or {})
-        comp_existing = dict(existing.get("compute", {}))
-        comp_existing["dedicated_pool_enabled"] = False
-        comp_existing["is_provisioned"] = False
-        existing["compute"] = comp_existing
-        account.settings = existing
-        db.commit()
-
-    node_pool_manager.trigger_deprovision_compute_nodepool_async(
-        pool_name=pool_name, fallback_pool=fallback_pool
-    )
-    return {"status": "deprovisioning", "message": f"Gracefully migrating pods to '{fallback_pool}' and deprovisioning '{pool_name}'."}
-
-
-@router.post("/settings/compute/switchover")
-def trigger_compute_switchover(
-    target_pool: Optional[str] = None,
-    _admin: Principal = Depends(require_account_admin),
-):
-    """Trigger manual rolling switchover of all compute and notebook pods to the target node pool."""
-    from app.services.node_pool_manager import node_pool_manager
-    res = node_pool_manager.switchover_compute_workloads(target_pool=target_pool)
-    return res
-
-
-@router.get("/settings/compute/status")
-def get_compute_status(
-    _admin: Principal = Depends(require_account_admin),
-):
-    """Return live compute node pool status, cluster pools, and compute workloads."""
-    from app.services.node_pool_manager import node_pool_manager
-    return node_pool_manager.get_compute_pool_status()
-
-
-
-# ── Workspaces ───────────────────────────────────────────────────────────────
-
-@router.get("/workspaces", response_model=list[WorkspaceOut])
-def list_workspaces(
-    db: Session = Depends(get_account_db),
-    _admin: Principal = Depends(require_account_admin),
-):
-    return [
-        WorkspaceOut(
-            id=w.id, name=w.name, slug=w.slug, status=w.status,
-            storage_backend=w.storage_backend,
-            url=f"/w/{w.slug}",
-            created_at=w.created_at,
-        )
-        for w in db.query(Workspace).all()
-    ]
-
-
-@router.post("/workspaces", response_model=WorkspaceOut, status_code=201)
-async def create_workspace(
-    body: WorkspaceCreate,
-    db: Session = Depends(get_account_db),
-    admin: Principal = Depends(require_account_admin),
-    request: Request = None,
-):
-    # Validate slug uniqueness
-    if db.query(Workspace).filter(Workspace.slug == body.slug).first():
-        raise HTTPException(status_code=400, detail="Workspace slug already exists")
-
-    # Handle managed storage vs custom storage config
-    storage_backend = body.storage_backend or "managed"
-    if storage_backend == "managed" or not body.storage_config:
-        storage_backend = "managed"
-        encrypted_config = {}
-    else:
-        # Validate custom storage config (test blob write)
-        try:
-            validate_storage_config(storage_backend, body.storage_config)
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc))
-        # Encrypt sensitive fields
-        encrypted_config = encrypt_storage_config(body.storage_config)
-
-    ws_id = str(uuid4())
-    ws = Workspace(
-        id=ws_id,
-        account_id=admin.account_id,
-        name=body.name,
-        slug=body.slug,
-        storage_backend=storage_backend,
-        storage_config=encrypted_config,
-        created_by=admin.id,
-    )
-    db.add(ws)
-    db.flush()
-
-    # Auto-add creating admin as workspace admin member
-    db.add(WorkspaceMembership(
-        workspace_id=ws_id,
-        principal_id=admin.id,
-        role="admin",
-        granted_by=admin.id,
-    ))
-
-    # Also add UmWorkspaceRoleAssignment in system_db (User Manager v1 topology)
-    try:
-        from app.database import SystemSessionLocal
-        if SystemSessionLocal:
-            sys_db = SystemSessionLocal()
-            try:
-                from app.user_manager.models.system_models import UmWorkspaceRoleAssignment
-                with sys_db.begin_nested():
-                    sys_db.add(UmWorkspaceRoleAssignment(
-                        workspace_id=ws_id,
-                        principal_id=admin.id,
-                        principal_type="user",
-                        role_id="workspace_admin",
-                        is_default=True,
-                        granted_by=admin.id,
-                    ))
-                sys_db.commit()
-            except Exception as sys_err:
-                logger.warning("Could not add system workspace role assignment: %s", sys_err)
-            finally:
-                sys_db.close()
-    except Exception as sys_err:
-        logger.warning("Could not open system DB for workspace role assignment: %s", sys_err)
-
-    # Auto-create and bind workspace-specific default catalog
-    try:
-        import re
-        from app.catalog.binding_service import CatalogBindingService
-        from app.catalog.schemas import BindingCreate, CatalogPrivilege
-        from app.catalog.models import UnifiedCatalog
-        
-        # Normalize workspace name to valid catalog name
-        normalized_name = ws.name.lower().replace(" ", "_").replace("-", "_")
-        normalized_name = re.sub(r'[^a-z0-9_]', '', normalized_name)
-        if not normalized_name:
-            normalized_name = "workspace"
-        catalog_name = f"{normalized_name}_default"
-        
-        # Check if catalog already exists
-        catalog = db.query(UnifiedCatalog).filter(UnifiedCatalog.name == catalog_name).first()
-        if not catalog:
-            catalog = UnifiedCatalog(
-                name=catalog_name,
-                description=f"Default catalog for workspace {ws.name}",
-                catalog_type="iceberg",
-                created_by="system",
-            )
-            db.add(catalog)
-            db.flush()
-
-        binding_service = CatalogBindingService(db)
-        await binding_service.bind_catalog(
-            workspace_id=ws_id,
-            data=BindingCreate(
-                catalog_name=catalog_name,
-                privilege=CatalogPrivilege.READ_WRITE,
-                is_default=True,
-            ),
-            bound_by="system",
-        )
-
-        # Auto-create default schema
-        from app.catalog.models import UnifiedCatalogNotebook, UnifiedCatalogSchema, UnifiedCatalogVolume
-        schema = db.query(UnifiedCatalogSchema).filter(
-            UnifiedCatalogSchema.catalog_id == catalog.id,
-            UnifiedCatalogSchema.name == "default",
-        ).first()
-        if not schema:
-            schema = UnifiedCatalogSchema(
-                catalog_id=catalog.id,
-                name="default",
-                description="Default schema",
-                created_by=admin.id,
-            )
-            db.add(schema)
-            db.flush()
-
-        # Auto-create default volume for files and datasets
-        volume = db.query(UnifiedCatalogVolume).filter(
-            UnifiedCatalogVolume.schema_id == schema.id,
-            UnifiedCatalogVolume.name == "sample_data",
-        ).first()
-        if not volume:
-            volume = UnifiedCatalogVolume(
-                schema_id=schema.id,
-                name="sample_data",
-                description="Default storage volume for files and datasets",
-                owner=admin.name or admin.email or admin.id,
-                created_by=admin.id,
-            )
-            db.add(volume)
-            db.flush()
-
-        # Auto-create getting-started notebook with platform code references
-        existing_nb = db.query(UnifiedCatalogNotebook).filter(
-            UnifiedCatalogNotebook.schema_id == schema.id,
-            UnifiedCatalogNotebook.name == "getting_started",
-        ).first()
-        if not existing_nb:
-            from app.catalog.service import _write_notebook_content
-            from app.workspace.starter_notebook import build_getting_started_notebook
-
-            nb_id = str(uuid4())
-            rel_path = f"{nb_id}.ipynb"
-            nb_content = build_getting_started_notebook(
-                catalog_name=catalog_name,
-                schema_name="default",
-                volume_name="sample_data",
-            )
-            try:
-                await _write_notebook_content(db, schema, rel_path, nb_content)
-            except Exception as nb_write_err:
-                logger.warning("Could not write starter notebook content to storage: %s", nb_write_err)
-
-            starter_nb = UnifiedCatalogNotebook(
-                id=nb_id,
-                schema_id=schema.id,
-                catalog_name=catalog_name,
-                schema_name="default",
-                name="getting_started",
-                blob_path=rel_path,
-                owner=admin.name or admin.email or admin.id,
-                comment="Platform reference guide: Volumes (read/write), AI Agent Tools, and SQL querying",
-                created_by=admin.id,
-                updated_by=admin.id,
-            )
-            db.add(starter_nb)
-            db.flush()
-
-            try:
-                from app.catalog.search_indexer import enqueue_asset_for_embedding
-                enqueue_asset_for_embedding(
-                    db,
-                    object_type="notebook",
-                    source_object_id=starter_nb.id,
-                    catalog_name=catalog_name,
-                    schema_name="default",
-                    object_name=starter_nb.name,
-                    description=starter_nb.comment,
-                )
-            except Exception:
-                pass
-
-        db.commit()
-    except Exception as exc:
-        db.rollback()
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to create workspace due to catalog creation/binding error: {exc}"
-        )
-    db.refresh(ws)
-    result = WorkspaceOut(
-        id=ws.id,
-        name=ws.name,
-        slug=ws.slug,
-        status=ws.status,
-        storage_backend=ws.storage_backend,
-        url=f"/w/{ws.slug}",
-        created_at=ws.created_at,
-    )
-
-    # Auto-ensure default DuckDB compute and SQL warehouse for the new workspace
-    try:
-        from app.database import SystemSessionLocal
-        from app.compute.services.workspace_defaults import ensure_workspace_default_resources
-        if SystemSessionLocal:
-            sys_db = SystemSessionLocal()
-            try:
-                runtime_manager = getattr(getattr(request, "app", None), "state", None) and getattr(request.app.state, "runtime_manager", None)
-                ensure_workspace_default_resources(
-                    sys_db,
-                    workspace_id=ws_id,
-                    created_by=admin.id,
-                    user_id=admin.id,
-                    runtime_manager=runtime_manager,
-                )
-            except Exception as res_err:
-                logger.warning("Could not auto-ensure default compute/warehouse for workspace %s: %s", ws_id, res_err)
-            finally:
-                sys_db.close()
-    except Exception as res_err:
-        logger.warning("Could not open system DB for default compute/warehouse creation: %s", res_err)
-
-    # Invalidate entry point cache so post-login routing sees the new workspace
-    try:
-        from app.user_manager.entry_point import invalidate_entry_point_cache
-        invalidate_entry_point_cache(admin.id)
-    except Exception:
-        pass
-
-    return result
-
-
-@router.get("/workspaces/{workspace_id}", response_model=WorkspaceOut)
-def get_workspace(
-    workspace_id: str,
-    db: Session = Depends(get_account_db),
-    _admin: Principal = Depends(require_account_admin),
-):
-    ws = db.query(Workspace).filter(Workspace.id == workspace_id).first()
-    if ws is None:
-        raise HTTPException(status_code=404, detail="Workspace not found")
-    return WorkspaceOut(
-        id=ws.id, name=ws.name, slug=ws.slug, status=ws.status,
-        storage_backend=ws.storage_backend,
-        url=f"/w/{ws.slug}",
-        created_at=ws.created_at,
-    )
-
-
-@router.patch("/workspaces/{workspace_id}", response_model=WorkspaceOut)
-def update_workspace(
-    workspace_id: str,
-    body: WorkspacePatch,
-    db: Session = Depends(get_account_db),
-    _admin: Principal = Depends(require_account_admin),
-):
-    ws = db.query(Workspace).filter(Workspace.id == workspace_id).first()
-    if ws is None:
-        raise HTTPException(status_code=404, detail="Workspace not found")
-    if body.name is not None:
-        ws.name = body.name
-    if body.storage_config is not None:
-        ws.storage_config = encrypt_storage_config(body.storage_config)
-    db.commit()
-    db.refresh(ws)
-    return WorkspaceOut(
-        id=ws.id, name=ws.name, slug=ws.slug, status=ws.status,
-        storage_backend=ws.storage_backend,
-        url=f"/w/{ws.slug}",
-        created_at=ws.created_at,
-    )
-
-
-@router.delete("/workspaces/{workspace_id}", status_code=202)
-def delete_workspace(
-    workspace_id: str,
-    background_tasks: BackgroundTasks,
-    db: Session = Depends(get_account_db),
-    _admin: Principal = Depends(require_account_admin),
-):
-    ws = db.query(Workspace).filter(Workspace.id == workspace_id).first()
-    if ws is None:
-        raise HTTPException(status_code=404, detail="Workspace not found")
-    ws.status = "deleting"
-    db.commit()
-    background_tasks.add_task(_purge_workspace, workspace_id)
-    return {"status": "accepted", "workspace_id": workspace_id}
-
 
 def _purge_workspace(workspace_id: str) -> None:
     """Background job: purge workspace data then hard-delete workspace row."""
@@ -729,15 +116,176 @@ def _purge_workspace(workspace_id: str) -> None:
         finally:
             sys_db.close()
 
+import app.workspace.http.account.prelude as _prelude
+for _name, _value in vars(_prelude).items():
+    if not _name.startswith('__'):
+        globals()[_name] = _value
 
-# ── Principals ───────────────────────────────────────────────────────────────
+from app.workspace.http.account.application.get_account import get_account as get_account_action
+from app.workspace.http.account.application.patch_account import patch_account as patch_account_action
+from app.workspace.http.account.application.get_account_settings import get_account_settings as get_account_settings_action
+from app.workspace.http.account.application.update_account_settings import update_account_settings as update_account_settings_action
+from app.workspace.http.account.application.trigger_nodepool_switchover import trigger_nodepool_switchover as trigger_nodepool_switchover_action
+from app.workspace.http.account.application.get_nodepool_status import get_nodepool_status as get_nodepool_status_action
+from app.workspace.http.account.application.trigger_compute_provision import trigger_compute_provision as trigger_compute_provision_action
+from app.workspace.http.account.application.trigger_compute_deprovision import trigger_compute_deprovision as trigger_compute_deprovision_action
+from app.workspace.http.account.application.trigger_compute_switchover import trigger_compute_switchover as trigger_compute_switchover_action
+from app.workspace.http.account.application.get_compute_status import get_compute_status as get_compute_status_action
+from app.workspace.http.account.application.list_workspaces import list_workspaces as list_workspaces_action
+from app.workspace.http.account.application.create_workspace import create_workspace as create_workspace_action
+from app.workspace.http.account.application.get_workspace import get_workspace as get_workspace_action
+from app.workspace.http.account.application.update_workspace import update_workspace as update_workspace_action
+from app.workspace.http.account.application.delete_workspace import delete_workspace as delete_workspace_action
+from app.workspace.http.account.application.list_principals import list_principals as list_principals_action
+from app.workspace.http.account.application.create_principal import create_principal as create_principal_action
+from app.workspace.http.account.application.update_principal import update_principal as update_principal_action
+from app.workspace.http.account.application.deactivate_principal import deactivate_principal as deactivate_principal_action
+from app.workspace.http.account.application.reset_password import reset_password as reset_password_action
+
+router = APIRouter(prefix="/api/account", tags=["account-admin"])
+
+
+@router.get("", response_model=AccountOut)
+def get_account(
+    db: Session = Depends(get_account_db),
+    _admin: Principal = Depends(require_account_admin),
+):
+    return get_account_action(db=db, _admin=_admin)
+
+
+@router.patch("", response_model=AccountOut)
+def patch_account(
+    body: AccountPatch,
+    db: Session = Depends(get_account_db),
+    _admin: Principal = Depends(require_account_admin),
+):
+    return patch_account_action(body=body, db=db, _admin=_admin)
+
+
+@router.get("/settings")
+def get_account_settings(
+    db: Session = Depends(get_account_db),
+    _admin: Principal = Depends(require_account_admin),
+):
+    return get_account_settings_action(db=db, _admin=_admin)
+
+
+@router.patch("/settings")
+def update_account_settings(
+    body: dict,
+    db: Session = Depends(get_account_db),
+    _admin: Principal = Depends(require_account_admin),
+):
+    return update_account_settings_action(body=body, db=db, _admin=_admin)
+
+
+@router.post("/settings/nodepool/switchover")
+def trigger_nodepool_switchover(
+    target_pool: Optional[str] = None,
+    _admin: Principal = Depends(require_account_admin),
+):
+    """Trigger manual/forced rolling switchover of all app pods to the target node pool."""
+    return trigger_nodepool_switchover_action(target_pool=target_pool, _admin=_admin)
+
+
+@router.get("/settings/nodepool/status")
+def get_nodepool_status(
+    _admin: Principal = Depends(require_account_admin),
+):
+    """Return live node pool status, cluster pools, and app workloads."""
+    return get_nodepool_status_action(_admin=_admin)
+
+
+@router.post("/settings/compute/provision")
+def trigger_compute_provision(
+    body: Optional[dict] = None,
+    db: Session = Depends(get_account_db),
+    _admin: Principal = Depends(require_account_admin),
+):
+    """Explicitly provision or update compute node pool."""
+    return trigger_compute_provision_action(body=body, db=db, _admin=_admin)
+
+
+@router.post("/settings/compute/deprovision")
+def trigger_compute_deprovision(
+    body: Optional[dict] = None,
+    db: Session = Depends(get_account_db),
+    _admin: Principal = Depends(require_account_admin),
+):
+    """Gracefully migrate compute pods to shared user pool and deprovision compute node pool."""
+    return trigger_compute_deprovision_action(body=body, db=db, _admin=_admin)
+
+
+@router.post("/settings/compute/switchover")
+def trigger_compute_switchover(
+    target_pool: Optional[str] = None,
+    _admin: Principal = Depends(require_account_admin),
+):
+    """Trigger manual rolling switchover of all compute and notebook pods to the target node pool."""
+    return trigger_compute_switchover_action(target_pool=target_pool, _admin=_admin)
+
+
+@router.get("/settings/compute/status")
+def get_compute_status(
+    _admin: Principal = Depends(require_account_admin),
+):
+    """Return live compute node pool status, cluster pools, and compute workloads."""
+    return get_compute_status_action(_admin=_admin)
+
+
+@router.get("/workspaces", response_model=list[WorkspaceOut])
+def list_workspaces(
+    db: Session = Depends(get_account_db),
+    _admin: Principal = Depends(require_account_admin),
+):
+    return list_workspaces_action(db=db, _admin=_admin)
+
+
+@router.post("/workspaces", response_model=WorkspaceOut, status_code=201)
+async def create_workspace(
+    body: WorkspaceCreate,
+    db: Session = Depends(get_account_db),
+    admin: Principal = Depends(require_account_admin),
+    request: Request = None,
+):
+    return await create_workspace_action(body=body, db=db, admin=admin, request=request)
+
+
+@router.get("/workspaces/{workspace_id}", response_model=WorkspaceOut)
+def get_workspace(
+    workspace_id: str,
+    db: Session = Depends(get_account_db),
+    _admin: Principal = Depends(require_account_admin),
+):
+    return get_workspace_action(workspace_id=workspace_id, db=db, _admin=_admin)
+
+
+@router.patch("/workspaces/{workspace_id}", response_model=WorkspaceOut)
+def update_workspace(
+    workspace_id: str,
+    body: WorkspacePatch,
+    db: Session = Depends(get_account_db),
+    _admin: Principal = Depends(require_account_admin),
+):
+    return update_workspace_action(workspace_id=workspace_id, body=body, db=db, _admin=_admin)
+
+
+@router.delete("/workspaces/{workspace_id}", status_code=202)
+def delete_workspace(
+    workspace_id: str,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_account_db),
+    _admin: Principal = Depends(require_account_admin),
+):
+    return delete_workspace_action(workspace_id=workspace_id, background_tasks=background_tasks, db=db, _admin=_admin)
+
 
 @router.get("/principals", response_model=list[PrincipalOut])
 def list_principals(
     db: Session = Depends(get_account_db),
     admin: Principal = Depends(require_account_admin),
 ):
-    return db.query(Principal).filter(Principal.account_id == admin.account_id).all()
+    return list_principals_action(db=db, admin=admin)
 
 
 @router.post("/principals", response_model=PrincipalOut, status_code=201)
@@ -746,30 +294,7 @@ def create_principal(
     db: Session = Depends(get_account_db),
     admin: Principal = Depends(require_account_admin),
 ):
-    if body.type not in ("user", "group", "service_principal"):
-        raise HTTPException(status_code=400, detail="Invalid principal type")
-    if body.email:
-        existing = db.query(Principal).filter(
-            Principal.account_id == admin.account_id,
-            Principal.email == body.email,
-        ).first()
-        if existing:
-            raise HTTPException(status_code=400, detail="Email already exists in this account")
-
-    pw_hash = hash_password(body.password) if body.password else None
-    p = Principal(
-        id=str(uuid4()),
-        account_id=admin.account_id,
-        type=body.type,
-        email=body.email,
-        name=body.name,
-        password_hash=pw_hash,
-        is_account_admin=body.is_account_admin,
-    )
-    db.add(p)
-    db.commit()
-    db.refresh(p)
-    return p
+    return create_principal_action(body=body, db=db, admin=admin)
 
 
 @router.patch("/principals/{principal_id}", response_model=PrincipalOut)
@@ -779,21 +304,7 @@ def update_principal(
     db: Session = Depends(get_account_db),
     admin: Principal = Depends(require_account_admin),
 ):
-    p = db.query(Principal).filter(
-        Principal.id == principal_id,
-        Principal.account_id == admin.account_id,
-    ).first()
-    if p is None:
-        raise HTTPException(status_code=404, detail="Principal not found")
-    if body.name is not None:
-        p.name = body.name
-    if body.is_account_admin is not None:
-        p.is_account_admin = body.is_account_admin
-    if body.is_active is not None:
-        p.is_active = body.is_active
-    db.commit()
-    db.refresh(p)
-    return p
+    return update_principal_action(principal_id=principal_id, body=body, db=db, admin=admin)
 
 
 @router.delete("/principals/{principal_id}", status_code=204)
@@ -802,14 +313,7 @@ def deactivate_principal(
     db: Session = Depends(get_account_db),
     admin: Principal = Depends(require_account_admin),
 ):
-    p = db.query(Principal).filter(
-        Principal.id == principal_id,
-        Principal.account_id == admin.account_id,
-    ).first()
-    if p is None:
-        raise HTTPException(status_code=404, detail="Principal not found")
-    p.is_active = False
-    db.commit()
+    return deactivate_principal_action(principal_id=principal_id, db=db, admin=admin)
 
 
 @router.post("/principals/{principal_id}/reset-password", status_code=204)
@@ -819,11 +323,4 @@ def reset_password(
     db: Session = Depends(get_account_db),
     admin: Principal = Depends(require_account_admin),
 ):
-    p = db.query(Principal).filter(
-        Principal.id == principal_id,
-        Principal.account_id == admin.account_id,
-    ).first()
-    if p is None:
-        raise HTTPException(status_code=404, detail="Principal not found")
-    p.password_hash = hash_password(body.new_password)
-    db.commit()
+    return reset_password_action(principal_id=principal_id, body=body, db=db, admin=admin)

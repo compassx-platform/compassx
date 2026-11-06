@@ -166,6 +166,22 @@ class TestResolution:
         assert result.allowed
         assert result.reason == Decision.WORKSPACE_ADMIN
 
+    def test_developer_and_app_executor_need_a_grant(self):
+        """Unity Catalog does not treat a workspace user as a data admin."""
+        for role in ("workspace_developer", "app_executor", "analyst", "business_viewer"):
+            assert not make_set(workspace_role=role).can(Privilege.SELECT, ORDERS)
+
+    def test_catalog_ownership_inherits_to_tables(self):
+        """Ownership of a parent is ALL PRIVILEGES on its descendants."""
+        owned = frozenset({("catalog", "main", None, None)})
+        result = make_set(owned=owned).check(Privilege.SELECT, ORDERS)
+        assert result.allowed
+        assert result.reason == Decision.OWNER
+
+    def test_schema_ownership_does_not_cross_schemas(self):
+        owned = frozenset({("schema", "main", "hr", None)})
+        assert not make_set(owned=owned).can(Privilege.SELECT, ORDERS)
+
     def test_account_admin_break_glass(self):
         result = make_set(workspace_role=None, is_account_admin=True).check(
             Privilege.SELECT, ORDERS

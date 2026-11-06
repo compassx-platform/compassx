@@ -1,3 +1,4 @@
+
 import os
 import base64
 import logging
@@ -6,7 +7,6 @@ from typing import Optional, List, Dict, Any
 from pydantic import BaseModel
 from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect, status
 from sqlalchemy.orm import Session
-
 from app.database import get_system_db
 from app.governance.dependencies import Guard, get_guard
 from app.models.app import App
@@ -18,89 +18,53 @@ from app.services.sandbox_reaper_service import unified_reaper_service
 from app.sandbox.service import sandbox_service
 from app.sandbox.models import SandboxSpec, StorageMount, InitScript, SandboxStatus
 
-logger = logging.getLogger(__name__)
+import app.apps.dev.prelude as _prelude
+for _name, _value in vars(_prelude).items():
+    if not _name.startswith('__'):
+        globals()[_name] = _value
 
-
-def _sync_agent_login(app, *, force: bool = False) -> None:
-    """Capture or restore the workspace Antigravity login. Never fails the request."""
-    try:
-        from app.services.sandbox_credentials import sync_antigravity_for_app
-        sync_antigravity_for_app(app, force=force)
-    except Exception:
-        logger.debug("Agent login sync failed for %s", getattr(app, "id", ""), exc_info=True)
-
+from app.apps.dev.application.list_dev_workspaces import list_dev_workspaces as list_dev_workspaces_action
+from app.apps.dev.application.create_dev_workspace import create_dev_workspace as create_dev_workspace_action
+from app.apps.dev.application.delete_dev_workspace import delete_dev_workspace as delete_dev_workspace_action
+from app.apps.dev.application.activate_dev_workspace import activate_dev_workspace as activate_dev_workspace_action
+from app.apps.dev.application.sync_dev_workspace_with_remote_main import sync_dev_workspace_with_remote_main as sync_dev_workspace_with_remote_main_action
+from app.apps.dev.application.list_app_sessions import list_app_sessions as list_app_sessions_action
+from app.apps.dev.application.list_app_dev_models import list_app_dev_models as list_app_dev_models_action
+from app.apps.dev.application.create_app_session import create_app_session as create_app_session_action
+from app.apps.dev.application.update_app_session import update_app_session as update_app_session_action
+from app.apps.dev.application.delete_app_session import delete_app_session as delete_app_session_action
+from app.apps.dev.application.start_dev_session import start_dev_session as start_dev_session_action
+from app.apps.dev.application.restart_dev_sandbox import restart_dev_sandbox as restart_dev_sandbox_action
+from app.apps.dev.application.ensure_app_sandbox import ensure_app_sandbox as ensure_app_sandbox_action
+from app.apps.dev.application.get_app_sandbox_status import get_app_sandbox_status as get_app_sandbox_status_action
+from app.apps.dev.application.get_dev_status import get_dev_status as get_dev_status_action
+from app.apps.dev.application.stop_dev_session import stop_dev_session as stop_dev_session_action
+from app.apps.dev.application.suspend_dev_session import suspend_dev_session as suspend_dev_session_action
+from app.apps.dev.application.resume_dev_session import resume_dev_session as resume_dev_session_action
+from app.apps.dev.application.list_workspace_files import list_workspace_files as list_workspace_files_action
+from app.apps.dev.application.read_workspace_file import read_workspace_file as read_workspace_file_action
+from app.apps.dev.application.diff_workspace_file import diff_workspace_file as diff_workspace_file_action
+from app.apps.dev.application.write_workspace_file import write_workspace_file as write_workspace_file_action
+from app.apps.dev.application.publish_dev_changes import publish_dev_changes as publish_dev_changes_action
+from app.apps.dev.application.get_git_commits import get_git_commits as get_git_commits_action
+from app.apps.dev.application.get_workspace_git_commits import get_workspace_git_commits as get_workspace_git_commits_action
+from app.apps.dev.application.get_omnigent_agents import get_omnigent_agents as get_omnigent_agents_action
+from app.apps.dev.application.create_omnigent_session import create_omnigent_session as create_omnigent_session_action
+from app.apps.dev.application.get_build_session import get_build_session as get_build_session_action
+from app.apps.dev.application.get_build_session_messages import get_build_session_messages as get_build_session_messages_action
+from app.apps.dev.application.send_build_prompt import send_build_prompt as send_build_prompt_action
+from app.apps.dev.application.clear_build_session import clear_build_session as clear_build_session_action
+from app.apps.dev.application.get_dev_sandbox_logs import get_dev_sandbox_logs as get_dev_sandbox_logs_action
+from app.apps.dev.application.verify_git_workspace import verify_git_workspace as verify_git_workspace_action
+from app.apps.dev.application.install_dev_dependencies import install_dev_dependencies as install_dev_dependencies_action
+from app.apps.dev.application.run_dev_application import run_dev_application as run_dev_application_action
+from app.apps.dev.application.exec_dev_command import exec_dev_command as exec_dev_command_action
+from app.apps.dev.application.record_dev_heartbeat import record_dev_heartbeat as record_dev_heartbeat_action
+from app.apps.dev.application.dev_terminal_websocket import dev_terminal_websocket as dev_terminal_websocket_action
+from app.apps.dev.application.get_dev_manifest import get_dev_manifest as get_dev_manifest_action
+from app.apps.dev.application.update_dev_manifest import update_dev_manifest as update_dev_manifest_action
 
 router = APIRouter(prefix="/api/v1/apps/{app_id}/dev", tags=["Apps Development & Omnigent"])
-
-class ExecCommandRequest(BaseModel):
-    command: str
-    workspace_id: Optional[str] = None
-    workspace_name: Optional[str] = None
-
-class FileWriteRequest(BaseModel):
-
-    path: str
-    content: str
-    workspace_id: Optional[str] = None
-
-class PublishRequest(BaseModel):
-    commit_message: Optional[str] = "Update application via Omnigent Dev Studio"
-    workspace_id: Optional[str] = None
-    workspace_name: Optional[str] = None
-
-class CreateAppSessionRequest(BaseModel):
-    agent: str = "opencode"  # 'opencode' | 'pi' | 'antigravity'
-    title: Optional[str] = None
-    workspace_id: Optional[str] = None
-    model: Optional[str] = None
-
-class UpdateAppSessionRequest(BaseModel):
-    title: Optional[str] = None
-    status: Optional[str] = None
-
-class CreateSessionRequest(BaseModel):
-    agent_name: Optional[str] = "polly"
-    title: Optional[str] = None
-
-class BuildPromptRequest(BaseModel):
-    prompt: str
-    session_id: Optional[str] = None
-    agent_name: Optional[str] = "polly"
-    workspace_id: Optional[str] = None
-
-class BuildClearRequest(BaseModel):
-    session_id: Optional[str] = None
-    workspace_id: Optional[str] = None
-
-class StartDevRequest(BaseModel):
-    workspace_id: Optional[str] = None  # if provided, resume this workspace; otherwise create new
-    workspace_name: Optional[str] = None  # if provided, create or resume workspace with this custom name
-    host_type: Optional[str] = "compassx"  # "compassx" | "omnigent"
-
-class CreateWorkspaceRequest(BaseModel):
-    name: str
-    git_branch: Optional[str] = None
-    base_branch: Optional[str] = "main"
-    fetch_remote: Optional[bool] = True
-
-class SyncWorkspaceRequest(BaseModel):
-    base_branch: Optional[str] = "main"
-
-class InstallDepsRequest(BaseModel):
-    workspace_id: Optional[str] = None
-    workspace_name: Optional[str] = None
-    force: Optional[bool] = False
-
-class VerifyGitRequest(BaseModel):
-    workspace_id: Optional[str] = None
-    workspace_name: Optional[str] = None
-
-class RunAppRequest(BaseModel):
-    workspace_id: Optional[str] = None
-    workspace_name: Optional[str] = None
-
-
-
 
 @router.get("/workspaces")
 def list_dev_workspaces(
@@ -109,14 +73,7 @@ def list_dev_workspaces(
     guard: Guard = Depends(get_guard),
 ):
     """List all dev workspaces (folders) for this app."""
-    app = db.query(App).filter(App.id == app_id).first()
-    if not app:
-        raise HTTPException(status_code=404, detail=f"App '{app_id}' not found.")
-    if guard.workspace_id and app.workspace_id != guard.workspace_id:
-        raise HTTPException(status_code=403, detail="Cannot access app in another workspace.")
-    unified_reaper_service.touch_app_activity(app.id)
-    return omnigent_dev_service.list_dev_workspaces(app)
-
+    return list_dev_workspaces_action(app_id=app_id, db=db, guard=guard)
 
 @router.post("/workspaces")
 def create_dev_workspace(
@@ -126,26 +83,7 @@ def create_dev_workspace(
     guard: Guard = Depends(get_guard),
 ):
     """Create a new dev workspace folder record for this app."""
-    app = db.query(App).filter(App.id == app_id).first()
-    if not app:
-        raise HTTPException(status_code=404, detail=f"App '{app_id}' not found.")
-    if guard.workspace_id and app.workspace_id != guard.workspace_id:
-        raise HTTPException(status_code=403, detail="Cannot access app in another workspace.")
-    if not body.name or not body.name.strip():
-        raise HTTPException(status_code=400, detail="Workspace name cannot be empty.")
-    try:
-        unified_reaper_service.touch_app_activity(app.id)
-        return omnigent_dev_service.create_dev_workspace(
-            app,
-            name=body.name.strip(),
-            git_branch=body.git_branch,
-            base_branch=body.base_branch or "main",
-            fetch_remote=body.fetch_remote if body.fetch_remote is not None else True,
-        )
-    except Exception as e:
-        logger.exception("Failed to create dev workspace for app %s: %s", app.name, e)
-        raise HTTPException(status_code=500, detail=f"Failed to create dev workspace: {str(e)}")
-
+    return create_dev_workspace_action(app_id=app_id, body=body, db=db, guard=guard)
 
 @router.delete("/workspaces/{workspace_id}")
 def delete_dev_workspace(
@@ -155,16 +93,7 @@ def delete_dev_workspace(
     guard: Guard = Depends(get_guard),
 ):
     """Delete a dev workspace folder and its DB record."""
-    app = db.query(App).filter(App.id == app_id).first()
-    if not app:
-        raise HTTPException(status_code=404, detail=f"App '{app_id}' not found.")
-    if guard.workspace_id and app.workspace_id != guard.workspace_id:
-        raise HTTPException(status_code=403, detail="Cannot access app in another workspace.")
-    result = omnigent_dev_service.delete_dev_workspace(app, workspace_id)
-    if not result.get("deleted") and result.get("reason") == "not_found":
-        raise HTTPException(status_code=404, detail=f"Workspace '{workspace_id}' not found.")
-    return result
-
+    return delete_dev_workspace_action(app_id=app_id, workspace_id=workspace_id, db=db, guard=guard)
 
 @router.post("/workspaces/{workspace_id}/activate")
 def activate_dev_workspace(
@@ -174,20 +103,7 @@ def activate_dev_workspace(
     guard: Guard = Depends(get_guard),
 ):
     """Instantly switch the active sandbox (git worktree) without restarting container."""
-    app = db.query(App).filter(App.id == app_id).first()
-    if not app:
-        raise HTTPException(status_code=404, detail=f"App '{app_id}' not found.")
-    if guard.workspace_id and app.workspace_id != guard.workspace_id:
-        raise HTTPException(status_code=403, detail="Cannot access app in another workspace.")
-    try:
-        unified_reaper_service.touch_app_activity(app.id)
-        return omnigent_dev_service.activate_dev_workspace(app, workspace_id)
-    except ValueError as ve:
-        raise HTTPException(status_code=404, detail=str(ve))
-    except Exception as e:
-        logger.exception("Failed to activate dev workspace %s for app %s: %s", workspace_id, app.name, e)
-        raise HTTPException(status_code=500, detail=f"Failed to activate dev workspace: {str(e)}")
-
+    return activate_dev_workspace_action(app_id=app_id, workspace_id=workspace_id, db=db, guard=guard)
 
 @router.post("/workspaces/{workspace_id}/sync-main")
 def sync_dev_workspace_with_remote_main(
@@ -198,21 +114,7 @@ def sync_dev_workspace_with_remote_main(
     guard: Guard = Depends(get_guard),
 ):
     """Fetch remote main and merge it into this sandbox workspace."""
-    app = db.query(App).filter(App.id == app_id).first()
-    if not app:
-        raise HTTPException(status_code=404, detail=f"App '{app_id}' not found.")
-    if guard.workspace_id and app.workspace_id != guard.workspace_id:
-        raise HTTPException(status_code=403, detail="Cannot access app in another workspace.")
-    try:
-        unified_reaper_service.touch_app_activity(app.id)
-        base_branch = (body.base_branch if body and body.base_branch else "main")
-        return omnigent_dev_service.sync_workspace_with_remote_main(
-            app, workspace_id=workspace_id, base_branch=base_branch
-        )
-    except Exception as e:
-        logger.exception("Failed to sync dev workspace %s with remote main: %s", workspace_id, e)
-        raise HTTPException(status_code=500, detail=f"Failed to sync with remote main: {str(e)}")
-
+    return sync_dev_workspace_with_remote_main_action(app_id=app_id, workspace_id=workspace_id, body=body, db=db, guard=guard)
 
 @router.get("/sessions")
 def list_app_sessions(
@@ -222,15 +124,7 @@ def list_app_sessions(
     guard: Guard = Depends(get_guard),
 ):
     """List all AI agent development sessions for this app."""
-    app = db.query(App).filter(App.id == app_id).first()
-    if not app:
-        raise HTTPException(status_code=404, detail=f"App '{app_id}' not found.")
-    if guard.workspace_id and app.workspace_id != guard.workspace_id:
-        raise HTTPException(status_code=403, detail="Cannot access app in another workspace.")
-    unified_reaper_service.touch_app_activity(app.id)
-    from app.services.dev_session_service import dev_session_service
-    return dev_session_service.list_sessions(app, include_archived=include_archived)
-
+    return list_app_sessions_action(app_id=app_id, include_archived=include_archived, db=db, guard=guard)
 
 @router.get("/models")
 def list_app_dev_models(
@@ -239,57 +133,7 @@ def list_app_dev_models(
     guard: Guard = Depends(get_guard),
 ):
     """List available AI models for the app's workspace."""
-    app = db.query(App).filter(App.id == app_id).first()
-    if not app:
-        raise HTTPException(status_code=404, detail=f"App '{app_id}' not found.")
-    if guard.workspace_id and app.workspace_id != guard.workspace_id:
-        raise HTTPException(status_code=403, detail="Cannot access app in another workspace.")
-
-    from app.database import AccountSessionLocal
-    from app.ai_gateway.models.provider import AIModelEndpoint, AIProvider
-
-    with AccountSessionLocal() as acc_db:
-        ws_id = str(app.workspace_id) if app.workspace_id else None
-        query = acc_db.query(AIModelEndpoint).filter(AIModelEndpoint.is_active == True)
-        if ws_id:
-            query = query.filter((AIModelEndpoint.workspace_id == ws_id) | (AIModelEndpoint.workspace_id.is_(None)))
-        endpoints = query.all()
-
-        if not endpoints:
-            prov_query = acc_db.query(AIProvider).filter(AIProvider.is_active == True)
-            if ws_id:
-                prov_query = prov_query.filter((AIProvider.workspace_id == ws_id) | (AIProvider.workspace_id.is_(None)))
-            provider = prov_query.first()
-            if provider:
-                default_models = ["gpt-5.4-mini", "gpt-5.6-sol"]
-                seeded = []
-                for idx, m_name in enumerate(default_models):
-                    ep = AIModelEndpoint(
-                        workspace_id=ws_id,
-                        name=m_name,
-                        provider_id=provider.id,
-                        upstream_model_name=m_name,
-                        is_active=True,
-                        is_default=(idx == 0),
-                    )
-                    acc_db.add(ep)
-                    seeded.append(ep)
-                try:
-                    acc_db.commit()
-                    endpoints = seeded
-                except Exception:
-                    acc_db.rollback()
-
-        return [
-            {
-                "id": ep.name,
-                "name": ep.name,
-                "is_default": ep.is_default,
-                "provider": ep.provider.name if ep.provider else "azure",
-            }
-            for ep in endpoints
-        ]
-
+    return list_app_dev_models_action(app_id=app_id, db=db, guard=guard)
 
 @router.post("/sessions")
 def create_app_session(
@@ -299,23 +143,7 @@ def create_app_session(
     guard: Guard = Depends(get_guard),
 ):
     """Create a new development session with a permanently bound agent."""
-    app = db.query(App).filter(App.id == app_id).first()
-    if not app:
-        raise HTTPException(status_code=404, detail=f"App '{app_id}' not found.")
-    if guard.workspace_id and app.workspace_id != guard.workspace_id:
-        raise HTTPException(status_code=403, detail="Cannot access app in another workspace.")
-    unified_reaper_service.touch_app_activity(app.id)
-    user_id = str(guard.principal.id) if hasattr(guard, "principal") and getattr(guard.principal, "id", None) else None
-    from app.services.dev_session_service import dev_session_service
-    return dev_session_service.create_session(
-        app=app,
-        agent=body.agent,
-        title=body.title,
-        workspace_id=body.workspace_id,
-        user_id=user_id,
-        model=body.model,
-    )
-
+    return create_app_session_action(app_id=app_id, body=body, db=db, guard=guard)
 
 @router.patch("/sessions/{session_id}")
 def update_app_session(
@@ -326,23 +154,7 @@ def update_app_session(
     guard: Guard = Depends(get_guard),
 ):
     """Update an app session's title or status (bound agent is strictly immutable)."""
-    app = db.query(App).filter(App.id == app_id).first()
-    if not app:
-        raise HTTPException(status_code=404, detail=f"App '{app_id}' not found.")
-    if guard.workspace_id and app.workspace_id != guard.workspace_id:
-        raise HTTPException(status_code=403, detail="Cannot access app in another workspace.")
-    unified_reaper_service.touch_app_activity(app.id)
-    from app.services.dev_session_service import dev_session_service
-    try:
-        return dev_session_service.update_session(
-            app=app,
-            session_id=session_id,
-            title=body.title,
-            status=body.status,
-        )
-    except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
-
+    return update_app_session_action(app_id=app_id, session_id=session_id, body=body, db=db, guard=guard)
 
 @router.delete("/sessions/{session_id}")
 def delete_app_session(
@@ -352,406 +164,7 @@ def delete_app_session(
     guard: Guard = Depends(get_guard),
 ):
     """Archive an app session and stop its background tmux process."""
-    app = db.query(App).filter(App.id == app_id).first()
-    if not app:
-        raise HTTPException(status_code=404, detail=f"App '{app_id}' not found.")
-    if guard.workspace_id and app.workspace_id != guard.workspace_id:
-        raise HTTPException(status_code=403, detail="Cannot access app in another workspace.")
-    unified_reaper_service.touch_app_activity(app.id)
-    from app.services.dev_session_service import dev_session_service
-    return dev_session_service.delete_session(app=app, session_id=session_id)
-
-
-def _build_app_sandbox_spec(app: App) -> SandboxSpec:
-    repo_dir = omnigent_dev_service.get_repo_dir(app)
-    clean_k8s_app_id = app.id.replace("_", "-").lower()
-
-    git_url = getattr(app, "git_repo_url", None)
-    git_token = None
-    if hasattr(app, "git_pat_enc") and app.git_pat_enc:
-        try:
-            from app.services.encryption import decrypt_field
-            git_token = decrypt_field(app.git_pat_enc)
-        except Exception:
-            pass
-
-    auth_url = git_url or ""
-    if git_token and git_url and not ("@" in git_url.split("//")[-1]):
-        if "github.com" in git_url:
-            auth_url = git_url.replace("https://", f"https://x-access-token:{git_token}@")
-        else:
-            auth_url = git_url.replace("https://", f"https://oauth2:{git_token}@")
-
-    git_ref = getattr(app, "git_ref", None) or getattr(app, "git_branch", None) or "main"
-
-    clone_cmd = "git status || git init"
-    if auth_url:
-        clone_cmd = (
-            f"if [ ! -d /workspace/.git ] || [ -z \"$(find /workspace -maxdepth 2 -not -name '.git*' -not -name 'index.html' 2>/dev/null)\" ]; then "
-            f"  rm -rf /workspace/* /workspace/.[!.]* 2>/dev/null || true; "
-            f"  (git clone --branch '{git_ref}' '{auth_url}' /workspace || git clone '{auth_url}' /workspace || (cd /workspace && git init)); "
-            f"fi"
-        )
-
-    git_config_cmd = "git config --global user.name 'CompassX Dev' && git config --global user.email 'dev@compassx.io'"
-    if git_token:
-        if "github.com" in (git_url or ""):
-            git_config_cmd += f" && git config --global url.\"https://x-access-token:{git_token}@github.com/\".insteadOf \"https://github.com/\""
-        elif "gitlab.com" in (git_url or ""):
-            git_config_cmd += f" && git config --global url.\"https://oauth2:{git_token}@gitlab.com/\".insteadOf \"https://gitlab.com/\""
-
-    raw_auto_start_py = """import os, sys, subprocess, yaml, time, socket, threading, re
-
-if os.fork() != 0:
-    sys.exit(0)
-os.setsid()
-if os.fork() != 0:
-    sys.exit(0)
-
-sys.stdout.flush()
-sys.stderr.flush()
-si = open('/dev/null', 'r')
-so = open('/tmp/auto_start.log', 'a+')
-se = open('/tmp/auto_start.log', 'a+', 1)
-os.dup2(si.fileno(), sys.stdin.fileno())
-os.dup2(so.fileno(), sys.stdout.fileno())
-os.dup2(se.fileno(), sys.stderr.fileno())
-
-print("[auto_start] Daemon initialized", flush=True)
-
-manifest = None
-for base_dir in ['/workspace', '/workspaces']:
-    if not os.path.exists(base_dir):
-        continue
-    for f in ('app.yaml', 'app.yml'):
-        p = os.path.join(base_dir, f)
-        if os.path.isfile(p):
-            try:
-                with open(p, 'r', encoding='utf-8') as fh:
-                    manifest = yaml.safe_load(fh)
-                    manifest['_dir'] = base_dir
-                    print(f"[auto_start] Found direct manifest: {p}", flush=True)
-                    break
-            except Exception as e:
-                print(f"[auto_start] Error loading manifest: {e}", flush=True)
-    if manifest:
-        break
-    for root, dirs, files in os.walk(base_dir):
-        depth = root[len(base_dir):].count(os.sep)
-        if depth > 3:
-            dirs[:] = []
-            continue
-        if any(x in root for x in ('node_modules', '.git', '.cache', '__pycache__', 'venv', '.venv')):
-            dirs[:] = []
-            continue
-        for f in ('app.yaml', 'app.yml'):
-            if f in files:
-                try:
-                    with open(os.path.join(root, f), 'r', encoding='utf-8') as fh:
-                        manifest = yaml.safe_load(fh)
-                        manifest['_dir'] = root
-                        print(f"[auto_start] Found manifest: {os.path.join(root, f)}", flush=True)
-                        break
-                except Exception as e:
-                    print(f"[auto_start] Error loading manifest: {e}", flush=True)
-        if manifest:
-            break
-    if manifest:
-        break
-
-mdir = manifest.get('_dir', '/workspace') if manifest else '/workspace'
-services = (manifest.get('services') or {}) if manifest else {}
-b_cmd = None
-b_port = 8877
-b_dir = mdir
-b_path = '/api'
-f_cmd = None
-f_port = 4000
-f_dir = mdir
-
-if isinstance(services, dict) and services:
-    b_svc = services.get('backend') or services.get('api')
-    if b_svc:
-        b_cmd = b_svc.get('command') if isinstance(b_svc, dict) else str(b_svc)
-        if isinstance(b_svc, dict):
-            b_port = int(b_svc.get('port', 8877))
-            if b_svc.get('dir'):
-                b_dir = os.path.normpath(os.path.join(mdir, b_svc['dir']))
-            b_path = b_svc.get('path', '/api')
-    f_svc = services.get('frontend') or services.get('ui')
-    if f_svc:
-        f_cmd = f_svc.get('command') if isinstance(f_svc, dict) else str(f_svc)
-        if isinstance(f_svc, dict):
-            f_port = int(f_svc.get('port', 4000))
-            if f_svc.get('dir'):
-                f_dir = os.path.normpath(os.path.join(mdir, f_svc['dir']))
-elif manifest and 'command' in manifest:
-    b_cmd = manifest.get('command')
-    b_port = int(manifest.get('port', manifest.get('backend_port', 8877)))
-    if manifest.get('frontend'):
-        f_cmd = manifest.get('frontend')
-        f_port = int(manifest.get('frontend_port', 4000))
-else:
-    for root, dirs, files in os.walk(mdir):
-        if any(x in root for x in ('node_modules', '.git', '.cache')):
-            dirs[:] = []
-            continue
-        if not b_cmd and any(f in files for f in ('app.py', 'main.py', 'server.py')):
-            b_dir = root
-            if 'main.py' in files:
-                b_cmd = 'uvicorn main:app --host 0.0.0.0 --port 8000 --reload'
-                b_port = 8000
-            else:
-                b_cmd = 'python3 app.py'
-        if not f_cmd and 'package.json' in files:
-            f_dir = root
-            f_cmd = 'npm run dev -- --port 4000 --host 0.0.0.0'
-
-print(f"[auto_start] Starting backend in {b_dir}: {b_cmd} (port {b_port})", flush=True)
-print(f"[auto_start] Starting frontend in {f_dir}: {f_cmd} (port {f_port})", flush=True)
-
-for check_dir in ['/workspace']:
-    if os.path.exists(check_dir):
-        for root, dirs, files in os.walk(check_dir):
-            if any(x in root for x in ('node_modules', '.git')):
-                dirs[:] = []
-                continue
-            for vf in files:
-                if vf.startswith('vite.config.') and vf.endswith(('.ts', '.js', '.mjs', '.cjs')):
-                    vp = os.path.join(root, vf)
-                    try:
-                        with open(vp, 'r', encoding='utf-8') as vfh:
-                            vc = vfh.read()
-                        if 'allowedHosts' not in vc and 'server:' in vc:
-                            vc = re.sub(r'server\\s*:\\s*\\{', 'server: {\\n    allowedHosts: true,', vc, count=1)
-                            with open(vp, 'w', encoding='utf-8') as vfh:
-                                vfh.write(vc)
-                    except Exception:
-                        pass
-
-def _supervise(label, command, cwd, log_path):
-    # Restart a dev server that exits. A one-shot start left the preview on the splash page.
-    def _run():
-        while True:
-            print(f"[auto_start] {label} starting", flush=True)
-            proc = subprocess.Popen(
-                command,
-                shell=True,
-                cwd=cwd,
-                stdout=open(log_path, 'a'),
-                stderr=subprocess.STDOUT,
-            )
-            code = proc.wait()
-            print(f"[auto_start] {label} exited {code}; restarting", flush=True)
-            time.sleep(2)
-    threading.Thread(target=_run, daemon=True).start()
-
-if b_cmd:
-    b_str = ' '.join(b_cmd) if isinstance(b_cmd, list) else str(b_cmd)
-    _supervise('backend', b_str, b_dir, '/tmp/app_backend.log')
-
-if f_cmd:
-    f_str = ' '.join(f_cmd) if isinstance(f_cmd, list) else str(f_cmd)
-    os.environ['PORT'] = str(f_port)
-    os.environ['HOST'] = '0.0.0.0'
-    _supervise('frontend', f_str, f_dir, '/tmp/app_frontend.log')
-
-def _port_open(port):
-    probe = socket.socket()
-    probe.settimeout(0.3)
-    try:
-        probe.connect(('127.0.0.1', int(port)))
-        return True
-    except Exception:
-        return False
-    finally:
-        try:
-            probe.close()
-        except Exception:
-            pass
-
-if f_cmd:
-    deadline = time.time() + 25
-    while time.time() < deadline and not _port_open(f_port):
-        time.sleep(0.4)
-    if not _port_open(f_port):
-        for candidate in (3000, 5173, 4173, 4000, 8081, 5000):
-            if candidate in (8080,):
-                continue
-            if _port_open(candidate):
-                print(f"[auto_start] Frontend is listening on {candidate}", flush=True)
-                f_port = candidate
-                break
-if b_cmd and not _port_open(b_port):
-    for candidate in (8000, 8877, 8081, 5000):
-        if candidate == 8080 or candidate == f_port:
-            continue
-        if _port_open(candidate):
-            print(f"[auto_start] Backend is listening on {candidate}", flush=True)
-            b_port = candidate
-            break
-GATEWAY_PORT = 8080
-SPLASH_HTML = b'HTTP/1.1 200 OK\\r\\nContent-Type: text/html; charset=utf-8\\r\\nConnection: close\\r\\n\\r\\n<!DOCTYPE html><html><head><meta charset="utf-8"><meta http-equiv="refresh" content="2"><title>Live Sandbox Starting</title><style>body{background:#0b0f19;color:#f1f5f9;font-family:-apple-system,BlinkMacSystemFont,sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;}.card{background:#111827;border:1px solid #1e293b;border-radius:12px;padding:2.5rem;text-align:center;max-width:440px;box-shadow:0 20px 25px -5px rgba(0,0,0,0.5);}.spinner{width:38px;height:38px;border:3px solid rgba(59,130,246,0.2);border-top-color:#3b82f6;border-radius:50%;animation:spin 0.8s linear infinite;margin:0 auto 1.25rem;}@keyframes spin{to{transform:rotate(360deg);}}h2{font-size:1.2rem;font-weight:600;margin-bottom:0.5rem;color:#f8fafc;}p{font-size:0.875rem;color:#94a3b8;line-height:1.5;}</style></head><body><div class="card"><div class="spinner"></div><h2>Live Sandbox Starting...</h2><p>Application dev server is compiling and starting. This preview will automatically refresh once ready.</p></div></body></html>'
-
-def forward(src, dst):
-    while True:
-        try:
-            data = src.recv(8192)
-            if not data:
-                break
-            dst.sendall(data)
-        except Exception:
-            break
-    try:
-        src.close()
-    except Exception:
-        pass
-    try:
-        dst.close()
-    except Exception:
-        pass
-
-def handle_client(client):
-    try:
-        peek = client.recv(1024, socket.MSG_PEEK)
-        t_port = f_port if f_cmd else b_port
-        if peek and f_cmd and b_cmd:
-            try:
-                line = peek.decode('utf-8', errors='ignore').split('\\r\\n')[0]
-                parts = line.split(' ')
-                if len(parts) >= 2:
-                    path = parts[1]
-                    if path.startswith(b_path) or path.startswith('/ws') or path.startswith('/docs') or path.startswith('/openapi.json'):
-                        t_port = b_port
-                    else:
-                        t_port = f_port
-            except Exception:
-                pass
-        try:
-            target = socket.create_connection(('127.0.0.1', int(t_port)), timeout=3)
-            threading.Thread(target=forward, args=(client, target), daemon=True).start()
-            threading.Thread(target=forward, args=(target, client), daemon=True).start()
-        except Exception:
-            try:
-                client.sendall(SPLASH_HTML)
-                client.close()
-            except Exception:
-                pass
-    except Exception:
-        try:
-            client.close()
-        except Exception:
-            pass
-
-srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-srv.bind(('0.0.0.0', GATEWAY_PORT))
-srv.listen(100)
-print(f"[auto_start] Gateway proxy listening on port {GATEWAY_PORT}", flush=True)
-while True:
-    try:
-        c, _ = srv.accept()
-        threading.Thread(target=handle_client, args=(c,), daemon=True).start()
-    except Exception:
-        pass
-"""
-    b64_auto_start = base64.b64encode(raw_auto_start_py.strip().encode("utf-8")).decode("ascii")
-    auto_start_script = f"echo '{b64_auto_start}' | base64 -d > /tmp/compassx_auto_start.py && python3 /tmp/compassx_auto_start.py"
-
-    auth_sync_script = (
-        "mkdir -p /root/.gemini/antigravity-cli /root/.gemini/config 2>/dev/null || true; "
-        "if [ -f /workspace/.env ]; then "
-        "  mkdir -p /etc/profile.d 2>/dev/null || true; "
-        "  cp -f /workspace/.env /etc/profile.d/compassx_env.sh 2>/dev/null || true; "
-        "  sed -i 's/^/export /' /etc/profile.d/compassx_env.sh 2>/dev/null || true; "
-        "  sed -i 's/export export /export /' /etc/profile.d/compassx_env.sh 2>/dev/null || true; "
-        "  grep -q 'compassx_env.sh' /root/.bashrc 2>/dev/null || echo '[ -f /etc/profile.d/compassx_env.sh ] && source /etc/profile.d/compassx_env.sh' >> /root/.bashrc; "
-        "  grep -q 'compassx_env.sh' /etc/profile 2>/dev/null || echo '[ -f /etc/profile.d/compassx_env.sh ] && source /etc/profile.d/compassx_env.sh' >> /etc/profile; "
-        "fi; "
-        "(while true; do "
-        "  for src in /root/.omnigent/antigravity-native/*/agy-home/.gemini; do "
-        "    if [ -d \"$src\" ]; then "
-        "      for f in antigravity-cli/antigravity-oauth-token oauth_creds.json antigravity-cli/jetski_state.pbtxt antigravity-cli/installation_id; do "
-        "        if [ -f \"$src/$f\" ] && [ -s \"$src/$f\" ] && ! grep -q auto-authenticated \"$src/$f\" 2>/dev/null; then "
-        "          mkdir -p \"/root/.gemini/$(dirname \"$f\")\" 2>/dev/null || true; "
-        "          cp -f \"$src/$f\" \"/root/.gemini/$f\" 2>/dev/null || true; "
-        "        fi; "
-        "      done; "
-        "    fi; "
-        "  done; "
-        "  sleep 3; "
-        "done) >/dev/null 2>&1 &"
-    )
-
-    # App-configured custom environment variables (from app.config)
-    app_cfg = getattr(app, "config", {}) or {}
-    raw_custom_env = app_cfg.get("env_vars") or app_cfg.get("environment") or app_cfg.get("env") or []
-    custom_env_dict: Dict[str, str] = {}
-    if isinstance(raw_custom_env, dict):
-        for k, v in raw_custom_env.items():
-            if k and v is not None:
-                custom_env_dict[str(k)] = str(v)
-    elif isinstance(raw_custom_env, list):
-        for ev in raw_custom_env:
-            if isinstance(ev, dict):
-                k = ev.get("key") or ev.get("name")
-                v = ev.get("value")
-                if k and v is not None:
-                    custom_env_dict[str(k)] = str(v)
-            elif isinstance(ev, str) and "=" in ev:
-                k, v = ev.split("=", 1)
-                if k.strip():
-                    custom_env_dict[k.strip()] = v.strip()
-
-    from app.services.app_runner import app_runner_service
-    app_dir = app_runner_service.get_app_dir(app.id)
-    agent_storage_dir = os.path.join(app_dir, "agent_storage")
-    gemini_dir = os.path.join(agent_storage_dir, "gemini").replace("\\", "/")
-    pi_dir = os.path.join(agent_storage_dir, "pi").replace("\\", "/")
-    opencode_dir = os.path.join(agent_storage_dir, "opencode").replace("\\", "/")
-    os.makedirs(gemini_dir, exist_ok=True)
-    os.makedirs(pi_dir, exist_ok=True)
-    os.makedirs(opencode_dir, exist_ok=True)
-
-    from app.services.sandbox_credentials import gateway_api_key_for_app, gateway_base_url
-    custom_env_dict["OPENAI_API_KEY"] = gateway_api_key_for_app(app)
-    custom_env_dict["OPENAI_BASE_URL"] = gateway_base_url()
-
-    return SandboxSpec(
-        sandbox_id=f"dev-app-{app.id}",
-        consumer_key=f"app_{app.id}",
-        name=f"{app.name} (Dev Sandbox)",
-        consumer_module="app",
-        workspace_id=str(app.workspace_id) if app.workspace_id else None,
-        image=os.environ.get("COMPASSX_SANDBOX_IMAGE") or "ghcr.io/compassx-platform/compassx-sandbox-host:latest",
-        ports=[8080, 9201],
-        env_vars=custom_env_dict,
-        storage_mounts=[
-            StorageMount(source_path=repo_dir, mount_path="/workspace"),
-            StorageMount(source_path=gemini_dir, mount_path="/root/.gemini"),
-            StorageMount(source_path=pi_dir, mount_path="/root/.pi"),
-            StorageMount(source_path=opencode_dir, mount_path="/root/.opencode"),
-        ],
-        init_scripts=[
-            InitScript(name="Restore & Sync Agent Auth", command=auth_sync_script, ignore_failure=True),
-            InitScript(name="Configure Git Credentials", command=git_config_cmd, ignore_failure=True),
-            InitScript(name="Prepare Workspace Code", command=clone_cmd, ignore_failure=True),
-            InitScript(name="Install Dependencies", command="(test -f requirements.txt && pip install --prefer-binary -r requirements.txt || true); (find /workspace -maxdepth 3 -name package.json -execdir npm install --prefer-offline --no-audit \\; 2>/dev/null || true)", timeout_seconds=600, ignore_failure=True),
-            InitScript(name="Run Application Server", command=auto_start_script, ignore_failure=True),
-        ],
-        labels={
-            "compassx/app-id": clean_k8s_app_id,
-            "compassx/dev": "true",
-            "compassx/role": "dev",
-            "compassx-app-id": app.id,
-            "compassx.app_id": app.id,
-            "compassx.app_slug": app.slug or "",
-            "compassx.consumer_key": f"app_{app.id}",
-            "compassx-consumer-key": f"app_{app.id}",
-        },
-        metadata={"app_id": app.id, "app_name": app.name, "slug": app.slug},
-    )
-
+    return delete_app_session_action(app_id=app_id, session_id=session_id, db=db, guard=guard)
 
 @router.post("/start")
 def start_dev_session(
@@ -761,28 +174,7 @@ def start_dev_session(
     guard: Guard = Depends(get_guard),
 ):
     """Start or attach to a development sandbox via the centralized Sandbox engine."""
-    app = db.query(App).filter(App.id == app_id).first()
-    if not app:
-        raise HTTPException(status_code=404, detail=f"App '{app_id}' not found.")
-
-    if guard.workspace_id and app.workspace_id != guard.workspace_id:
-        raise HTTPException(status_code=403, detail="Cannot access app in another workspace.")
-
-    unified_reaper_service.touch_app_activity(app.id)
-    spec = _build_app_sandbox_spec(app)
-    instance = sandbox_service.ensure_sandbox(spec)
-    if instance.status in (SandboxStatus.READY, SandboxStatus.RUNNING):
-        _sync_agent_login(app, force=True)
-    return {
-        "app_id": app.id,
-        "status": "active" if instance.status in (SandboxStatus.READY, SandboxStatus.RUNNING) else str(instance.status.value),
-        "mode": instance.runtime_mode,
-        "container_id": instance.container_id,
-        "dev_port": instance.ports[0] if instance.ports else 8080,
-        "endpoints": instance.endpoints,
-        "sandbox_id": instance.id,
-    }
-
+    return start_dev_session_action(app_id=app_id, body=body, db=db, guard=guard)
 
 @router.post("/restart")
 def restart_dev_sandbox(
@@ -792,34 +184,7 @@ def restart_dev_sandbox(
     guard: Guard = Depends(get_guard),
 ):
     """Restart dev sandbox: cleanly terminate and re-ensure compute via Sandbox engine."""
-    app = db.query(App).filter(App.id == app_id).first()
-    if not app:
-        raise HTTPException(status_code=404, detail=f"App '{app_id}' not found.")
-
-    if guard.workspace_id and app.workspace_id != guard.workspace_id:
-        raise HTTPException(status_code=403, detail="Cannot access app in another workspace.")
-
-    unified_reaper_service.touch_app_activity(app.id)
-
-    try:
-        sandbox_service.terminate_sandbox(f"dev-app-{app.id}")
-    except Exception as e:
-        logger.debug("Restart termination error for dev-app-%s: %s", app.id, e)
-
-    spec = _build_app_sandbox_spec(app)
-    instance = sandbox_service.ensure_sandbox(spec)
-    if instance.status in (SandboxStatus.READY, SandboxStatus.RUNNING):
-        _sync_agent_login(app, force=True)
-    return {
-        "app_id": app.id,
-        "status": "active" if instance.status in (SandboxStatus.READY, SandboxStatus.RUNNING) else str(instance.status.value),
-        "mode": instance.runtime_mode,
-        "container_id": instance.container_id,
-        "dev_port": instance.ports[0] if instance.ports else 8080,
-        "endpoints": instance.endpoints,
-        "sandbox_id": instance.id,
-    }
-
+    return restart_dev_sandbox_action(app_id=app_id, body=body, db=db, guard=guard)
 
 @router.post("/sandbox/ensure")
 def ensure_app_sandbox(
@@ -828,19 +193,7 @@ def ensure_app_sandbox(
     guard: Guard = Depends(get_guard),
 ):
     """Idempotently ensure dev sandbox is running for this app, returning live progress or ready instance."""
-    app = db.query(App).filter(App.id == app_id).first()
-    if not app:
-        raise HTTPException(status_code=404, detail=f"App '{app_id}' not found.")
-    if guard.workspace_id and app.workspace_id != guard.workspace_id:
-        raise HTTPException(status_code=403, detail="Cannot access app in another workspace.")
-
-    unified_reaper_service.touch_app_activity(app.id)
-    spec = _build_app_sandbox_spec(app)
-    instance = sandbox_service.ensure_sandbox(spec)
-    if instance.status in (SandboxStatus.READY, SandboxStatus.RUNNING):
-        _sync_agent_login(app)
-    return instance
-
+    return ensure_app_sandbox_action(app_id=app_id, db=db, guard=guard)
 
 @router.get("/sandbox/status")
 def get_app_sandbox_status(
@@ -849,29 +202,7 @@ def get_app_sandbox_status(
     guard: Guard = Depends(get_guard),
 ):
     """Get active sandbox and detailed stage progress for this app."""
-    app = db.query(App).filter(App.id == app_id).first()
-    if not app:
-        raise HTTPException(status_code=404, detail=f"App '{app_id}' not found.")
-
-    unified_reaper_service.touch_app_activity(app.id)
-    instance = sandbox_service.find_active_sandbox(
-        sandbox_id=f"dev-app-{app.id}",
-        consumer_key=f"app_{app.id}",
-        consumer_module="app",
-    )
-    if instance:
-        instance = sandbox_service.get_sandbox(instance.id)
-        return instance
-    return {
-        "id": f"dev-app-{app.id}",
-        "consumer_key": f"app_{app.id}",
-        "name": f"{app.name} (Dev Sandbox)",
-        "consumer_module": "app",
-        "status": "stopped",
-        "endpoints": {},
-        "progress": None,
-    }
-
+    return get_app_sandbox_status_action(app_id=app_id, db=db, guard=guard)
 
 @router.get("/status")
 def get_dev_status(
@@ -880,18 +211,7 @@ def get_dev_status(
     guard: Guard = Depends(get_guard),
 ):
     """Check status of active development sandbox and Databricks Omnigent server."""
-    app = db.query(App).filter(App.id == app_id).first()
-    if not app:
-        raise HTTPException(status_code=404, detail=f"App '{app_id}' not found.")
-
-    app_id_val = app.id
-    db.expunge(app)
-    db.close()
-
-    unified_reaper_service.touch_app_activity(app_id_val)
-    return omnigent_dev_service.get_dev_session(app)
-
-
+    return get_dev_status_action(app_id=app_id, db=db, guard=guard)
 
 @router.post("/stop")
 def stop_dev_session(
@@ -900,29 +220,7 @@ def stop_dev_session(
     guard: Guard = Depends(get_guard),
 ):
     """Stop the development sandbox container."""
-    app = db.query(App).filter(App.id == app_id).first()
-    if not app:
-        raise HTTPException(status_code=404, detail=f"App '{app_id}' not found.")
-
-    db.expunge(app)
-    db.close()
-
-    # 1. Terminate sandbox instance in centralized sandbox_service
-    try:
-        sandbox_service.terminate_sandbox(f"dev-app-{app.id}")
-    except Exception as sb_err:
-        logger.debug("Sandbox terminate error for dev-app-%s: %s", app.id, sb_err)
-
-    try:
-        active_sb = sandbox_service.find_active_sandbox(consumer_key=f"app_{app.id}")
-        if active_sb:
-            sandbox_service.terminate_sandbox(active_sb.id)
-    except Exception as sb_err2:
-        logger.debug("Sandbox terminate error for consumer app_%s: %s", app.id, sb_err2)
-
-    # 2. Stop legacy dev session
-    return omnigent_dev_service.stop_dev_session(app)
-
+    return stop_dev_session_action(app_id=app_id, db=db, guard=guard)
 
 @router.post("/suspend")
 def suspend_dev_session(
@@ -931,27 +229,7 @@ def suspend_dev_session(
     guard: Guard = Depends(get_guard),
 ):
     """Suspend dev sandbox (scale compute to 0 replicas, keep storage intact)."""
-    app = db.query(App).filter(App.id == app_id).first()
-    if not app:
-        raise HTTPException(status_code=404, detail=f"App '{app_id}' not found.")
-
-    db.expunge(app)
-    db.close()
-
-    try:
-        sandbox_service.suspend_sandbox(f"dev-app-{app.id}")
-    except Exception:
-        pass
-
-    try:
-        active_sb = sandbox_service.find_active_sandbox(consumer_key=f"app_{app.id}")
-        if active_sb:
-            sandbox_service.suspend_sandbox(active_sb.id)
-    except Exception:
-        pass
-
-    return omnigent_dev_service.suspend_dev_session(app)
-
+    return suspend_dev_session_action(app_id=app_id, db=db, guard=guard)
 
 @router.post("/resume")
 def resume_dev_session(
@@ -960,30 +238,7 @@ def resume_dev_session(
     guard: Guard = Depends(get_guard),
 ):
     """Resume a suspended dev sandbox (restore compute to 1 replica)."""
-    app = db.query(App).filter(App.id == app_id).first()
-    if not app:
-        raise HTTPException(status_code=404, detail=f"App '{app_id}' not found.")
-
-    app_id_val = app.id
-    db.expunge(app)
-    db.close()
-
-    unified_reaper_service.touch_app_activity(app_id_val)
-
-    try:
-        sandbox_service.resume_sandbox(f"dev-app-{app.id}")
-    except Exception:
-        pass
-
-    try:
-        active_sb = sandbox_service.find_active_sandbox(consumer_key=f"app_{app.id}")
-        if active_sb:
-            sandbox_service.resume_sandbox(active_sb.id)
-    except Exception:
-        pass
-
-    return omnigent_dev_service.resume_dev_session(app)
-
+    return resume_dev_session_action(app_id=app_id, db=db, guard=guard)
 
 @router.get("/files")
 def list_workspace_files(
@@ -993,18 +248,7 @@ def list_workspace_files(
     guard: Guard = Depends(get_guard),
 ):
     """List source code files in the attached app workspace."""
-    app = db.query(App).filter(App.id == app_id).first()
-    if not app:
-        raise HTTPException(status_code=404, detail=f"App '{app_id}' not found.")
-
-    app_id_val = app.id
-    db.expunge(app)
-    db.close()
-
-    unified_reaper_service.touch_app_activity(app_id_val)
-    return get_workspace_file_service().list_workspace_files(app, workspace_id=workspace_id)
-
-
+    return list_workspace_files_action(app_id=app_id, workspace_id=workspace_id, db=db, guard=guard)
 
 @router.get("/file")
 def read_workspace_file(
@@ -1015,18 +259,7 @@ def read_workspace_file(
     guard: Guard = Depends(get_guard),
 ):
     """Read a specific source code file from the app workspace."""
-    app = db.query(App).filter(App.id == app_id).first()
-    if not app:
-        raise HTTPException(status_code=404, detail=f"App '{app_id}' not found.")
-
-    try:
-        unified_reaper_service.touch_app_activity(app.id)
-        return get_workspace_file_service().read_workspace_file(app, path, workspace_id=workspace_id)
-    except FileNotFoundError as e:
-        raise HTTPException(status_code=404, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
+    return read_workspace_file_action(app_id=app_id, path=path, workspace_id=workspace_id, db=db, guard=guard)
 
 @router.get("/file/diff")
 def diff_workspace_file(
@@ -1037,17 +270,7 @@ def diff_workspace_file(
     guard: Guard = Depends(get_guard),
 ):
     """Unified diff of one sandbox file against the last commit."""
-    app = db.query(App).filter(App.id == app_id).first()
-    if not app:
-        raise HTTPException(status_code=404, detail=f"App '{app_id}' not found.")
-    if guard.workspace_id and app.workspace_id != guard.workspace_id:
-        raise HTTPException(status_code=403, detail="Cannot access app in another workspace.")
-    try:
-        unified_reaper_service.touch_app_activity(app.id)
-        return get_workspace_file_service().diff_workspace_file(app, path, workspace_id=workspace_id)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-
+    return diff_workspace_file_action(app_id=app_id, path=path, workspace_id=workspace_id, db=db, guard=guard)
 
 @router.put("/file")
 def write_workspace_file(
@@ -1058,19 +281,7 @@ def write_workspace_file(
     guard: Guard = Depends(get_guard),
 ):
     """Save manual code edits to a workspace file (triggering hot reload)."""
-    app = db.query(App).filter(App.id == app_id).first()
-    if not app:
-        raise HTTPException(status_code=404, detail=f"App '{app_id}' not found.")
-
-    try:
-        unified_reaper_service.touch_app_activity(app.id)
-        target_ws = body.workspace_id or workspace_id
-        return get_workspace_file_service().write_workspace_file(app, body.path, body.content, workspace_id=target_ws)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
+    return write_workspace_file_action(app_id=app_id, body=body, workspace_id=workspace_id, db=db, guard=guard)
 
 @router.post("/publish")
 def publish_dev_changes(
@@ -1080,30 +291,7 @@ def publish_dev_changes(
     guard: Guard = Depends(get_guard),
 ):
     """Commit workspace changes and push to its dedicated remote Git branch."""
-    app = db.query(App).filter(App.id == app_id).first()
-    if not app:
-        raise HTTPException(status_code=404, detail=f"App '{app_id}' not found.")
-
-    user_id = str(guard.principal.id) if guard.principal else "system"
-    commit_msg = body.commit_message if body else None
-    ws_id = body.workspace_id if body else None
-    ws_name = body.workspace_name if body else None
-    try:
-        unified_reaper_service.touch_app_activity(app.id)
-        res = omnigent_dev_service.publish_dev_changes(
-            app,
-            commit_message=commit_msg,
-            user_id=user_id,
-            workspace_id=ws_id,
-            workspace_name=ws_name,
-        )
-        return res
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.exception("Failed to publish dev changes for app %s: %s", app.name, e)
-        raise HTTPException(status_code=500, detail=str(e) or "Failed to publish sandbox changes.") from e
-
+    return publish_dev_changes_action(app_id=app_id, body=body, db=db, guard=guard)
 
 @router.get("/commits")
 def get_git_commits(
@@ -1115,20 +303,7 @@ def get_git_commits(
     guard: Guard = Depends(get_guard),
 ):
     """Retrieve Git commit history for the application workspace."""
-    app = db.query(App).filter(App.id == app_id).first()
-    if not app:
-        raise HTTPException(status_code=404, detail=f"App '{app_id}' not found.")
-    if guard.workspace_id and app.workspace_id != guard.workspace_id:
-        raise HTTPException(status_code=403, detail="Cannot access app in another workspace.")
-    unified_reaper_service.touch_app_activity(app.id)
-
-    return omnigent_dev_service.get_git_commits(
-        app=app,
-        workspace_id=workspace_id,
-        workspace_name=workspace_name,
-        limit=limit or 50,
-    )
-
+    return get_git_commits_action(app_id=app_id, workspace_id=workspace_id, workspace_name=workspace_name, limit=limit, db=db, guard=guard)
 
 @router.get("/workspaces/{workspace_id}/commits")
 def get_workspace_git_commits(
@@ -1139,19 +314,7 @@ def get_workspace_git_commits(
     guard: Guard = Depends(get_guard),
 ):
     """Retrieve Git commit history for a specific workspace."""
-    app = db.query(App).filter(App.id == app_id).first()
-    if not app:
-        raise HTTPException(status_code=404, detail=f"App '{app_id}' not found.")
-    if guard.workspace_id and app.workspace_id != guard.workspace_id:
-        raise HTTPException(status_code=403, detail="Cannot access app in another workspace.")
-    unified_reaper_service.touch_app_activity(app.id)
-
-    return omnigent_dev_service.get_git_commits(
-        app=app,
-        workspace_id=workspace_id,
-        limit=limit or 50,
-    )
-
+    return get_workspace_git_commits_action(app_id=app_id, workspace_id=workspace_id, limit=limit, db=db, guard=guard)
 
 @router.get("/omnigent/agents")
 def get_omnigent_agents(
@@ -1160,14 +323,7 @@ def get_omnigent_agents(
     guard: Guard = Depends(get_guard),
 ):
     """Fetch available AI agents from Databricks Omnigent server."""
-    app = db.query(App).filter(App.id == app_id).first()
-    if not app:
-        raise HTTPException(status_code=404, detail=f"App '{app_id}' not found.")
-
-    unified_reaper_service.touch_app_activity(app.id)
-    unified_reaper_service.touch_omnigent_activity()
-    return omnigent_dev_service.get_omnigent_agents()
-
+    return get_omnigent_agents_action(app_id=app_id, db=db, guard=guard)
 
 @router.post("/omnigent/session")
 def create_omnigent_session(
@@ -1177,20 +333,7 @@ def create_omnigent_session(
     guard: Guard = Depends(get_guard),
 ):
     """Create a new conversational AI session on Omnigent Server bound to the app host."""
-    app = db.query(App).filter(App.id == app_id).first()
-    if not app:
-        raise HTTPException(status_code=404, detail=f"App '{app_id}' not found.")
-
-    agent_name = body.agent_name if body else "polly"
-    title = body.title if body else None
-    try:
-        unified_reaper_service.touch_app_activity(app.id)
-        unified_reaper_service.touch_omnigent_activity()
-        return omnigent_dev_service.create_omnigent_chat_session(app, agent_name=agent_name, title=title)
-    except Exception as e:
-        logger.exception("Failed to create Omnigent session for app %s: %s", app.name, e)
-        raise HTTPException(status_code=500, detail=f"Failed to create Omnigent session: {str(e)}")
-
+    return create_omnigent_session_action(app_id=app_id, body=body, db=db, guard=guard)
 
 @router.get("/build/session")
 def get_build_session(
@@ -1200,14 +343,7 @@ def get_build_session(
     guard: Guard = Depends(get_guard),
 ):
     """Get or initialize the active Build Studio AI session for this app."""
-    app = db.query(App).filter(App.id == app_id).first()
-    if not app:
-        raise HTTPException(status_code=404, detail=f"App '{app_id}' not found.")
-    if guard.workspace_id and app.workspace_id != guard.workspace_id:
-        raise HTTPException(status_code=403, detail="Cannot access app in another workspace.")
-    unified_reaper_service.touch_app_activity(app.id)
-    return omnigent_dev_service.get_build_session(app, workspace_id=workspace_id)
-
+    return get_build_session_action(app_id=app_id, workspace_id=workspace_id, db=db, guard=guard)
 
 @router.get("/build/messages")
 def get_build_session_messages(
@@ -1217,15 +353,7 @@ def get_build_session_messages(
     guard: Guard = Depends(get_guard),
 ):
     """Get chat transcript items for the specified Build Studio session."""
-    app = db.query(App).filter(App.id == app_id).first()
-    if not app:
-        raise HTTPException(status_code=404, detail=f"App '{app_id}' not found.")
-    if guard.workspace_id and app.workspace_id != guard.workspace_id:
-        raise HTTPException(status_code=403, detail="Cannot access app in another workspace.")
-    unified_reaper_service.touch_app_activity(app.id)
-    _sync_agent_login(app)
-    return omnigent_dev_service.get_build_session_messages(app, session_id=session_id)
-
+    return get_build_session_messages_action(app_id=app_id, session_id=session_id, db=db, guard=guard)
 
 @router.post("/build/prompt")
 def send_build_prompt(
@@ -1235,32 +363,7 @@ def send_build_prompt(
     guard: Guard = Depends(get_guard),
 ):
     """Send an AI coding instruction / prompt to the Build Studio session."""
-    app = db.query(App).filter(App.id == app_id).first()
-    if not app:
-        raise HTTPException(status_code=404, detail=f"App '{app_id}' not found.")
-    if guard.workspace_id and app.workspace_id != guard.workspace_id:
-        raise HTTPException(status_code=403, detail="Cannot access app in another workspace.")
-    if not body.prompt or not body.prompt.strip():
-        raise HTTPException(status_code=400, detail="Prompt cannot be empty.")
-
-    unified_reaper_service.touch_app_activity(app.id)
-    _sync_agent_login(app, force=True)
-    session_id = body.session_id
-    if not session_id:
-        sess = omnigent_dev_service.get_build_session(app, workspace_id=body.workspace_id)
-        session_id = sess.get("session_id")
-
-    result = omnigent_dev_service.send_build_session_prompt(
-        app,
-        session_id=session_id,
-        prompt=body.prompt.strip(),
-        agent_name=body.agent_name,
-        workspace_id=body.workspace_id,
-    )
-    if result.get("status") == "error":
-        raise HTTPException(status_code=409, detail=result.get("message") or "Agent terminal is not ready.")
-    return result
-
+    return send_build_prompt_action(app_id=app_id, body=body, db=db, guard=guard)
 
 @router.post("/build/clear")
 def clear_build_session(
@@ -1270,16 +373,7 @@ def clear_build_session(
     guard: Guard = Depends(get_guard),
 ):
     """Clear Build Studio session history and start fresh conversation."""
-    app = db.query(App).filter(App.id == app_id).first()
-    if not app:
-        raise HTTPException(status_code=404, detail=f"App '{app_id}' not found.")
-    if guard.workspace_id and app.workspace_id != guard.workspace_id:
-        raise HTTPException(status_code=403, detail="Cannot access app in another workspace.")
-    ws_id = body.workspace_id if body else None
-    session_id = body.session_id if body else None
-    unified_reaper_service.touch_app_activity(app.id)
-    return omnigent_dev_service.clear_build_session(app, workspace_id=ws_id, session_id=session_id)
-
+    return clear_build_session_action(app_id=app_id, body=body, db=db, guard=guard)
 
 @router.get("/logs")
 def get_dev_sandbox_logs(
@@ -1289,13 +383,7 @@ def get_dev_sandbox_logs(
     guard: Guard = Depends(get_guard),
 ):
     """Fetch real-time stdout/stderr runtime logs from the dev sandbox container."""
-    app = db.query(App).filter(App.id == app_id).first()
-    if not app:
-        raise HTTPException(status_code=404, detail=f"App '{app_id}' not found.")
-
-    unified_reaper_service.touch_app_activity(app.id)
-    return omnigent_dev_service.get_dev_logs(app, tail=tail)
-
+    return get_dev_sandbox_logs_action(app_id=app_id, tail=tail, db=db, guard=guard)
 
 @router.post("/verify-git")
 def verify_git_workspace(
@@ -1305,24 +393,7 @@ def verify_git_workspace(
     guard: Guard = Depends(get_guard),
 ):
     """Verify git status, branch, and working tree for dev workspace."""
-    app = db.query(App).filter(App.id == app_id).first()
-    if not app:
-        raise HTTPException(status_code=404, detail=f"App '{app_id}' not found.")
-    if guard.workspace_id and app.workspace_id != guard.workspace_id:
-        raise HTTPException(status_code=403, detail="Cannot access app in another workspace.")
-
-    workspace_id = body.workspace_id if body else None
-    workspace_name = body.workspace_name if body else None
-
-    app_id_val = app.id
-    db.expunge(app)
-    db.close()
-
-    unified_reaper_service.touch_app_activity(app_id_val)
-    return omnigent_dev_service.verify_git_workspace(
-        app, workspace_id=workspace_id, workspace_name=workspace_name
-    )
-
+    return verify_git_workspace_action(app_id=app_id, body=body, db=db, guard=guard)
 
 @router.post("/install-deps")
 def install_dev_dependencies(
@@ -1332,25 +403,7 @@ def install_dev_dependencies(
     guard: Guard = Depends(get_guard),
 ):
     """Verify and install dependencies (pip / npm) inside active dev sandbox."""
-    app = db.query(App).filter(App.id == app_id).first()
-    if not app:
-        raise HTTPException(status_code=404, detail=f"App '{app_id}' not found.")
-    if guard.workspace_id and app.workspace_id != guard.workspace_id:
-        raise HTTPException(status_code=403, detail="Cannot access app in another workspace.")
-
-    workspace_id = body.workspace_id if body else None
-    workspace_name = body.workspace_name if body else None
-    force = body.force if body else False
-
-    app_id_val = app.id
-    db.expunge(app)
-    db.close()
-
-    unified_reaper_service.touch_app_activity(app_id_val)
-    return omnigent_dev_service.install_dev_dependencies(
-        app, workspace_id=workspace_id, workspace_name=workspace_name, force=force
-    )
-
+    return install_dev_dependencies_action(app_id=app_id, body=body, db=db, guard=guard)
 
 @router.post("/run-app")
 def run_dev_application(
@@ -1360,25 +413,7 @@ def run_dev_application(
     guard: Guard = Depends(get_guard),
 ):
     """Start application dev processes (FastAPI / Vite) and verify local runtime."""
-    app = db.query(App).filter(App.id == app_id).first()
-    if not app:
-        raise HTTPException(status_code=404, detail=f"App '{app_id}' not found.")
-    if guard.workspace_id and app.workspace_id != guard.workspace_id:
-        raise HTTPException(status_code=403, detail="Cannot access app in another workspace.")
-
-    workspace_id = body.workspace_id if body else None
-    workspace_name = body.workspace_name if body else None
-
-    app_id_val = app.id
-    db.expunge(app)
-    db.close()
-
-    unified_reaper_service.touch_app_activity(app_id_val)
-    return omnigent_dev_service.run_dev_app(
-        app, workspace_id=workspace_id, workspace_name=workspace_name
-    )
-
-
+    return run_dev_application_action(app_id=app_id, body=body, db=db, guard=guard)
 
 @router.post("/exec")
 def exec_dev_command(
@@ -1388,22 +423,7 @@ def exec_dev_command(
     guard: Guard = Depends(get_guard),
 ):
     """Execute a single shell command inside the dev sandbox container."""
-    app = db.query(App).filter(App.id == app_id).first()
-    if not app:
-        raise HTTPException(status_code=404, detail=f"App '{app_id}' not found.")
-    if guard.workspace_id and app.workspace_id != guard.workspace_id:
-        raise HTTPException(status_code=403, detail="Cannot access app in another workspace.")
-    if not body.command or not body.command.strip():
-        raise HTTPException(status_code=400, detail="Command cannot be empty.")
-
-    unified_reaper_service.touch_app_activity(app.id)
-    return dev_terminal_service.exec_command(
-        app,
-        command=body.command.strip(),
-        workspace_id=body.workspace_id,
-        workspace_name=body.workspace_name,
-    )
-
+    return exec_dev_command_action(app_id=app_id, body=body, db=db, guard=guard)
 
 @router.post("/heartbeat")
 def record_dev_heartbeat(
@@ -1413,16 +433,7 @@ def record_dev_heartbeat(
     guard: Guard = Depends(get_guard),
 ):
     """Client heartbeat endpoint to keep active dev session and workspace alive."""
-    app = db.query(App).filter(App.id == app_id).first()
-    if not app:
-        raise HTTPException(status_code=404, detail=f"App '{app_id}' not found.")
-    if guard.workspace_id and app.workspace_id != guard.workspace_id:
-        raise HTTPException(status_code=403, detail="Cannot access app in another workspace.")
-
-    unified_reaper_service.touch_app_activity(app.id)
-    _sync_agent_login(app)
-    return {"status": "ok", "app_id": app.id}
-
+    return record_dev_heartbeat_action(app_id=app_id, workspace_id=workspace_id, db=db, guard=guard)
 
 @router.websocket("/terminal/ws")
 async def dev_terminal_websocket(
@@ -1437,64 +448,7 @@ async def dev_terminal_websocket(
     session_id: Optional[str] = Query(None),
 ):
     """Interactive real-time WebSocket terminal inside the dev pod/container."""
-    from app.database import SystemSessionLocal
-    from app.workspace.middleware import WorkspaceAuthError, resolve_workspace_context
-
-    with SystemSessionLocal() as db:
-        app = db.query(App).filter(App.id == app_id).first()
-        if not app:
-            await websocket.accept()
-            await websocket.send_text(f"\r\n\x1b[1;31mApp '{app_id}' not found.\x1b[0m\r\n")
-            await websocket.close(code=4404, reason=f"App '{app_id}' not found")
-            return
-        workspace_key = str(app.workspace_id) if app.workspace_id else None
-        db.expunge(app)
-
-    try:
-        if workspace_key:
-            resolve_workspace_context(workspace_key, token)
-        elif not token:
-            raise WorkspaceAuthError(401, "missing auth token")
-        else:
-            from app.user_manager.auth_utils import decode_access_token
-            decode_access_token(token)
-    except WorkspaceAuthError as exc:
-        await websocket.accept()
-        await websocket.send_text(f"\r\n\x1b[1;31m{exc.message}\x1b[0m\r\n")
-        await websocket.close(code=4401 if exc.status_code == 401 else 4403, reason=exc.message[:120])
-        return
-    except Exception:
-        await websocket.accept()
-        await websocket.send_text("\r\n\x1b[1;31mInvalid or expired token.\x1b[0m\r\n")
-        await websocket.close(code=4401, reason="invalid or expired token")
-        return
-
-    unified_reaper_service.touch_app_activity(app.id)
-    _sync_agent_login(app, force=True)
-    await dev_terminal_service.handle_terminal_websocket(
-        websocket=websocket,
-        app=app,
-        workspace_id=workspace_id,
-        workspace_name=workspace_name,
-        cols=cols,
-        rows=rows,
-        agent=agent,
-        session_id=session_id,
-    )
-
-
-class AppManifestUpdateRequest(BaseModel):
-    frontend_command: Optional[str] = None
-    frontend_dir: Optional[str] = None
-    frontend_port: Optional[int] = None
-    backend_command: Optional[str] = None
-    backend_dir: Optional[str] = None
-    backend_port: Optional[int] = None
-    install_command: Optional[str] = None
-    env: Optional[Dict[str, str]] = None
-    raw_yaml: Optional[str] = None
-    workspace_id: Optional[str] = None
-
+    return await dev_terminal_websocket_action(websocket=websocket, app_id=app_id, token=token, workspace_id=workspace_id, workspace_name=workspace_name, cols=cols, rows=rows, agent=agent, session_id=session_id)
 
 @router.get("/manifest")
 def get_dev_manifest(
@@ -1504,36 +458,7 @@ def get_dev_manifest(
     guard: Guard = Depends(get_guard),
 ):
     """Retrieve and parse the app.yaml manifest or generated runtime configuration for an app."""
-    app = db.query(App).filter(App.id == app_id).first()
-    if not app:
-        raise HTTPException(status_code=404, detail=f"App '{app_id}' not found.")
-    if guard.workspace_id and app.workspace_id != guard.workspace_id:
-        raise HTTPException(status_code=403, detail="Cannot access app in another workspace.")
-
-    repo_dir = omnigent_dev_service.get_repo_dir(app)
-    manifest = app_manifest_service.load_manifest(repo_dir)
-    if not manifest:
-        try:
-            from app.services.drivers.factory import driver_factory
-            dev_driver = driver_factory.get_dev_driver()
-            clean_id = app.id.replace("_", "-").lower()
-            manifest = omnigent_dev_service._resolve_app_manifest(app, dev_driver, f"{clean_id}/default", repo_dir, repo_dir)
-        except Exception:
-            pass
-    run_cfg = app_manifest_service.get_run_config(manifest)
-    return {
-        "app_id": app.id,
-        "has_manifest": manifest is not None,
-        "manifest": manifest,
-        "run_config": run_cfg or {
-            "gateway_port": 8080,
-            "frontend_port": 4000,
-            "backend_port": 8000,
-            "frontend_command": "npm run dev",
-            "backend_command": "uvicorn main:app --port 8000",
-        },
-    }
-
+    return get_dev_manifest_action(app_id=app_id, workspace_id=workspace_id, db=db, guard=guard)
 
 @router.put("/manifest")
 def update_dev_manifest(
@@ -1543,73 +468,5 @@ def update_dev_manifest(
     guard: Guard = Depends(get_guard),
 ):
     """Save or generate an app.yaml manifest directly into the app repository."""
-    app = db.query(App).filter(App.id == app_id).first()
-    if not app:
-        raise HTTPException(status_code=404, detail=f"App '{app_id}' not found.")
-    if guard.workspace_id and app.workspace_id != guard.workspace_id:
-        raise HTTPException(status_code=403, detail="Cannot access app in another workspace.")
-
-    repo_dir = omnigent_dev_service.get_repo_dir(app)
-    os.makedirs(repo_dir, exist_ok=True)
-    manifest_path = os.path.join(repo_dir, "app.yaml")
-
-    if body.raw_yaml and body.raw_yaml.strip():
-        yaml_content = body.raw_yaml.strip()
-    else:
-        manifest_dict: Dict[str, Any] = {
-            "version": "1",
-            "name": app.slug or app.name or app.id,
-            "services": {}
-        }
-        if body.backend_command:
-            manifest_dict["services"]["backend"] = {
-                "command": body.backend_command,
-                "port": body.backend_port or 8000,
-                "dir": body.backend_dir or ".",
-                "path": "/api",
-            }
-        if body.frontend_command:
-            manifest_dict["services"]["frontend"] = {
-                "command": body.frontend_command,
-                "port": body.frontend_port or 4000,
-                "dir": body.frontend_dir or "frontend",
-                "path": "/",
-            }
-        if body.install_command:
-            manifest_dict["install"] = body.install_command
-        if body.env:
-            manifest_dict["env"] = body.env
-
-        yaml_content = yaml.dump(manifest_dict, sort_keys=False, default_flow_style=False)
-
-    try:
-        with open(manifest_path, "w", encoding="utf-8") as f:
-            f.write(yaml_content)
-    except Exception:
-        pass
-
-    # Sync to dev sandbox pod if running
-    try:
-        from app.services.drivers.factory import driver_factory
-        import base64
-        dev_driver = driver_factory.get_dev_driver()
-        clean_id = app.id.replace("_", "-").lower()
-        b64 = base64.b64encode(yaml_content.encode("utf-8")).decode("ascii")
-        sync_cmd = f"mkdir -p /workspace && echo '{b64}' | base64 -d | tee /workspace/app.yaml /workspaces/{clean_id}/*/app.yaml 2>/dev/null || true"
-        dev_driver.exec_command_in_dev(app, sync_cmd)
-    except Exception:
-        pass
-
-    parsed = app_manifest_service.parse_manifest_text(yaml_content, manifest_path=manifest_path)
-    run_cfg = app_manifest_service.get_run_config(parsed)
-
-    return {
-        "app_id": app.id,
-        "status": "saved",
-        "manifest_path": manifest_path,
-        "manifest": parsed,
-        "run_config": run_cfg,
-    }
-
-
+    return update_dev_manifest_action(app_id=app_id, body=body, db=db, guard=guard)
 

@@ -12,23 +12,30 @@ doc_id is linked into the active plan's context.uploaded_documents if one exists
 from __future__ import annotations
 
 import logging
+
 import os
+
 from typing import List
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Request, UploadFile
+
 from sqlalchemy.orm import Session
 
 from app.agents.routes._authz import authorized_session
+
 from app.database import get_system_db as get_db
+
 from app.governance.dependencies import Guard, get_guard
+
 from app.governance.privileges import Privilege
+
 from app.models.agents import Agent, ChatSession, RagDocument, DocumentStatus
+
 from app.agents.services.document_processor import parse_document, process_document
+
 from app.agents.services.agent.plan_service import PlanService
 
-logger = logging.getLogger(__name__)
-
-router = APIRouter(prefix="/api/v1/agents/{agent_id}/sessions/{session_id}", tags=["Documents"])
+logger = logging.getLogger("app.agents.routes.document_routes")
 
 ACCEPTED_MIME_TYPES = {
     "application/pdf",
@@ -45,9 +52,6 @@ ACCEPTED_MIME_TYPES = {
     "image/svg+xml",
 }
 
-
-# ── Helpers ───────────────────────────────────────────────────────────────────
-
 def _get_session_or_404(
     db: Session, agent_id: int, session_id: int, guard: Guard, privilege: Privilege
 ) -> ChatSession:
@@ -59,7 +63,6 @@ def _get_session_or_404(
     both readable and writable by anyone who could guess an id.
     """
     return authorized_session(db, guard, agent_id, session_id, privilege)
-
 
 def _link_doc_to_plan(session_id: int, doc_id: int) -> None:
     """Add doc_id to the active plan's context.uploaded_documents if one exists."""
@@ -75,8 +78,18 @@ def _link_doc_to_plan(session_id: int, doc_id: int) -> None:
     except Exception as exc:
         logger.warning("Could not link doc to plan: %s", exc)
 
+import app.agents.http.documents.prelude as _prelude
+for _name, _value in vars(_prelude).items():
+    if not _name.startswith('__'):
+        globals()[_name] = _value
 
-# ── Endpoints ─────────────────────────────────────────────────────────────────
+from app.agents.http.documents.application.upload_documents import upload_documents as upload_documents_action
+from app.agents.http.documents.application.list_documents import list_documents as list_documents_action
+from app.agents.http.documents.application.delete_document import delete_document as delete_document_action
+
+logger = logging.getLogger("app.agents.routes.document_routes")
+
+router = APIRouter(prefix="/api/v1/agents/{agent_id}/sessions/{session_id}", tags=["Documents"])
 
 @router.post("/documents", status_code=201)
 async def upload_documents(
@@ -94,101 +107,7 @@ async def upload_documents(
     the next turn, so this is supplying input to a run rather than storing a
     file. Whoever may run the agent may give it something to read.
     """
-    _get_session_or_404(db, agent_id, session_id, guard, Privilege.EXECUTE)
-
-    all_uploads: list[UploadFile] = list(files or [])
-    try:
-        form = await request.form()
-        for field in ("file", "files"):
-            for item in form.getlist(field):
-                if isinstance(item, UploadFile) and item not in all_uploads:
-                    all_uploads.append(item)
-    except Exception:
-        pass
-
-    if not all_uploads:
-        raise HTTPException(400, "No files uploaded")
-
-    # Resolve accepted types from agent manifest
-    agent = db.query(Agent).filter(Agent.id == agent_id).first()
-    accepted_exts: set[str] = {"pdf", "docx", "xlsx", "csv", "txt", "md", "json", "png", "jpg", "jpeg", "webp", "gif", "svg"}
-    if agent and agent.manifest:
-        from app.agents.schemas.agent_manifest import AgentManifest
-        try:
-            m = AgentManifest.model_validate(agent.manifest)
-            if not m.capabilities.document_upload.enabled:
-                raise HTTPException(403, "Document upload is disabled for this agent")
-            accepted_exts = set(m.capabilities.document_upload.accepted_types)
-        except Exception:
-            pass
-
-    results = []
-    for upload in all_uploads:
-        ext = (upload.filename or "").rsplit(".", 1)[-1].lower() if "." in (upload.filename or "") else ""
-        if ext not in accepted_exts:
-            results.append({"filename": upload.filename, "error": f"File type '{ext}' not accepted", "ok": False})
-            continue
-
-        content = await upload.read()
-        mime = upload.content_type or "application/octet-stream"
-
-        # Extract full parsed text synchronously — fast (less than 100ms)
-        try:
-            full_text = parse_document(content, mime, upload.filename or "file")
-            preview = full_text[:1000]
-        except Exception as exc:
-            logger.warning("Synchronous document parse failed for %s: %s", upload.filename, exc)
-            full_text = ""
-            preview = ""
-
-        doc = RagDocument(
-            agent_id=agent_id,
-            session_id=session_id,
-            filename=upload.filename or "upload",
-            mime_type=mime,
-            size_bytes=len(content),
-            status=DocumentStatus.processing,
-            extracted_preview=preview,
-        )
-        db.add(doc)
-        db.commit()
-        db.refresh(doc)
-
-        # Persist full extracted text blob & raw binary file immediately
-        try:
-            from app.nova.services.attachment_service import STORAGE_BASE_DIR, _ensure_dir
-            doc_dir = os.path.join(STORAGE_BASE_DIR, "sessions", str(session_id), "rag_docs", str(doc.id))
-            _ensure_dir(os.path.join(doc_dir, "keep"))
-
-            # Save full parsed text
-            if full_text:
-                with open(os.path.join(doc_dir, "full_text.txt"), "w", encoding="utf-8") as f:
-                    f.write(full_text)
-
-            # Save raw original binary file
-            raw_filename = upload.filename or "file"
-            with open(os.path.join(doc_dir, raw_filename), "wb") as f:
-                f.write(content)
-        except Exception as blob_err:
-            logger.warning("Failed to write rag doc blob for doc %s: %s", doc.id, blob_err)
-
-        # Background: chunk + embed
-        background_tasks.add_task(process_document, doc.id, content, mime, upload.filename or "file", db)
-
-        # Link to active plan if one exists
-        background_tasks.add_task(_link_doc_to_plan, session_id, doc.id)
-
-        results.append({
-            "doc_id": doc.id,
-            "filename": doc.filename,
-            "size_bytes": doc.size_bytes,
-            "status": doc.status.value,
-            "preview": preview[:200],
-            "ok": True,
-        })
-
-    return {"uploaded": results}
-
+    return await upload_documents_action(request=request, agent_id=agent_id, session_id=session_id, background_tasks=background_tasks, files=files, db=db, guard=guard)
 
 @router.get("/documents")
 def list_documents(
@@ -203,27 +122,7 @@ def list_documents(
     BROWSE: the response carries each file's extracted preview, which is its
     content.
     """
-    _get_session_or_404(db, agent_id, session_id, guard, Privilege.BROWSE)
-    docs = (
-        db.query(RagDocument)
-        .filter(RagDocument.session_id == session_id, RagDocument.agent_id == agent_id)
-        .order_by(RagDocument.created_at.asc())
-        .all()
-    )
-    return [
-        {
-            "doc_id": d.id,
-            "filename": d.filename,
-            "mime_type": d.mime_type,
-            "size_bytes": d.size_bytes,
-            "status": d.status.value,
-            "chunk_count": d.chunk_count,
-            "preview": d.extracted_preview,
-            "created_at": d.created_at.isoformat() if d.created_at else None,
-        }
-        for d in docs
-    ]
-
+    return list_documents_action(request=request, agent_id=agent_id, session_id=session_id, db=db, guard=guard)
 
 @router.delete("/documents/{doc_id}", status_code=204)
 def delete_document(
@@ -239,13 +138,4 @@ def delete_document(
     EXECUTE, the same as adding one: both change what the agent will read on
     the next turn.
     """
-    _get_session_or_404(db, agent_id, session_id, guard, Privilege.EXECUTE)
-    doc = (
-        db.query(RagDocument)
-        .filter(RagDocument.id == doc_id, RagDocument.session_id == session_id)
-        .first()
-    )
-    if not doc:
-        raise HTTPException(404, "Document not found")
-    db.delete(doc)
-    db.commit()
+    return delete_document_action(request=request, agent_id=agent_id, session_id=session_id, doc_id=doc_id, db=db, guard=guard)

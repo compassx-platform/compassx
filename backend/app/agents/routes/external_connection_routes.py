@@ -21,28 +21,34 @@ resolved and authorised.
 from __future__ import annotations
 
 import logging
+
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+
 from sqlalchemy.orm import Session
 
 from app.agents.models.external_connection import ExternalConnection
+
 from app.agents.routes._authz import authorized_connection, visible_connections
+
 from app.agents.schemas.external_connections import (
     ExternalConnectionCreate,
     ExternalConnectionResponse,
     ExternalConnectionUpdate,
 )
+
 from app.agents.services import external_connection_service as svc
+
 from app.database import get_system_db as get_db
+
 from app.governance.dependencies import Guard, get_guard
+
 from app.governance.privileges import Privilege
+
 from app.governance.securable import Securable
 
-logger = logging.getLogger(__name__)
-
-router = APIRouter(tags=["External Connections"])
-
+logger = logging.getLogger("app.agents.routes.external_connection_routes")
 
 def _to_response(conn) -> ExternalConnectionResponse:
     return ExternalConnectionResponse(
@@ -57,11 +63,25 @@ def _to_response(conn) -> ExternalConnectionResponse:
         updated_at=conn.updated_at,
     )
 
-
 def _get_or_404(db: Session, connection_id: str, guard: Guard, privilege: Privilege) -> ExternalConnection:
     """Load an external connection the caller holds ``privilege`` on."""
     return authorized_connection(db, guard, ExternalConnection, connection_id, privilege)
 
+import app.agents.http.external_connections.prelude as _prelude
+for _name, _value in vars(_prelude).items():
+    if not _name.startswith('__'):
+        globals()[_name] = _value
+
+from app.agents.http.external_connections.application.create_external_connection import create_external_connection as create_external_connection_action
+from app.agents.http.external_connections.application.list_external_connections import list_external_connections as list_external_connections_action
+from app.agents.http.external_connections.application.get_external_connection import get_external_connection as get_external_connection_action
+from app.agents.http.external_connections.application.update_external_connection import update_external_connection as update_external_connection_action
+from app.agents.http.external_connections.application.disable_external_connection import disable_external_connection as disable_external_connection_action
+from app.agents.http.external_connections.application.delete_external_connection import delete_external_connection as delete_external_connection_action
+
+logger = logging.getLogger("app.agents.routes.external_connection_routes")
+
+router = APIRouter(tags=["External Connections"])
 
 @router.post(
     "/api/v1/external-connections",
@@ -85,19 +105,7 @@ def create_external_connection(
     Admin: ``auth_config`` is a credential for a system CompassX does not
     control, and every agent granted on the connection then calls with it.
     """
-    guard.require_workspace_admin("Creating an external connection")
-    try:
-        conn = svc.create_connection(
-            db=db,
-            data=payload,
-            workspace_id=guard.workspace_id,
-            user_id=str(guard.principal.id),
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
-    guard.claim_ownership(Securable.connection(str(conn.id)))
-    return _to_response(conn)
-
+    return create_external_connection_action(payload=payload, request=request, db=db, guard=guard)
 
 @router.get(
     "/api/v1/external-connections",
@@ -119,14 +127,7 @@ def list_external_connections(
     Queried here rather than through ``svc.list_connections``, which also
     returns rows with a null workspace to every workspace.
     """
-    q = db.query(ExternalConnection).filter(
-        ExternalConnection.workspace_id == guard.workspace_id
-    )
-    if status_filter:
-        q = q.filter(ExternalConnection.status == status_filter)
-    rows = q.order_by(ExternalConnection.created_at.desc()).all()
-    return [_to_response(c) for c in visible_connections(guard, rows)]
-
+    return list_external_connections_action(request=request, status_filter=status_filter, db=db, guard=guard)
 
 @router.get(
     "/api/v1/external-connections/{connection_id}",
@@ -143,8 +144,7 @@ def get_external_connection(
     db: Session = Depends(get_db),
     guard: Guard = Depends(get_guard),
 ):
-    return _to_response(_get_or_404(db, connection_id, guard, Privilege.BROWSE))
-
+    return get_external_connection_action(connection_id=connection_id, request=request, db=db, guard=guard)
 
 @router.put(
     "/api/v1/external-connections/{connection_id}",
@@ -171,13 +171,7 @@ def update_external_connection(
     EDIT: ``base_url`` decides which host the stored credential is sent to, so
     this can redirect an existing grant at a different system.
     """
-    conn = _get_or_404(db, connection_id, guard, Privilege.EDIT)
-    try:
-        updated = svc.update_connection(db, conn.id, payload, workspace_id=guard.workspace_id)
-    except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
-    return _to_response(updated)
-
+    return update_external_connection_action(connection_id=connection_id, payload=payload, request=request, db=db, guard=guard)
 
 @router.post(
     "/api/v1/external-connections/{connection_id}/disable",
@@ -199,13 +193,7 @@ def disable_external_connection(
     EDIT rather than MANAGE: it is reversible and nothing is destroyed, but it
     stops every agent using it, so it is not a read.
     """
-    conn = _get_or_404(db, connection_id, guard, Privilege.EDIT)
-    try:
-        updated = svc.disable_connection(db, conn.id, workspace_id=guard.workspace_id)
-    except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
-    return _to_response(updated)
-
+    return disable_external_connection_action(connection_id=connection_id, request=request, db=db, guard=guard)
 
 @router.delete(
     "/api/v1/external-connections/{connection_id}",
@@ -226,7 +214,4 @@ def delete_external_connection(
 
     MANAGE: irreversible, and it revokes access for everyone granted on it.
     """
-    conn = _get_or_404(db, connection_id, guard, Privilege.MANAGE)
-    db.delete(conn)
-    db.commit()
-    return None
+    return delete_external_connection_action(connection_id=connection_id, request=request, db=db, guard=guard)

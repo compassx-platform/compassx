@@ -1,0 +1,8 @@
+title: Platform Architecture
+nav:
+  - Overview: index.md
+  - For agents and developers: for-agents.md
+  - Modules: modules
+  - Runtime: runtime
+  - Setup: setup
+  - Decisions: decisions

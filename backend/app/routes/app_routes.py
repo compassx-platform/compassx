@@ -1,17 +1,14 @@
 """Application routes for workspace-scoped apps stored in system database 'apps' schema."""
 
 from __future__ import annotations
-
 import re
 import uuid
 import logging
 from datetime import datetime, timezone
 from typing import List, Optional
-
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, status
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
-
 from app.database import get_system_db
 from app.governance.dependencies import Guard, get_guard
 from app.models.app import App
@@ -27,45 +24,27 @@ from app.services.encryption import encrypt_field
 from app.services.app_runner import app_runner_service
 from app.services.sandbox_reaper_service import unified_reaper_service
 
-logger = logging.getLogger(__name__)
+import app.apps.record.prelude as _prelude
+for _name, _value in vars(_prelude).items():
+    if not _name.startswith('__'):
+        globals()[_name] = _value
+
+from app.apps.record.application.list_apps import list_apps as list_apps_action
+from app.apps.record.application.create_app import create_app as create_app_action
+from app.apps.record.application.get_app import get_app as get_app_action
+from app.apps.record.application.update_app import update_app as update_app_action
+from app.apps.record.application.delete_app import delete_app as delete_app_action
+from app.apps.record.application.deploy_app import deploy_app as deploy_app_action
+from app.apps.record.application.get_app_deployments import get_app_deployments as get_app_deployments_action
+from app.apps.record.application.get_app_deployment import get_app_deployment as get_app_deployment_action
+from app.apps.record.application.get_app_logs import get_app_logs as get_app_logs_action
+from app.apps.record.application.get_app_runtime_status import get_app_runtime_status as get_app_runtime_status_action
+from app.apps.record.application.start_app_instance import start_app_instance as start_app_instance_action
+from app.apps.record.application.stop_app_instance import stop_app_instance as stop_app_instance_action
+from app.apps.record.application.update_app_status import update_app_status as update_app_status_action
+from app.apps.record.application.proxy_app_traffic import proxy_app_traffic as proxy_app_traffic_action
 
 router = APIRouter(prefix="/api/v1/apps", tags=["Apps"])
-
-
-def _to_slug(name: str) -> str:
-    slug = re.sub(r"[^a-zA-Z0-9]+", "-", name.strip().lower()).strip("-")
-    return slug or "app"
-
-
-def _to_response(app: App) -> AppResponse:
-    return AppResponse(
-        id=app.id,
-        workspace_id=app.workspace_id,
-        workspace_slug=app.workspace_slug,
-        name=app.name,
-        slug=app.slug,
-        description=app.description,
-        app_type=app.app_type,
-        status=app.status,
-        route=app.route,
-        git_provider=app.git_provider or "github",
-        git_repo_url=app.git_repo_url,
-        git_ref=app.git_ref or "main",
-        git_ref_type=app.git_ref_type or "branch",
-        git_branch=app.git_branch or app.git_ref or "main",
-        git_subdir=app.git_subdir,
-        entrypoint=app.entrypoint,
-        git_credential_type=app.git_credential_type or "none",
-        git_credential_nickname=app.git_credential_nickname,
-        git_connection_id=app.git_connection_id,
-        pat_configured=bool(app.git_pat_enc),
-        workspace_identity=app.workspace_identity,
-        config=app.config,
-        created_by_user_id=app.created_by_user_id,
-        created_at=app.created_at,
-        updated_at=app.updated_at,
-    )
-
 
 @router.get("", response_model=List[AppResponse])
 def list_apps(
@@ -76,17 +55,7 @@ def list_apps(
     guard: Guard = Depends(get_guard),
 ):
     """List all applications belonging to the caller's workspace."""
-    target_ws = workspace_id or guard.workspace_id
-    query = db.query(App)
-
-    if target_ws:
-        query = query.filter(App.workspace_id == target_ws)
-    elif workspace_slug:
-        query = query.filter(App.workspace_slug == workspace_slug)
-
-    apps = query.order_by(App.created_at.desc()).all()
-    return [_to_response(a) for a in apps]
-
+    return list_apps_action(request=request, workspace_id=workspace_id, workspace_slug=workspace_slug, db=db, guard=guard)
 
 @router.post("", response_model=AppResponse, status_code=status.HTTP_201_CREATED)
 def create_app(
@@ -96,75 +65,7 @@ def create_app(
     guard: Guard = Depends(get_guard),
 ):
     """Create and register a new workspace-scoped application in the system DB."""
-    workspace_id = guard.workspace_id or "default"
-    ctx = getattr(request.state, "workspace", None)
-    workspace_slug = getattr(ctx, "workspace_slug", None) if ctx else None
-    slug = body.slug or _to_slug(body.name)
-    route = body.route or f"/{slug}"
-    if not route.startswith("/"):
-        route = f"/{route}"
-
-    # Generate dedicated App Workspace Identity
-    identity_id = f"id_app_{uuid.uuid4().hex[:12]}"
-    workspace_identity = {
-        "identity_id": identity_id,
-        "principal_type": "app_workload",
-        "workspace_id": workspace_id,
-        "role": "app_executor",
-        "scopes": [
-            "catalog:read",
-            "compute:run",
-            "models:inference",
-            "agents:invoke",
-        ],
-        "created_at": datetime.now(timezone.utc).isoformat(),
-    }
-
-    # Encrypt Git PAT if supplied
-    git_pat_enc = encrypt_field(body.git_pat) if body.git_pat else None
-    git_ref = body.git_ref or body.git_branch or "main"
-
-    app_id = f"app_{uuid.uuid4().hex[:16]}"
-    app = App(
-        id=app_id,
-        workspace_id=workspace_id,
-        workspace_slug=workspace_slug,
-        name=body.name,
-        slug=slug,
-        description=body.description,
-        app_type=body.app_type,
-        status="active",
-        route=route,
-        git_provider=body.git_provider or "github",
-        git_repo_url=body.git_repo_url,
-        git_ref=git_ref,
-        git_ref_type=body.git_ref_type or "branch",
-        git_branch=git_ref,
-        git_subdir=body.git_subdir,
-        entrypoint=body.entrypoint,
-        git_credential_type=body.git_credential_type or ("pat" if body.git_pat else "none"),
-        git_credential_nickname=body.git_credential_nickname,
-        git_connection_id=body.git_connection_id,
-        git_pat_enc=git_pat_enc,
-        workspace_identity=workspace_identity,
-        config=body.config or {},
-        created_by_user_id=str(guard.principal.id) if guard.principal else None,
-    )
-
-    db.add(app)
-    db.commit()
-    db.refresh(app)
-    logger.info("Created app '%s' (id=%s) for workspace '%s'", app.name, app.id, workspace_id)
-
-    # Automatically provision Ingress with Let's Encrypt TLS so certificates are generated immediately
-    try:
-        from app.services.ingress_service import ingress_service
-        ingress_service.ensure_app_ingress(app)
-    except Exception as ing_err:
-        logger.warning("Non-fatal app ingress initialization error for %s: %s", app.slug, ing_err)
-
-    return _to_response(app)
-
+    return create_app_action(body=body, request=request, db=db, guard=guard)
 
 @router.get("/{app_id}", response_model=AppResponse)
 def get_app(
@@ -173,15 +74,7 @@ def get_app(
     guard: Guard = Depends(get_guard),
 ):
     """Retrieve an application by ID."""
-    app = db.query(App).filter(App.id == app_id).first()
-    if not app:
-        raise HTTPException(status_code=404, detail=f"App '{app_id}' not found.")
-
-    if guard.workspace_id and app.workspace_id != guard.workspace_id:
-        raise HTTPException(status_code=404, detail="App not found in this workspace.")
-
-    return _to_response(app)
-
+    return get_app_action(app_id=app_id, db=db, guard=guard)
 
 @router.put("/{app_id}", response_model=AppResponse)
 def update_app(
@@ -191,52 +84,7 @@ def update_app(
     guard: Guard = Depends(get_guard),
 ):
     """Update an application."""
-    app = db.query(App).filter(App.id == app_id).first()
-    if not app:
-        raise HTTPException(status_code=404, detail=f"App '{app_id}' not found.")
-
-    if guard.workspace_id and app.workspace_id != guard.workspace_id:
-        raise HTTPException(status_code=403, detail="Cannot modify app from another workspace.")
-
-    if body.name is not None:
-        app.name = body.name
-    if body.description is not None:
-        app.description = body.description
-    if body.app_type is not None:
-        app.app_type = body.app_type
-    if body.status is not None:
-        app.status = body.status
-    if body.route is not None:
-        app.route = body.route
-    if body.git_provider is not None:
-        app.git_provider = body.git_provider
-    if body.git_repo_url is not None:
-        app.git_repo_url = body.git_repo_url
-    if body.git_ref is not None:
-        app.git_ref = body.git_ref
-        app.git_branch = body.git_ref
-    if body.git_ref_type is not None:
-        app.git_ref_type = body.git_ref_type
-    if body.git_subdir is not None:
-        app.git_subdir = body.git_subdir
-    if body.entrypoint is not None:
-        app.entrypoint = body.entrypoint
-    if body.git_credential_type is not None:
-        app.git_credential_type = body.git_credential_type
-    if body.git_credential_nickname is not None:
-        app.git_credential_nickname = body.git_credential_nickname
-    if body.git_connection_id is not None:
-        app.git_connection_id = body.git_connection_id
-    if body.git_pat is not None:
-        app.git_pat_enc = encrypt_field(body.git_pat) if body.git_pat else None
-    if body.config is not None:
-        app.config = body.config
-        flag_modified(app, "config")
-
-    db.commit()
-    db.refresh(app)
-    return _to_response(app)
-
+    return update_app_action(app_id=app_id, body=body, db=db, guard=guard)
 
 @router.delete("/{app_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_app(
@@ -245,26 +93,7 @@ def delete_app(
     guard: Guard = Depends(get_guard),
 ):
     """Delete an application and cleanup its running container / runtime storage."""
-    app = db.query(App).filter(App.id == app_id).first()
-    if not app:
-        raise HTTPException(status_code=404, detail=f"App '{app_id}' not found.")
-
-    if guard.workspace_id and app.workspace_id != guard.workspace_id:
-        raise HTTPException(status_code=403, detail="Cannot delete app from another workspace.")
-
-    try:
-        app_runner_service.delete_app_runtime(app)
-    except Exception as e:
-        logger.warning("Error cleaning up app runtime for %s: %s", app.id, e)
-
-    db.delete(app)
-    db.commit()
-    logger.info("Deleted app '%s' (id=%s)", app.name, app.id)
-    return None
-
-
-_GIT_REF = re.compile(r"^[A-Za-z0-9._/-]{1,128}$")
-
+    return delete_app_action(app_id=app_id, db=db, guard=guard)
 
 @router.post("/{app_id}/deploy", response_model=AppDeployResponse)
 def deploy_app(
@@ -276,117 +105,7 @@ def deploy_app(
     guard: Guard = Depends(get_guard),
 ):
     """Trigger a new build and deployment for an application into container or local runner."""
-    app = db.query(App).filter(App.id == app_id).first()
-    if not app:
-        raise HTTPException(status_code=404, detail=f"App '{app_id}' not found.")
-
-    if guard.workspace_id and app.workspace_id != guard.workspace_id:
-        raise HTTPException(status_code=403, detail="Cannot deploy app from another workspace.")
-    if git_ref and not _GIT_REF.match(git_ref):
-        raise HTTPException(status_code=400, detail="Invalid git ref.")
-
-    deployment_id = f"dep_{uuid.uuid4().hex[:10]}"
-    now_iso = datetime.now(timezone.utc).isoformat()
-    start_time = datetime.now(timezone.utc)
-
-    # Fetch real latest Git commit info
-    git_info = app_runner_service.get_latest_git_commit(app, git_ref=git_ref)
-    commit_sha = git_info.get("sha") or "latest"
-    commit_msg = git_info.get("message")
-
-    try:
-        runner_res = app_runner_service.deploy_app(app, runner_mode=runner_mode, git_ref=git_ref)
-        runtime_info = runner_res["runtime_info"]
-        logs = runner_res["build_logs"]
-        deploy_status = "in_progress" if runtime_info.get("mode") == "kubernetes" else "success"
-    except Exception as e:
-        logger.exception("App deployment failed for %s: %s", app.name, e)
-        logs = [f"[ERROR] Deployment failed: {str(e)}"]
-        runtime_info = {"status": "error", "error": str(e)}
-        deploy_status = "failed"
-
-    duration = round((datetime.now(timezone.utc) - start_time).total_seconds(), 2)
-
-    cfg = dict(app.config or {})
-    deployments = list(cfg.get("deployments", []))
-    deployment_record = {
-        "deployment_id": deployment_id,
-        "app_id": app.id,
-        "status": deploy_status,
-        "commit_sha": commit_sha,
-        "commit_message": commit_msg,
-        "git_ref": git_ref or app.git_ref or app.git_branch or "main",
-        "duration_seconds": duration,
-        "triggered_by": str(guard.principal.id) if guard.principal else "system",
-        "created_at": now_iso,
-        "logs": logs,
-    }
-    deployments.insert(0, deployment_record)
-    cfg["deployments"] = deployments[:20]
-    cfg["logs"] = logs
-    cfg["runtime"] = runtime_info
-
-    app.config = cfg
-    flag_modified(app, "config")
-    app.status = "active" if deploy_status in ("success", "in_progress") else "error"
-    db.commit()
-    db.refresh(app)
-
-    if deploy_status == "failed":
-        raise HTTPException(status_code=500, detail=f"Deployment failed: {runtime_info.get('error')}")
-
-    # Dispatch background worker to capture and isolate container build logs
-    if runtime_info.get("mode") == "kubernetes":
-        background_tasks.add_task(app_runner_service.capture_deployment_build_logs, app.id, deployment_id)
-
-    return AppDeployResponse(**deployment_record)
-
-
-def _reconcile_app_deployments(app: App, db: Session) -> list:
-    """Check and reconcile any stuck 'in_progress' deployments by inspecting logs and status."""
-    cfg = dict(app.config or {})
-    deployments = list(cfg.get("deployments", []))
-    modified = False
-
-    for dep in deployments:
-        if dep.get("status") in ("in_progress", "building", "starting", "queued"):
-            dep_logs = list(dep.get("logs") or [])
-            has_err = any(
-                ("[ERROR]" in l or "npm error" in l.lower() or "fatal:" in l.lower() or "build failed" in l.lower())
-                for l in dep_logs
-            )
-            has_ok = any(
-                ("[RUNTIME]" in l or "Build phase completed successfully" in l or "Launching application server" in l or "Deployment, Service, and Ingress" in l)
-                for l in dep_logs
-            )
-
-            if has_err:
-                dep["status"] = "failed"
-                modified = True
-            elif has_ok or app.status == "active":
-                dep["status"] = "success"
-                # Calculate real duration if available
-                try:
-                    created_dt = datetime.fromisoformat(dep.get("created_at", "").replace("Z", "+00:00"))
-                    dur = round((datetime.now(timezone.utc) - created_dt).total_seconds(), 2)
-                    if dur > 0 and dep.get("duration_seconds", 0) <= 2.0:
-                        dep["duration_seconds"] = min(dur, 60.0)
-                except Exception:
-                    pass
-                modified = True
-
-    if modified:
-        cfg["deployments"] = deployments
-        app.config = cfg
-        flag_modified(app, "config")
-        try:
-            db.commit()
-            db.refresh(app)
-        except Exception as e:
-            logger.debug("Failed to commit reconciled deployment status for app %s: %s", app.id, e)
-
-    return deployments
-
+    return deploy_app_action(app_id=app_id, background_tasks=background_tasks, runner_mode=runner_mode, git_ref=git_ref, db=db, guard=guard)
 
 @router.get("/{app_id}/deployments", response_model=List[AppDeployResponse])
 def get_app_deployments(
@@ -395,16 +114,7 @@ def get_app_deployments(
     guard: Guard = Depends(get_guard),
 ):
     """Retrieve historical deployment records for an application."""
-    app = db.query(App).filter(App.id == app_id).first()
-    if not app:
-        raise HTTPException(status_code=404, detail=f"App '{app_id}' not found.")
-
-    if guard.workspace_id and app.workspace_id != guard.workspace_id:
-        raise HTTPException(status_code=403, detail="Cannot access app from another workspace.")
-
-    deployments = _reconcile_app_deployments(app, db)
-    return [AppDeployResponse(**d) for d in deployments]
-
+    return get_app_deployments_action(app_id=app_id, db=db, guard=guard)
 
 @router.get("/{app_id}/deployments/{deployment_id}", response_model=AppDeployResponse)
 def get_app_deployment(
@@ -414,20 +124,7 @@ def get_app_deployment(
     guard: Guard = Depends(get_guard),
 ):
     """Retrieve a specific deployment record by deployment ID."""
-    app = db.query(App).filter(App.id == app_id).first()
-    if not app:
-        raise HTTPException(status_code=404, detail=f"App '{app_id}' not found.")
-
-    if guard.workspace_id and app.workspace_id != guard.workspace_id:
-        raise HTTPException(status_code=403, detail="Cannot access app from another workspace.")
-
-    deployments = _reconcile_app_deployments(app, db)
-    for dep in deployments:
-        if dep.get("deployment_id") == deployment_id:
-            return AppDeployResponse(**dep)
-
-    raise HTTPException(status_code=404, detail=f"Deployment '{deployment_id}' not found.")
-
+    return get_app_deployment_action(app_id=app_id, deployment_id=deployment_id, db=db, guard=guard)
 
 @router.get("/{app_id}/logs", response_model=AppLogsResponse)
 def get_app_logs(
@@ -437,18 +134,7 @@ def get_app_logs(
     guard: Guard = Depends(get_guard),
 ):
     """Retrieve actual live runtime container / process logs for an application."""
-    app = db.query(App).filter(App.id == app_id).first()
-    if not app:
-        raise HTTPException(status_code=404, detail=f"App '{app_id}' not found.")
-
-    live_logs = app_runner_service.get_live_logs(app, tail=tail)
-
-    return AppLogsResponse(
-        app_id=app.id,
-        status=app.status,
-        logs=live_logs,
-    )
-
+    return get_app_logs_action(app_id=app_id, tail=tail, db=db, guard=guard)
 
 @router.get("/{app_id}/runtime-status", response_model=AppRuntimeStatusResponse)
 def get_app_runtime_status(
@@ -457,16 +143,7 @@ def get_app_runtime_status(
     guard: Guard = Depends(get_guard),
 ):
     """Inspect actual real-time container or Kubernetes pod status for an application."""
-    app = db.query(App).filter(App.id == app_id).first()
-    if not app:
-        raise HTTPException(status_code=404, detail=f"App '{app_id}' not found.")
-
-    if guard.workspace_id and app.workspace_id != guard.workspace_id:
-        raise HTTPException(status_code=403, detail="Cannot access app from another workspace.")
-
-    runtime_status = app_runner_service.get_runtime_status(app, db=db)
-    return AppRuntimeStatusResponse(**runtime_status)
-
+    return get_app_runtime_status_action(app_id=app_id, db=db, guard=guard)
 
 @router.post("/{app_id}/start", response_model=AppRuntimeStatusResponse)
 def start_app_instance(
@@ -475,22 +152,7 @@ def start_app_instance(
     guard: Guard = Depends(get_guard),
 ):
     """Start or scale up application container/pod."""
-    app = db.query(App).filter(App.id == app_id).first()
-    if not app:
-        raise HTTPException(status_code=404, detail=f"App '{app_id}' not found.")
-
-    if guard.workspace_id and app.workspace_id != guard.workspace_id:
-        raise HTTPException(status_code=403, detail="Cannot modify app from another workspace.")
-
-    app.status = "starting"
-    db.commit()
-    db.refresh(app)
-
-    unified_reaper_service.touch_app_activity(app_id)
-    app_runner_service.start_app(app)
-    status_info = app_runner_service.get_runtime_status(app, db=db)
-    return AppRuntimeStatusResponse(**status_info)
-
+    return start_app_instance_action(app_id=app_id, db=db, guard=guard)
 
 @router.post("/{app_id}/stop", response_model=AppRuntimeStatusResponse)
 def stop_app_instance(
@@ -499,21 +161,7 @@ def stop_app_instance(
     guard: Guard = Depends(get_guard),
 ):
     """Stop application container/pod."""
-    app = db.query(App).filter(App.id == app_id).first()
-    if not app:
-        raise HTTPException(status_code=404, detail=f"App '{app_id}' not found.")
-
-    if guard.workspace_id and app.workspace_id != guard.workspace_id:
-        raise HTTPException(status_code=403, detail="Cannot modify app from another workspace.")
-
-    app.status = "stopping"
-    db.commit()
-    db.refresh(app)
-
-    app_runner_service.stop_app(app)
-    status_info = app_runner_service.get_runtime_status(app, db=db)
-    return AppRuntimeStatusResponse(**status_info)
-
+    return stop_app_instance_action(app_id=app_id, db=db, guard=guard)
 
 @router.post("/{app_id}/status", response_model=AppResponse)
 def update_app_status(
@@ -523,30 +171,7 @@ def update_app_status(
     guard: Guard = Depends(get_guard),
 ):
     """Change status of application (active, stopped, starting, stopping)."""
-    app = db.query(App).filter(App.id == app_id).first()
-    if not app:
-        raise HTTPException(status_code=404, detail=f"App '{app_id}' not found.")
-
-    if guard.workspace_id and app.workspace_id != guard.workspace_id:
-        raise HTTPException(status_code=403, detail="Cannot modify app from another workspace.")
-
-    if status_value.lower() in ("stopped", "inactive"):
-        app.status = "stopping"
-        db.commit()
-        app_runner_service.stop_app(app)
-        app_runner_service.get_runtime_status(app, db=db)
-    elif status_value.lower() in ("active", "starting", "provisioning"):
-        app.status = "starting"
-        db.commit()
-        app_runner_service.start_app(app)
-        app_runner_service.get_runtime_status(app, db=db)
-    else:
-        app.status = status_value
-        db.commit()
-
-    db.refresh(app)
-    return _to_response(app)
-
+    return update_app_status_action(app_id=app_id, status_value=status_value, db=db, guard=guard)
 
 @router.api_route("/{app_id}/proxy/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"])
 async def proxy_app_traffic(
@@ -556,8 +181,5 @@ async def proxy_app_traffic(
     db: Session = Depends(get_system_db),
 ):
     """Proxy HTTP traffic to the active app container or process."""
-    app = db.query(App).filter(App.id == app_id).first()
-    if not app:
-        raise HTTPException(status_code=404, detail=f"App '{app_id}' not found.")
-    unified_reaper_service.touch_app_activity(app_id)
-    return await app_runner_service.proxy_request(app, path, request)
+    return await proxy_app_traffic_action(app_id=app_id, path=path, request=request, db=db)
+

@@ -3,14 +3,21 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+
 from sqlalchemy.orm import Session, selectinload
 
 from app.agents.routes._authz import authorized_agent, visible_agents
+
 from app.database import get_system_db as get_db
+
 from app.governance.dependencies import Guard, get_guard
+
 from app.governance.privileges import Privilege
+
 from app.governance.securable import Securable
+
 from app.models.agents import Agent, AgentTool, AgentSkillAttachment
+
 from app.schemas.agents import (
     AgentCreate,
     AgentListResponse,
@@ -20,9 +27,6 @@ from app.schemas.agents import (
     AgentSkillResponse,
     SkillResponse,
 )
-
-router = APIRouter(prefix="/api/v1/agents", tags=["Agents"])
-
 
 def _load_agent(db: Session, agent_id: int, guard: Guard, privilege: Privilege) -> Agent:
     """Load an agent the caller holds ``privilege`` on, with tools and skills.
@@ -43,7 +47,6 @@ def _load_agent(db: Session, agent_id: int, guard: Guard, privilege: Privilege) 
         .first()
     )
 
-
 def _agent_response(agent: Agent) -> AgentResponse:
     resp = AgentResponse.model_validate(agent)
     resp.tools = [AgentToolResponse(id=t.id, tool_name=t.tool_name) for t in agent.tools]
@@ -61,6 +64,34 @@ def _agent_response(agent: Agent) -> AgentResponse:
     ]
     return resp
 
+def _sync_tools(db: Session, agent_id: int, tools) -> None:
+    for t in (tools or []):
+        db.add(AgentTool(
+            agent_id=agent_id,
+            tool_name=t.tool_name if hasattr(t, "tool_name") else t["tool_name"],
+        ))
+
+def _sync_skills(db: Session, agent_id: int, skills) -> None:
+    for idx, s in enumerate(skills or []):
+        db.add(AgentSkillAttachment(
+            agent_id=agent_id,
+            skill_id=s.skill_id if hasattr(s, "skill_id") else s["skill_id"],
+            position=idx,
+        ))
+
+import app.agents.http.records.prelude as _prelude
+for _name, _value in vars(_prelude).items():
+    if not _name.startswith('__'):
+        globals()[_name] = _value
+
+from app.agents.http.records.application.list_agents import list_agents as list_agents_action
+from app.agents.http.records.application.create_agent import create_agent as create_agent_action
+from app.agents.http.records.application.get_agent import get_agent as get_agent_action
+from app.agents.http.records.application.update_agent import update_agent as update_agent_action
+from app.agents.http.records.application.delete_agent import delete_agent as delete_agent_action
+from app.agents.http.records.application.clone_agent import clone_agent as clone_agent_action
+
+router = APIRouter(prefix="/api/v1/agents", tags=["Agents"])
 
 @router.get("", response_model=list[AgentListResponse])
 def list_agents(
@@ -69,33 +100,7 @@ def list_agents(
     guard: Guard = Depends(get_guard),
 ):
     """List the agents in this workspace that the caller may browse."""
-    agents = (
-        db.query(Agent)
-        .filter(Agent.workspace_id == guard.workspace_id)
-        .options(selectinload(Agent.tools))
-        .order_by(Agent.name)
-        .all()
-    )
-    agents = visible_agents(guard, agents)
-    return [
-        AgentListResponse(
-            id=a.id,
-            llm_connection_id=a.llm_connection_id,
-            name=a.name,
-            description=a.description,
-            avatar=a.avatar,
-            color=a.color,
-            model=a.model,
-            is_orchestrator=a.is_orchestrator,
-            visibility=a.visibility,
-            is_active=a.is_active,
-            tool_count=len(a.tools),
-            created_at=a.created_at,
-            updated_at=a.updated_at,
-        )
-        for a in agents
-    ]
-
+    return list_agents_action(request=request, db=db, guard=guard)
 
 @router.post("", response_model=AgentResponse, status_code=201)
 def create_agent(
@@ -110,32 +115,7 @@ def create_agent(
     bringing one into being is an admin action rather than something any
     member may do.
     """
-    guard.require_workspace_admin("Creating an agent")
-    workspace_id = guard.workspace_id
-    agent = Agent(
-        workspace_id=workspace_id,
-        llm_connection_id=body.llm_connection_id,
-        name=body.name,
-        description=body.description,
-        avatar=body.avatar,
-        color=body.color,
-        prompt=body.prompt,
-        model=body.model,
-        max_tokens=body.max_tokens,
-        is_orchestrator=body.is_orchestrator,
-        visibility=body.visibility,
-        status=body.status or "active",
-        manifest=body.manifest or {},
-        created_by=str(guard.principal.id),
-    )
-    db.add(agent)
-    db.flush()
-    _sync_tools(db, agent.id, body.tools)
-    _sync_skills(db, agent.id, body.skills)
-    db.commit()
-    guard.claim_ownership(Securable.agent(str(agent.id)))
-    return _agent_response(_load_agent(db, agent.id, guard, Privilege.BROWSE))
-
+    return create_agent_action(request=request, body=body, db=db, guard=guard)
 
 @router.get("/{agent_id}", response_model=AgentResponse)
 def get_agent(
@@ -149,8 +129,7 @@ def get_agent(
     BROWSE, not EDIT: the response includes the system prompt, which is what
     someone deciding whether to run this agent needs to read.
     """
-    return _agent_response(_load_agent(db, agent_id, guard, Privilege.BROWSE))
-
+    return get_agent_action(request=request, agent_id=agent_id, db=db, guard=guard)
 
 @router.put("/{agent_id}", response_model=AgentResponse)
 def update_agent(
@@ -166,23 +145,7 @@ def update_agent(
     does and what it may reach. Anyone who can run the agent inherits the
     consequences, so it is deliberately not implied by EXECUTE.
     """
-    agent = _load_agent(db, agent_id, guard, Privilege.EDIT)
-    data = body.model_dump(exclude_none=True)
-    tools = data.pop("tools", None)
-    data.pop("db_connections", None)
-    data.pop("git_connections", None)
-    skills = data.pop("skills", None)
-    for field, value in data.items():
-        setattr(agent, field, value)
-    if tools is not None:
-        db.query(AgentTool).filter(AgentTool.agent_id == agent_id).delete()
-        _sync_tools(db, agent_id, tools)
-    if skills is not None:
-        db.query(AgentSkillAttachment).filter(AgentSkillAttachment.agent_id == agent_id).delete()
-        _sync_skills(db, agent_id, skills)
-    db.commit()
-    return _agent_response(_load_agent(db, agent_id, guard, Privilege.BROWSE))
-
+    return update_agent_action(request=request, agent_id=agent_id, body=body, db=db, guard=guard)
 
 @router.delete("/{agent_id}", status_code=204)
 def delete_agent(
@@ -196,10 +159,7 @@ def delete_agent(
     Takes its chat history with it and cannot be undone by whoever was relying
     on it, so MANAGE rather than EDIT.
     """
-    agent = _load_agent(db, agent_id, guard, Privilege.MANAGE)
-    db.delete(agent)
-    db.commit()
-
+    return delete_agent_action(request=request, agent_id=agent_id, db=db, guard=guard)
 
 @router.post("/{agent_id}/clone", response_model=AgentResponse, status_code=201)
 def clone_agent(
@@ -214,54 +174,4 @@ def clone_agent(
     discloses exactly what BROWSE does. Creating the copy is still an admin
     action, for the same reason ``create_agent`` is.
     """
-    source = _load_agent(db, agent_id, guard, Privilege.BROWSE)
-    guard.require_workspace_admin("Cloning an agent")
-    workspace_id = guard.workspace_id
-
-    clone = Agent(
-        workspace_id=workspace_id,
-        llm_connection_id=source.llm_connection_id,
-        name=f"{source.name} (copy)",
-        description=source.description,
-        avatar=source.avatar,
-        color=source.color,
-        prompt=source.prompt,
-        model=source.model,
-        max_tokens=source.max_tokens,
-        is_orchestrator=source.is_orchestrator,
-        visibility=source.visibility,
-        status=source.status or "active",
-        manifest=source.manifest or {},
-        created_by=str(guard.principal.id),
-    )
-    db.add(clone)
-    db.flush()
-
-    for tool in source.tools:
-        db.add(AgentTool(agent_id=clone.id, tool_name=tool.tool_name))
-    for s in source.skills:
-        db.add(AgentSkillAttachment(agent_id=clone.id, skill_id=s.skill_id, position=s.position))
-
-    db.commit()
-    # The clone is a new object: it starts with the caller as owner and no
-    # grants, rather than inheriting the source's, whose grantees consented to
-    # the source and not to a copy someone else now controls.
-    guard.claim_ownership(Securable.agent(str(clone.id)))
-    return _agent_response(_load_agent(db, clone.id, guard, Privilege.BROWSE))
-
-
-def _sync_tools(db: Session, agent_id: int, tools) -> None:
-    for t in (tools or []):
-        db.add(AgentTool(
-            agent_id=agent_id,
-            tool_name=t.tool_name if hasattr(t, "tool_name") else t["tool_name"],
-        ))
-
-
-def _sync_skills(db: Session, agent_id: int, skills) -> None:
-    for idx, s in enumerate(skills or []):
-        db.add(AgentSkillAttachment(
-            agent_id=agent_id,
-            skill_id=s.skill_id if hasattr(s, "skill_id") else s["skill_id"],
-            position=idx,
-        ))
+    return clone_agent_action(request=request, agent_id=agent_id, db=db, guard=guard)

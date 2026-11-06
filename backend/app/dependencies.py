@@ -1,20 +1,27 @@
-"""Auth dependency – returns static administrator credentials directly."""
+"""Auth dependency. Identity comes from the workspace gate, never from a fixed user."""
 
-from fastapi import Request
+from fastapi import HTTPException, Request, status
+
 
 async def get_current_user(
     request: Request,
 ) -> dict:
-    """
-    Returns a static Admin user context directly.
-    """
+    """Return the caller the workspace middleware already authenticated."""
+    ctx = getattr(request.state, "workspace", None)
+    if ctx is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated",
+        )
     return {
-        "id": "bbbbbbbb-0000-0000-0000-000000000001",
-        "sub": "bbbbbbbb-0000-0000-0000-000000000001",
-        "email": "vishal@compass.internal",
-        "org_id": "aaaaaaaa-0000-0000-0000-000000000001",
-        "name": "Vishalkumar Vora",
-        "is_account_admin": True,
+        "id": str(ctx.principal_id),
+        "sub": str(ctx.principal_id),
+        "email": "",
+        "org_id": "",
+        "name": "",
+        "is_account_admin": bool(ctx.is_account_admin),
+        "workspace_id": str(ctx.workspace_id),
+        "workspace_role": ctx.principal_role,
     }
 
 # ── Platform layer (DI via app.state.platform) ───────────────────────────────

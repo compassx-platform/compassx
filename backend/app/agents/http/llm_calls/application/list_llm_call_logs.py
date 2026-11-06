@@ -1,0 +1,91 @@
+def _bind():
+    import app.agents.http.llm_calls.prelude as prelude
+    target = globals()
+    for key, value in vars(prelude).items():
+        if not key.startswith("__"):
+            target[key] = value
+
+
+_bind()
+
+
+def list_llm_call_logs(
+    request: Request,
+    agent_id: int | None = Query(None),
+    session_id: int | None = Query(None),
+    model: str | None = Query(None),
+    start_date: datetime | None = Query(None),
+    end_date: datetime | None = Query(None),
+    limit: int = Query(50, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    db: Session = Depends(get_db),
+    guard: Guard = Depends(get_guard),
+):
+    query = db.query(LlmCallLog).filter(LlmCallLog.workspace_id == guard.workspace_id)
+
+    if isinstance(agent_id, int):
+        # Named explicitly: refuse rather than silently return nothing, so the
+        # caller is told they lack access instead of believing the agent made
+        # no calls.
+        authorized_agent(db, guard, agent_id, Privilege.BROWSE)
+        query = query.filter(LlmCallLog.agent_id == agent_id)
+    if isinstance(session_id, int):
+        query = query.filter(LlmCallLog.session_id == session_id)
+    if isinstance(model, str) and model:
+        query = query.filter(LlmCallLog.model.ilike(f"%{model}%"))
+    if isinstance(start_date, datetime):
+        query = query.filter(LlmCallLog.created_at >= start_date)
+    if isinstance(end_date, datetime):
+        query = query.filter(LlmCallLog.created_at <= end_date)
+
+    logs = query.order_by(LlmCallLog.created_at.desc()).offset(offset).limit(limit).all()
+
+    # Narrow to the agents the caller may browse. Done after the page is
+    # fetched rather than in SQL because visibility is computed from grants,
+    # not stored on the row; the page may therefore come back short.
+    logs = guard.filter(
+        Privilege.BROWSE, logs, lambda log: Securable.agent(str(log.agent_id))
+    )
+
+    # Pre-load agents mapping to avoid N+1 queries
+    agent_ids = {log.agent_id for log in logs}
+    agents_map = {}
+    if agent_ids:
+        agents = db.query(Agent).filter(Agent.id.in_(agent_ids)).all()
+        agents_map = {a.id: a.name for a in agents}
+
+    result = []
+    for log in logs:
+        # Dynamic summary construction
+        summary = "No response content"
+        if log.response_text:
+            summary = log.response_text
+            if len(summary) > 120:
+                summary = summary[:120] + "..."
+        elif log.response_tool_calls:
+            calls = log.response_tool_calls
+            tool_names = []
+            for tc in calls:
+                func_name = tc.get("function", {}).get("name") or tc.get("name")
+                if func_name:
+                    tool_names.append(func_name)
+            if tool_names:
+                summary = f"Called tools: {', '.join(tool_names)}"
+
+        result.append(
+            LlmCallLogListItemResponse(
+                id=log.id,
+                agent_id=log.agent_id,
+                agent_name=agents_map.get(log.agent_id),
+                session_id=log.session_id,
+                call_sequence_number=log.call_sequence_number,
+                created_at=log.created_at,
+                model=log.model,
+                input_tokens=log.input_tokens,
+                output_tokens=log.output_tokens,
+                finish_reason=log.finish_reason,
+                summary=summary,
+                response_tool_calls=log.response_tool_calls or [],
+            )
+        )
+    return result

@@ -129,16 +129,19 @@ class PermissionSet:
 
         # 3. Workspace gate. The workspace comes from the securable's
         #    resolved context, never from a request header.
+        #    Only the workspace administrator skips grants, the same way a
+        #    Unity Catalog metastore admin does inside one workspace.
+        #    Analysts, viewers, developers, and app executors need a grant.
         ws_role = self.principal.workspace_role(self.workspace_id)
         if ws_role is None:
             return AccessResult(False, Decision.NO_WORKSPACE_ACCESS)
-        if ws_role in ("workspace_admin", "workspace_developer", "app_executor"):
+        if ws_role == "workspace_admin":
             return AccessResult(True, Decision.WORKSPACE_ADMIN)
 
-        # 4. Ownership implies MANAGE, which implies everything applicable.
-        if self._is_owner(securable):
-            if privilege in implied_by_manage(securable.type):
-                return AccessResult(True, Decision.OWNER)
+        # 4. Ownership implies MANAGE. MANAGE on a container is inherited by
+        #    its descendants, matching ALL PRIVILEGES on a Unity Catalog parent.
+        if self._privilege_via_ownership(privilege, securable):
+            return AccessResult(True, Decision.OWNER)
 
         # 5. USE chain: every ancestor container must be traversable.
         #    Checked before grants so that a broken chain is reported as such
@@ -213,8 +216,36 @@ class PermissionSet:
         )
         return key in self._owned
 
+    def _iter_owned(self) -> list[Securable]:
+        owned: list[Securable] = []
+        for type_value, catalog, schema, asset in self._owned:
+            try:
+                kind = SecurableType(type_value)
+            except ValueError:
+                continue
+            try:
+                if catalog == WORKSPACE_SENTINEL or kind in (
+                    SecurableType.JOB,
+                    SecurableType.AGENT,
+                    SecurableType.COMPUTE,
+                    SecurableType.CONNECTION,
+                ):
+                    owned.append(Securable(kind, asset=asset))
+                else:
+                    owned.append(
+                        Securable(kind, catalog=catalog, schema=schema, asset=asset)
+                    )
+            except ValueError:
+                continue
+        return owned
+
+    def _privilege_via_ownership(self, privilege: Privilege, securable: Securable) -> bool:
+        if privilege not in implied_by_manage(securable.type):
+            return False
+        return any(owned.covers(securable) for owned in self._iter_owned())
+
     def _has_privilege(self, privilege: Privilege, securable: Securable) -> bool:
-        if self._is_owner(securable) and privilege in implied_by_manage(securable.type):
+        if self._privilege_via_ownership(privilege, securable):
             return True
         return self._matching_grant(privilege, securable) is not None
 

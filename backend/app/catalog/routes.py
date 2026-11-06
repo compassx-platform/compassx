@@ -160,7 +160,12 @@ def _search_row_securable(row) -> Securable:
     return factory(catalog, schema, asset)
 
 
-def _kernel_principal(principal, db: Session, workspace_id: str) -> GovernancePrincipal:
+def _kernel_principal(
+    principal,
+    db: Session,
+    workspace_id: str,
+    workspace_role: str | None = None,
+) -> GovernancePrincipal:
     """Governance identity for a notebook kernel calling back into the API.
 
     Kernel-facing endpoints authenticate their own bearer token rather than
@@ -184,12 +189,13 @@ def _kernel_principal(principal, db: Session, workspace_id: str) -> GovernancePr
         logger.exception("Group expansion failed for kernel principal %s", user_id)
         group_ids = ()
 
+    roles = {workspace_id: workspace_role} if workspace_role else {}
     return GovernancePrincipal(
         id=user_id,
         type="user",
         is_account_admin=bool(getattr(principal, "is_account_admin", False)),
         group_ids=group_ids,
-        workspace_roles={},
+        workspace_roles=roles,
     )
 
 
@@ -946,7 +952,9 @@ async def record_volume_file(
         raise HTTPException(
             status_code=403, detail="No workspace context for this request."
         )
-    kernel = _kernel_principal(principal, db, str(ctx.workspace_id))
+    kernel = _kernel_principal(
+        principal, db, str(ctx.workspace_id), ctx.principal_role
+    )
     Guard(
         load_permission_set(system_db, kernel, str(ctx.workspace_id)),
         system_db,
@@ -2066,43 +2074,28 @@ async def resolve_volume_credential(
         token = authorization[7:]  # Remove "Bearer " prefix
         principal = validate_bearer_token(token)
         user_id = principal.id if hasattr(principal, "id") else principal.get("sub")
-        
-        # Resolve workspace ID: explicit request -> catalog binding -> request context
-        workspace_id = (
-            body.workspace_id
-            or req_context.headers.get("x-workspace-id")
-        )
-        if not workspace_id and (body.workspace_slug or req_context.headers.get("x-workspace-slug")):
-            ws_slug = body.workspace_slug or req_context.headers.get("x-workspace-slug")
-            from app.workspace.models import Workspace
-            ws_obj = db.query(Workspace).filter((Workspace.slug == ws_slug) | (Workspace.id == ws_slug)).first()
-            if ws_obj:
-                workspace_id = str(ws_obj.id)
 
-        if not workspace_id:
-            from app.catalog.models import UnifiedCatalog, CatalogWorkspaceBinding
-            cat_obj = db.query(UnifiedCatalog).filter(UnifiedCatalog.name == body.catalog).first()
-            if cat_obj:
-                binding = db.query(CatalogWorkspaceBinding).filter(
-                    CatalogWorkspaceBinding.catalog_id == cat_obj.id
-                ).first()
-                if binding:
-                    workspace_id = str(binding.workspace_id)
-
-        if not workspace_id:
-            workspace_id = getattr(req_context.state, "workspace", None) and getattr(req_context.state.workspace, "workspace_id", None)
-            if workspace_id:
-                workspace_id = str(workspace_id)
-
-        if not workspace_id:
-            logger.warning("Volume resolve rejected: missing mandatory workspace ID")
+        # The authorization scope is the workspace the gate already resolved.
+        # A body or header must not switch the caller into another workspace.
+        ctx = getattr(req_context.state, "workspace", None)
+        if ctx is None:
             return JSONResponse(
-                status_code=400,
+                status_code=403,
                 content={
-                    "error_code": "WORKSPACE_REQUIRED",
-                    "message": "Workspace ID is mandatory when resolving volume credentials.",
+                    "error_code": "PERMISSION_DENIED",
+                    "message": "No workspace context for this request.",
                 },
             )
+        requested = body.workspace_id or req_context.headers.get("x-workspace-id")
+        if requested and str(requested) not in (str(ctx.workspace_id), str(ctx.workspace_slug)):
+            return JSONResponse(
+                status_code=403,
+                content={
+                    "error_code": "PERMISSION_DENIED",
+                    "message": "Workspace does not match the authenticated workspace.",
+                },
+            )
+        workspace_id = str(ctx.workspace_id)
     except Exception as exc:
         logger.warning("Volume resolve: token validation failed: %s", exc)
         return JSONResponse(
@@ -2177,7 +2170,7 @@ async def resolve_volume_credential(
 
         securable = Securable.volume(body.catalog, body.schema_name, body.volume)
         needed = Privilege.SELECT if body_mode == "read" else Privilege.MODIFY
-        kernel = _kernel_principal(principal, db, workspace_id)
+        kernel = _kernel_principal(principal, db, workspace_id, ctx.principal_role)
         guard = Guard(
             load_permission_set(system_db, kernel, workspace_id),
             system_db,

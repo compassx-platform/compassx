@@ -1,16 +1,6 @@
-"""Z-Order clustering module for catalog service and table operations."""
-from __future__ import annotations
+"""Import shim. The implementation lives under `app.catalog.infrastructure`.
+"""
+import importlib as _importlib
 
-from services.compassx_sql.zorder import (
-    normalize_to_uint32,
-    interleave_bits_2d,
-    interleave_bits_nd,
-    z_order_dataframe,
-)
-
-__all__ = [
-    "normalize_to_uint32",
-    "interleave_bits_2d",
-    "interleave_bits_nd",
-    "z_order_dataframe",
-]
+_mod = _importlib.import_module('app.catalog.infrastructure.zorder')
+globals().update({name: value for name, value in vars(_mod).items() if not name.startswith('__')})

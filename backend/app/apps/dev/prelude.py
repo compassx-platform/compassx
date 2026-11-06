@@ -1,0 +1,591 @@
+import os
+import base64
+import logging
+import yaml
+from typing import Optional, List, Dict, Any
+from pydantic import BaseModel
+from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect, status
+from sqlalchemy.orm import Session
+
+from app.database import get_system_db
+from app.governance.dependencies import Guard, get_guard
+from app.models.app import App
+from app.services.app_manifest_service import app_manifest_service
+from app.services.omnigent_dev_service import omnigent_dev_service
+from app.services.studio.workspace_files import get_workspace_file_service
+from app.services.dev_terminal_service import dev_terminal_service
+from app.services.sandbox_reaper_service import unified_reaper_service
+from app.sandbox.service import sandbox_service
+from app.sandbox.models import SandboxSpec, StorageMount, InitScript, SandboxStatus
+
+logger = logging.getLogger("app.routes.app_dev_routes")
+
+
+def _sync_agent_login(app, *, force: bool = False) -> None:
+    """Capture or restore the workspace Antigravity login. Never fails the request."""
+    try:
+        from app.services.sandbox_credentials import sync_antigravity_for_app
+        sync_antigravity_for_app(app, force=force)
+    except Exception:
+        logger.debug("Agent login sync failed for %s", getattr(app, "id", ""), exc_info=True)
+
+
+
+class ExecCommandRequest(BaseModel):
+    command: str
+    workspace_id: Optional[str] = None
+    workspace_name: Optional[str] = None
+
+class FileWriteRequest(BaseModel):
+
+    path: str
+    content: str
+    workspace_id: Optional[str] = None
+
+class PublishRequest(BaseModel):
+    commit_message: Optional[str] = "Update application via Omnigent Dev Studio"
+    workspace_id: Optional[str] = None
+    workspace_name: Optional[str] = None
+
+class CreateAppSessionRequest(BaseModel):
+    agent: str = "opencode"  # 'opencode' | 'pi' | 'antigravity'
+    title: Optional[str] = None
+    workspace_id: Optional[str] = None
+    model: Optional[str] = None
+
+class UpdateAppSessionRequest(BaseModel):
+    title: Optional[str] = None
+    status: Optional[str] = None
+
+class CreateSessionRequest(BaseModel):
+    agent_name: Optional[str] = "polly"
+    title: Optional[str] = None
+
+class BuildPromptRequest(BaseModel):
+    prompt: str
+    session_id: Optional[str] = None
+    agent_name: Optional[str] = "polly"
+    workspace_id: Optional[str] = None
+
+class BuildClearRequest(BaseModel):
+    session_id: Optional[str] = None
+    workspace_id: Optional[str] = None
+
+class StartDevRequest(BaseModel):
+    workspace_id: Optional[str] = None  # if provided, resume this workspace; otherwise create new
+    workspace_name: Optional[str] = None  # if provided, create or resume workspace with this custom name
+    host_type: Optional[str] = "compassx"  # "compassx" | "omnigent"
+
+class CreateWorkspaceRequest(BaseModel):
+    name: str
+    git_branch: Optional[str] = None
+    base_branch: Optional[str] = "main"
+    fetch_remote: Optional[bool] = True
+
+class SyncWorkspaceRequest(BaseModel):
+    base_branch: Optional[str] = "main"
+
+class InstallDepsRequest(BaseModel):
+    workspace_id: Optional[str] = None
+    workspace_name: Optional[str] = None
+    force: Optional[bool] = False
+
+class VerifyGitRequest(BaseModel):
+    workspace_id: Optional[str] = None
+    workspace_name: Optional[str] = None
+
+class RunAppRequest(BaseModel):
+    workspace_id: Optional[str] = None
+    workspace_name: Optional[str] = None
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+def _build_app_sandbox_spec(app: App) -> SandboxSpec:
+    repo_dir = omnigent_dev_service.get_repo_dir(app)
+    clean_k8s_app_id = app.id.replace("_", "-").lower()
+
+    git_url = getattr(app, "git_repo_url", None)
+    git_token = None
+    if hasattr(app, "git_pat_enc") and app.git_pat_enc:
+        try:
+            from app.services.encryption import decrypt_field
+            git_token = decrypt_field(app.git_pat_enc)
+        except Exception:
+            pass
+
+    auth_url = git_url or ""
+    if git_token and git_url and not ("@" in git_url.split("//")[-1]):
+        if "github.com" in git_url:
+            auth_url = git_url.replace("https://", f"https://x-access-token:{git_token}@")
+        else:
+            auth_url = git_url.replace("https://", f"https://oauth2:{git_token}@")
+
+    git_ref = getattr(app, "git_ref", None) or getattr(app, "git_branch", None) or "main"
+
+    clone_cmd = "git status || git init"
+    if auth_url:
+        clone_cmd = (
+            f"if [ ! -d /workspace/.git ] || [ -z \"$(find /workspace -maxdepth 2 -not -name '.git*' -not -name 'index.html' 2>/dev/null)\" ]; then "
+            f"  rm -rf /workspace/* /workspace/.[!.]* 2>/dev/null || true; "
+            f"  (git clone --branch '{git_ref}' '{auth_url}' /workspace || git clone '{auth_url}' /workspace || (cd /workspace && git init)); "
+            f"fi"
+        )
+
+    git_config_cmd = "git config --global user.name 'CompassX Dev' && git config --global user.email 'dev@compassx.io'"
+    if git_token:
+        if "github.com" in (git_url or ""):
+            git_config_cmd += f" && git config --global url.\"https://x-access-token:{git_token}@github.com/\".insteadOf \"https://github.com/\""
+        elif "gitlab.com" in (git_url or ""):
+            git_config_cmd += f" && git config --global url.\"https://oauth2:{git_token}@gitlab.com/\".insteadOf \"https://gitlab.com/\""
+
+    raw_auto_start_py = """import os, sys, subprocess, yaml, time, socket, threading, re
+
+if os.fork() != 0:
+    sys.exit(0)
+os.setsid()
+if os.fork() != 0:
+    sys.exit(0)
+
+sys.stdout.flush()
+sys.stderr.flush()
+si = open('/dev/null', 'r')
+so = open('/tmp/auto_start.log', 'a+')
+se = open('/tmp/auto_start.log', 'a+', 1)
+os.dup2(si.fileno(), sys.stdin.fileno())
+os.dup2(so.fileno(), sys.stdout.fileno())
+os.dup2(se.fileno(), sys.stderr.fileno())
+
+print("[auto_start] Daemon initialized", flush=True)
+
+manifest = None
+for base_dir in ['/workspace', '/workspaces']:
+    if not os.path.exists(base_dir):
+        continue
+    for f in ('app.yaml', 'app.yml'):
+        p = os.path.join(base_dir, f)
+        if os.path.isfile(p):
+            try:
+                with open(p, 'r', encoding='utf-8') as fh:
+                    manifest = yaml.safe_load(fh)
+                    manifest['_dir'] = base_dir
+                    print(f"[auto_start] Found direct manifest: {p}", flush=True)
+                    break
+            except Exception as e:
+                print(f"[auto_start] Error loading manifest: {e}", flush=True)
+    if manifest:
+        break
+    for root, dirs, files in os.walk(base_dir):
+        depth = root[len(base_dir):].count(os.sep)
+        if depth > 3:
+            dirs[:] = []
+            continue
+        if any(x in root for x in ('node_modules', '.git', '.cache', '__pycache__', 'venv', '.venv')):
+            dirs[:] = []
+            continue
+        for f in ('app.yaml', 'app.yml'):
+            if f in files:
+                try:
+                    with open(os.path.join(root, f), 'r', encoding='utf-8') as fh:
+                        manifest = yaml.safe_load(fh)
+                        manifest['_dir'] = root
+                        print(f"[auto_start] Found manifest: {os.path.join(root, f)}", flush=True)
+                        break
+                except Exception as e:
+                    print(f"[auto_start] Error loading manifest: {e}", flush=True)
+        if manifest:
+            break
+    if manifest:
+        break
+
+mdir = manifest.get('_dir', '/workspace') if manifest else '/workspace'
+services = (manifest.get('services') or {}) if manifest else {}
+b_cmd = None
+b_port = 8877
+b_dir = mdir
+b_path = '/api'
+f_cmd = None
+f_port = 4000
+f_dir = mdir
+
+if isinstance(services, dict) and services:
+    b_svc = services.get('backend') or services.get('api')
+    if b_svc:
+        b_cmd = b_svc.get('command') if isinstance(b_svc, dict) else str(b_svc)
+        if isinstance(b_svc, dict):
+            b_port = int(b_svc.get('port', 8877))
+            if b_svc.get('dir'):
+                b_dir = os.path.normpath(os.path.join(mdir, b_svc['dir']))
+            b_path = b_svc.get('path', '/api')
+    f_svc = services.get('frontend') or services.get('ui')
+    if f_svc:
+        f_cmd = f_svc.get('command') if isinstance(f_svc, dict) else str(f_svc)
+        if isinstance(f_svc, dict):
+            f_port = int(f_svc.get('port', 4000))
+            if f_svc.get('dir'):
+                f_dir = os.path.normpath(os.path.join(mdir, f_svc['dir']))
+elif manifest and 'command' in manifest:
+    b_cmd = manifest.get('command')
+    b_port = int(manifest.get('port', manifest.get('backend_port', 8877)))
+    if manifest.get('frontend'):
+        f_cmd = manifest.get('frontend')
+        f_port = int(manifest.get('frontend_port', 4000))
+else:
+    for root, dirs, files in os.walk(mdir):
+        if any(x in root for x in ('node_modules', '.git', '.cache')):
+            dirs[:] = []
+            continue
+        if not b_cmd and any(f in files for f in ('app.py', 'main.py', 'server.py')):
+            b_dir = root
+            if 'main.py' in files:
+                b_cmd = 'uvicorn main:app --host 0.0.0.0 --port 8000 --reload'
+                b_port = 8000
+            else:
+                b_cmd = 'python3 app.py'
+        if not f_cmd and 'package.json' in files:
+            f_dir = root
+            f_cmd = 'npm run dev -- --port 4000 --host 0.0.0.0'
+
+print(f"[auto_start] Starting backend in {b_dir}: {b_cmd} (port {b_port})", flush=True)
+print(f"[auto_start] Starting frontend in {f_dir}: {f_cmd} (port {f_port})", flush=True)
+
+for check_dir in ['/workspace']:
+    if os.path.exists(check_dir):
+        for root, dirs, files in os.walk(check_dir):
+            if any(x in root for x in ('node_modules', '.git')):
+                dirs[:] = []
+                continue
+            for vf in files:
+                if vf.startswith('vite.config.') and vf.endswith(('.ts', '.js', '.mjs', '.cjs')):
+                    vp = os.path.join(root, vf)
+                    try:
+                        with open(vp, 'r', encoding='utf-8') as vfh:
+                            vc = vfh.read()
+                        if 'allowedHosts' not in vc and 'server:' in vc:
+                            vc = re.sub(r'server\\s*:\\s*\\{', 'server: {\\n    allowedHosts: true,', vc, count=1)
+                            with open(vp, 'w', encoding='utf-8') as vfh:
+                                vfh.write(vc)
+                    except Exception:
+                        pass
+
+def _supervise(label, command, cwd, log_path):
+    # Restart a dev server that exits. A one-shot start left the preview on the splash page.
+    def _run():
+        while True:
+            print(f"[auto_start] {label} starting", flush=True)
+            proc = subprocess.Popen(
+                command,
+                shell=True,
+                cwd=cwd,
+                stdout=open(log_path, 'a'),
+                stderr=subprocess.STDOUT,
+            )
+            code = proc.wait()
+            print(f"[auto_start] {label} exited {code}; restarting", flush=True)
+            time.sleep(2)
+    threading.Thread(target=_run, daemon=True).start()
+
+if b_cmd:
+    b_str = ' '.join(b_cmd) if isinstance(b_cmd, list) else str(b_cmd)
+    _supervise('backend', b_str, b_dir, '/tmp/app_backend.log')
+
+if f_cmd:
+    f_str = ' '.join(f_cmd) if isinstance(f_cmd, list) else str(f_cmd)
+    os.environ['PORT'] = str(f_port)
+    os.environ['HOST'] = '0.0.0.0'
+    _supervise('frontend', f_str, f_dir, '/tmp/app_frontend.log')
+
+def _port_open(port):
+    probe = socket.socket()
+    probe.settimeout(0.3)
+    try:
+        probe.connect(('127.0.0.1', int(port)))
+        return True
+    except Exception:
+        return False
+    finally:
+        try:
+            probe.close()
+        except Exception:
+            pass
+
+if f_cmd:
+    deadline = time.time() + 25
+    while time.time() < deadline and not _port_open(f_port):
+        time.sleep(0.4)
+    if not _port_open(f_port):
+        for candidate in (3000, 5173, 4173, 4000, 8081, 5000):
+            if candidate in (8080,):
+                continue
+            if _port_open(candidate):
+                print(f"[auto_start] Frontend is listening on {candidate}", flush=True)
+                f_port = candidate
+                break
+if b_cmd and not _port_open(b_port):
+    for candidate in (8000, 8877, 8081, 5000):
+        if candidate == 8080 or candidate == f_port:
+            continue
+        if _port_open(candidate):
+            print(f"[auto_start] Backend is listening on {candidate}", flush=True)
+            b_port = candidate
+            break
+GATEWAY_PORT = 8080
+SPLASH_HTML = b'HTTP/1.1 200 OK\\r\\nContent-Type: text/html; charset=utf-8\\r\\nConnection: close\\r\\n\\r\\n<!DOCTYPE html><html><head><meta charset="utf-8"><meta http-equiv="refresh" content="2"><title>Live Sandbox Starting</title><style>body{background:#0b0f19;color:#f1f5f9;font-family:-apple-system,BlinkMacSystemFont,sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;}.card{background:#111827;border:1px solid #1e293b;border-radius:12px;padding:2.5rem;text-align:center;max-width:440px;box-shadow:0 20px 25px -5px rgba(0,0,0,0.5);}.spinner{width:38px;height:38px;border:3px solid rgba(59,130,246,0.2);border-top-color:#3b82f6;border-radius:50%;animation:spin 0.8s linear infinite;margin:0 auto 1.25rem;}@keyframes spin{to{transform:rotate(360deg);}}h2{font-size:1.2rem;font-weight:600;margin-bottom:0.5rem;color:#f8fafc;}p{font-size:0.875rem;color:#94a3b8;line-height:1.5;}</style></head><body><div class="card"><div class="spinner"></div><h2>Live Sandbox Starting...</h2><p>Application dev server is compiling and starting. This preview will automatically refresh once ready.</p></div></body></html>'
+
+def forward(src, dst):
+    while True:
+        try:
+            data = src.recv(8192)
+            if not data:
+                break
+            dst.sendall(data)
+        except Exception:
+            break
+    try:
+        src.close()
+    except Exception:
+        pass
+    try:
+        dst.close()
+    except Exception:
+        pass
+
+def handle_client(client):
+    try:
+        peek = client.recv(1024, socket.MSG_PEEK)
+        t_port = f_port if f_cmd else b_port
+        if peek and f_cmd and b_cmd:
+            try:
+                line = peek.decode('utf-8', errors='ignore').split('\\r\\n')[0]
+                parts = line.split(' ')
+                if len(parts) >= 2:
+                    path = parts[1]
+                    if path.startswith(b_path) or path.startswith('/ws') or path.startswith('/docs') or path.startswith('/openapi.json'):
+                        t_port = b_port
+                    else:
+                        t_port = f_port
+            except Exception:
+                pass
+        try:
+            target = socket.create_connection(('127.0.0.1', int(t_port)), timeout=3)
+            threading.Thread(target=forward, args=(client, target), daemon=True).start()
+            threading.Thread(target=forward, args=(target, client), daemon=True).start()
+        except Exception:
+            try:
+                client.sendall(SPLASH_HTML)
+                client.close()
+            except Exception:
+                pass
+    except Exception:
+        try:
+            client.close()
+        except Exception:
+            pass
+
+srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+srv.bind(('0.0.0.0', GATEWAY_PORT))
+srv.listen(100)
+print(f"[auto_start] Gateway proxy listening on port {GATEWAY_PORT}", flush=True)
+while True:
+    try:
+        c, _ = srv.accept()
+        threading.Thread(target=handle_client, args=(c,), daemon=True).start()
+    except Exception:
+        pass
+"""
+    b64_auto_start = base64.b64encode(raw_auto_start_py.strip().encode("utf-8")).decode("ascii")
+    auto_start_script = f"echo '{b64_auto_start}' | base64 -d > /tmp/compassx_auto_start.py && python3 /tmp/compassx_auto_start.py"
+
+    auth_sync_script = (
+        "mkdir -p /root/.gemini/antigravity-cli /root/.gemini/config 2>/dev/null || true; "
+        "if [ -f /workspace/.env ]; then "
+        "  mkdir -p /etc/profile.d 2>/dev/null || true; "
+        "  cp -f /workspace/.env /etc/profile.d/compassx_env.sh 2>/dev/null || true; "
+        "  sed -i 's/^/export /' /etc/profile.d/compassx_env.sh 2>/dev/null || true; "
+        "  sed -i 's/export export /export /' /etc/profile.d/compassx_env.sh 2>/dev/null || true; "
+        "  grep -q 'compassx_env.sh' /root/.bashrc 2>/dev/null || echo '[ -f /etc/profile.d/compassx_env.sh ] && source /etc/profile.d/compassx_env.sh' >> /root/.bashrc; "
+        "  grep -q 'compassx_env.sh' /etc/profile 2>/dev/null || echo '[ -f /etc/profile.d/compassx_env.sh ] && source /etc/profile.d/compassx_env.sh' >> /etc/profile; "
+        "fi; "
+        "(while true; do "
+        "  for src in /root/.omnigent/antigravity-native/*/agy-home/.gemini; do "
+        "    if [ -d \"$src\" ]; then "
+        "      for f in antigravity-cli/antigravity-oauth-token oauth_creds.json antigravity-cli/jetski_state.pbtxt antigravity-cli/installation_id; do "
+        "        if [ -f \"$src/$f\" ] && [ -s \"$src/$f\" ] && ! grep -q auto-authenticated \"$src/$f\" 2>/dev/null; then "
+        "          mkdir -p \"/root/.gemini/$(dirname \"$f\")\" 2>/dev/null || true; "
+        "          cp -f \"$src/$f\" \"/root/.gemini/$f\" 2>/dev/null || true; "
+        "        fi; "
+        "      done; "
+        "    fi; "
+        "  done; "
+        "  sleep 3; "
+        "done) >/dev/null 2>&1 &"
+    )
+
+    # App-configured custom environment variables (from app.config)
+    app_cfg = getattr(app, "config", {}) or {}
+    raw_custom_env = app_cfg.get("env_vars") or app_cfg.get("environment") or app_cfg.get("env") or []
+    custom_env_dict: Dict[str, str] = {}
+    if isinstance(raw_custom_env, dict):
+        for k, v in raw_custom_env.items():
+            if k and v is not None:
+                custom_env_dict[str(k)] = str(v)
+    elif isinstance(raw_custom_env, list):
+        for ev in raw_custom_env:
+            if isinstance(ev, dict):
+                k = ev.get("key") or ev.get("name")
+                v = ev.get("value")
+                if k and v is not None:
+                    custom_env_dict[str(k)] = str(v)
+            elif isinstance(ev, str) and "=" in ev:
+                k, v = ev.split("=", 1)
+                if k.strip():
+                    custom_env_dict[k.strip()] = v.strip()
+
+    from app.services.app_runner import app_runner_service
+    app_dir = app_runner_service.get_app_dir(app.id)
+    agent_storage_dir = os.path.join(app_dir, "agent_storage")
+    gemini_dir = os.path.join(agent_storage_dir, "gemini").replace("\\", "/")
+    pi_dir = os.path.join(agent_storage_dir, "pi").replace("\\", "/")
+    opencode_dir = os.path.join(agent_storage_dir, "opencode").replace("\\", "/")
+    os.makedirs(gemini_dir, exist_ok=True)
+    os.makedirs(pi_dir, exist_ok=True)
+    os.makedirs(opencode_dir, exist_ok=True)
+
+    from app.services.sandbox_credentials import gateway_api_key_for_app, gateway_base_url
+    custom_env_dict["OPENAI_API_KEY"] = gateway_api_key_for_app(app)
+    custom_env_dict["OPENAI_BASE_URL"] = gateway_base_url()
+
+    return SandboxSpec(
+        sandbox_id=f"dev-app-{app.id}",
+        consumer_key=f"app_{app.id}",
+        name=f"{app.name} (Dev Sandbox)",
+        consumer_module="app",
+        workspace_id=str(app.workspace_id) if app.workspace_id else None,
+        image=os.environ.get("COMPASSX_SANDBOX_IMAGE") or "ghcr.io/compassx-platform/compassx-sandbox-host:latest",
+        ports=[8080, 9201],
+        env_vars=custom_env_dict,
+        storage_mounts=[
+            StorageMount(source_path=repo_dir, mount_path="/workspace"),
+            StorageMount(source_path=gemini_dir, mount_path="/root/.gemini"),
+            StorageMount(source_path=pi_dir, mount_path="/root/.pi"),
+            StorageMount(source_path=opencode_dir, mount_path="/root/.opencode"),
+        ],
+        init_scripts=[
+            InitScript(name="Restore & Sync Agent Auth", command=auth_sync_script, ignore_failure=True),
+            InitScript(name="Configure Git Credentials", command=git_config_cmd, ignore_failure=True),
+            InitScript(name="Prepare Workspace Code", command=clone_cmd, ignore_failure=True),
+            InitScript(name="Install Dependencies", command="(test -f requirements.txt && pip install --prefer-binary -r requirements.txt || true); (find /workspace -maxdepth 3 -name package.json -execdir npm install --prefer-offline --no-audit \\; 2>/dev/null || true)", timeout_seconds=600, ignore_failure=True),
+            InitScript(name="Run Application Server", command=auto_start_script, ignore_failure=True),
+        ],
+        labels={
+            "compassx/app-id": clean_k8s_app_id,
+            "compassx/dev": "true",
+            "compassx/role": "dev",
+            "compassx-app-id": app.id,
+            "compassx.app_id": app.id,
+            "compassx.app_slug": app.slug or "",
+            "compassx.consumer_key": f"app_{app.id}",
+            "compassx-consumer-key": f"app_{app.id}",
+        },
+        metadata={"app_id": app.id, "app_name": app.name, "slug": app.slug},
+    )
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+class AppManifestUpdateRequest(BaseModel):
+    frontend_command: Optional[str] = None
+    frontend_dir: Optional[str] = None
+    frontend_port: Optional[int] = None
+    backend_command: Optional[str] = None
+    backend_dir: Optional[str] = None
+    backend_port: Optional[int] = None
+    install_command: Optional[str] = None
+    env: Optional[Dict[str, str]] = None
+    raw_yaml: Optional[str] = None
+    workspace_id: Optional[str] = None
+
+
+
+
+
+
+

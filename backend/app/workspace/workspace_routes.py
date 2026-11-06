@@ -4,17 +4,23 @@
 - Member management
 - Catalog visibility (list objects, publish)
 """
+
 from __future__ import annotations
 
 import logging
+
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+
 from sqlalchemy.orm import Session
 
 from app.database import get_account_db
+
 from app.workspace.auth import get_current_principal
+
 from app.workspace.middleware import WorkspaceContext
+
 from app.workspace.models import (
     CatalogObject,
     CatalogPermission,
@@ -23,6 +29,7 @@ from app.workspace.models import (
     WorkspaceCatalog,
     WorkspaceMembership,
 )
+
 from app.workspace.schemas import (
     CatalogObjectOut,
     MemberAdd,
@@ -31,9 +38,9 @@ from app.workspace.schemas import (
     WorkspaceSlim,
 )
 
-logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/api/w/{slug}/api", tags=["workspace"])
+logger = logging.getLogger("app.workspace.workspace_routes")
 
+router = APIRouter(prefix="/api/w/{slug}/api", tags=["workspace"])
 
 def _get_workspace_ctx(request: Request) -> WorkspaceContext:
     ctx = getattr(request.state, "workspace", None)
@@ -41,13 +48,9 @@ def _get_workspace_ctx(request: Request) -> WorkspaceContext:
         raise HTTPException(status_code=400, detail="Missing workspace context")
     return ctx
 
-
 def _require_workspace_admin(ctx: WorkspaceContext) -> None:
     if ctx.principal_role not in ("admin",) and not ctx.is_account_admin:
         raise HTTPException(status_code=403, detail="Workspace admin required")
-
-
-# ── Workspace info & settings ──────────────────────────────────────────────────
 
 DEFAULT_WORKSPACE_SETTINGS = {
     "default_warehouse": "last_selected",
@@ -92,6 +95,25 @@ DEFAULT_WORKSPACE_SETTINGS = {
     }
 }
 
+import app.workspace.http.workspace.prelude as _prelude
+for _name, _value in vars(_prelude).items():
+    if not _name.startswith('__'):
+        globals()[_name] = _value
+
+from app.workspace.http.workspace.application.get_workspace_info import get_workspace_info as get_workspace_info_action
+from app.workspace.http.workspace.application.get_workspace_settings import get_workspace_settings as get_workspace_settings_action
+from app.workspace.http.workspace.application.update_workspace_settings import update_workspace_settings as update_workspace_settings_action
+from app.workspace.http.workspace.application.list_members import list_members as list_members_action
+from app.workspace.http.workspace.application.add_member import add_member as add_member_action
+from app.workspace.http.workspace.application.update_member_role import update_member_role as update_member_role_action
+from app.workspace.http.workspace.application.remove_member import remove_member as remove_member_action
+from app.workspace.http.workspace.application.list_catalogs import list_catalogs as list_catalogs_action
+from app.workspace.http.workspace.application.list_schemas import list_schemas as list_schemas_action
+from app.workspace.http.workspace.application.list_objects import list_objects as list_objects_action
+from app.workspace.http.workspace.application.publish_object import publish_object as publish_object_action
+
+router = APIRouter(prefix="/api/w/{slug}/api", tags=["workspace"])
+
 
 @router.get("/workspace")
 def get_workspace_info(
@@ -99,17 +121,7 @@ def get_workspace_info(
     request: Request,
     db: Session = Depends(get_account_db),
 ):
-    ctx = _get_workspace_ctx(request)
-    ws = db.query(Workspace).filter(Workspace.id == ctx.workspace_id).first()
-    return {
-        "id": ws.id,
-        "name": ws.name,
-        "slug": ws.slug,
-        "status": ws.status,
-        "url": f"/w/{ws.slug}",
-        "current_user_role": ctx.principal_role,
-        "is_account_admin": ctx.is_account_admin,
-    }
+    return get_workspace_info_action(slug=slug, request=request, db=db)
 
 
 @router.get("/workspace/settings")
@@ -118,21 +130,7 @@ def get_workspace_settings(
     request: Request,
     db: Session = Depends(get_account_db),
 ):
-    ctx = _get_workspace_ctx(request)
-    ws = db.query(Workspace).filter(Workspace.id == ctx.workspace_id).first()
-    if ws is None:
-        raise HTTPException(status_code=404, detail="Workspace not found")
-    
-    cfg = dict(ws.storage_config or {})
-    saved_settings = cfg.get("workspace_settings") or {}
-    
-    # Deep merge with defaults
-    merged = {**DEFAULT_WORKSPACE_SETTINGS, **saved_settings}
-    for k in ["package_repositories", "base_environments", "serverless_usage_policies", "classic_compute_policies"]:
-        if k in DEFAULT_WORKSPACE_SETTINGS and isinstance(DEFAULT_WORKSPACE_SETTINGS[k], dict):
-            merged[k] = {**DEFAULT_WORKSPACE_SETTINGS[k], **saved_settings.get(k, {})}
-
-    return merged
+    return get_workspace_settings_action(slug=slug, request=request, db=db)
 
 
 @router.patch("/workspace/settings")
@@ -142,38 +140,8 @@ def update_workspace_settings(
     request: Request,
     db: Session = Depends(get_account_db),
 ):
-    ctx = _get_workspace_ctx(request)
-    _require_workspace_admin(ctx)
-    ws = db.query(Workspace).filter(Workspace.id == ctx.workspace_id).first()
-    if ws is None:
-        raise HTTPException(status_code=404, detail="Workspace not found")
+    return update_workspace_settings_action(slug=slug, body=body, request=request, db=db)
 
-    cfg = dict(ws.storage_config or {})
-    existing = cfg.get("workspace_settings") or {}
-    
-    # Merge updates into existing settings
-    for key, value in body.items():
-        if isinstance(value, dict) and key in existing and isinstance(existing[key], dict):
-            existing[key] = {**existing[key], **value}
-        else:
-            existing[key] = value
-
-    cfg["workspace_settings"] = existing
-    ws.storage_config = cfg
-    db.commit()
-    db.refresh(ws)
-
-    # Return full merged settings
-    merged = {**DEFAULT_WORKSPACE_SETTINGS, **existing}
-    for k in ["package_repositories", "base_environments", "serverless_usage_policies", "classic_compute_policies"]:
-        if k in DEFAULT_WORKSPACE_SETTINGS and isinstance(DEFAULT_WORKSPACE_SETTINGS[k], dict):
-            merged[k] = {**DEFAULT_WORKSPACE_SETTINGS[k], **existing.get(k, {})}
-
-    return merged
-
-
-
-# ── Members ───────────────────────────────────────────────────────────────────
 
 @router.get("/workspace/members", response_model=list[MemberOut])
 def list_members(
@@ -181,24 +149,7 @@ def list_members(
     request: Request,
     db: Session = Depends(get_account_db),
 ):
-    ctx = _get_workspace_ctx(request)
-    memberships = (
-        db.query(WorkspaceMembership)
-        .filter(WorkspaceMembership.workspace_id == ctx.workspace_id)
-        .all()
-    )
-    result = []
-    for m in memberships:
-        principal = db.query(Principal).filter(Principal.id == m.principal_id).first()
-        result.append(MemberOut(
-            id=m.id,
-            workspace_id=m.workspace_id,
-            principal_id=m.principal_id,
-            role=m.role,
-            granted_at=m.granted_at,
-            principal=principal,
-        ))
-    return result
+    return list_members_action(slug=slug, request=request, db=db)
 
 
 @router.post("/workspace/members", response_model=MemberOut, status_code=201)
@@ -208,41 +159,7 @@ def add_member(
     request: Request,
     db: Session = Depends(get_account_db),
 ):
-    ctx = _get_workspace_ctx(request)
-    _require_workspace_admin(ctx)
-
-    if body.role not in ("admin", "member", "viewer"):
-        raise HTTPException(status_code=400, detail="Invalid role")
-
-    existing = db.query(WorkspaceMembership).filter(
-        WorkspaceMembership.workspace_id == ctx.workspace_id,
-        WorkspaceMembership.principal_id == body.principal_id,
-    ).first()
-    if existing:
-        raise HTTPException(status_code=400, detail="Principal already a member")
-
-    principal = db.query(Principal).filter(Principal.id == body.principal_id).first()
-    if principal is None:
-        raise HTTPException(status_code=404, detail="Principal not found")
-
-    m = WorkspaceMembership(
-        id=str(uuid4()),
-        workspace_id=ctx.workspace_id,
-        principal_id=body.principal_id,
-        role=body.role,
-        granted_by=ctx.principal_id,
-    )
-    db.add(m)
-    db.commit()
-    db.refresh(m)
-    return MemberOut(
-        id=m.id,
-        workspace_id=m.workspace_id,
-        principal_id=m.principal_id,
-        role=m.role,
-        granted_at=m.granted_at,
-        principal=principal,
-    )
+    return add_member_action(slug=slug, body=body, request=request, db=db)
 
 
 @router.patch("/workspace/members/{member_id}", response_model=MemberOut)
@@ -253,30 +170,7 @@ def update_member_role(
     request: Request,
     db: Session = Depends(get_account_db),
 ):
-    ctx = _get_workspace_ctx(request)
-    _require_workspace_admin(ctx)
-
-    if body.role not in ("admin", "member", "viewer"):
-        raise HTTPException(status_code=400, detail="Invalid role")
-
-    m = db.query(WorkspaceMembership).filter(
-        WorkspaceMembership.id == member_id,
-        WorkspaceMembership.workspace_id == ctx.workspace_id,
-    ).first()
-    if m is None:
-        raise HTTPException(status_code=404, detail="Membership not found")
-    m.role = body.role
-    db.commit()
-    db.refresh(m)
-    principal = db.query(Principal).filter(Principal.id == m.principal_id).first()
-    return MemberOut(
-        id=m.id,
-        workspace_id=m.workspace_id,
-        principal_id=m.principal_id,
-        role=m.role,
-        granted_at=m.granted_at,
-        principal=principal,
-    )
+    return update_member_role_action(slug=slug, member_id=member_id, body=body, request=request, db=db)
 
 
 @router.delete("/workspace/members/{member_id}", status_code=204)
@@ -286,20 +180,8 @@ def remove_member(
     request: Request,
     db: Session = Depends(get_account_db),
 ):
-    ctx = _get_workspace_ctx(request)
-    _require_workspace_admin(ctx)
+    return remove_member_action(slug=slug, member_id=member_id, request=request, db=db)
 
-    m = db.query(WorkspaceMembership).filter(
-        WorkspaceMembership.id == member_id,
-        WorkspaceMembership.workspace_id == ctx.workspace_id,
-    ).first()
-    if m is None:
-        raise HTTPException(status_code=404, detail="Membership not found")
-    db.delete(m)
-    db.commit()
-
-
-# ── Catalog visibility ────────────────────────────────────────────────────────
 
 @router.get("/catalog", response_model=list[dict])
 def list_catalogs(
@@ -307,15 +189,7 @@ def list_catalogs(
     request: Request,
     db: Session = Depends(get_account_db),
 ):
-    ctx = _get_workspace_ctx(request)
-    ws = db.query(Workspace).filter(Workspace.id == ctx.workspace_id).first()
-    catalogs = db.query(WorkspaceCatalog).filter(
-        WorkspaceCatalog.account_id == ws.account_id
-    ).all()
-    return [
-        {"id": c.id, "name": c.name, "type": c.type, "is_system": c.is_system}
-        for c in catalogs
-    ]
+    return list_catalogs_action(slug=slug, request=request, db=db)
 
 
 @router.get("/catalog/{catalog_name}/schemas")
@@ -325,15 +199,7 @@ def list_schemas(
     request: Request,
     db: Session = Depends(get_account_db),
 ):
-    ctx = _get_workspace_ctx(request)
-    ws = db.query(Workspace).filter(Workspace.id == ctx.workspace_id).first()
-    catalog = db.query(WorkspaceCatalog).filter(
-        WorkspaceCatalog.account_id == ws.account_id,
-        WorkspaceCatalog.name == catalog_name,
-    ).first()
-    if catalog is None:
-        raise HTTPException(status_code=404, detail="Catalog not found")
-    return [{"id": s.id, "name": s.name} for s in catalog.schemas]
+    return list_schemas_action(slug=slug, catalog_name=catalog_name, request=request, db=db)
 
 
 @router.get("/catalog/{catalog_name}/{schema_name}/objects", response_model=list[CatalogObjectOut])
@@ -345,31 +211,7 @@ def list_objects(
     object_type: str | None = None,
     db: Session = Depends(get_account_db),
 ):
-    ctx = _get_workspace_ctx(request)
-    ws = db.query(Workspace).filter(Workspace.id == ctx.workspace_id).first()
-    catalog = db.query(WorkspaceCatalog).filter(
-        WorkspaceCatalog.account_id == ws.account_id,
-        WorkspaceCatalog.name == catalog_name,
-    ).first()
-    if catalog is None:
-        raise HTTPException(status_code=404, detail="Catalog not found")
-
-    from app.workspace.models import WorkspaceCatalogSchema
-    schema = db.query(WorkspaceCatalogSchema).filter(
-        WorkspaceCatalogSchema.catalog_id == catalog.id,
-        WorkspaceCatalogSchema.name == schema_name,
-    ).first()
-    if schema is None:
-        raise HTTPException(status_code=404, detail="Schema not found")
-
-    q = db.query(CatalogObject).filter(
-        CatalogObject.schema_id == schema.id,
-        (CatalogObject.visibility == "global") |
-        (CatalogObject.home_workspace_id == ctx.workspace_id),
-    )
-    if object_type:
-        q = q.filter(CatalogObject.object_type == object_type)
-    return q.all()
+    return list_objects_action(slug=slug, catalog_name=catalog_name, schema_name=schema_name, request=request, object_type=object_type, db=db)
 
 
 @router.post("/catalog/objects/{object_id}/publish", status_code=200)
@@ -379,34 +221,4 @@ def publish_object(
     request: Request,
     db: Session = Depends(get_account_db),
 ):
-    ctx = _get_workspace_ctx(request)
-    obj = db.query(CatalogObject).filter(CatalogObject.id == object_id).first()
-    if obj is None:
-        raise HTTPException(status_code=404, detail="Object not found")
-    if obj.home_workspace_id != ctx.workspace_id:
-        raise HTTPException(status_code=403, detail="Object belongs to a different workspace")
-    if obj.visibility == "global":
-        raise HTTPException(status_code=400, detail="Object already published")
-
-    # Check PUBLISH privilege
-    perm = db.query(CatalogPermission).filter(
-        CatalogPermission.securable_type == "object",
-        CatalogPermission.securable_id == object_id,
-        CatalogPermission.principal_id == ctx.principal_id,
-        CatalogPermission.privilege == "PUBLISH",
-    ).first()
-    # Schema MANAGE also grants publish
-    schema_manage = db.query(CatalogPermission).filter(
-        CatalogPermission.securable_type == "schema",
-        CatalogPermission.securable_id == obj.schema_id,
-        CatalogPermission.principal_id == ctx.principal_id,
-        CatalogPermission.privilege == "MANAGE",
-    ).first()
-
-    if perm is None and schema_manage is None and not ctx.is_account_admin:
-        raise HTTPException(status_code=403, detail="PUBLISH privilege required")
-
-    obj.visibility = "global"
-    obj.home_workspace_id = None
-    db.commit()
-    return {"status": "published", "object_id": object_id}
+    return publish_object_action(slug=slug, object_id=object_id, request=request, db=db)

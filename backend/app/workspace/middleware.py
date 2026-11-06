@@ -175,7 +175,7 @@ def resolve_workspace_context(
                             principal_role = app_wi.get("role") or "workspace_developer"
                             break
                         clean_id = re.sub(r"[^a-z0-9]", "", str(a.id).lower())
-                        if f"id_app_{clean_id[:12]}" == token or a.id == token:
+                        if f"id_app_{clean_id[:12]}" == token:
                             user_id = token
                             principal_role = "workspace_developer"
                             break
@@ -249,7 +249,7 @@ def _get_default_workspace_slug_for_token(token: str) -> str | None:
                     if isinstance(app_wi, dict) and app_wi.get("identity_id") == token:
                         return str(a.workspace_id)
                     clean_id = re.sub(r"[^a-z0-9]", "", str(a.id).lower())
-                    if f"id_app_{clean_id[:12]}" == token or a.id == token:
+                    if f"id_app_{clean_id[:12]}" == token:
                         return str(a.workspace_id)
             except Exception:
                 pass
@@ -318,6 +318,19 @@ def _get_default_workspace_slug_for_token(token: str) -> str | None:
         db.close()
 
 
+def _product_api_requires_workspace(path: str) -> bool:
+    """Product APIs under /api/v1 require the workspace gate.
+
+    Login, setup, invites, and the signed Airflow callback stay open because
+    they authenticate with their own credential.
+    """
+    if not path.startswith("/api/v1/"):
+        return False
+    if path.startswith("/api/v1/webhooks/") or path.startswith("/api/v1/internal/"):
+        return False
+    return True
+
+
 class WorkspaceMiddleware(BaseHTTPMiddleware):
     """Resolves /w/<slug>/* and /api/w/<slug>/* requests, injects WorkspaceContext into request.state."""
 
@@ -344,15 +357,16 @@ class WorkspaceMiddleware(BaseHTTPMiddleware):
             slug = _get_default_workspace_slug_for_token(token)
             inferred_slug = True
 
-        if slug is None:
-            return await call_next(request)
+        if slug is not None:
+            try:
+                request.state.workspace = resolve_workspace_context(
+                    slug, token
+                )
+            except WorkspaceAuthError as exc:
+                if not inferred_slug:
+                    return JSONResponse({"error": exc.message}, status_code=exc.status_code)
 
-        try:
-            request.state.workspace = resolve_workspace_context(
-                slug, token
-            )
-        except WorkspaceAuthError as exc:
-            if not inferred_slug:
-                return JSONResponse({"error": exc.message}, status_code=exc.status_code)
+        if _product_api_requires_workspace(request.url.path) and getattr(request.state, "workspace", None) is None:
+            return JSONResponse({"error": "Not authenticated"}, status_code=401)
 
         return await call_next(request)

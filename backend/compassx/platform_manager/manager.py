@@ -87,61 +87,27 @@ class PlatformManager:
         wait_healthy: bool = True,
         health_timeout: float = 300.0,
     ) -> PlatformStatus:
-        ordered = self._ordered_services(services)
-        logger.info(
-            "platform: starting profile=%s services=%s",
-            self._profile.name,
-            ", ".join(ordered),
-        )
-        for launcher, group in self._group_by_launcher(ordered):
-            await launcher.start(group)
-
-        health = None
-        if wait_healthy:
-            required = [
-                s for s in self._profile.required_healthy if s in ordered
-            ] or ordered
-            health = await self._health.wait_until_healthy(
-                required, timeout=health_timeout
-            )
-            logger.info("platform: READY (profile=%s)", self._profile.name)
-        return await self.status(services, health=health)
+        from compassx.platform_manager.application.up import up as up_action
+        return await up_action(self, services=services, wait_healthy=wait_healthy, health_timeout=health_timeout)
 
     async def down(self, services: list[str] | None = None) -> None:
-        ordered = list(reversed(self._ordered_services(services)))
-        for launcher, group in self._group_by_launcher(ordered):
-            await launcher.stop(group)
-        logger.info("platform: stopped (profile=%s)", self._profile.name)
+        from compassx.platform_manager.application.down import down as down_action
+        return await down_action(self, services=services)
 
     async def restart(self, services: list[str] | None = None) -> PlatformStatus:
-        ordered = self._ordered_services(services)
-        for launcher, group in self._group_by_launcher(ordered):
-            await launcher.restart(group)
-        return await self.status(services)
+        from compassx.platform_manager.application.restart import restart as restart_action
+        return await restart_action(self, services=services)
 
     async def status(
         self, services: list[str] | None = None, *, health: HealthReport | None = None
     ) -> PlatformStatus:
-        ordered = self._ordered_services(services)
-        statuses: list[ServiceStatus] = []
-        for launcher, group in self._group_by_launcher(ordered):
-            launcher_status = await launcher.status(group)
-            statuses.extend(launcher_status.services)
-        return PlatformStatus(
-            profile=self._profile.name, services=statuses, health=health
-        )
+        from compassx.platform_manager.application.status import status as status_action
+        return await status_action(self, services=services, health=health)
 
     async def health(self, services: list[str] | None = None) -> HealthReport:
-        targets = services or self._ordered_services()
-        return await self._health.check_all(targets)
+        from compassx.platform_manager.application.health import health as health_action
+        return await health_action(self, services=services)
 
     async def logs(self, service: str, tail: int = 200) -> str:
-        mode = self._profile.mode_for(service)
-        launcher = self._launchers.get(mode)
-        if launcher is None:
-            from compassx.models import LauncherError
-
-            raise LauncherError(
-                f"No launcher available for mode '{mode.value}' (service '{service}')"
-            )
-        return await launcher.logs(service, tail=tail)
+        from compassx.platform_manager.application.logs import logs as logs_action
+        return await logs_action(self, service=service, tail=tail)

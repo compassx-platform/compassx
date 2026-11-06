@@ -67,56 +67,28 @@ def _conn_from_record(record: CatalogConnection, database: str | None = None):
 # ── CRUD ──────────────────────────────────────────────────────────────────────
 
 def list_connections(db: Session) -> list[CatalogConnection]:
-    return db.query(CatalogConnection).order_by(CatalogConnection.created_at).all()
+    from app.data.services.application.list_connections import list_connections as list_connections_action
+    return list_connections_action(db=db)
 
 
 def get_connection(db: Session, conn_id: int) -> CatalogConnection | None:
-    return db.query(CatalogConnection).filter(CatalogConnection.id == conn_id).first()
+    from app.data.services.application.get_connection import get_connection as get_connection_action
+    return get_connection_action(db=db, conn_id=conn_id)
 
 
 def create_connection(db: Session, data: ConnectionCreate) -> CatalogConnection:
-    record = CatalogConnection(
-        name=data.name,
-        host=data.host,
-        port=data.port,
-        username=data.username,
-        password_enc=encrypt_password(data.password),
-        default_database=data.default_database,
-    )
-    db.add(record)
-    db.commit()
-    db.refresh(record)
-    return record
+    from app.data.services.application.create_connection import create_connection as create_connection_action
+    return create_connection_action(db=db, data=data)
 
 
 def update_connection(db: Session, conn_id: int, data: ConnectionUpdate) -> CatalogConnection | None:
-    record = get_connection(db, conn_id)
-    if not record:
-        return None
-    if data.name is not None:
-        record.name = data.name
-    if data.host is not None:
-        record.host = data.host
-    if data.port is not None:
-        record.port = data.port
-    if data.username is not None:
-        record.username = data.username
-    if data.password is not None:
-        record.password_enc = encrypt_password(data.password)
-    if data.default_database is not None:
-        record.default_database = data.default_database
-    db.commit()
-    db.refresh(record)
-    return record
+    from app.data.services.application.update_connection import update_connection as update_connection_action
+    return update_connection_action(db=db, conn_id=conn_id, data=data)
 
 
 def delete_connection(db: Session, conn_id: int) -> bool:
-    record = get_connection(db, conn_id)
-    if not record:
-        return False
-    db.delete(record)
-    db.commit()
-    return True
+    from app.data.services.application.delete_connection import delete_connection as delete_connection_action
+    return delete_connection_action(db=db, conn_id=conn_id)
 
 
 # ── Connection test ───────────────────────────────────────────────────────────
@@ -124,166 +96,32 @@ def delete_connection(db: Session, conn_id: int) -> bool:
 def test_connection_raw(
     host: str, port: int, username: str, password: str, database: str
 ) -> dict:
-    try:
-        conn = _make_conn(host, port, username, password, database)
-        cur = conn.cursor()
-        cur.execute("SELECT version()")
-        version = cur.fetchone()[0]
-        cur.close()
-        conn.close()
-        return {"success": True, "message": "Connection successful", "server_version": version}
-    except psycopg2.OperationalError as exc:
-        return {"success": False, "message": str(exc), "server_version": None}
-    except Exception as exc:
-        return {"success": False, "message": f"Unexpected error: {exc}", "server_version": None}
+    from app.data.services.application.test_connection_raw import test_connection_raw as test_connection_raw_action
+    return test_connection_raw_action(host=host, port=port, username=username, password=password, database=database)
 
 
 # ── Catalog browsing ──────────────────────────────────────────────────────────
 
 def list_databases(db: Session, conn_id: int) -> list[dict]:
-    record = get_connection(db, conn_id)
-    if not record:
-        raise ValueError(f"Connection {conn_id} not found")
-
-    conn = _conn_from_record(record)
-    try:
-        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-        cur.execute(
-            """
-            SELECT datname AS name,
-                   pg_catalog.pg_get_userbyid(datdba) AS owner
-            FROM   pg_catalog.pg_database
-            WHERE  datistemplate = false
-            ORDER  BY datname
-            """
-        )
-        rows = cur.fetchall()
-        cur.close()
-        return [dict(r) for r in rows]
-    finally:
-        conn.close()
+    from app.data.services.application.list_databases import list_databases as list_databases_action
+    return list_databases_action(db=db, conn_id=conn_id)
 
 
 def list_schemas(db: Session, conn_id: int, database: str) -> list[dict]:
-    record = get_connection(db, conn_id)
-    if not record:
-        raise ValueError(f"Connection {conn_id} not found")
-
-    conn = _conn_from_record(record, database)
-    try:
-        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-        cur.execute(
-            """
-            SELECT schema_name AS name,
-                   schema_owner AS owner
-            FROM   information_schema.schemata
-            WHERE  schema_name NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
-              AND  schema_name NOT LIKE 'pg_temp_%'
-              AND  schema_name NOT LIKE 'pg_toast_temp_%'
-            ORDER  BY schema_name
-            """
-        )
-        rows = cur.fetchall()
-        cur.close()
-        return [dict(r) for r in rows]
-    finally:
-        conn.close()
+    from app.data.services.application.list_schemas import list_schemas as list_schemas_action
+    return list_schemas_action(db=db, conn_id=conn_id, database=database)
 
 
 def list_tables(db: Session, conn_id: int, database: str, schema: str) -> list[dict]:
-    record = get_connection(db, conn_id)
-    if not record:
-        raise ValueError(f"Connection {conn_id} not found")
-
-    conn = _conn_from_record(record, database)
-    try:
-        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-        cur.execute(
-            """
-            SELECT t.table_name                          AS name,
-                   t.table_schema                        AS schema_name,
-                   t.table_type,
-                   s.n_live_tup::bigint                  AS row_estimate
-            FROM   information_schema.tables t
-            LEFT   JOIN pg_stat_user_tables  s
-                   ON  s.schemaname = t.table_schema
-                   AND s.relname    = t.table_name
-            WHERE  t.table_schema = %s
-            ORDER  BY t.table_type, t.table_name
-            """,
-            (schema,),
-        )
-        rows = cur.fetchall()
-        cur.close()
-        return [dict(r) for r in rows]
-    finally:
-        conn.close()
+    from app.data.services.application.list_tables import list_tables as list_tables_action
+    return list_tables_action(db=db, conn_id=conn_id, database=database, schema=schema)
 
 
 def get_table_preview(
     db: Session, conn_id: int, database: str, schema: str, table: str, limit: int = 100
 ) -> TablePreviewResponse:
-    record = get_connection(db, conn_id)
-    if not record:
-        raise ValueError(f"Connection {conn_id} not found")
-
-    conn = _conn_from_record(record, database)
-    try:
-        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-
-        # Column metadata
-        cur.execute(
-            """
-            SELECT column_name,
-                   data_type,
-                   is_nullable,
-                   column_default,
-                   ordinal_position,
-                   character_maximum_length
-            FROM   information_schema.columns
-            WHERE  table_schema = %s
-              AND  table_name   = %s
-            ORDER  BY ordinal_position
-            """,
-            (schema, table),
-        )
-        col_rows = cur.fetchall()
-        columns = [
-            ColumnInfo(
-                name=r["column_name"],
-                data_type=r["data_type"],
-                is_nullable=(r["is_nullable"] == "YES"),
-                column_default=r["column_default"],
-                ordinal_position=r["ordinal_position"],
-                character_maximum_length=r["character_maximum_length"],
-            )
-            for r in col_rows
-        ]
-
-        # Row count estimate
-        cur.execute(
-            "SELECT reltuples::bigint FROM pg_class WHERE relname = %s", (table,)
-        )
-        count_row = cur.fetchone()
-        total_rows = int(count_row["reltuples"]) if count_row else 0
-
-        # Sample data
-        safe_schema = schema.replace('"', '""')
-        safe_table = table.replace('"', '""')
-        cur.execute(f'SELECT * FROM "{safe_schema}"."{safe_table}" LIMIT %s', (limit,))
-        data_rows = cur.fetchall()
-
-        rows = [_serialize_row(dict(r)) for r in data_rows]
-        cur.close()
-
-        return TablePreviewResponse(
-            columns=columns,
-            rows=rows,
-            total_rows=total_rows,
-            truncated=len(rows) >= limit,
-        )
-    finally:
-        conn.close()
+    from app.data.services.application.get_table_preview import get_table_preview as get_table_preview_action
+    return get_table_preview_action(db=db, conn_id=conn_id, database=database, schema=schema, table=table, limit=limit)
 
 
 # ── SQL execution ─────────────────────────────────────────────────────────────
@@ -291,48 +129,8 @@ def get_table_preview(
 def execute_sql(
     db: Session, conn_id: int, database: str, sql: str, limit: int = 1000
 ) -> SqlExecuteResponse:
-    record = get_connection(db, conn_id)
-    if not record:
-        raise ValueError(f"Connection {conn_id} not found")
-
-    conn = _conn_from_record(record, database)
-    start = time.perf_counter()
-    try:
-        cur = conn.cursor()
-        # Wrap in a sub-query to enforce row limit safely
-        wrapped = f"SELECT * FROM ({sql.rstrip(';')}) __q LIMIT {limit + 1}"
-        cur.execute(wrapped)
-
-        col_names = [desc[0] for desc in cur.description] if cur.description else []
-        raw_rows = cur.fetchall()
-        elapsed_ms = (time.perf_counter() - start) * 1000
-
-        truncated = len(raw_rows) > limit
-        rows = [list(_serialize_value(v) for v in row) for row in raw_rows[:limit]]
-
-        cur.close()
-        conn.rollback()  # ensure read-only behaviour
-
-        return SqlExecuteResponse(
-            columns=col_names,
-            rows=rows,
-            row_count=len(rows),
-            execution_time_ms=round(elapsed_ms, 2),
-            truncated=truncated,
-        )
-    except psycopg2.Error as exc:
-        elapsed_ms = (time.perf_counter() - start) * 1000
-        conn.rollback()
-        return SqlExecuteResponse(
-            columns=[],
-            rows=[],
-            row_count=0,
-            execution_time_ms=round(elapsed_ms, 2),
-            truncated=False,
-            error=str(exc).strip(),
-        )
-    finally:
-        conn.close()
+    from app.data.services.application.execute_sql import execute_sql as execute_sql_action
+    return execute_sql_action(db=db, conn_id=conn_id, database=database, sql=sql, limit=limit)
 
 
 # ── Serialisation helpers ─────────────────────────────────────────────────────

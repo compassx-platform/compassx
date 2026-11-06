@@ -3,34 +3,41 @@
 GET  /api/um/setup/status   → { needs_setup: bool }
 POST /api/um/setup/complete → spans both DBs, returns access+refresh tokens
 """
+
 from __future__ import annotations
 
 import logging
+
 import secrets
+
 from datetime import datetime, timezone, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+
 from pydantic import BaseModel, EmailStr
+
 from sqlalchemy.orm import Session
 
 from app.config import settings
+
 from app.database import get_account_db, get_system_db
+
 from app.user_manager.auth_utils import hash_password, create_access_token, generate_refresh_token, hash_refresh_token
+
 from app.user_manager.models.account_models import (
     UmUser, UmRefreshToken, UmAccountRoleAssignment,
 )
+
 from app.user_manager.models.system_models import UmWorkspaceRoleAssignment
+
 from app.user_manager.seed import run_all_seeds
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("app.user_manager.routes.setup_routes")
+
 router = APIRouter(prefix="/api/um/setup", tags=["setup"])
-
-
-# ── Schemas ───────────────────────────────────────────────────────────────────
 
 class SetupStatusOut(BaseModel):
     needs_setup: bool
-
 
 class SetupCompleteIn(BaseModel):
     account_name: str
@@ -39,30 +46,27 @@ class SetupCompleteIn(BaseModel):
     admin_display_name: str
     workspace_name: str | None = None
 
-
 class SetupCompleteOut(BaseModel):
     access_token: str
     refresh_token: str
     user_id: str
     account_id: str
 
+import app.user_manager.http.setup.prelude as _prelude
+for _name, _value in vars(_prelude).items():
+    if not _name.startswith('__'):
+        globals()[_name] = _value
 
-# ── Routes ────────────────────────────────────────────────────────────────────
+from app.user_manager.http.setup.application.setup_status import setup_status as setup_status_action
+from app.user_manager.http.setup.application.setup_complete import setup_complete as setup_complete_action
+
+router = APIRouter(prefix="/api/um/setup", tags=["setup"])
+
 
 @router.get("/status", response_model=SetupStatusOut)
 def setup_status(account_db: Session = Depends(get_account_db)):
     """Check whether initial setup has been completed."""
-    from app.workspace.models import Account
-    account = account_db.query(Account).first()
-    if account is None:
-        return {"needs_setup": True}
-    # Check setup_completed column if it exists
-    setup_completed = getattr(account, "setup_completed", None)
-    if setup_completed is None:
-        # Column doesn't exist yet; check if any UmUser exists as proxy
-        user_count = account_db.query(UmUser).count()
-        return {"needs_setup": user_count == 0}
-    return {"needs_setup": not setup_completed}
+    return setup_status_action(account_db=account_db)
 
 
 @router.post("/complete", response_model=SetupCompleteOut, status_code=201)
@@ -77,183 +81,4 @@ def setup_complete(
     Guards against concurrent double-submit by checking existing users.
     Once a UmUser exists, returns 403 permanently.
     """
-    # Guard: already set up?
-    existing_user = account_db.query(UmUser).filter(UmUser.account_id != None).first()
-    if existing_user:
-        raise HTTPException(status_code=403, detail="Setup already completed")
-
-    # 1. Ensure seed data (account_roles, workspace_roles, landing_rules, etc.)
-    run_all_seeds(account_db, system_db)
-
-    # 2. Get or create Account in account_db
-    from app.workspace.models import Account, Workspace as LegacyWorkspace
-    account = account_db.query(Account).first()
-    if account is None:
-        import uuid
-        account = Account(
-            id=str(uuid.uuid4()),
-            name=body.account_name,
-            slug=body.account_name.lower().replace(" ", "-"),
-        )
-        account_db.add(account)
-        account_db.flush()
-
-    account_id = account.id
-
-    # 3. Create admin UmUser
-    admin_user = UmUser(
-        account_id=account_id,
-        email=body.admin_email.lower().strip(),
-        display_name=body.admin_display_name,
-        password_hash=hash_password(body.admin_password),
-        auth_provider="local",
-        status="active",
-    )
-    account_db.add(admin_user)
-    account_db.flush()
-
-    # 4. Assign account_admin role
-    account_db.add(UmAccountRoleAssignment(
-        account_id=account_id,
-        principal_id=admin_user.id,
-        principal_type="user",
-        role_id="account_admin",
-        granted_by=admin_user.id,
-    ))
-    account_db.flush()
-
-    # 5. Always create initial default workspace with managed storage
-    ws_id = str(__import__("uuid").uuid4())
-    ws_name = body.workspace_name.strip() if body.workspace_name else "default"
-    ws_slug = ws_name.lower().replace(" ", "-")
-    try:
-        from app.workspace.storage_resolver import ensure_default_storage_bucket
-        ensure_default_storage_bucket()
-    except Exception as b_err:
-        logger.warning("Could not auto-ensure default storage bucket: %s", b_err)
-
-    try:
-        from app.workspace.models import Principal as LegacyPrincipal
-        if not account_db.query(LegacyPrincipal).filter(LegacyPrincipal.id == admin_user.id).first():
-            account_db.add(LegacyPrincipal(
-                id=admin_user.id,
-                account_id=account_id,
-                type="user",
-                email=admin_user.email,
-                name=admin_user.display_name or "Admin",
-                password_hash=admin_user.password_hash,
-                is_account_admin=True,
-            ))
-            account_db.flush()
-
-        legacy_ws = LegacyWorkspace(
-            id=ws_id,
-            account_id=account_id,
-            name=ws_name,
-            slug=ws_slug,
-            storage_backend="managed",
-            storage_config={},
-            created_by=admin_user.id,
-        )
-        account_db.add(legacy_ws)
-        account_db.flush()
-
-        system_db.add(UmWorkspaceRoleAssignment(
-            workspace_id=ws_id,
-            principal_id=admin_user.id,
-            principal_type="user",
-            role_id="workspace_admin",
-            is_default=True,
-            granted_by=admin_user.id,
-        ))
-        system_db.flush()
-
-        # Auto-create and bind workspace-specific default catalog
-        try:
-            import re
-            from app.catalog.schemas import CatalogPrivilege
-            from app.catalog.models import UnifiedCatalog, UnifiedCatalogSchema, CatalogWorkspaceBinding
-
-            normalized_name = legacy_ws.name.lower().replace(" ", "_").replace("-", "_")
-            normalized_name = re.sub(r'[^a-z0-9_]', '', normalized_name)
-            if not normalized_name:
-                normalized_name = "workspace"
-            catalog_name = f"{normalized_name}_default"
-
-            catalog = account_db.query(UnifiedCatalog).filter(UnifiedCatalog.name == catalog_name).first()
-            if not catalog:
-                catalog = UnifiedCatalog(
-                    name=catalog_name,
-                    description=f"Default catalog for workspace {legacy_ws.name}",
-                    catalog_type="iceberg",
-                    created_by=admin_user.id,
-                )
-                account_db.add(catalog)
-                account_db.flush()
-
-                schema = UnifiedCatalogSchema(
-                    catalog_id=catalog.id,
-                    name="default",
-                    description="Default schema",
-                    created_by=admin_user.id,
-                )
-                account_db.add(schema)
-                account_db.flush()
-
-            existing_binding = account_db.query(CatalogWorkspaceBinding).filter(
-                CatalogWorkspaceBinding.catalog_id == catalog.id,
-                CatalogWorkspaceBinding.workspace_id == ws_id,
-            ).first()
-            if not existing_binding:
-                binding = CatalogWorkspaceBinding(
-                    catalog_id=catalog.id,
-                    workspace_id=ws_id,
-                    privilege=CatalogPrivilege.READ_WRITE.value,
-                    is_default=True,
-                    bound_by=admin_user.id,
-                )
-                account_db.add(binding)
-                account_db.flush()
-        except Exception as cat_err:
-            logger.warning("Could not auto-create/bind default catalog in setup_complete: %s", cat_err)
-
-        # Auto-ensure default DuckDB compute and SQL warehouse for initial workspace
-        try:
-            from app.compute.services.workspace_defaults import ensure_workspace_default_resources
-            runtime_manager = getattr(getattr(request, "app", None), "state", None) and getattr(request.app.state, "runtime_manager", None)
-            ensure_workspace_default_resources(
-                system_db,
-                workspace_id=ws_id,
-                created_by=admin_user.id,
-                user_id=admin_user.id,
-                runtime_manager=runtime_manager,
-            )
-        except Exception as res_err:
-            logger.warning("Could not auto-ensure default compute/warehouse in setup_complete: %s", res_err)
-    except Exception as ws_err:
-        logger.warning("Could not create initial workspace: %s", ws_err)
-
-    # 7. Issue tokens
-    access_token = create_access_token(
-        user_id=admin_user.id,
-        account_id=account_id,
-        account_roles=["account_admin"],
-    )
-    raw_refresh = generate_refresh_token()
-    account_db.add(UmRefreshToken(
-        user_id=admin_user.id,
-        token_hash=hash_refresh_token(raw_refresh),
-        expires_at=datetime.now(timezone.utc) + timedelta(days=settings.REFRESH_TOKEN_TTL_DAYS),
-    ))
-
-    account_db.commit()
-    system_db.commit()
-
-    logger.info("Setup complete: account=%s, admin=%s, workspace=%s", account_id, admin_user.id, ws_id)
-
-    return SetupCompleteOut(
-        access_token=access_token,
-        refresh_token=raw_refresh,
-        user_id=admin_user.id,
-        account_id=account_id,
-    )
+    return setup_complete_action(body=body, account_db=account_db, system_db=system_db, request=request)

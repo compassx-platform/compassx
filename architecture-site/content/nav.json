@@ -1,0 +1,228 @@
+{
+  "sections": [
+    {
+      "title": "Start",
+      "items": [
+        { "title": "Overview", "slug": "" },
+        { "title": "Restructure status", "slug": "restructure-status" },
+        { "title": "For agents and developers", "slug": "for-agents" }
+      ]
+    },
+    { "title": "Identity", "items": [
+        { "title": "Overview", "slug": "identity" },
+        { "title": "Sign-in", "slug": "identity/sign-in" },
+        { "title": "Setup", "slug": "identity/setup" },
+        { "title": "Account", "slug": "identity/account" },
+        { "title": "Invites", "slug": "identity/invites" },
+        { "title": "Members", "slug": "identity/members" },
+        { "title": "Entry point", "slug": "identity/entry" },
+        { "title": "Screen", "slug": "identity/screen" },
+        { "title": "Test cases", "slug": "identity/test-cases" }
+      ]
+    },
+    { "title": "Workspace", "items": [
+        { "title": "Overview", "slug": "workspace" },
+        { "title": "Tenants", "slug": "workspace/tenants" },
+        { "title": "Settings", "slug": "workspace/settings" },
+        { "title": "Members", "slug": "workspace/members" },
+        { "title": "Storage", "slug": "workspace/storage" },
+        { "title": "Context", "slug": "workspace/context" },
+        { "title": "Screen", "slug": "workspace/screen" },
+        { "title": "Test cases", "slug": "workspace/test-cases" }
+      ]
+    },
+    { "title": "Governance", "items": [
+        { "title": "Overview", "slug": "governance" },
+        { "title": "Privileges", "slug": "governance/privileges" },
+        { "title": "Grants", "slug": "governance/grants" },
+        { "title": "Ownership", "slug": "governance/ownership" },
+        { "title": "Guard", "slug": "governance/guard" },
+        { "title": "Screen", "slug": "governance/screen" },
+        { "title": "Test cases", "slug": "governance/test-cases" }
+      ]
+    },
+    { "title": "Platform", "items": [
+        { "title": "Overview", "slug": "platform" },
+        { "title": "Profiles", "slug": "platform/profiles" },
+        { "title": "Command line", "slug": "platform/cli" },
+        { "title": "Lifecycle", "slug": "platform/lifecycle" },
+        { "title": "Launchers", "slug": "platform/launchers" },
+        { "title": "Drivers", "slug": "platform/drivers" },
+        { "title": "Runtimes", "slug": "platform/runtimes" },
+        { "title": "Monitoring collectors", "slug": "platform/monitoring" },
+        { "title": "Service HTTP", "slug": "platform/services" },
+        { "title": "Screen", "slug": "platform/screen" },
+        { "title": "Test cases", "slug": "platform/test-cases" }
+      ]
+    },
+    {
+      "title": "Catalog",
+      "items": [
+        { "title": "Overview", "slug": "catalog" },
+        { "title": "Catalogs and schemas", "slug": "catalog/catalogs" },
+        { "title": "Tables", "slug": "catalog/tables" },
+        { "title": "Volumes", "slug": "catalog/volumes" },
+        { "title": "Notebooks, dashboards, and queries", "slug": "catalog/assets" },
+        { "title": "Search", "slug": "catalog/search" },
+        { "title": "Tools", "slug": "catalog/tools" },
+        { "title": "Test cases", "slug": "catalog/test-cases" }
+      ]
+    },
+    { "title": "Legacy data catalog", "items": [
+        { "title": "Overview", "slug": "legacy-data-catalog" },
+        { "title": "Connections", "slug": "legacy-data-catalog/connections" },
+        { "title": "Browse", "slug": "legacy-data-catalog/browse" },
+        { "title": "SQL", "slug": "legacy-data-catalog/sql" },
+        { "title": "Datasets", "slug": "legacy-data-catalog/datasets" },
+        { "title": "Screen", "slug": "legacy-data-catalog/screen" },
+        { "title": "Test cases", "slug": "legacy-data-catalog/test-cases" }
+      ]
+    },
+    { "title": "Storage", "items": [
+        { "title": "Overview", "slug": "storage" },
+        { "title": "Backends", "slug": "storage/backends" },
+        { "title": "Objects", "slug": "storage/objects" },
+        { "title": "Screen", "slug": "storage/screen" },
+        { "title": "Test cases", "slug": "storage/test-cases" }
+      ]
+    },
+    { "title": "SQL warehouse", "items": [
+        { "title": "Overview", "slug": "sql-warehouse" },
+        { "title": "Warehouses", "slug": "sql-warehouse/warehouses" },
+        { "title": "Queries", "slug": "sql-warehouse/queries" },
+        { "title": "Editor", "slug": "sql-warehouse/editor" },
+        { "title": "Test cases", "slug": "sql-warehouse/test-cases" }
+      ]
+    },
+    { "title": "Ingestion", "items": [
+        { "title": "Overview", "slug": "ingestion" },
+        { "title": "Connections", "slug": "ingestion/connections" },
+        { "title": "Job configs", "slug": "ingestion/job-configs" },
+        { "title": "Runs", "slug": "ingestion/runs" },
+        { "title": "Screen", "slug": "ingestion/screen" },
+        { "title": "Test cases", "slug": "ingestion/test-cases" }
+      ]
+    },
+    { "title": "Jobs", "items": [
+        { "title": "Overview", "slug": "jobs" },
+        { "title": "Definitions", "slug": "jobs/definitions" },
+        { "title": "Runs", "slug": "jobs/runs" },
+        { "title": "Execution", "slug": "jobs/execution" },
+        { "title": "Screen", "slug": "jobs/screen" },
+        { "title": "Test cases", "slug": "jobs/test-cases" }
+      ]
+    },
+    { "title": "Notebooks", "items": [
+        { "title": "Overview", "slug": "notebooks" },
+        { "title": "Documents", "slug": "notebooks/documents" },
+        { "title": "Kernels", "slug": "notebooks/kernels" },
+        { "title": "Experiments", "slug": "notebooks/experiments" },
+        { "title": "Screen", "slug": "notebooks/screen" },
+        { "title": "Test cases", "slug": "notebooks/test-cases" }
+      ]
+    },
+    { "title": "Dashboards", "items": [
+        { "title": "Overview", "slug": "dashboards" },
+        { "title": "Documents", "slug": "dashboards/documents" },
+        { "title": "Datasets", "slug": "dashboards/datasets" },
+        { "title": "Screen", "slug": "dashboards/screen" },
+        { "title": "Test cases", "slug": "dashboards/test-cases" }
+      ]
+    },
+    { "title": "Ontology", "items": [
+        { "title": "Overview", "slug": "ontology" },
+        { "title": "Schema", "slug": "ontology/schema" },
+        { "title": "Knowledge graph", "slug": "ontology/graph" },
+        { "title": "Map", "slug": "ontology/map" },
+        { "title": "Test cases", "slug": "ontology/test-cases" }
+      ]
+    },
+    { "title": "Monitoring", "items": [
+        { "title": "Overview", "slug": "monitoring" },
+        { "title": "Resources", "slug": "monitoring/resources" },
+        { "title": "History", "slug": "monitoring/history" },
+        { "title": "Screen", "slug": "monitoring/screen" },
+        { "title": "Test cases", "slug": "monitoring/test-cases" }
+      ]
+    },
+    { "title": "Compute", "items": [
+        { "title": "Overview", "slug": "compute" },
+        { "title": "Resources", "slug": "compute/resources" },
+        { "title": "Services and health", "slug": "compute/services" },
+        { "title": "Kernels", "slug": "compute/kernels" },
+        { "title": "Screen", "slug": "compute/screen" },
+        { "title": "Test cases", "slug": "compute/test-cases" }
+      ]
+    },
+    { "title": "Sandbox", "items": [
+        { "title": "Overview", "slug": "sandbox" },
+        { "title": "Lifecycle", "slug": "sandbox/lifecycle" },
+        { "title": "Commands and terminal", "slug": "sandbox/commands" },
+        { "title": "Screen", "slug": "sandbox/screen" },
+        { "title": "Test cases", "slug": "sandbox/test-cases" }
+      ]
+    },
+    { "title": "Apps", "items": [
+        { "title": "Overview", "slug": "apps" },
+        { "title": "Records", "slug": "apps/records" },
+        { "title": "Dev studio", "slug": "apps/studio" },
+        { "title": "Omnigent server", "slug": "apps/omnigent" },
+        { "title": "Screen", "slug": "apps/screen" },
+        { "title": "Test cases", "slug": "apps/test-cases" }
+      ]
+    },
+    { "title": "Portal", "items": [
+        { "title": "Overview", "slug": "portal" },
+        { "title": "Layout", "slug": "portal/layout" },
+        { "title": "Available items", "slug": "portal/available-items" },
+        { "title": "Screen", "slug": "portal/screen" },
+        { "title": "Test cases", "slug": "portal/test-cases" }
+      ]
+    },
+    { "title": "AI Gateway", "items": [
+        { "title": "Overview", "slug": "ai-gateway" },
+        { "title": "Providers", "slug": "ai-gateway/providers" },
+        { "title": "Ingress", "slug": "ai-gateway/ingress" },
+        { "title": "MCP servers", "slug": "ai-gateway/mcp" },
+        { "title": "Tools", "slug": "ai-gateway/tools" },
+        { "title": "Logs", "slug": "ai-gateway/logs" },
+        { "title": "Screen", "slug": "ai-gateway/screen" },
+        { "title": "Test cases", "slug": "ai-gateway/test-cases" }
+      ]
+    },
+    { "title": "Agents", "items": [
+        { "title": "Overview", "slug": "agents" },
+        { "title": "Records", "slug": "agents/records" },
+        { "title": "Chat", "slug": "agents/chat" },
+        { "title": "Tools", "slug": "agents/tools" },
+        { "title": "Connections", "slug": "agents/connections" },
+        { "title": "Skills, budgets, and logs", "slug": "agents/skills" },
+        { "title": "Documents and changes", "slug": "agents/documents" },
+        { "title": "Screen", "slug": "agents/screen" },
+        { "title": "Test cases", "slug": "agents/test-cases" }
+      ]
+    },
+    { "title": "Nova", "items": [
+        { "title": "Overview", "slug": "nova" },
+        { "title": "Attachments", "slug": "nova/attachments" },
+        { "title": "Tools", "slug": "nova/tools" },
+        { "title": "Test cases", "slug": "nova/test-cases" }
+      ]
+    },
+    { "title": "Agent runtime", "items": [
+        { "title": "Overview", "slug": "agent-runtime" },
+        { "title": "Sessions", "slug": "agent-runtime/sessions" },
+        { "title": "Screen", "slug": "agent-runtime/screen" },
+        { "title": "Test cases", "slug": "agent-runtime/test-cases" }
+      ]
+    },
+    { "title": "Shared libraries", "items": [
+        { "title": "Overview", "slug": "shared-libraries" },
+        { "title": "Shims", "slug": "shared-libraries/shims" },
+        { "title": "Composition", "slug": "shared-libraries/composition" },
+        { "title": "Service libraries", "slug": "shared-libraries/services" },
+        { "title": "Test cases", "slug": "shared-libraries/test-cases" }
+      ]
+    }
+  ]
+}

@@ -18,25 +18,32 @@ Two checks, one per securable the call touches:
 from __future__ import annotations
 
 import logging
+
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+
 from pydantic import BaseModel, Field
+
 from sqlalchemy.orm import Session
 
 from app.agents.models.external_connection import ExternalConnection
+
 from app.agents.routes._authz import authorized_connection
+
 from app.agents.services.agent.tools.external_tool_executor import execute_agent_tool
+
 from app.catalog.models import UnifiedCatalogTool
+
 from app.database import get_account_db, get_system_db
+
 from app.governance.dependencies import Guard, get_guard
+
 from app.governance.privileges import Privilege
+
 from app.governance.securable import Securable
 
-logger = logging.getLogger(__name__)
-
-router = APIRouter(tags=["Agent Tools"])
-
+logger = logging.getLogger("app.agents.routes.agent_tool_routes")
 
 class AgentToolExecuteRequest(BaseModel):
     tool_id: str = Field(..., description="Tool catalog ID or name")
@@ -46,7 +53,6 @@ class AgentToolExecuteRequest(BaseModel):
     session_id: Optional[str] = Field(default=None, description="Agent session ID")
     agent_type: Optional[str] = Field(default="nova", description="Calling agent type label")
 
-
 class AgentToolExecuteResponse(BaseModel):
     ok: bool
     result: Optional[Any] = None
@@ -54,7 +60,6 @@ class AgentToolExecuteResponse(BaseModel):
     error_type: Optional[str] = None
     message: Optional[str] = None
     retryable: Optional[bool] = None
-
 
 def _authorized_tool(db: Session, guard: Guard, tool_id: str) -> UnifiedCatalogTool:
     """Resolve a tool by id or name and require EXECUTE on it.
@@ -80,6 +85,16 @@ def _authorized_tool(db: Session, guard: Guard, tool_id: str) -> UnifiedCatalogT
     )
     return tool
 
+import app.agents.http.tool_execution.prelude as _prelude
+for _name, _value in vars(_prelude).items():
+    if not _name.startswith('__'):
+        globals()[_name] = _value
+
+from app.agents.http.tool_execution.application.execute_tool_endpoint import execute_tool_endpoint as execute_tool_endpoint_action
+
+logger = logging.getLogger("app.agents.routes.agent_tool_routes")
+
+router = APIRouter(tags=["Agent Tools"])
 
 @router.post(
     "/api/v1/agent-tools/execute",
@@ -98,21 +113,4 @@ async def execute_tool_endpoint(
     guard: Guard = Depends(get_guard),
 ):
     """Execute a promoted catalog tool in an isolated ephemeral execution pod."""
-    tool = _authorized_tool(account_db, guard, payload.tool_id)
-    if payload.connection_id:
-        authorized_connection(
-            system_db, guard, ExternalConnection, payload.connection_id, Privilege.USE_COMPUTE
-        )
-
-    res = await execute_agent_tool(
-        # The resolved id, not the caller's string: the executor would
-        # otherwise redo the name lookup and could land on a different row.
-        tool_id=tool.id,
-        version=payload.version,
-        connection_id=payload.connection_id,
-        params=payload.params or {},
-        session_id=payload.session_id,
-        agent_type=payload.agent_type or "nova",
-        invoked_by=str(guard.principal.id),
-    )
-    return AgentToolExecuteResponse(**res)
+    return await execute_tool_endpoint_action(payload=payload, request=request, account_db=account_db, system_db=system_db, guard=guard)

@@ -11,8 +11,9 @@ from app.monitoring.schemas import (
     Resource,
     TimeseriesResponse,
 )
-from app.monitoring.service import MonitoringService
+from app.monitoring.composition import monitoring_service
 from app.monitoring.exporter import render_prometheus_metrics
+from app.monitoring.service import MonitoringService
 
 router = APIRouter(prefix="/api/v1/monitoring", tags=["monitoring"])
 
@@ -20,7 +21,7 @@ router = APIRouter(prefix="/api/v1/monitoring", tags=["monitoring"])
 def get_monitoring_service(
     resource_manager=Depends(get_monitoring_resource_manager),
 ) -> MonitoringService:
-    return MonitoringService(resource_manager)
+    return monitoring_service(resource_manager)
 
 
 @router.get("/export", include_in_schema=False)

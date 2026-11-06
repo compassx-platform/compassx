@@ -41,89 +41,92 @@ router = APIRouter(prefix="/api/v1/data-catalog", tags=["Data Catalog"])
 
 # ── Connection CRUD ───────────────────────────────────────────────────────────
 
-@router.get("/connections", response_model=list[ConnectionResponse])
-def get_connections(db: Session = Depends(get_db)):
-    return list_connections(db)
 
 
-@router.get("/connections/{conn_id}", response_model=ConnectionResponse)
-def read_connection(conn_id: int, db: Session = Depends(get_db)):
-    record = get_connection(db, conn_id)
-    if not record:
-        raise HTTPException(status_code=404, detail="Connection not found")
-    return record
 
 
-@router.post("/connections", response_model=ConnectionResponse, status_code=201)
-def add_connection(body: ConnectionCreate, db: Session = Depends(get_db)):
-    return create_connection(db, body)
 
 
-@router.put("/connections/{conn_id}", response_model=ConnectionResponse)
-def edit_connection(conn_id: int, body: ConnectionUpdate, db: Session = Depends(get_db)):
-    record = update_connection(db, conn_id, body)
-    if not record:
-        raise HTTPException(status_code=404, detail="Connection not found")
-    return record
 
 
-@router.delete("/connections/{conn_id}", status_code=204)
-def remove_connection(conn_id: int, db: Session = Depends(get_db)):
-    if not delete_connection(db, conn_id):
-        raise HTTPException(status_code=404, detail="Connection not found")
 
 
 # ── Connection test ───────────────────────────────────────────────────────────
 
-@router.post("/connections/test", response_model=ConnectionTestResponse)
-def test_connection(body: ConnectionTestRequest):
-    result = test_connection_raw(
-        host=body.host,
-        port=body.port,
-        username=body.username,
-        password=body.password,
-        database=body.database,
-    )
-    return ConnectionTestResponse(**result)
 
 
 # ── Catalog browsing ──────────────────────────────────────────────────────────
 
+
+
+
+
+
+
+
+
+# ── SQL execution ─────────────────────────────────────────────────────────────
+
+
+from app.data.http.catalog.application.get_connections import get_connections as get_connections_action
+from app.data.http.catalog.application.read_connection import read_connection as read_connection_action
+from app.data.http.catalog.application.add_connection import add_connection as add_connection_action
+from app.data.http.catalog.application.edit_connection import edit_connection as edit_connection_action
+from app.data.http.catalog.application.remove_connection import remove_connection as remove_connection_action
+from app.data.http.catalog.application.test_connection import test_connection as test_connection_action
+from app.data.http.catalog.application.get_databases import get_databases as get_databases_action
+from app.data.http.catalog.application.get_schemas import get_schemas as get_schemas_action
+from app.data.http.catalog.application.get_tables import get_tables as get_tables_action
+from app.data.http.catalog.application.preview_table import preview_table as preview_table_action
+from app.data.http.catalog.application.run_sql import run_sql as run_sql_action
+
+@router.get("/connections", response_model=list[ConnectionResponse])
+def get_connections(db: Session = Depends(get_db)):
+    from app.data.http.catalog.application.get_connections import get_connections as get_connections_action
+    return get_connections_action(db=db)
+
+@router.get("/connections/{conn_id}", response_model=ConnectionResponse)
+def read_connection(conn_id: int, db: Session = Depends(get_db)):
+    from app.data.http.catalog.application.read_connection import read_connection as read_connection_action
+    return read_connection_action(conn_id=conn_id, db=db)
+
+@router.post("/connections", response_model=ConnectionResponse, status_code=201)
+def add_connection(body: ConnectionCreate, db: Session = Depends(get_db)):
+    from app.data.http.catalog.application.add_connection import add_connection as add_connection_action
+    return add_connection_action(body=body, db=db)
+
+@router.put("/connections/{conn_id}", response_model=ConnectionResponse)
+def edit_connection(conn_id: int, body: ConnectionUpdate, db: Session = Depends(get_db)):
+    from app.data.http.catalog.application.edit_connection import edit_connection as edit_connection_action
+    return edit_connection_action(conn_id=conn_id, body=body, db=db)
+
+@router.delete("/connections/{conn_id}", status_code=204)
+def remove_connection(conn_id: int, db: Session = Depends(get_db)):
+    from app.data.http.catalog.application.remove_connection import remove_connection as remove_connection_action
+    return remove_connection_action(conn_id=conn_id, db=db)
+
+@router.post("/connections/test", response_model=ConnectionTestResponse)
+def test_connection(body: ConnectionTestRequest):
+    from app.data.http.catalog.application.test_connection import test_connection as test_connection_action
+    return test_connection_action(body=body)
+
 @router.get("/{conn_id}/databases", response_model=DatabaseListResponse)
 def get_databases(conn_id: int, db: Session = Depends(get_db)):
-    try:
-        dbs = list_databases(db, conn_id)
-        return DatabaseListResponse(databases=[DatabaseItem(**d) for d in dbs])
-    except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
-
+    from app.data.http.catalog.application.get_databases import get_databases as get_databases_action
+    return get_databases_action(conn_id=conn_id, db=db)
 
 @router.get("/{conn_id}/databases/{database}/schemas", response_model=SchemaListResponse)
 def get_schemas(conn_id: int, database: str, db: Session = Depends(get_db)):
-    try:
-        schemas = list_schemas(db, conn_id, database)
-        return SchemaListResponse(schemas=[SchemaItem(**s) for s in schemas])
-    except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
-
+    from app.data.http.catalog.application.get_schemas import get_schemas as get_schemas_action
+    return get_schemas_action(conn_id=conn_id, database=database, db=db)
 
 @router.get(
     "/{conn_id}/databases/{database}/schemas/{schema}/tables",
     response_model=TableListResponse,
 )
 def get_tables(conn_id: int, database: str, schema: str, db: Session = Depends(get_db)):
-    try:
-        tables = list_tables(db, conn_id, database, schema)
-        return TableListResponse(tables=[TableItem(**t) for t in tables])
-    except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
-
+    from app.data.http.catalog.application.get_tables import get_tables as get_tables_action
+    return get_tables_action(conn_id=conn_id, database=database, schema=schema, db=db)
 
 @router.get(
     "/{conn_id}/databases/{database}/schemas/{schema}/tables/{table}/preview",
@@ -137,21 +140,10 @@ def preview_table(
     limit: int = Query(default=100, ge=1, le=500),
     db: Session = Depends(get_db),
 ):
-    try:
-        return get_table_preview(db, conn_id, database, schema, table, limit)
-    except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
-
-
-# ── SQL execution ─────────────────────────────────────────────────────────────
+    from app.data.http.catalog.application.preview_table import preview_table as preview_table_action
+    return preview_table_action(conn_id=conn_id, database=database, schema=schema, table=table, limit=limit, db=db)
 
 @router.post("/sql/execute", response_model=SqlExecuteResponse)
 def run_sql(body: SqlExecuteRequest, db: Session = Depends(get_db)):
-    try:
-        return execute_sql(db, body.connection_id, body.database, body.sql, body.limit)
-    except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
+    from app.data.http.catalog.application.run_sql import run_sql as run_sql_action
+    return run_sql_action(body=body, db=db)

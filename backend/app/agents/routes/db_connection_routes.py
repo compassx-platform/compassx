@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import logging
+
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Request
+
 from sqlalchemy.orm import Session
 
 from app.agents.routes._authz import (
@@ -11,11 +13,17 @@ from app.agents.routes._authz import (
     authorized_connection,
     visible_connections,
 )
+
 from app.database import get_system_db as get_db, get_account_db
+
 from app.governance.dependencies import Guard, get_guard
+
 from app.governance.privileges import Privilege
+
 from app.governance.securable import Securable
+
 from app.models.agents import DBConnection, AgentDBConnection, DataSourceProfile
+
 from app.schemas.agents import (
     DBConnectionCreate,
     DBConnectionResponse,
@@ -24,13 +32,12 @@ from app.schemas.agents import (
     SchemaIntrospectionResponse,
     DataSourceProfileResponse,
 )
+
 from app.services.db_introspector import build_engine, get_schema, test_connection
+
 from app.services.encryption import encrypt_field
 
-logger = logging.getLogger(__name__)
-
-router = APIRouter(prefix="/api/v1/db-connections", tags=["DB Connections"])
-
+logger = logging.getLogger("app.agents.routes.db_connection_routes")
 
 def _to_response(conn: DBConnection) -> DBConnectionResponse:
     return DBConnectionResponse(
@@ -47,7 +54,6 @@ def _to_response(conn: DBConnection) -> DBConnectionResponse:
         updated_at=conn.updated_at,
     )
 
-
 def sync_agent_db_connection(connection_id: int, agent_id: int | None, scoped_tables: list[str], db: Session):
     # Remove existing mappings for this connection
     db.query(AgentDBConnection).filter(
@@ -63,7 +69,6 @@ def sync_agent_db_connection(connection_id: int, agent_id: int | None, scoped_ta
         )
         db.add(mapping)
     db.commit()
-
 
 def trigger_profiling(
     conn: DBConnection,
@@ -120,6 +125,33 @@ def trigger_profiling(
  
     background_tasks.add_task(run_profiling)
 
+def _get_or_404(db: Session, connection_id: int, guard: Guard, privilege: Privilege) -> DBConnection:
+    """Load a connection the caller holds ``privilege`` on.
+
+    The workspace comes from the guard. The previous version fell back to
+    ``workspace_id == None`` when none was resolved, so an unscoped request
+    reached the workspace-less connections rather than being refused.
+    """
+    return authorized_connection(db, guard, DBConnection, connection_id, privilege)
+
+import app.agents.http.db_connections.prelude as _prelude
+for _name, _value in vars(_prelude).items():
+    if not _name.startswith('__'):
+        globals()[_name] = _value
+
+from app.agents.http.db_connections.application.list_db_connections import list_db_connections as list_db_connections_action
+from app.agents.http.db_connections.application.create_db_connection import create_db_connection as create_db_connection_action
+from app.agents.http.db_connections.application.get_db_connection import get_db_connection as get_db_connection_action
+from app.agents.http.db_connections.application.update_db_connection import update_db_connection as update_db_connection_action
+from app.agents.http.db_connections.application.delete_db_connection import delete_db_connection as delete_db_connection_action
+from app.agents.http.db_connections.application.test_db_connection import test_db_connection as test_db_connection_action
+from app.agents.http.db_connections.application.introspect_schema import introspect_schema as introspect_schema_action
+from app.agents.http.db_connections.application.reprofile_db_connection import reprofile_db_connection as reprofile_db_connection_action
+from app.agents.http.db_connections.application.get_db_connection_profiles import get_db_connection_profiles as get_db_connection_profiles_action
+
+logger = logging.getLogger("app.agents.routes.db_connection_routes")
+
+router = APIRouter(prefix="/api/v1/db-connections", tags=["DB Connections"])
 
 @router.get("", response_model=list[DBConnectionResponse])
 def list_db_connections(
@@ -133,14 +165,7 @@ def list_db_connections(
     credentials, which are encrypted at rest and only decrypted when a query
     is actually run.
     """
-    rows = (
-        db.query(DBConnection)
-        .filter(DBConnection.workspace_id == guard.workspace_id)
-        .order_by(DBConnection.name)
-        .all()
-    )
-    return [_to_response(r) for r in visible_connections(guard, rows)]
-
+    return list_db_connections_action(request=request, db=db, guard=guard)
 
 @router.post("", response_model=DBConnectionResponse, status_code=201)
 def create_db_connection(
@@ -157,40 +182,7 @@ def create_db_connection(
     is an administrative act, so it sits with the workspace admin. The creator
     becomes the owner and can delegate from there.
     """
-    guard.require_workspace_admin("Creating a database connection")
-    workspace_id = guard.workspace_id
-    if body.profiler_agent_id:
-        # Profiling runs the named agent against this connection, so the
-        # caller must be allowed to run that agent — otherwise setting the
-        # field is a way to invoke an agent one cannot otherwise execute.
-        authorized_agent(db, guard, body.profiler_agent_id, Privilege.EXECUTE)
-    conn = DBConnection(
-        workspace_id=workspace_id,
-        name=body.name,
-        db_type=body.db_type,
-        host=body.host,
-        port=body.port,
-        db_name=body.db_name,
-        username_enc=encrypt_field(body.username) if body.username else None,
-        password_enc=encrypt_field(body.password) if body.password else None,
-        ssl_config=body.ssl_config,
-        profiler_agent_id=body.profiler_agent_id,
-        scoped_tables=body.scoped_tables,
-    )
-    sys_db.add(conn)
-    sys_db.commit()
-    sys_db.refresh(conn)
-    guard.claim_ownership(Securable.connection(str(conn.id)))
-
-    # Sync AgentDBConnection
-    sync_agent_db_connection(conn.id, conn.profiler_agent_id, conn.scoped_tables, db)
-
-    # Trigger profiling run
-    if conn.profiler_agent_id:
-        trigger_profiling(conn, str(guard.principal.id), workspace_id, background_tasks)
-
-    return _to_response(conn)
-
+    return create_db_connection_action(request=request, body=body, background_tasks=background_tasks, db=db, sys_db=sys_db, guard=guard)
 
 @router.get("/{connection_id}", response_model=DBConnectionResponse)
 def get_db_connection(
@@ -199,8 +191,7 @@ def get_db_connection(
     db: Session = Depends(get_account_db),
     guard: Guard = Depends(get_guard),
 ):
-    return _to_response(_get_or_404(db, connection_id, guard, Privilege.BROWSE))
-
+    return get_db_connection_action(request=request, connection_id=connection_id, db=db, guard=guard)
 
 @router.put("/{connection_id}", response_model=DBConnectionResponse)
 def update_db_connection(
@@ -218,32 +209,7 @@ def update_db_connection(
     authenticates as: everyone already granted USE_COMPUTE on it keeps their
     grant and silently starts querying the new target.
     """
-    conn = _get_or_404(sys_db, connection_id, guard, Privilege.EDIT)
-    old_profiler_id = conn.profiler_agent_id
-
-    data = body.model_dump(exclude_none=True)
-    if data.get("profiler_agent_id") and data["profiler_agent_id"] != old_profiler_id:
-        # Same reason as on create: naming an agent here is a way to run it.
-        authorized_agent(db, guard, data["profiler_agent_id"], Privilege.EXECUTE)
-    if "username" in data:
-        conn.username_enc = encrypt_field(data.pop("username"))
-    if "password" in data:
-        conn.password_enc = encrypt_field(data.pop("password"))
-    for field, value in data.items():
-        setattr(conn, field, value)
-    
-    sys_db.commit()
-    sys_db.refresh(conn)
-    
-    # Sync AgentDBConnection
-    sync_agent_db_connection(conn.id, conn.profiler_agent_id, conn.scoped_tables or [], db)
-    
-    # Trigger profiling if profiler_agent_id changed/updated
-    if conn.profiler_agent_id and conn.profiler_agent_id != old_profiler_id:
-        trigger_profiling(conn, str(guard.principal.id), guard.workspace_id, background_tasks)
-
-    return _to_response(conn)
-
+    return update_db_connection_action(request=request, connection_id=connection_id, body=body, background_tasks=background_tasks, db=db, sys_db=sys_db, guard=guard)
 
 @router.delete("/{connection_id}", status_code=204)
 def delete_db_connection(
@@ -258,11 +224,7 @@ def delete_db_connection(
     MANAGE: it takes away access for everyone granted on it, and the stored
     credentials go with it.
     """
-    conn = _get_or_404(sys_db, connection_id, guard, Privilege.MANAGE)
-    sys_db.delete(conn)
-    sys_db.commit()
-    sync_agent_db_connection(connection_id, None, [], db)
-
+    return delete_db_connection_action(request=request, connection_id=connection_id, db=db, sys_db=sys_db, guard=guard)
 
 @router.post("/{connection_id}/test", response_model=PingResponse)
 def test_db_connection(
@@ -276,10 +238,7 @@ def test_db_connection(
     USE_COMPUTE, not BROWSE: this decrypts the stored credentials and makes a
     real connection to the remote database on the caller's behalf.
     """
-    conn = _get_or_404(db, connection_id, guard, Privilege.USE_COMPUTE)
-    success, message = test_connection(conn)
-    return PingResponse(success=success, message=message)
-
+    return test_db_connection_action(request=request, connection_id=connection_id, db=db, guard=guard)
 
 @router.get("/{connection_id}/schema", response_model=SchemaIntrospectionResponse)
 def introspect_schema(
@@ -293,13 +252,7 @@ def introspect_schema(
     USE_COMPUTE: the response is content read out of the remote system, not
     metadata CompassX holds about the connection.
     """
-    conn = _get_or_404(db, connection_id, guard, Privilege.USE_COMPUTE)
-    try:
-        tables = get_schema(build_engine(conn))
-    except Exception as exc:
-        raise HTTPException(400, f"Schema introspection failed: {exc}")
-    return SchemaIntrospectionResponse(tables=tables)
-
+    return introspect_schema_action(request=request, connection_id=connection_id, db=db, guard=guard)
 
 @router.post("/{connection_id}/reprofile")
 def reprofile_db_connection(
@@ -316,14 +269,7 @@ def reprofile_db_connection(
     read through the connection, and EXECUTE on the configured agent, which is
     what actually does the reading.
     """
-    conn = _get_or_404(db, connection_id, guard, Privilege.USE_COMPUTE)
-    if not conn.profiler_agent_id:
-        raise HTTPException(400, "No profiler agent configured for this connection")
-    authorized_agent(sys_db, guard, conn.profiler_agent_id, Privilege.EXECUTE)
-
-    trigger_profiling(conn, str(guard.principal.id), guard.workspace_id, background_tasks)
-    return {"status": "queued", "message": "Data profiling run started in the background."}
-
+    return reprofile_db_connection_action(request=request, connection_id=connection_id, background_tasks=background_tasks, db=db, sys_db=sys_db, guard=guard)
 
 @router.get("/{connection_id}/profiles", response_model=list[DataSourceProfileResponse])
 def get_db_connection_profiles(
@@ -338,16 +284,4 @@ def get_db_connection_profiles(
     BROWSE: these are CompassX's own notes about the source — column stats and
     inferred relationships — not a live read of it.
     """
-    _get_or_404(sys_db, connection_id, guard, Privilege.BROWSE)
-    profiles = db.query(DataSourceProfile).filter(DataSourceProfile.connection_id == connection_id).all()
-    return [DataSourceProfileResponse.model_validate(p) for p in profiles]
-
-
-def _get_or_404(db: Session, connection_id: int, guard: Guard, privilege: Privilege) -> DBConnection:
-    """Load a connection the caller holds ``privilege`` on.
-
-    The workspace comes from the guard. The previous version fell back to
-    ``workspace_id == None`` when none was resolved, so an unscoped request
-    reached the workspace-less connections rather than being refused.
-    """
-    return authorized_connection(db, guard, DBConnection, connection_id, privilege)
+    return get_db_connection_profiles_action(request=request, connection_id=connection_id, db=db, sys_db=sys_db, guard=guard)

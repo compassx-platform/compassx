@@ -3,21 +3,31 @@
 from __future__ import annotations
 
 import json
+
 import logging
+
 from datetime import datetime, timezone
+
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+
 from sqlalchemy.orm import Session
 
 from app.ai_gateway.mcp.builtins import BUILTIN_MCP_SERVERS
+
 from app.ai_gateway.mcp.manager import MCPManager
+
 from app.ai_gateway.mcp.omnigent_sync import build_mcp_configs_from_gateway
+
 from app.ai_gateway.mcp.proxy import MCPExecutionProxy
+
 from app.ai_gateway.mcp.sse_server import (
     handle_mcp_sse_stream,
     mcp_session_manager,
     process_mcp_jsonrpc_message,
 )
+
 from app.ai_gateway.models.mcp import MCPServer
+
 from app.ai_gateway.schemas.mcp import (
     MCPServerCreate,
     MCPServerResponse,
@@ -27,13 +37,12 @@ from app.ai_gateway.schemas.mcp import (
     MCPToolCallResponse,
     MCPToolDefinition,
 )
+
 from app.database import get_account_db
+
 from app.services.encryption import encrypt_field
 
-router = APIRouter(prefix="/api/v1/ai-gateway/mcp", tags=["AI Gateway - MCP Services & Tools"])
-logger = logging.getLogger(__name__)
-
-
+logger = logging.getLogger("app.ai_gateway.routes.mcp_routes")
 def _get_workspace_id(request: Request) -> str | None:
     ctx = getattr(request.state, "workspace", None)
     if ctx and hasattr(ctx, "workspace_id"):
@@ -53,12 +62,10 @@ def _get_workspace_id(request: Request) -> str | None:
             return None
     return None
 
-
 def _resolve_base_url(request: Request) -> str:
     proto = request.headers.get("x-forwarded-proto") or request.url.scheme or "https"
     host = request.headers.get("x-forwarded-host") or request.headers.get("host") or "135.13.180.167.nip.io"
     return f"{proto}://{host}".rstrip("/")
-
 
 def _to_mcp_response(server: MCPServer, base_url: str = "") -> MCPServerResponse:
     cat = server.catalog_name or "default"
@@ -85,7 +92,6 @@ def _to_mcp_response(server: MCPServer, base_url: str = "") -> MCPServerResponse
         created_at=server.created_at,
         updated_at=server.updated_at,
     )
-
 
 def _resolve_mcp_server(
     identifier: str,
@@ -164,6 +170,29 @@ def _resolve_mcp_server(
 
     return None, None, None
 
+import app.ai_gateway.http.mcp.prelude as _prelude
+for _name, _value in vars(_prelude).items():
+    if not _name.startswith('__'):
+        globals()[_name] = _value
+
+from app.ai_gateway.http.mcp.application.get_omnigent_mcp_config import get_omnigent_mcp_config as get_omnigent_mcp_config_action
+from app.ai_gateway.http.mcp.application.mcp_sse_stream import mcp_sse_stream as mcp_sse_stream_action
+from app.ai_gateway.http.mcp.application.mcp_server_sse_stream import mcp_server_sse_stream as mcp_server_sse_stream_action
+from app.ai_gateway.http.mcp.application.mcp_server_streamable_post import mcp_server_streamable_post as mcp_server_streamable_post_action
+from app.ai_gateway.http.mcp.application.mcp_root_streamable_post import mcp_root_streamable_post as mcp_root_streamable_post_action
+from app.ai_gateway.http.mcp.application.mcp_messages import mcp_messages as mcp_messages_action
+from app.ai_gateway.http.mcp.application.list_mcp_servers import list_mcp_servers as list_mcp_servers_action
+from app.ai_gateway.http.mcp.application.create_mcp_server import create_mcp_server as create_mcp_server_action
+from app.ai_gateway.http.mcp.application.get_mcp_server import get_mcp_server as get_mcp_server_action
+from app.ai_gateway.http.mcp.application.update_mcp_server import update_mcp_server as update_mcp_server_action
+from app.ai_gateway.http.mcp.application.delete_mcp_server import delete_mcp_server as delete_mcp_server_action
+from app.ai_gateway.http.mcp.application.get_mcp_server_tools import get_mcp_server_tools as get_mcp_server_tools_action
+from app.ai_gateway.http.mcp.application.list_tools import list_tools as list_tools_action
+from app.ai_gateway.http.mcp.application.call_tool import call_tool as call_tool_action
+
+logger = logging.getLogger("app.ai_gateway.routes.mcp_routes")
+
+router = APIRouter(prefix="/api/v1/ai-gateway/mcp", tags=["AI Gateway - MCP Services & Tools"])
 
 @router.get("/config/omnigent")
 def get_omnigent_mcp_config(
@@ -171,9 +200,7 @@ def get_omnigent_mcp_config(
     db: Session = Depends(get_account_db),
 ):
     """Return unified MCP server configurations formatted for Claude Code, OpenCode, Antigravity, and Codex harnesses."""
-    ws_id = _get_workspace_id(request)
-    return build_mcp_configs_from_gateway(db=db, workspace_id=ws_id)
-
+    return get_omnigent_mcp_config_action(request=request, db=db)
 
 @router.get("/sse")
 async def mcp_sse_stream(
@@ -183,15 +210,7 @@ async def mcp_sse_stream(
     Standard MCP SSE Stream endpoint for the unified CompassX platform.
     Clients connect via HTTP GET and receive the 'endpoint' event with the messages URI.
     """
-    ws_id = _get_workspace_id(request)
-    user_email = getattr(request.state, "user_email", None)
-    return await handle_mcp_sse_stream(
-        request=request,
-        server_filter=None,
-        workspace_id=ws_id,
-        user_email=user_email,
-    )
-
+    return await mcp_sse_stream_action(request=request)
 
 @router.get("/servers/{server_name}/mcp")
 @router.get("/servers/{server_name}/sse")
@@ -202,15 +221,7 @@ async def mcp_server_sse_stream(
     """
     Standard MCP SSE Stream endpoint for a specific MCP server (built-in native or proxied).
     """
-    ws_id = _get_workspace_id(request)
-    user_email = getattr(request.state, "user_email", None)
-    return await handle_mcp_sse_stream(
-        request=request,
-        server_filter=server_name,
-        workspace_id=ws_id,
-        user_email=user_email,
-    )
-
+    return await mcp_server_sse_stream_action(server_name=server_name, request=request)
 
 @router.post("/servers/{server_name}/sse")
 @router.post("/servers/{server_name}/mcp")
@@ -224,38 +235,7 @@ async def mcp_server_streamable_post(
     Streamable HTTP MCP endpoint (spec 2025-03-26) for a specific MCP server.
     Handles direct JSON-RPC 2.0 requests from Antigravity CLI, Claude Code, and modern MCP clients.
     """
-    try:
-        body = await request.json()
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid JSON body")
-
-    ws_id = _get_workspace_id(request)
-    user_email = getattr(request.state, "user_email", None)
-    session_id = request.query_params.get("session_id")
-    session = mcp_session_manager.get_session(session_id) if session_id else None
-
-    if isinstance(body, list):
-        return [
-            await process_mcp_jsonrpc_message(
-                body=b,
-                session=session,
-                db=db,
-                workspace_id=ws_id,
-                user_email=user_email,
-                server_filter=server_name,
-            )
-            for b in body
-        ]
-
-    return await process_mcp_jsonrpc_message(
-        body=body,
-        session=session,
-        db=db,
-        workspace_id=ws_id,
-        user_email=user_email,
-        server_filter=server_name,
-    )
-
+    return await mcp_server_streamable_post_action(server_name=server_name, request=request, db=db)
 
 @router.post("/sse")
 @router.post("/mcp")
@@ -266,38 +246,7 @@ async def mcp_root_streamable_post(
     """
     Streamable HTTP MCP root endpoint (spec 2025-03-26) for unified platform MCP tools.
     """
-    try:
-        body = await request.json()
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid JSON body")
-
-    ws_id = _get_workspace_id(request)
-    user_email = getattr(request.state, "user_email", None)
-    session_id = request.query_params.get("session_id")
-    session = mcp_session_manager.get_session(session_id) if session_id else None
-
-    if isinstance(body, list):
-        return [
-            await process_mcp_jsonrpc_message(
-                body=b,
-                session=session,
-                db=db,
-                workspace_id=ws_id,
-                user_email=user_email,
-                server_filter=None,
-            )
-            for b in body
-        ]
-
-    return await process_mcp_jsonrpc_message(
-        body=body,
-        session=session,
-        db=db,
-        workspace_id=ws_id,
-        user_email=user_email,
-        server_filter=None,
-    )
-
+    return await mcp_root_streamable_post_action(request=request, db=db)
 
 @router.post("/messages")
 async def mcp_messages(
@@ -308,34 +257,7 @@ async def mcp_messages(
     Standard MCP JSON-RPC 2.0 message handler.
     Dispatches initialize, notifications/initialized, tools/list, tools/call, and ping requests.
     """
-    session_id = request.query_params.get("session_id")
-    session = mcp_session_manager.get_session(session_id) if session_id else None
-
-    try:
-        body = await request.json()
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid JSON body")
-
-    ws_id = _get_workspace_id(request)
-    user_email = getattr(request.state, "user_email", None)
-
-    response = await process_mcp_jsonrpc_message(
-        body=body,
-        session=session,
-        db=db,
-        workspace_id=ws_id,
-        user_email=user_email,
-    )
-
-    # If session has an active queue, also put message into queue
-    if session and session.is_active and "result" in response:
-        try:
-            await session.queue.put(json.dumps(response))
-        except Exception:
-            pass
-
-    return response
-
+    return await mcp_messages_action(request=request, db=db)
 
 @router.get("/servers", response_model=list[MCPServerResponse])
 def list_mcp_servers(
@@ -343,53 +265,7 @@ def list_mcp_servers(
     db: Session = Depends(get_account_db),
 ):
     """List registered MCP servers (both built-in native and remote/subprocess) in the current workspace."""
-    ws_id = _get_workspace_id(request)
-    base_url = _resolve_base_url(request)
-
-    results: list[MCPServerResponse] = []
-    # 1. Native Built-in servers
-    for b_name, b_inst in BUILTIN_MCP_SERVERS.items():
-        tool_list = [
-            {
-                "name": t.name,
-                "description": t.description or "",
-                "inputSchema": t.inputSchema.model_dump() if hasattr(t.inputSchema, "model_dump") else t.inputSchema,
-            }
-            for t in b_inst.list_tools()
-        ]
-        results.append(
-            MCPServerResponse(
-                id=abs(hash(b_name)) % 100000 + 1,
-                workspace_id=ws_id,
-                catalog_name="system",
-                schema_name="ai",
-                full_name=f"system.ai.{b_name}",
-                name=b_name,
-                description=b_inst.description,
-                server_type="native",
-                endpoint_url=f"{base_url}/api/v1/ai-gateway/mcp/servers/{b_name}/sse",
-                has_auth=False,
-                command=None,
-                is_enabled=True,
-                created_by="system",
-                cached_tools=tool_list,
-                last_synced_at=datetime.now(timezone.utc),
-                created_at=datetime.now(timezone.utc),
-                updated_at=datetime.now(timezone.utc),
-            )
-        )
-
-    # 2. Database registered servers
-    query = db.query(MCPServer)
-    if ws_id:
-        query = query.filter((MCPServer.workspace_id == ws_id) | (MCPServer.workspace_id.is_(None)))
-    servers = query.order_by(MCPServer.name).all()
-    for s in servers:
-        if not any(r.name == s.name for r in results):
-            results.append(_to_mcp_response(s, base_url))
-
-    return results
-
+    return list_mcp_servers_action(request=request, db=db)
 
 @router.post("/servers", response_model=MCPServerResponse, status_code=status.HTTP_201_CREATED)
 async def create_mcp_server(
@@ -398,49 +274,7 @@ async def create_mcp_server(
     db: Session = Depends(get_account_db),
 ):
     """Register a new MCP server (Native, Remote SSE, or Subprocess) and auto-sync tools."""
-    ws_id = _get_workspace_id(request)
-
-    existing_query = db.query(MCPServer).filter(MCPServer.name == body.name)
-    if ws_id:
-        existing_query = existing_query.filter((MCPServer.workspace_id == ws_id) | (MCPServer.workspace_id.is_(None)))
-    existing = existing_query.first()
-    if existing:
-        raise HTTPException(status_code=400, detail=f"MCP server '{body.name}' already registered.")
-
-    auth_enc = encrypt_field(json.dumps(body.auth_headers)) if body.auth_headers else None
-    env_enc = encrypt_field(json.dumps(body.env_vars)) if body.env_vars else None
-    s_type = body.server_type.value if hasattr(body.server_type, "value") else str(body.server_type)
-    user_email = getattr(request.state, "user_email", None) or "system"
-
-    server = MCPServer(
-        workspace_id=ws_id,
-        catalog_name=body.catalog_name,
-        schema_name=body.schema_name,
-        name=body.name,
-        description=body.description,
-        server_type=s_type,
-        endpoint_url=body.endpoint_url,
-        auth_config_enc=auth_enc,
-        command=body.command,
-        env_vars_enc=env_enc,
-        is_enabled=body.is_enabled,
-        created_by=user_email,
-        cached_tools=[],
-    )
-    db.add(server)
-    db.commit()
-    db.refresh(server)
-
-    # Immediately sync tools from remote server
-    try:
-        if server.server_type in ("remote_sse", "subprocess") and (server.endpoint_url or server.command):
-            await MCPManager.sync_server_tools(db, server)
-            db.refresh(server)
-    except Exception as sync_err:
-        logger.warning("Initial tools discovery for MCP server '%s' completed with warning: %s", server.name, sync_err)
-
-    return _to_mcp_response(server)
-
+    return await create_mcp_server_action(body=body, request=request, db=db)
 
 @router.get("/servers/{server_id}", response_model=MCPServerResponse)
 def get_mcp_server(
@@ -449,12 +283,7 @@ def get_mcp_server(
     db: Session = Depends(get_account_db),
 ):
     """Get MCP server details by ID or catalog.schema.name."""
-    ws_id = _get_workspace_id(request)
-    server, _, _ = _resolve_mcp_server(server_id, db, ws_id)
-    if not server:
-        raise HTTPException(status_code=404, detail="MCP server not found")
-    return _to_mcp_response(server)
-
+    return get_mcp_server_action(server_id=server_id, request=request, db=db)
 
 @router.put("/servers/{server_id}", response_model=MCPServerResponse)
 async def update_mcp_server(
@@ -464,45 +293,7 @@ async def update_mcp_server(
     db: Session = Depends(get_account_db),
 ):
     """Update MCP server configuration and refresh tools."""
-    ws_id = _get_workspace_id(request)
-    server, _, _ = _resolve_mcp_server(server_id, db, ws_id)
-    if not server:
-        raise HTTPException(status_code=404, detail="MCP server not found")
-
-    if body.catalog_name is not None:
-        server.catalog_name = body.catalog_name
-    if body.schema_name is not None:
-        server.schema_name = body.schema_name
-    if body.name is not None:
-        server.name = body.name
-    if body.description is not None:
-        server.description = body.description
-    if body.server_type is not None:
-        server.server_type = body.server_type.value if hasattr(body.server_type, "value") else str(body.server_type)
-    if body.endpoint_url is not None:
-        server.endpoint_url = body.endpoint_url
-    if body.auth_headers is not None:
-        server.auth_config_enc = encrypt_field(json.dumps(body.auth_headers)) if body.auth_headers else None
-    if body.command is not None:
-        server.command = body.command
-    if body.env_vars is not None:
-        server.env_vars_enc = encrypt_field(json.dumps(body.env_vars)) if body.env_vars else None
-    if body.is_enabled is not None:
-        server.is_enabled = body.is_enabled
-
-    db.commit()
-    db.refresh(server)
-
-    # Sync tools if connection changed
-    try:
-        if server.server_type in ("remote_sse", "subprocess") and (server.endpoint_url or server.command):
-            await MCPManager.sync_server_tools(db, server)
-            db.refresh(server)
-    except Exception as sync_err:
-        logger.warning("Tools sync for updated MCP server '%s' warning: %s", server.name, sync_err)
-
-    return _to_mcp_response(server)
-
+    return await update_mcp_server_action(server_id=server_id, body=body, request=request, db=db)
 
 @router.delete("/servers/{server_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_mcp_server(
@@ -511,14 +302,7 @@ def delete_mcp_server(
     db: Session = Depends(get_account_db),
 ):
     """Delete an MCP server registration."""
-    ws_id = _get_workspace_id(request)
-    server, _, _ = _resolve_mcp_server(server_id, db, ws_id)
-    if not server:
-        raise HTTPException(status_code=404, detail="MCP server not found")
-    db.delete(server)
-    db.commit()
-    return None
-
+    return delete_mcp_server_action(server_id=server_id, request=request, db=db)
 
 @router.get("/servers/{server_id}/tools")
 @router.post("/servers/{server_id}/tools")
@@ -529,121 +313,7 @@ async def get_mcp_server_tools(
     db: Session = Depends(get_account_db),
 ):
     """Retrieve the live tools list exposed by an MCP server (with real-time introspection and latency)."""
-    import time
-
-    start_time = time.perf_counter()
-    ws_id = _get_workspace_id(request)
-    db_server, builtin_name, builtin_inst = _resolve_mcp_server(server_id, db, ws_id)
-
-    # Case 1: Built-in Native Servers
-    if builtin_inst and builtin_name:
-        tools = builtin_inst.list_tools()
-        latency_ms = max(1, int((time.perf_counter() - start_time) * 1000))
-        tool_defs = [
-            {
-                "name": t.name,
-                "description": t.description,
-                "input_schema": t.inputSchema.model_dump() if hasattr(t.inputSchema, "model_dump") else t.inputSchema,
-            }
-            for t in tools
-        ]
-        full_ref = f"system.ai.{builtin_name}"
-        return {
-            "success": True,
-            "message": f"Successfully retrieved tools from native MCP server '{builtin_name}'",
-            "latency_ms": latency_ms,
-            "called_endpoint": f"/api/v1/ai-gateway/mcp/servers/{full_ref}/tools",
-            "http_method": "GET",
-            "mcp_method": "tools/list",
-            "mcp_protocol": "JSON-RPC 2.0",
-            "upstream_target": "compassx-internal-runtime",
-            "server_id": builtin_name,
-            "server_name": builtin_name,
-            "server_full_name": full_ref,
-            "server_type": "native",
-            "endpoint_url": "compassx-internal-runtime",
-            "tools_count": len(tool_defs),
-            "tools": tool_defs,
-            "raw_response": {
-                "jsonrpc": "2.0",
-                "result": {
-                    "tools": tool_defs
-                }
-            }
-        }
-
-    # Case 2: Registered Database Servers (Remote SSE or Subprocess)
-    if not db_server:
-        raise HTTPException(status_code=404, detail=f"MCP server '{server_id}' not found")
-
-    server = db_server
-    cat = server.catalog_name or "default"
-    sch = server.schema_name or "default"
-    full_ref = f"{cat}.{sch}.{server.name}"
-    target = server.endpoint_url or server.command or "unknown"
-
-    try:
-        tools = await MCPManager.sync_server_tools(db, server)
-        latency_ms = max(1, int((time.perf_counter() - start_time) * 1000))
-        tool_defs = [
-            {
-                "name": t.name,
-                "description": t.description,
-                "input_schema": t.inputSchema.model_dump() if hasattr(t.inputSchema, "model_dump") else t.inputSchema,
-            }
-            for t in tools
-        ]
-        return {
-            "success": True,
-            "message": f"Successfully retrieved tools from MCP server '{server.name}' via {server.server_type.upper()}",
-            "latency_ms": latency_ms,
-            "called_endpoint": f"/api/v1/ai-gateway/mcp/servers/{full_ref}/tools",
-            "http_method": "GET",
-            "mcp_method": "tools/list",
-            "mcp_protocol": "JSON-RPC 2.0",
-            "upstream_target": target,
-            "server_id": server.id,
-            "server_name": server.name,
-            "server_full_name": full_ref,
-            "server_type": server.server_type,
-            "endpoint_url": target,
-            "tools_count": len(tool_defs),
-            "tools": tool_defs,
-            "raw_response": {
-                "jsonrpc": "2.0",
-                "result": {
-                    "tools": tool_defs
-                }
-            }
-        }
-    except Exception as e:
-        latency_ms = max(1, int((time.perf_counter() - start_time) * 1000))
-        logger.error("Error retrieving tools for MCP server %s: %s", server.name, e)
-        return {
-            "success": False,
-            "message": f"Failed to retrieve tools: {str(e)}",
-            "latency_ms": latency_ms,
-            "called_endpoint": f"/api/v1/ai-gateway/mcp/servers/{full_ref}/tools",
-            "http_method": "GET",
-            "mcp_method": "tools/list",
-            "mcp_protocol": "JSON-RPC 2.0",
-            "upstream_target": target,
-            "server_id": server.id,
-            "server_name": server.name,
-            "server_full_name": full_ref,
-            "server_type": server.server_type,
-            "endpoint_url": target,
-            "tools_count": 0,
-            "tools": [],
-            "raw_response": {
-                "jsonrpc": "2.0",
-                "error": {
-                    "code": -32603,
-                    "message": str(e)
-                }
-            }
-        }
-
+    return await get_mcp_server_tools_action(server_id=server_id, request=request, db=db)
 
 @router.get("/tools", response_model=list[MCPToolDefinition])
 async def list_tools(
@@ -651,9 +321,7 @@ async def list_tools(
     db: Session = Depends(get_account_db),
 ):
     """List all aggregated tools available in the workspace (built-ins + external servers)."""
-    ws_id = _get_workspace_id(request)
-    return await MCPManager.list_all_tools_for_workspace(db, ws_id)
-
+    return await list_tools_action(request=request, db=db)
 
 @router.post("/tools/call", response_model=MCPToolCallResponse)
 async def call_tool(
@@ -662,13 +330,4 @@ async def call_tool(
     db: Session = Depends(get_account_db),
 ):
     """Execute an MCP tool call through the governed execution proxy."""
-    ws_id = _get_workspace_id(request)
-    return await MCPExecutionProxy.execute_tool(
-        tool_name=body.tool_name,
-        arguments=body.arguments,
-        db=db,
-        workspace_id=ws_id,
-        user_id=None,
-        caller_id=body.caller_id,
-        server_id=body.server_id,
-    )
+    return await call_tool_action(body=body, request=request, db=db)

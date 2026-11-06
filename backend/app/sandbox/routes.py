@@ -1,10 +1,25 @@
-"""FastAPI routes for the Sandbox Module."""
+"""FastAPI routes for the Sandbox Module.
+
+Handlers stay here. Each one forwards to one application type.
+"""
 from typing import Any, Dict, List, Optional
-from fastapi import APIRouter, HTTPException, Query, Request, WebSocket
+from fastapi import APIRouter, Query, Request, WebSocket
 from pydantic import BaseModel, Field
 
-from app.sandbox.models import ExecResult, SandboxInstance, SandboxSpec, SandboxStatus
-from app.sandbox.service import sandbox_service
+from app.sandbox.http.application.delete_sandbox import delete_sandbox as delete_sandbox_action
+from app.sandbox.http.application.ensure_sandbox import ensure_sandbox as ensure_sandbox_action
+from app.sandbox.http.application.exec_in_sandbox import exec_in_sandbox as exec_in_sandbox_action
+from app.sandbox.http.application.get_sandbox import get_sandbox as get_sandbox_action
+from app.sandbox.http.application.get_sandbox_logs import get_sandbox_logs as get_sandbox_logs_action
+from app.sandbox.http.application.list_sandboxes import list_sandboxes as list_sandboxes_action
+from app.sandbox.http.application.provision_sandbox import provision_sandbox as provision_sandbox_action
+from app.sandbox.http.application.resume_sandbox import resume_sandbox as resume_sandbox_action
+from app.sandbox.http.application.sandbox_terminal_websocket import (
+    sandbox_terminal_websocket as sandbox_terminal_websocket_action,
+)
+from app.sandbox.http.application.suspend_sandbox import suspend_sandbox as suspend_sandbox_action
+from app.sandbox.http.application.terminate_sandbox import terminate_sandbox as terminate_sandbox_action
+from app.sandbox.models import ExecResult, SandboxInstance, SandboxSpec
 
 router = APIRouter(prefix="/sandboxes", tags=["sandbox"])
 
@@ -23,13 +38,7 @@ def list_sandboxes(
     status: Optional[str] = Query(default=None),
 ):
     """List all active and discovered sandboxes."""
-    ctx = getattr(request.state, "workspace", None)
-    ws_id = str(ctx.workspace_id) if ctx else None
-    return sandbox_service.list_sandboxes(
-        workspace_id=ws_id,
-        consumer_module=consumer_module,
-        status=status,
-    )
+    return list_sandboxes_action(request, consumer_module, status)
 
 
 @router.post("", response_model=SandboxInstance, status_code=201)
@@ -38,11 +47,7 @@ def provision_sandbox(
     spec: SandboxSpec,
 ):
     """Provision a new compute sandbox."""
-    ctx = getattr(request.state, "workspace", None)
-    if not spec.workspace_id and ctx:
-        spec.workspace_id = str(ctx.workspace_id)
-    handle = sandbox_service.provision_sandbox(spec)
-    return handle.instance
+    return provision_sandbox_action(request, spec)
 
 
 @router.post("/ensure", response_model=SandboxInstance)
@@ -51,75 +56,49 @@ def ensure_sandbox(
     spec: SandboxSpec,
 ):
     """Idempotently ensure a sandbox is active. Returns existing instance if already running, or provisions with stage tracking."""
-    ctx = getattr(request.state, "workspace", None)
-    if not spec.workspace_id and ctx:
-        spec.workspace_id = str(ctx.workspace_id)
-    return sandbox_service.ensure_sandbox(spec)
-
+    return ensure_sandbox_action(request, spec)
 
 
 @router.get("/{sandbox_id}", response_model=SandboxInstance)
 def get_sandbox(sandbox_id: str):
     """Get status and endpoints of a specific sandbox."""
-    instance = sandbox_service.get_sandbox(sandbox_id)
-    if not instance:
-        raise HTTPException(status_code=404, detail=f"Sandbox '{sandbox_id}' not found")
-    return instance
+    return get_sandbox_action(sandbox_id)
 
 
 @router.delete("/{sandbox_id}")
 def delete_sandbox(sandbox_id: str):
     """Terminate and destroy a sandbox."""
-    ok = sandbox_service.terminate_sandbox(sandbox_id)
-    if not ok:
-        raise HTTPException(status_code=404, detail=f"Sandbox '{sandbox_id}' not found or could not be terminated")
-    return {"terminated": True, "sandbox_id": sandbox_id}
+    return delete_sandbox_action(sandbox_id)
 
 
 @router.post("/{sandbox_id}/terminate")
 def terminate_sandbox(sandbox_id: str):
     """Terminate and destroy a sandbox."""
-    ok = sandbox_service.terminate_sandbox(sandbox_id)
-    if not ok:
-        raise HTTPException(status_code=404, detail=f"Sandbox '{sandbox_id}' not found or could not be terminated")
-    return {"terminated": True, "sandbox_id": sandbox_id}
+    return terminate_sandbox_action(sandbox_id)
 
 
 @router.post("/{sandbox_id}/suspend")
 def suspend_sandbox(sandbox_id: str):
     """Suspend compute resources of a sandbox."""
-    ok = sandbox_service.suspend_sandbox(sandbox_id)
-    if not ok:
-        raise HTTPException(status_code=404, detail=f"Sandbox '{sandbox_id}' not found or could not be suspended")
-    return {"suspended": True, "sandbox_id": sandbox_id}
+    return suspend_sandbox_action(sandbox_id)
 
 
 @router.post("/{sandbox_id}/resume")
 def resume_sandbox(sandbox_id: str):
     """Resume compute resources of a sandbox."""
-    ok = sandbox_service.resume_sandbox(sandbox_id)
-    if not ok:
-        raise HTTPException(status_code=404, detail=f"Sandbox '{sandbox_id}' not found or could not be resumed")
-    return {"resumed": True, "sandbox_id": sandbox_id}
+    return resume_sandbox_action(sandbox_id)
 
 
 @router.get("/{sandbox_id}/logs")
 def get_sandbox_logs(sandbox_id: str, max_lines: int = Query(default=200, ge=1, le=2000)):
     """Fetch recent execution logs for a sandbox."""
-    logs = sandbox_service.get_sandbox_logs(sandbox_id, max_lines=max_lines)
-    return {"sandbox_id": sandbox_id, "logs": logs}
+    return get_sandbox_logs_action(sandbox_id, max_lines)
 
 
 @router.post("/{sandbox_id}/exec", response_model=ExecResult)
 def exec_in_sandbox(sandbox_id: str, body: ExecRequestBody):
     """Run a shell command inside a sandbox container/workspace."""
-    return sandbox_service.exec_in_sandbox(
-        sandbox_id=sandbox_id,
-        command=body.command,
-        working_dir=body.working_dir,
-        env=body.env,
-        timeout=body.timeout,
-    )
+    return exec_in_sandbox_action(sandbox_id, body)
 
 
 @router.websocket("/{sandbox_id}/terminal/ws")
@@ -134,14 +113,6 @@ async def sandbox_terminal_websocket(
     session_id: Optional[str] = Query(None),
 ):
     """Interactive real-time WebSocket PTY terminal for any compute sandbox."""
-    await sandbox_service.handle_terminal_websocket(
-        websocket=websocket,
-        sandbox_id=sandbox_id,
-        cols=cols,
-        rows=rows,
-        working_dir=working_dir,
-        command=command,
-        agent=agent,
-        session_id=session_id,
+    await sandbox_terminal_websocket_action(
+        websocket, sandbox_id, cols, rows, working_dir, command, agent, session_id
     )
-

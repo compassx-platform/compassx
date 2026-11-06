@@ -3,21 +3,22 @@
 from __future__ import annotations
 
 import logging
+
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+
 from sqlalchemy.orm import Session
 
 from app.ai_gateway.models.provider import AIModelEndpoint, AIProvider
+
 from app.ai_gateway.schemas.provider import (
     AIModelEndpointCreate,
     AIModelEndpointResponse,
     AIModelEndpointUpdate,
 )
+
 from app.database import get_account_db
 
-router = APIRouter(prefix="/api/v1/ai-gateway/endpoints", tags=["AI Gateway - Model Endpoints"])
-logger = logging.getLogger(__name__)
-
-
+logger = logging.getLogger("app.ai_gateway.routes.endpoint_routes")
 def _get_workspace_id(request: Request) -> str | None:
     ctx = getattr(request.state, "workspace", None)
     if ctx and hasattr(ctx, "workspace_id"):
@@ -36,7 +37,6 @@ def _get_workspace_id(request: Request) -> str | None:
         except Exception:
             return None
     return None
-
 
 def _to_endpoint_response(endpoint: AIModelEndpoint) -> AIModelEndpointResponse:
     provider = endpoint.provider
@@ -65,6 +65,22 @@ def _to_endpoint_response(endpoint: AIModelEndpoint) -> AIModelEndpointResponse:
         updated_at=endpoint.updated_at,
     )
 
+import app.ai_gateway.http.endpoints.prelude as _prelude
+for _name, _value in vars(_prelude).items():
+    if not _name.startswith('__'):
+        globals()[_name] = _value
+
+from app.ai_gateway.http.endpoints.application.list_endpoints import list_endpoints as list_endpoints_action
+from app.ai_gateway.http.endpoints.application.create_endpoint import create_endpoint as create_endpoint_action
+from app.ai_gateway.http.endpoints.application.get_endpoint import get_endpoint as get_endpoint_action
+from app.ai_gateway.http.endpoints.application.update_endpoint import update_endpoint as update_endpoint_action
+from app.ai_gateway.http.endpoints.application.delete_endpoint import delete_endpoint as delete_endpoint_action
+from app.ai_gateway.http.endpoints.application.set_default_endpoint import set_default_endpoint as set_default_endpoint_action
+from app.ai_gateway.http.endpoints.application.set_embedding_endpoint import set_embedding_endpoint as set_embedding_endpoint_action
+
+logger = logging.getLogger("app.ai_gateway.routes.endpoint_routes")
+
+router = APIRouter(prefix="/api/v1/ai-gateway/endpoints", tags=["AI Gateway - Model Endpoints"])
 
 @router.get("", response_model=list[AIModelEndpointResponse])
 def list_endpoints(
@@ -72,13 +88,7 @@ def list_endpoints(
     db: Session = Depends(get_account_db),
 ):
     """List all AI Model Endpoints for the workspace."""
-    ws_id = _get_workspace_id(request)
-    query = db.query(AIModelEndpoint)
-    if ws_id:
-        query = query.filter((AIModelEndpoint.workspace_id == ws_id) | (AIModelEndpoint.workspace_id.is_(None)))
-    endpoints = query.order_by(AIModelEndpoint.name).all()
-    return [_to_endpoint_response(ep) for ep in endpoints]
-
+    return list_endpoints_action(request=request, db=db)
 
 @router.post("", response_model=AIModelEndpointResponse, status_code=status.HTTP_201_CREATED)
 def create_endpoint(
@@ -87,51 +97,7 @@ def create_endpoint(
     db: Session = Depends(get_account_db),
 ):
     """Create a new AI Model Endpoint."""
-    ws_id = _get_workspace_id(request)
-
-    # Verify provider exists
-    provider = db.query(AIProvider).filter(AIProvider.id == body.provider_id).first()
-    if not provider:
-        raise HTTPException(status_code=400, detail=f"Provider with ID {body.provider_id} not found.")
-
-    # Check unique name
-    existing_query = db.query(AIModelEndpoint).filter(AIModelEndpoint.name == body.name)
-    if ws_id:
-        existing_query = existing_query.filter((AIModelEndpoint.workspace_id == ws_id) | (AIModelEndpoint.workspace_id.is_(None)))
-    existing = existing_query.first()
-    if existing:
-        raise HTTPException(status_code=400, detail=f"Endpoint with alias '{body.name}' already exists.")
-
-    if body.is_default and ws_id:
-        db.query(AIModelEndpoint).filter(AIModelEndpoint.workspace_id == ws_id).update({"is_default": False})
-
-    if body.use_for_embedding and ws_id:
-        db.query(AIModelEndpoint).filter(AIModelEndpoint.workspace_id == ws_id).update({"use_for_embedding": False})
-
-    endpoint = AIModelEndpoint(
-        workspace_id=ws_id,
-        name=body.name,
-        provider_id=body.provider_id,
-        upstream_model_name=body.upstream_model_name,
-        fallback_endpoint_ids=body.fallback_endpoint_ids,
-        timeout_s=body.timeout_s,
-        max_tokens=body.max_tokens,
-        temperature_default=body.temperature_default,
-        rate_limit_rpm=body.rate_limit_rpm,
-        rate_limit_tpm=body.rate_limit_tpm,
-        input_cost_per_1k_tokens=body.input_cost_per_1k_tokens,
-        output_cost_per_1k_tokens=body.output_cost_per_1k_tokens,
-        cost_currency=body.cost_currency,
-        use_for_embedding=body.use_for_embedding,
-        is_default=body.is_default,
-        guardrail_config=body.guardrail_config,
-        is_active=body.is_active,
-    )
-    db.add(endpoint)
-    db.commit()
-    db.refresh(endpoint)
-    return _to_endpoint_response(endpoint)
-
+    return create_endpoint_action(body=body, request=request, db=db)
 
 @router.get("/{endpoint_id}", response_model=AIModelEndpointResponse)
 def get_endpoint(
@@ -140,11 +106,7 @@ def get_endpoint(
     db: Session = Depends(get_account_db),
 ):
     """Get AI Model Endpoint by ID."""
-    endpoint = db.query(AIModelEndpoint).filter(AIModelEndpoint.id == endpoint_id).first()
-    if not endpoint:
-        raise HTTPException(status_code=404, detail="Endpoint not found")
-    return _to_endpoint_response(endpoint)
-
+    return get_endpoint_action(endpoint_id=endpoint_id, request=request, db=db)
 
 @router.put("/{endpoint_id}", response_model=AIModelEndpointResponse)
 def update_endpoint(
@@ -154,25 +116,7 @@ def update_endpoint(
     db: Session = Depends(get_account_db),
 ):
     """Update AI Model Endpoint."""
-    endpoint = db.query(AIModelEndpoint).filter(AIModelEndpoint.id == endpoint_id).first()
-    if not endpoint:
-        raise HTTPException(status_code=404, detail="Endpoint not found")
-
-    ws_id = _get_workspace_id(request)
-    if body.is_default and ws_id:
-        db.query(AIModelEndpoint).filter(AIModelEndpoint.workspace_id == ws_id).update({"is_default": False})
-
-    if body.use_for_embedding and ws_id:
-        db.query(AIModelEndpoint).filter(AIModelEndpoint.workspace_id == ws_id).update({"use_for_embedding": False})
-
-    update_data = body.model_dump(exclude_unset=True)
-    for field, value in update_data.items():
-        setattr(endpoint, field, value)
-
-    db.commit()
-    db.refresh(endpoint)
-    return _to_endpoint_response(endpoint)
-
+    return update_endpoint_action(endpoint_id=endpoint_id, body=body, request=request, db=db)
 
 @router.delete("/{endpoint_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_endpoint(
@@ -181,13 +125,7 @@ def delete_endpoint(
     db: Session = Depends(get_account_db),
 ):
     """Delete an AI Model Endpoint."""
-    endpoint = db.query(AIModelEndpoint).filter(AIModelEndpoint.id == endpoint_id).first()
-    if not endpoint:
-        raise HTTPException(status_code=404, detail="Endpoint not found")
-    db.delete(endpoint)
-    db.commit()
-    return None
-
+    return delete_endpoint_action(endpoint_id=endpoint_id, request=request, db=db)
 
 @router.post("/{endpoint_id}/set-default", response_model=AIModelEndpointResponse)
 def set_default_endpoint(
@@ -196,18 +134,7 @@ def set_default_endpoint(
     db: Session = Depends(get_account_db),
 ):
     """Set endpoint as the default model endpoint for the workspace."""
-    endpoint = db.query(AIModelEndpoint).filter(AIModelEndpoint.id == endpoint_id).first()
-    if not endpoint:
-        raise HTTPException(status_code=404, detail="Endpoint not found")
-
-    ws_id = _get_workspace_id(request)
-    if ws_id:
-        db.query(AIModelEndpoint).filter(AIModelEndpoint.workspace_id == ws_id).update({"is_default": False})
-    endpoint.is_default = True
-    db.commit()
-    db.refresh(endpoint)
-    return _to_endpoint_response(endpoint)
-
+    return set_default_endpoint_action(endpoint_id=endpoint_id, request=request, db=db)
 
 @router.post("/{endpoint_id}/set-embedding", response_model=AIModelEndpointResponse)
 def set_embedding_endpoint(
@@ -216,14 +143,4 @@ def set_embedding_endpoint(
     db: Session = Depends(get_account_db),
 ):
     """Set endpoint as the active embedding model endpoint."""
-    endpoint = db.query(AIModelEndpoint).filter(AIModelEndpoint.id == endpoint_id).first()
-    if not endpoint:
-        raise HTTPException(status_code=404, detail="Endpoint not found")
-
-    ws_id = _get_workspace_id(request)
-    if ws_id:
-        db.query(AIModelEndpoint).filter(AIModelEndpoint.workspace_id == ws_id).update({"use_for_embedding": False})
-    endpoint.use_for_embedding = True
-    db.commit()
-    db.refresh(endpoint)
-    return _to_endpoint_response(endpoint)
+    return set_embedding_endpoint_action(endpoint_id=endpoint_id, request=request, db=db)

@@ -3,13 +3,19 @@
 from __future__ import annotations
 
 import json
+
 import logging
+
 from typing import Any, AsyncIterator
+
 from fastapi import APIRouter, Depends, HTTPException, Request
+
 from fastapi.responses import StreamingResponse
+
 from sqlalchemy.orm import Session
 
 from app.ai_gateway.models.provider import AIModelEndpoint, AIProvider
+
 from app.ai_gateway.schemas.chat import (
     ChatCompletionChunk,
     ChatCompletionRequest,
@@ -20,14 +26,14 @@ from app.ai_gateway.schemas.chat import (
     ModelItem,
     ModelListResponse,
 )
+
 from app.ai_gateway.services.gateway_service import GatewayService
+
 from app.database import get_account_db, SystemSessionLocal
+
 from app.models.app import App
 
-router = APIRouter(prefix="/api/v1/ai-gateway/v1", tags=["AI Gateway - OpenAI-Compatible Ingress"])
-logger = logging.getLogger(__name__)
-
-
+logger = logging.getLogger("app.ai_gateway.routes.proxy_routes")
 def _get_workspace_id(request: Request) -> str | None:
     ctx = getattr(request.state, "workspace", None)
     if ctx and hasattr(ctx, "workspace_id"):
@@ -46,7 +52,6 @@ def _get_workspace_id(request: Request) -> str | None:
         except Exception:
             return None
     return None
-
 
 def _resolve_caller_and_workspace(request: Request) -> tuple[str | None, str, str | None]:
     """
@@ -85,7 +90,6 @@ def _resolve_caller_and_workspace(request: Request) -> tuple[str | None, str, st
     user_id = request.headers.get("X-User-Id") or None
     return (workspace_id, "direct_api", user_id)
 
-
 async def _sse_chunk_generator(stream_iter: AsyncIterator[ChatCompletionChunk]) -> AsyncIterator[str]:
     """Format ChatCompletionChunk objects into standard SSE data chunks."""
     try:
@@ -99,53 +103,6 @@ async def _sse_chunk_generator(stream_iter: AsyncIterator[ChatCompletionChunk]) 
         yield f"data: {err_payload}\n\n"
         yield "data: [DONE]\n\n"
 
-
-@router.post("/chat/completions")
-async def chat_completions(
-    body: ChatCompletionRequest,
-    request: Request,
-    db: Session = Depends(get_account_db),
-):
-    """OpenAI-compatible Chat Completions endpoint with streaming and failover."""
-    workspace_id, caller_type, caller_id = _resolve_caller_and_workspace(request)
-    effective_user_id = caller_id if caller_type == "dev_agent" else (request.headers.get("X-User-Id") or None)
-    effective_caller_id = caller_id or body.user
-
-    if body.stream:
-        stream_iter = GatewayService.chat_stream(
-            db=db,
-            request=body,
-            workspace_id=workspace_id,
-            user_id=effective_user_id,
-            caller_type=caller_type,
-            caller_id=effective_caller_id,
-        )
-        return StreamingResponse(
-            _sse_chunk_generator(stream_iter),
-            media_type="text/event-stream",
-            headers={
-                "Cache-Control": "no-cache",
-                "Connection": "keep-alive",
-                "X-Accel-Buffering": "no",
-            },
-        )
-    else:
-        try:
-            return await GatewayService.chat_complete(
-                db=db,
-                request=body,
-                workspace_id=workspace_id,
-                user_id=effective_user_id,
-                caller_type=caller_type,
-                caller_id=effective_caller_id,
-            )
-        except ValueError as val_err:
-            raise HTTPException(status_code=404, detail=str(val_err))
-        except Exception as exc:
-            logger.error("Chat completion error: %s", exc)
-            raise HTTPException(status_code=502, detail=str(exc))
-
-
 def _response_text(content: Any) -> str:
     if content is None or isinstance(content, str):
         return content or ""
@@ -158,7 +115,6 @@ def _response_text(content: Any) -> str:
                 parts.append(str(part.get("text") or part.get("output_text") or ""))
         return "\n".join(part for part in parts if part)
     return str(content)
-
 
 def _chat_request_from_responses(payload: dict[str, Any]) -> ChatCompletionRequest:
     """Translate an OpenAI Responses request into a chat completion."""
@@ -230,10 +186,8 @@ def _chat_request_from_responses(payload: dict[str, Any]) -> ChatCompletionReque
         user=payload.get("user"),
     )
 
-
 def _sse_event(payload: dict[str, Any]) -> str:
     return f"event: {payload['type']}\ndata: {json.dumps(payload)}\n\n"
-
 
 async def _responses_event_stream(stream_iter: AsyncIterator[ChatCompletionChunk], model: str) -> AsyncIterator[str]:
     """Emit the Responses stream events OpenCode's OpenAI client consumes."""
@@ -377,6 +331,28 @@ async def _responses_event_stream(stream_iter: AsyncIterator[ChatCompletionChunk
         },
     })
 
+import app.ai_gateway.http.ingress.prelude as _prelude
+for _name, _value in vars(_prelude).items():
+    if not _name.startswith('__'):
+        globals()[_name] = _value
+
+from app.ai_gateway.http.ingress.application.chat_completions import chat_completions as chat_completions_action
+from app.ai_gateway.http.ingress.application.responses import responses as responses_action
+from app.ai_gateway.http.ingress.application.create_embeddings import create_embeddings as create_embeddings_action
+from app.ai_gateway.http.ingress.application.list_models import list_models as list_models_action
+
+logger = logging.getLogger("app.ai_gateway.routes.proxy_routes")
+
+router = APIRouter(prefix="/api/v1/ai-gateway/v1", tags=["AI Gateway - OpenAI-Compatible Ingress"])
+
+@router.post("/chat/completions")
+async def chat_completions(
+    body: ChatCompletionRequest,
+    request: Request,
+    db: Session = Depends(get_account_db),
+):
+    """OpenAI-compatible Chat Completions endpoint with streaming and failover."""
+    return await chat_completions_action(body=body, request=request, db=db)
 
 @router.post("/responses")
 async def responses(
@@ -384,78 +360,7 @@ async def responses(
     db: Session = Depends(get_account_db),
 ):
     """OpenAI Responses API used by OpenCode for GPT-5 class models."""
-    payload = await request.json()
-    if not isinstance(payload, dict):
-        raise HTTPException(status_code=400, detail="Responses body must be an object.")
-    chat_request = _chat_request_from_responses(payload)
-    if not chat_request.model:
-        raise HTTPException(status_code=400, detail="Model is required.")
-
-    workspace_id, caller_type, caller_id = _resolve_caller_and_workspace(request)
-    effective_user_id = caller_id if caller_type == "dev_agent" else (request.headers.get("X-User-Id") or None)
-    logger.info("Responses request model=%s stream=%s", chat_request.model, chat_request.stream)
-
-    if chat_request.stream:
-        stream_iter = GatewayService.chat_stream(
-            db=db,
-            request=chat_request,
-            workspace_id=workspace_id,
-            user_id=effective_user_id,
-            caller_type=caller_type,
-            caller_id=caller_id,
-        )
-        return StreamingResponse(
-            _responses_event_stream(stream_iter, chat_request.model),
-            media_type="text/event-stream",
-            headers={
-                "Cache-Control": "no-cache",
-                "Connection": "keep-alive",
-                "X-Accel-Buffering": "no",
-            },
-        )
-
-    try:
-        completed = await GatewayService.chat_complete(
-            db=db,
-            request=chat_request,
-            workspace_id=workspace_id,
-            user_id=effective_user_id,
-            caller_type=caller_type,
-            caller_id=caller_id,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
-    except Exception as exc:
-        logger.error("Responses completion error: %s", exc)
-        raise HTTPException(status_code=502, detail=str(exc))
-
-    message = completed.choices[0].message if completed.choices else None
-    output: list[dict[str, Any]] = []
-    if message and message.content:
-        output.append({
-            "id": "msg_complete",
-            "type": "message",
-            "status": "completed",
-            "role": "assistant",
-            "content": [{"type": "output_text", "text": message.content, "annotations": []}],
-        })
-    for call in (message.tool_calls if message and message.tool_calls else []):
-        output.append({
-            "id": call.id,
-            "type": "function_call",
-            "status": "completed",
-            "call_id": call.id,
-            "name": call.function.name,
-            "arguments": call.function.arguments,
-        })
-    return {
-        "id": completed.id,
-        "object": "response",
-        "status": "completed",
-        "model": completed.model,
-        "output": output,
-    }
-
+    return await responses_action(request=request, db=db)
 
 @router.post("/embeddings", response_model=EmbeddingResponse)
 async def create_embeddings(
@@ -464,28 +369,7 @@ async def create_embeddings(
     db: Session = Depends(get_account_db),
 ):
     """OpenAI-compatible vector embeddings endpoint."""
-    texts = [body.input] if isinstance(body.input, str) else body.input
-    workspace_id, caller_type, caller_id = _resolve_caller_and_workspace(request)
-
-    try:
-        raw_embeddings = await GatewayService.embed(
-            db=db,
-            texts=texts,
-            model_name_or_id=body.model,
-            workspace_id=workspace_id,
-        )
-        data_items = [
-            EmbeddingData(object="embedding", index=i, embedding=emb)
-            for i, emb in enumerate(raw_embeddings)
-        ]
-        return EmbeddingResponse(
-            data=data_items,
-            model=body.model,
-        )
-    except Exception as exc:
-        logger.error("Embedding generation error: %s", exc)
-        raise HTTPException(status_code=502, detail=str(exc))
-
+    return await create_embeddings_action(body=body, request=request, db=db)
 
 @router.get("/models", response_model=ModelListResponse)
 def list_models(
@@ -493,45 +377,4 @@ def list_models(
     db: Session = Depends(get_account_db),
 ):
     """OpenAI-compatible list models endpoint."""
-    workspace_id, caller_type, caller_id = _resolve_caller_and_workspace(request)
-    query = db.query(AIModelEndpoint).filter(AIModelEndpoint.is_active == True)  # noqa: E712
-    if workspace_id:
-        query = query.filter((AIModelEndpoint.workspace_id == workspace_id) | (AIModelEndpoint.workspace_id.is_(None)))
-    endpoints = query.all()
-
-    if not endpoints:
-        # Check if an active AIProvider exists in this workspace and seed initial endpoints
-        prov_query = db.query(AIProvider).filter(AIProvider.is_active == True)
-        if workspace_id:
-            prov_query = prov_query.filter((AIProvider.workspace_id == workspace_id) | (AIProvider.workspace_id.is_(None)))
-        provider = prov_query.first()
-        if provider:
-            seeded = []
-            default_models = ["gpt-5.4-mini", "gpt-5.6-sol"]
-            for idx, m_name in enumerate(default_models):
-                ep = AIModelEndpoint(
-                    workspace_id=workspace_id,
-                    name=m_name,
-                    provider_id=provider.id,
-                    upstream_model_name=m_name,
-                    is_active=True,
-                    is_default=(idx == 0),
-                )
-                db.add(ep)
-                seeded.append(ep)
-            try:
-                db.commit()
-                endpoints = seeded
-            except Exception:
-                db.rollback()
-
-    model_items = [
-        ModelItem(
-            id=ep.name,
-            provider_type=getattr(ep.provider.provider_type, "value", ep.provider.provider_type) if ep.provider else "unknown",
-            is_default=ep.is_default,
-            use_for_embedding=ep.use_for_embedding,
-        )
-        for ep in endpoints
-    ]
-    return ModelListResponse(data=model_items)
+    return list_models_action(request=request, db=db)

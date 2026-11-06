@@ -1,0 +1,21 @@
+"""Ontology actions. Import inside a function body when another action calls one."""
+from app.ontology.graph.application.ensure_default_seed import ensure_default_seed as ensure_default_seed
+from app.ontology.types.application.list_types import list_types as list_types
+from app.ontology.types.application.get_type import get_type as get_type
+from app.ontology.types.application.create_type import create_type as create_type
+from app.ontology.types.application.update_type import update_type as update_type
+from app.ontology.types.application.delete_type import delete_type as delete_type
+from app.ontology.relations.application.list_type_relations import list_type_relations as list_type_relations
+from app.ontology.relations.application.create_type_relation import create_type_relation as create_type_relation
+from app.ontology.relations.application.update_type_relation import update_type_relation as update_type_relation
+from app.ontology.relations.application.delete_type_relation import delete_type_relation as delete_type_relation
+from app.ontology.graph.application.validate_graph import validate_graph as validate_graph
+from app.ontology.graph.application.parse_yaml_to_dataset import parse_yaml_to_dataset as parse_yaml_to_dataset
+from app.ontology.graph.application.get_active_graph import get_active_graph as get_active_graph
+from app.ontology.graph.application.persist_dataset import persist_dataset as persist_dataset
+from app.ontology.graph.application.import_yaml_or_dataset import import_yaml_or_dataset as import_yaml_or_dataset
+from app.ontology.graph.application.add_node import add_node as add_node
+from app.ontology.graph.application.update_node import update_node as update_node
+from app.ontology.graph.application.delete_node import delete_node as delete_node
+from app.ontology.graph.application.add_edge import add_edge as add_edge
+from app.ontology.graph.application.delete_edge import delete_edge as delete_edge

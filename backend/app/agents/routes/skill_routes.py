@@ -21,14 +21,21 @@ unscoped request reached the workspace-less skills instead of being refused.
 from __future__ import annotations
 
 from datetime import datetime, timezone
+
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+
 from sqlalchemy.orm import Session, selectinload
 
 from app.agents.routes._authz import authorized_agent
+
 from app.database import get_system_db as get_db
+
 from app.governance.dependencies import Guard, get_guard
+
 from app.governance.privileges import Privilege
+
 from app.models.agents import Agent, Skill, AgentSkillAttachment
+
 from app.schemas.agents import (
     SkillCreate,
     SkillUpdate,
@@ -36,12 +43,8 @@ from app.schemas.agents import (
     AgentSkillResponse,
 )
 
-router = APIRouter(prefix="/api/v1/skills", tags=["Skills"])
-
-
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
-
 
 def _get_skill(db: Session, skill_id: int, guard: Guard) -> Skill:
     """Load an active skill from the caller's workspace."""
@@ -58,6 +61,20 @@ def _get_skill(db: Session, skill_id: int, guard: Guard) -> Skill:
         raise HTTPException(404, "Skill not found")
     return skill
 
+import app.agents.http.skills.prelude as _prelude
+for _name, _value in vars(_prelude).items():
+    if not _name.startswith('__'):
+        globals()[_name] = _value
+
+from app.agents.http.skills.application.list_skills import list_skills as list_skills_action
+from app.agents.http.skills.application.create_skill import create_skill as create_skill_action
+from app.agents.http.skills.application.get_skill import get_skill as get_skill_action
+from app.agents.http.skills.application.update_skill import update_skill as update_skill_action
+from app.agents.http.skills.application.delete_skill import delete_skill as delete_skill_action
+from app.agents.http.skills.application.attach_skill import attach_skill as attach_skill_action
+from app.agents.http.skills.application.detach_skill import detach_skill as detach_skill_action
+
+router = APIRouter(prefix="/api/v1/skills", tags=["Skills"])
 
 @router.get("", response_model=list[SkillResponse])
 def list_skills(
@@ -71,16 +88,7 @@ def list_skills(
     Readable by any member: the library is what someone picks from when
     configuring an agent, and a skill body is instructions, not data.
     """
-    query = db.query(Skill).filter(
-        Skill.is_active.is_(True),
-        Skill.workspace_id == guard.workspace_id,
-    )
-    if isinstance(search, str) and search.strip():
-        query = query.filter(
-            Skill.name.ilike(f"%{search.strip()}%") | Skill.description.ilike(f"%{search.strip()}%")
-        )
-    return query.order_by(Skill.name).all()
-
+    return list_skills_action(request=request, search=search, db=db, guard=guard)
 
 @router.post("", response_model=SkillResponse, status_code=201)
 def create_skill(
@@ -94,37 +102,7 @@ def create_skill(
     Admin: the library is shared, and anyone who can add to it can put text in
     front of an agent that other people will later attach without reading.
     """
-    guard.require_workspace_admin("Creating a skill")
-    workspace_id = guard.workspace_id
-    existing = (
-        db.query(Skill)
-        .filter(
-            Skill.name.ilike(body.name),
-            Skill.is_active.is_(True),
-            Skill.workspace_id == workspace_id,
-        )
-        .first()
-    )
-    if existing:
-        raise HTTPException(400, "Skill with this name already exists")
-
-    skill = Skill(
-        workspace_id=workspace_id,
-        name=body.name.strip(),
-        description=body.description.strip(),
-        body=body.body,
-        trigger_hints=body.trigger_hints,
-        version=1,
-        is_active=True,
-        created_by=str(guard.principal.id),
-        created_at=_utcnow(),
-        updated_at=_utcnow(),
-    )
-    db.add(skill)
-    db.commit()
-    db.refresh(skill)
-    return skill
-
+    return create_skill_action(request=request, body=body, db=db, guard=guard)
 
 @router.get("/{skill_id}", response_model=SkillResponse)
 def get_skill(
@@ -134,8 +112,7 @@ def get_skill(
     guard: Guard = Depends(get_guard),
 ):
     """Get a single skill by ID."""
-    return _get_skill(db, skill_id, guard)
-
+    return get_skill_action(request=request, skill_id=skill_id, db=db, guard=guard)
 
 @router.put("/{skill_id}", response_model=SkillResponse)
 def update_skill(
@@ -150,42 +127,7 @@ def update_skill(
     Admin, for the reason given in the module docstring: the edit propagates
     to every agent this skill is attached to, whoever owns them.
     """
-    guard.require_workspace_admin("Editing a skill")
-    skill = _get_skill(db, skill_id, guard)
-
-    if body.name is not None:
-        name_clean = body.name.strip()
-        if name_clean.lower() != skill.name.lower():
-            existing = (
-                db.query(Skill)
-                .filter(
-                    Skill.name.ilike(name_clean),
-                    Skill.is_active.is_(True),
-                    Skill.workspace_id == guard.workspace_id,
-                )
-                .first()
-            )
-            if existing:
-                raise HTTPException(400, "Skill with this name already exists")
-        skill.name = name_clean
-
-    if body.description is not None:
-        skill.description = body.description.strip()
-
-    if body.body is not None:
-        skill.body = body.body
-
-    if body.trigger_hints is not None:
-        skill.trigger_hints = body.trigger_hints
-
-    # Increment version upon update
-    skill.version += 1
-    skill.updated_at = _utcnow()
-
-    db.commit()
-    db.refresh(skill)
-    return skill
-
+    return update_skill_action(request=request, skill_id=skill_id, body=body, db=db, guard=guard)
 
 @router.delete("/{skill_id}", status_code=204)
 def delete_skill(
@@ -199,17 +141,7 @@ def delete_skill(
     Admin: it detaches the skill from every agent that had it, which changes
     the behaviour of agents belonging to other people.
     """
-    guard.require_workspace_admin("Deleting a skill")
-    skill = _get_skill(db, skill_id, guard)
-    skill.is_active = False
-    skill.updated_at = _utcnow()
-
-    # Detach from all agents
-    db.query(AgentSkillAttachment).filter(AgentSkillAttachment.skill_id == skill_id).delete()
-
-    db.commit()
-    return
-
+    return delete_skill_action(request=request, skill_id=skill_id, db=db, guard=guard)
 
 @router.post("/{skill_id}/attach/{agent_id}", response_model=AgentSkillResponse, status_code=201)
 def attach_skill(
@@ -225,37 +157,7 @@ def attach_skill(
     different URL. Reading the library takes nothing beyond membership, so the
     skill lookup adds no check of its own.
     """
-    authorized_agent(db, guard, agent_id, Privilege.EDIT)
-    _get_skill(db, skill_id, guard)
-
-    # Check if already attached
-    existing = db.query(AgentSkillAttachment).filter(
-        AgentSkillAttachment.skill_id == skill_id,
-        AgentSkillAttachment.agent_id == agent_id,
-    ).first()
-    if existing:
-        return db.query(AgentSkillAttachment).options(selectinload(AgentSkillAttachment.skill)).filter(
-            AgentSkillAttachment.id == existing.id
-        ).first()
-
-    # Get max position
-    max_pos = db.query(AgentSkillAttachment).filter(
-        AgentSkillAttachment.agent_id == agent_id
-    ).count()
-
-    attachment = AgentSkillAttachment(
-        agent_id=agent_id,
-        skill_id=skill_id,
-        position=max_pos,
-        attached_at=_utcnow(),
-    )
-    db.add(attachment)
-    db.commit()
-
-    return db.query(AgentSkillAttachment).options(selectinload(AgentSkillAttachment.skill)).filter(
-        AgentSkillAttachment.id == attachment.id
-    ).first()
-
+    return attach_skill_action(request=request, skill_id=skill_id, agent_id=agent_id, db=db, guard=guard)
 
 @router.post("/{skill_id}/detach/{agent_id}", status_code=204)
 def detach_skill(
@@ -266,16 +168,4 @@ def detach_skill(
     guard: Guard = Depends(get_guard),
 ):
     """Detach a skill from an agent."""
-    authorized_agent(db, guard, agent_id, Privilege.EDIT)
-    _get_skill(db, skill_id, guard)
-
-    attachment = db.query(AgentSkillAttachment).filter(
-        AgentSkillAttachment.skill_id == skill_id,
-        AgentSkillAttachment.agent_id == agent_id,
-    ).first()
-    if not attachment:
-        raise HTTPException(404, "Attachment not found")
-
-    db.delete(attachment)
-    db.commit()
-    return
+    return detach_skill_action(request=request, skill_id=skill_id, agent_id=agent_id, db=db, guard=guard)

@@ -12,21 +12,26 @@ stream id was sufficient to read another workspace's agent output live.
 from __future__ import annotations
 
 import asyncio
+
 import json
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+
 from fastapi.responses import StreamingResponse
+
 from sqlalchemy.orm import Session
 
 from app.agents.routes._authz import authorized_agent
+
 from app.agents.services.stream_registry import stream_registry
+
 from app.database import get_system_db as get_db
+
 from app.governance.dependencies import Guard, get_guard
+
 from app.governance.privileges import Privilege
+
 from app.governance.securable import Securable
-
-router = APIRouter(prefix="/api/v1/streams", tags=["Streams"])
-
 
 def _authorized_stream(stream_id: str, guard: Guard, db: Session, privilege: Privilege):
     """Resolve a stream in the caller's workspace, or 404.
@@ -42,6 +47,16 @@ def _authorized_stream(stream_id: str, guard: Guard, db: Session, privilege: Pri
     authorized_agent(db, guard, stream.agent_id, privilege)
     return stream
 
+import app.agents.http.streams.prelude as _prelude
+for _name, _value in vars(_prelude).items():
+    if not _name.startswith('__'):
+        globals()[_name] = _value
+
+from app.agents.http.streams.application.list_active_streams import list_active_streams as list_active_streams_action
+from app.agents.http.streams.application.attach_stream import attach_stream as attach_stream_action
+from app.agents.http.streams.application.cancel_stream import cancel_stream as cancel_stream_action
+
+router = APIRouter(prefix="/api/v1/streams", tags=["Streams"])
 
 @router.get("/active")
 def list_active_streams(
@@ -53,19 +68,7 @@ def list_active_streams(
     guard: Guard = Depends(get_guard),
 ):
     """List the running streams the caller may see."""
-    streams = stream_registry.list(
-        kind=kind,
-        agent_id=agent_id,
-        session_id=session_id,
-        workspace_id=guard.workspace_id,
-    )
-    visible = [s for s in streams if s.get("agent_id") is not None]
-    return {
-        "streams": guard.filter(
-            Privilege.BROWSE, visible, lambda s: Securable.agent(str(s["agent_id"]))
-        ),
-    }
-
+    return list_active_streams_action(request=request, kind=kind, agent_id=agent_id, session_id=session_id, db=db, guard=guard)
 
 @router.get("/{stream_id}/events")
 async def attach_stream(
@@ -74,31 +77,7 @@ async def attach_stream(
     guard: Guard = Depends(get_guard),
 ):
     """Attach to a running stream and replay its events as SSE."""
-    _authorized_stream(stream_id, guard, db, Privilege.BROWSE)
-
-    queue = stream_registry.subscribe(stream_id)
-    if queue is None:
-        raise HTTPException(404, "Stream not found")
-
-    async def event_generator():
-        try:
-            yield f"data: {json.dumps({'type': 'stream_attached', 'stream_id': stream_id})}\n\n"
-            while True:
-                event = await queue.get()
-                if event is None:
-                    break
-                yield f"data: {json.dumps(event)}\n\n"
-        except asyncio.CancelledError:
-            raise
-        finally:
-            stream_registry.unsubscribe(stream_id, queue)
-
-    return StreamingResponse(
-        event_generator(),
-        media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-    )
-
+    return await attach_stream_action(stream_id=stream_id, db=db, guard=guard)
 
 @router.post("/{stream_id}/cancel")
 def cancel_stream(
@@ -113,6 +92,4 @@ def cancel_stream(
     a run of it, and a runaway turn only its starter can kill is worse than one
     stopped by a colleague.
     """
-    _authorized_stream(stream_id, guard, db, Privilege.EXECUTE)
-    stream_registry.cancel(stream_id)
-    return {"ok": True}
+    return cancel_stream_action(request=request, stream_id=stream_id, db=db, guard=guard)

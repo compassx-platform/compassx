@@ -214,29 +214,7 @@ def execute_task(
 
 def recover_orphaned_executions(runtime_manager) -> int:
     """Fail and clean executions whose owning backend process was restarted."""
-    db = SystemSessionLocal()
-    recovered = 0
-    try:
-        executions = (
-            db.query(JobExecution)
-            .filter(JobExecution.state.in_(["queued", "running"]))
-            .all()
-        )
-        for execution in executions:
-            execution.state = "failed"
-            execution.error = "Execution interrupted because the backend restarted."
-            execution.ended_at = utcnow()
-            db.commit()
-            if execution.runtime_id:
-                try:
-                    asyncio.run(runtime_manager.delete_runtime(execution.runtime_id))
-                except Exception:
-                    logger.warning(
-                        "Could not remove orphaned job runtime %s",
-                        execution.runtime_id,
-                        exc_info=True,
-                    )
-            recovered += 1
-        return recovered
-    finally:
-        db.close()
+    from app.jobs.task.application.recover_orphaned_executions import (
+        recover_orphaned_executions as recover,
+    )
+    return recover(runtime_manager)

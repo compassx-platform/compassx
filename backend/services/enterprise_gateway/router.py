@@ -16,7 +16,7 @@ from services.base import ServicePhase
 from services.enterprise_gateway.config import eg_settings
 from services.enterprise_gateway.manager import get_eg_manager
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("services.enterprise_gateway.router")
 router = APIRouter(tags=["enterprise-gateway"])
 
 
@@ -33,101 +33,69 @@ def _eg_base_url() -> str:
 
 # ── Service lifecycle ─────────────────────────────────────────────────────────
 
-@router.post("/start")
-def start_eg():
-    """Start Enterprise Gateway pod."""
-    try:
-        status = get_eg_manager().start()
-        return {"phase": status.phase, "message": status.message}
-    except Exception as exc:
-        logger.exception("Error starting EG")
-        return _error("InternalError", str(exc), 500)
 
 
-@router.post("/stop")
-def stop_eg():
-    """Stop Enterprise Gateway pod."""
-    try:
-        status = get_eg_manager().stop()
-        return {"phase": status.phase, "message": status.message}
-    except Exception as exc:
-        logger.exception("Error stopping EG")
-        return _error("InternalError", str(exc), 500)
 
 
-@router.post("/restart")
-def restart_eg():
-    """Restart Enterprise Gateway pod."""
-    try:
-        status = get_eg_manager().restart()
-        return {"phase": status.phase, "message": status.message}
-    except Exception as exc:
-        logger.exception("Error restarting EG")
-        return _error("InternalError", str(exc), 500)
 
 
-@router.get("/status")
-def eg_status():
-    """Get Enterprise Gateway deployment status."""
-    try:
-        status = get_eg_manager().get_status()
-        return {"phase": status.phase, "message": status.message}
-    except Exception as exc:
-        logger.exception("Error getting EG status")
-        return _error("InternalError", str(exc), 500)
 
 
 # ── Kernel proxy endpoints ────────────────────────────────────────────────────
 
+
+
+
+
+
+
+
+from services.enterprise_gateway.http.application.start_eg import start_eg as start_eg_action
+from services.enterprise_gateway.http.application.stop_eg import stop_eg as stop_eg_action
+from services.enterprise_gateway.http.application.restart_eg import restart_eg as restart_eg_action
+from services.enterprise_gateway.http.application.eg_status import eg_status as eg_status_action
+from services.enterprise_gateway.http.application.list_kernels import list_kernels as list_kernels_action
+from services.enterprise_gateway.http.application.get_kernel import get_kernel as get_kernel_action
+from services.enterprise_gateway.http.application.shutdown_kernel import shutdown_kernel as shutdown_kernel_action
+from services.enterprise_gateway.http.application.list_kernelspecs import list_kernelspecs as list_kernelspecs_action
+
+@router.post("/start")
+def start_eg():
+    """Start Enterprise Gateway pod."""
+    return start_eg_action()
+
+@router.post("/stop")
+def stop_eg():
+    """Stop Enterprise Gateway pod."""
+    return stop_eg_action()
+
+@router.post("/restart")
+def restart_eg():
+    """Restart Enterprise Gateway pod."""
+    return restart_eg_action()
+
+@router.get("/status")
+def eg_status():
+    """Get Enterprise Gateway deployment status."""
+    return eg_status_action()
+
 @router.get("/kernels")
 async def list_kernels():
     """List active kernels (proxied from EG)."""
-    try:
-        async with httpx.AsyncClient(timeout=10.0) as http:
-            resp = await http.get(f"{_eg_base_url()}/api/kernels")
-            return resp.json()
-    except Exception as exc:
-        logger.warning("EG /api/kernels failed: %s", exc)
-        return _error("EGUnreachable", "Enterprise Gateway not reachable.", 503)
-
+    return await list_kernels_action()
 
 @router.get("/kernels/{kernel_id}")
 async def get_kernel(kernel_id: str):
     """Get kernel status."""
-    try:
-        async with httpx.AsyncClient(timeout=10.0) as http:
-            resp = await http.get(f"{_eg_base_url()}/api/kernels/{kernel_id}")
-            if resp.status_code == 404:
-                return _error("NotFound", f"Kernel {kernel_id} not found.", 404)
-            return resp.json()
-    except Exception as exc:
-        logger.warning("EG kernel status failed: %s", exc)
-        return _error("EGUnreachable", "Enterprise Gateway not reachable.", 503)
-
+    return await get_kernel_action(kernel_id=kernel_id)
 
 @router.delete("/kernels/{kernel_id}")
 async def shutdown_kernel(kernel_id: str):
     """Shutdown a kernel."""
-    try:
-        async with httpx.AsyncClient(timeout=10.0) as http:
-            resp = await http.delete(f"{_eg_base_url()}/api/kernels/{kernel_id}")
-            if resp.status_code == 404:
-                return _error("NotFound", f"Kernel {kernel_id} not found.", 404)
-            return {"shutdown": True, "kernel_id": kernel_id}
-    except Exception as exc:
-        logger.warning("EG kernel shutdown failed: %s", exc)
-        return _error("EGUnreachable", "Enterprise Gateway not reachable.", 503)
-
+    return await shutdown_kernel_action(kernel_id=kernel_id)
 
 @router.get("/kernelspecs")
 async def list_kernelspecs():
     """List available kernelspecs for UI dropdown."""
-    try:
-        async with httpx.AsyncClient(timeout=10.0) as http:
-            resp = await http.get(f"{_eg_base_url()}/api/kernelspecs")
-            if resp.status_code != 200:
-                return _error("EGError", "Could not fetch kernelspecs.", resp.status_code)
-            return resp.json()
-    except Exception as exc:
-        logger.warning("EG kernelspecs failed: %s", exc)
-        return _error("EGUnreachable", "Enterprise Gateway not reachable.", 503)
+    return await list_kernelspecs_action()
+

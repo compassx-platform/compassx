@@ -29,102 +29,19 @@ from app.schemas.portal_config import (
     PortalSection,
 )
 
-logger = logging.getLogger(__name__)
+import app.portal.prelude as _prelude
+for _name, _value in vars(_prelude).items():
+    if not _name.startswith("__"):
+        globals()[_name] = _value
+
+from app.portal.application.get_portal_config import _bootstrap_default_config
+from app.portal.application.get_portal_config import get_portal_config as get_portal_config_action
+from app.portal.application.update_portal_config import update_portal_config as update_portal_config_action
+from app.portal.application.get_available_items import get_available_items as get_available_items_action
+
+logger = logging.getLogger("app.routes.portal_routes")
 
 router = APIRouter(prefix="/api/v1/portal", tags=["Portal"])
-
-
-def _bootstrap_default_config(
-    workspace_id: str,
-    workspace_slug: Optional[str],
-    sdb: Session,
-    adb: Session,
-    user_id: Optional[str] = None,
-) -> PortalConfig:
-    """Build a sensible default portal configuration using existing apps & dashboards."""
-    # Query workspace apps
-    app_query = sdb.query(App)
-    if workspace_id:
-        app_query = app_query.filter(App.workspace_id == workspace_id)
-    elif workspace_slug:
-        app_query = app_query.filter(App.workspace_slug == workspace_slug)
-    apps = app_query.order_by(App.created_at.desc()).all()
-
-    # Query dashboards
-    dashboards = adb.query(Dashboard).order_by(Dashboard.created_at.desc()).all()
-
-    sections: List[dict] = []
-
-    # Apps Section
-    app_items = []
-    for idx, a in enumerate(apps):
-        app_items.append({
-            "id": f"item_app_{a.id}",
-            "type": "app",
-            "target_id": a.id,
-            "title": a.name,
-            "icon": "LayoutGrid" if a.app_type == "react" else "Sparkles" if a.app_type == "streamlit" else "Code2",
-            "is_visible": True,
-            "order": idx,
-            "url": a.route,
-            "app_type": a.app_type,
-            "status": a.status,
-        })
-
-    if app_items:
-        sections.append({
-            "id": "sec_applications",
-            "title": "Applications",
-            "items": app_items,
-        })
-
-    # Dashboards Section
-    dash_items = []
-    for idx, d in enumerate(dashboards):
-        dash_items.append({
-            "id": f"item_dash_{d.id}",
-            "type": "dashboard",
-            "target_id": str(d.id),
-            "title": d.name,
-            "icon": "BarChart2",
-            "is_visible": True,
-            "order": idx,
-            "url": None,
-            "app_type": None,
-            "status": "published" if not d.is_draft else "draft",
-        })
-
-    if dash_items:
-        sections.append({
-            "id": "sec_dashboards",
-            "title": "Dashboards",
-            "items": dash_items,
-        })
-
-    # Fallback if both empty
-    if not sections:
-        sections.append({
-            "id": "sec_applications",
-            "title": "Applications",
-            "items": [],
-        })
-
-    new_cfg = PortalConfig(
-        id=f"portal_cfg_{uuid.uuid4().hex[:16]}",
-        workspace_id=workspace_id or "default",
-        workspace_slug=workspace_slug,
-        sections=sections,
-        created_by_user_id=user_id,
-    )
-    sdb.add(new_cfg)
-    try:
-        sdb.commit()
-        sdb.refresh(new_cfg)
-    except Exception as e:
-        sdb.rollback()
-        logger.warning("Could not persist auto-bootstrapped portal config: %s", e)
-
-    return new_cfg
 
 
 @router.get("/config", response_model=PortalConfigOut)
@@ -141,27 +58,13 @@ def get_portal_config(
     If no configuration exists, automatically bootstraps one from the workspace's
     deployed apps and dashboards.
     """
-    target_ws = workspace_id or guard.workspace_id or "default"
-    cfg = sdb.query(PortalConfig).filter(PortalConfig.workspace_id == target_ws).first()
-
-    if not cfg and workspace_slug:
-        cfg = sdb.query(PortalConfig).filter(PortalConfig.workspace_slug == workspace_slug).first()
-
-    if not cfg:
-        cfg = _bootstrap_default_config(
-            workspace_id=target_ws,
-            workspace_slug=workspace_slug,
-            sdb=sdb,
-            adb=adb,
-            user_id=guard.user_id if hasattr(guard, "user_id") else None,
-        )
-
-    return PortalConfigOut(
-        id=cfg.id,
-        workspace_id=cfg.workspace_id,
-        workspace_slug=cfg.workspace_slug,
-        sections=cfg.sections or [],
-        updated_at=cfg.updated_at or cfg.created_at,
+    return get_portal_config_action(
+        request=request,
+        workspace_id=workspace_id,
+        workspace_slug=workspace_slug,
+        sdb=sdb,
+        adb=adb,
+        guard=guard,
     )
 
 
@@ -175,36 +78,13 @@ def update_portal_config(
     guard: Guard = Depends(get_guard),
 ):
     """Save updated portal navigation layout (sections, items, ordering, icons, visibility)."""
-    target_ws = workspace_id or guard.workspace_id or "default"
-    cfg = sdb.query(PortalConfig).filter(PortalConfig.workspace_id == target_ws).first()
-
-    sections_data = [sec.dict() for sec in body.sections]
-
-    if not cfg:
-        cfg = PortalConfig(
-            id=f"portal_cfg_{uuid.uuid4().hex[:16]}",
-            workspace_id=target_ws,
-            workspace_slug=workspace_slug,
-            sections=sections_data,
-            created_by_user_id=guard.user_id if hasattr(guard, "user_id") else None,
-        )
-        sdb.add(cfg)
-    else:
-        cfg.sections = sections_data
-        if workspace_slug:
-            cfg.workspace_slug = workspace_slug
-        cfg.updated_at = datetime.now(timezone.utc)
-        flag_modified(cfg, "sections")
-
-    sdb.commit()
-    sdb.refresh(cfg)
-
-    return PortalConfigOut(
-        id=cfg.id,
-        workspace_id=cfg.workspace_id,
-        workspace_slug=cfg.workspace_slug,
-        sections=cfg.sections or [],
-        updated_at=cfg.updated_at or cfg.created_at,
+    return update_portal_config_action(
+        body=body,
+        request=request,
+        workspace_id=workspace_id,
+        workspace_slug=workspace_slug,
+        sdb=sdb,
+        guard=guard,
     )
 
 
@@ -218,41 +98,11 @@ def get_available_items(
     guard: Guard = Depends(get_guard),
 ):
     """Retrieve all candidate apps and dashboards available to be pinned/linked into the Portal."""
-    target_ws = workspace_id or guard.workspace_id
-    app_query = sdb.query(App)
-    if target_ws:
-        app_query = app_query.filter(App.workspace_id == target_ws)
-    elif workspace_slug:
-        app_query = app_query.filter(App.workspace_slug == workspace_slug)
-
-    apps = app_query.order_by(App.created_at.desc()).all()
-    dashboards = adb.query(Dashboard).order_by(Dashboard.created_at.desc()).all()
-
-    app_list = [
-        AvailableAppItem(
-            id=a.id,
-            name=a.name,
-            slug=a.slug,
-            description=a.description,
-            app_type=a.app_type,
-            status=a.status,
-            route=a.route,
-        )
-        for a in apps
-    ]
-
-    dash_list = [
-        AvailableDashboardItem(
-            id=str(d.id),
-            name=d.name,
-            description=None,
-            is_draft=bool(d.is_draft),
-            published_at=d.published_at,
-        )
-        for d in dashboards
-    ]
-
-    return PortalAvailableItemsResponse(
-        apps=app_list,
-        dashboards=dash_list,
+    return get_available_items_action(
+        request=request,
+        workspace_id=workspace_id,
+        workspace_slug=workspace_slug,
+        sdb=sdb,
+        adb=adb,
+        guard=guard,
     )
