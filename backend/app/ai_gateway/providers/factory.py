@@ -7,6 +7,7 @@ from app.ai_gateway.providers.base import BaseProviderAdapter
 from app.ai_gateway.providers.openai_adapter import OpenAIAdapter
 from app.ai_gateway.providers.anthropic_adapter import AnthropicAdapter
 from app.ai_gateway.providers.gemini_adapter import GeminiAdapter
+from app.ai_gateway.providers.grok_adapter import GrokAdapter
 from app.ai_gateway.providers.ollama_adapter import OllamaAdapter
 
 _ADAPTER_REGISTRY: dict[AIProviderType, BaseProviderAdapter] = {
@@ -15,6 +16,7 @@ _ADAPTER_REGISTRY: dict[AIProviderType, BaseProviderAdapter] = {
     AIProviderType.anthropic: AnthropicAdapter(),
     AIProviderType.gemini: GeminiAdapter(),
     AIProviderType.ollama: OllamaAdapter(),
+    AIProviderType.grok: GrokAdapter(),
     AIProviderType.compatible: OpenAIAdapter(),
 }
 

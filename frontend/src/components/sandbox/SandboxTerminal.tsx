@@ -19,7 +19,10 @@ export interface SandboxTerminalProps {
   onResume?: () => void;
   onSessionReady?: () => void;
   fullHeight?: boolean;
+  embedded?: boolean;
+  isDark?: boolean;
   className?: string;
+  visible?: boolean;
 }
 
 /**
@@ -37,7 +40,10 @@ export function SandboxTerminal({
   onResume,
   onSessionReady,
   fullHeight = true,
+  embedded = false,
+  isDark = true,
   className = '',
+  visible = true,
 }: SandboxTerminalProps) {
   const toast = useToast();
   const terminalViewRef = useRef<TerminalViewHandle>(null);
@@ -71,6 +77,14 @@ export function SandboxTerminal({
   useEffect(() => {
     setIsSessionLoading(true);
   }, [wsUrl]);
+
+  useEffect(() => {
+    if (!visible) return undefined;
+    const timer = window.setTimeout(() => {
+      window.dispatchEvent(new Event('resize'));
+    }, 50);
+    return () => window.clearTimeout(timer);
+  }, [visible]);
 
   const handleTerminalActivity = useCallback(() => {
     setIsSessionLoading(false);
@@ -168,23 +182,25 @@ export function SandboxTerminal({
       style={{
         display: 'flex',
         flexDirection: 'column',
-        height: fullHeight ? '100%' : '520px',
-        minHeight: '360px',
-        border: '1px solid var(--color-border, #e2e8f0)',
-        borderRadius: 8,
+        width: '100%',
+        minWidth: 0,
+        height: embedded || fullHeight ? '100%' : '520px',
+        minHeight: embedded ? 0 : '360px',
+        border: embedded ? 'none' : '1px solid var(--color-border, #e2e8f0)',
+        borderRadius: embedded ? 0 : 8,
         overflow: 'hidden',
-        background: '#0d1117',
+        background: isDark ? '#0d1117' : '#ffffff',
       }}
       className={className}
     >
       {/* ── Terminal Inner Stream Container ── */}
-      <div style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
+      <div style={{ flex: 1, minWidth: 0, minHeight: 0, width: '100%', position: 'relative', overflow: 'hidden' }}>
         {isSessionLoading && (
           <div
             style={{
               position: 'absolute',
               inset: 0,
-              background: 'rgba(13, 17, 23, 0.85)',
+              background: isDark ? 'rgba(13, 17, 23, 0.85)' : 'rgba(255, 255, 255, 0.92)',
               display: 'flex',
               flexDirection: 'column',
               alignItems: 'center',
@@ -193,8 +209,8 @@ export function SandboxTerminal({
               gap: 8,
             }}
           >
-            <Loader2 size={24} className="spin" style={{ color: '#38bdf8' }} />
-            <span style={{ fontSize: '0.82rem', color: '#94a3b8', fontWeight: 500 }}>
+            <Loader2 size={24} className="spin" style={{ color: isDark ? '#38bdf8' : '#2563eb' }} />
+            <span style={{ fontSize: '0.82rem', color: isDark ? '#94a3b8' : '#64748b', fontWeight: 500 }}>
               Connecting to sandbox shell...
             </span>
           </div>
@@ -208,7 +224,7 @@ export function SandboxTerminal({
             onStateChange={setConnState}
             onActivity={handleTerminalActivity}
             adaptCodexPalette={true}
-            isDark={true}
+            isDark={isDark}
             className="w-full h-full"
           />
         )}
@@ -225,12 +241,12 @@ export function SandboxTerminal({
             display: 'flex',
             alignItems: 'center',
             gap: 8,
-            background: '#161b22',
-            borderTop: '1px solid #30363d',
+            background: isDark ? '#161b22' : '#f8fafc',
+            borderTop: isDark ? '1px solid #30363d' : '1px solid #e2e8f0',
             padding: '6px 12px',
           }}
         >
-          <span style={{ color: '#38bdf8', fontFamily: 'monospace', fontWeight: 700, fontSize: '0.85rem' }}>
+          <span style={{ color: isDark ? '#38bdf8' : '#2563eb', fontFamily: 'monospace', fontWeight: 700, fontSize: '0.85rem' }}>
             $
           </span>
           <input
@@ -243,7 +259,7 @@ export function SandboxTerminal({
               background: 'transparent',
               border: 'none',
               outline: 'none',
-              color: '#f0f6fc',
+              color: isDark ? '#f0f6fc' : '#0f172a',
               fontFamily: 'monospace',
               fontSize: '0.85rem',
             }}

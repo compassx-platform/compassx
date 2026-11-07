@@ -180,13 +180,17 @@ def gateway_base_url() -> str:
         from app.config import settings
         ns = getattr(settings, "K8S_NAMESPACE", "compassx")
         return f"http://compassx-backend.{ns}.svc.cluster.local:8000/api/v1/ai-gateway/v1"
-    # Sandboxes join the Compose network. host.docker.internal does not reach
-    # the published backend port from those containers.
+    explicit = (os.getenv("COMPASSX_GATEWAY_INTERNAL_URL") or "").strip()
+    if explicit:
+        return explicit.rstrip("/")
+    # App-mode sandboxes run on the default Docker bridge and reach the host
+    # backend through host.docker.internal. Compose-network sandboxes use the
+    # backend service DNS name instead.
+    platform_mode = (os.getenv("COMPASSX_PLATFORM_MODE") or "").lower()
+    if platform_mode == "app" or mode == "app":
+        return "http://host.docker.internal:8000/api/v1/ai-gateway/v1"
     if mode == "docker" or os.getenv("COMPASSX_SANDBOX_NETWORK"):
-        return os.getenv(
-            "COMPASSX_GATEWAY_INTERNAL_URL",
-            "http://backend:8000/api/v1/ai-gateway/v1",
-        )
+        return "http://backend:8000/api/v1/ai-gateway/v1"
     return "http://host.docker.internal:8000/api/v1/ai-gateway/v1"
 
 
@@ -302,6 +306,52 @@ def _credential_targets(app: Any) -> List[ExecTarget]:
     from app.services.studio.sandbox_commands import build_sandbox_commands
 
     return build_sandbox_commands.targets(app, timeout=20)
+
+
+def sync_antigravity_for_sandbox(
+    workspace_id: str,
+    exec_target: ExecTarget,
+    *,
+    sandbox_id: str = "",
+    force: bool = False,
+    min_interval: float = 15.0,
+) -> None:
+    """Save this sandbox's Antigravity login, or copy the workspace login into it."""
+    workspace_id = (workspace_id or "").strip()
+    if not workspace_id:
+        return
+    key = f"sandbox:{sandbox_id or workspace_id}"
+    now = time.monotonic()
+    if not force and now - _LAST_SYNC.get(key, 0.0) < min_interval:
+        return
+    _LAST_SYNC[key] = now
+    try:
+        stored = _load_files(workspace_id)
+        try:
+            pod = parse_auth_output(exec_target(reader_command()))
+        except Exception:
+            logger.debug("Antigravity credential read failed for sandbox %s", sandbox_id or workspace_id, exc_info=True)
+            pod = None
+        current = dict(stored)
+        if pod:
+            save, _write = plan_auth_sync(current, pod)
+            if save:
+                current = save
+        if primary_oauth(current) and current != stored:
+            _save_files(workspace_id, current)
+            stored = current
+            logger.info("Captured Antigravity login for workspace %s", workspace_id)
+        _save, write = plan_auth_sync(stored, {} if pod is None else pod)
+        if not write:
+            return
+        exec_target(writer_command(write))
+        logger.info("Restored Antigravity login into sandbox %s", sandbox_id or workspace_id)
+    except Exception:
+        logger.warning(
+            "Antigravity credential sync failed for sandbox %s",
+            sandbox_id or workspace_id,
+            exc_info=True,
+        )
 
 
 def sync_antigravity_for_app(app: Any, *, force: bool = False, min_interval: float = 15.0) -> None:

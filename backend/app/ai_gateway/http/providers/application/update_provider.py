@@ -39,6 +39,7 @@ def update_provider(
     if body.created_by is not None:
         provider.created_by = body.created_by
 
+    _sync_provider_endpoints(db, provider, body.allowed_models, provider.workspace_id or _get_workspace_id(request))
     db.commit()
     db.refresh(provider)
     return _to_provider_response(provider)

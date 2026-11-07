@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 
 from sqlalchemy.orm import Session
 
-from app.ai_gateway.models.provider import AIProvider, AIProviderType
+from app.ai_gateway.models.provider import AIModelEndpoint, AIProvider, AIProviderType
 
 from app.ai_gateway.providers.base import ProviderCredentials
 
@@ -80,3 +80,66 @@ def _to_provider_response(provider: AIProvider) -> AIProviderResponse:
         created_at=provider.created_at,
         updated_at=provider.updated_at,
     )
+
+
+def _unique_endpoint_name(db: Session, alias: str, workspace_id: str | None, provider_id: int) -> str:
+    name = (alias or "model")[:100]
+    query = db.query(AIModelEndpoint).filter(AIModelEndpoint.name == name)
+    if workspace_id:
+        query = query.filter((AIModelEndpoint.workspace_id == workspace_id) | (AIModelEndpoint.workspace_id.is_(None)))
+    clash = query.first()
+    if clash and clash.provider_id != provider_id:
+        suffix = f"-{provider_id}"
+        name = (alias[: max(1, 100 - len(suffix))] + suffix)[:100]
+    return name
+
+
+def _sync_provider_endpoints(
+    db: Session,
+    provider: AIProvider,
+    model_names: list[str] | None,
+    workspace_id: str | None,
+) -> None:
+    if model_names is None:
+        return
+    wanted: list[str] = []
+    seen: set[str] = set()
+    for raw in model_names:
+        item = " ".join(str(raw).split())
+        if not item or item in seen:
+            continue
+        seen.add(item)
+        wanted.append(item[:100])
+    wanted_set = set(wanted)
+    existing = db.query(AIModelEndpoint).filter(AIModelEndpoint.provider_id == provider.id).all()
+    for endpoint in existing:
+        if endpoint.upstream_model_name not in wanted_set:
+            db.delete(endpoint)
+    remaining = {
+        endpoint.upstream_model_name
+        for endpoint in existing
+        if endpoint.upstream_model_name in wanted_set
+    }
+    used_names = {
+        endpoint.name for endpoint in existing if endpoint.upstream_model_name in wanted_set
+    }
+    has_default = any(endpoint.is_default for endpoint in existing if endpoint.upstream_model_name in wanted_set)
+    for index, model in enumerate(wanted):
+        if model in remaining:
+            continue
+        alias = _unique_endpoint_name(db, model, workspace_id, provider.id)
+        if alias in used_names:
+            alias = f"{model}-{provider.id}"[:100]
+        used_names.add(alias)
+        endpoint = AIModelEndpoint(
+            workspace_id=workspace_id,
+            name=alias,
+            provider_id=provider.id,
+            upstream_model_name=model,
+            is_active=True,
+            is_default=not has_default and index == 0,
+            use_for_embedding="embed" in model.lower(),
+        )
+        db.add(endpoint)
+        if endpoint.is_default:
+            has_default = True

@@ -68,6 +68,25 @@ async def test_anthropic_message_conversion():
     assert "input_schema" in tools[0]
 
 
+def test_anthropic_accepts_raw_tool_dicts():
+    adapter = AnthropicAdapter()
+    req = ChatCompletionRequest.model_validate({
+        "model": "claude-haiku-5-5",
+        "messages": [{"role": "user", "content": "hi"}],
+        "tools": [{
+            "type": "function",
+            "function": {
+                "name": "list_files",
+                "description": "List files",
+                "parameters": {"type": "object", "properties": {"path": {"type": "string"}}},
+            },
+        }],
+    })
+    tools = adapter._convert_tools(req)
+    assert tools[0]["name"] == "list_files"
+    assert tools[0]["input_schema"]["properties"]["path"]["type"] == "string"
+
+
 @pytest.mark.asyncio
 async def test_gemini_message_conversion():
     adapter = GeminiAdapter()

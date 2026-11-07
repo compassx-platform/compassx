@@ -54,6 +54,7 @@ RUN ln -s /usr/local/lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
 RUN npm install -g --no-audit --no-fund \
     @anthropic-ai/claude-code \
     @openai/codex \
+    @cursor/cli \
     @earendil-works/pi-coding-agent \
     opencode-ai@1.18.0 \
  && npm cache clean --force
@@ -114,7 +115,18 @@ RUN set -eu; \
 RUN git config --system credential.helper \
       '!f() { [ "$1" = get ] || return 0; [ -n "$GIT_TOKEN" ] || return 0; printf "username=%s\npassword=%s\n" "${GIT_USERNAME:-x-access-token}" "$GIT_TOKEN"; }; f'
 
-# 8. Configure global workspace directory
+# 8. CompassX Nova CLI (isolated agent loop; platform services stay on the host)
+COPY sandbox_nova /opt/compassx/sandbox_nova
+ENV PYTHONPATH=/opt/compassx
+RUN printf '%s\n' \
+      '#!/bin/sh' \
+      'export PYTHONPATH=/opt/compassx:${PYTHONPATH:-}' \
+      'exec python3 -m sandbox_nova "$@"' \
+      > /usr/local/bin/nova \
+    && chmod 0755 /usr/local/bin/nova \
+    && python3 -c "import sandbox_nova"
+
+# 9. Configure global workspace directory
 WORKDIR /workspace
 RUN mkdir -p /workspace /workspaces
 

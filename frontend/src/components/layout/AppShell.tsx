@@ -55,11 +55,35 @@ const EXPERIMENTAL_NAV: NavItem[] = [
   { to: '/design-system', icon: Palette, label: 'Design System', end: false },
 ];
 
+const SIDEBAR_COLLAPSED_STORAGE_KEY = 'compassx_main_sidebar_collapsed';
+
+function readStoredSidebarCollapsed(): boolean | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const stored = window.localStorage.getItem(SIDEBAR_COLLAPSED_STORAGE_KEY);
+    if (stored === 'true') return true;
+    if (stored === 'false') return false;
+  } catch {
+    // Storage can be unavailable in private mode.
+  }
+  return null;
+}
+
+function writeStoredSidebarCollapsed(collapsed: boolean) {
+  try {
+    window.localStorage.setItem(SIDEBAR_COLLAPSED_STORAGE_KEY, String(collapsed));
+  } catch {
+    // Ignore quota and private-mode failures; the in-memory toggle still works.
+  }
+}
+
 export default function AppShell() {
   const { data: me } = useMe();
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
   const [appMenuOpen, setAppMenuOpen] = useState(false);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(() => {
+    const stored = readStoredSidebarCollapsed();
+    if (stored !== null) return stored;
     if (typeof window === 'undefined') return false;
     return window.innerWidth < 768;
   });
@@ -149,6 +173,8 @@ export default function AppShell() {
   useEffect(() => {
     const updateSidebarMode = () => {
       if (typeof window === 'undefined') return;
+      // A saved choice wins over the viewport default, including after refresh.
+      if (readStoredSidebarCollapsed() !== null) return;
       setIsSidebarCollapsed(window.innerWidth < 768);
     };
 
@@ -165,7 +191,13 @@ export default function AppShell() {
           <button
             type="button"
             className="app-sidebar-edge-toggle"
-            onClick={() => setIsSidebarCollapsed((open) => !open)}
+            onClick={() => {
+              setIsSidebarCollapsed((collapsed) => {
+                const next = !collapsed;
+                writeStoredSidebarCollapsed(next);
+                return next;
+              });
+            }}
             aria-label={isSidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
             title={isSidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
           >

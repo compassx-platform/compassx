@@ -18,8 +18,9 @@ async def up(
 ) -> PlatformStatus:
     ordered = self._ordered_services(services)
     logger.info(
-        "platform: starting profile=%s services=%s",
+        "platform: starting profile=%s mode=%s services=%s",
         self._profile.name,
+        self._mode.name,
         ", ".join(ordered),
     )
     for launcher, group in self._group_by_launcher(ordered):

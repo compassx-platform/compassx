@@ -11,9 +11,10 @@ _bind()
 
 def status(
     profile: Optional[str] = typer.Option(None, "--profile", "-p"),
+    mode: Optional[str] = typer.Option(None, "--mode", "-m", help="Deployment mode: full or app"),
 ) -> None:
     """Show platform service status."""
-    container = _container(profile)
+    container = _container(profile, mode)
     try:
         result = asyncio.run(container.platform_manager.status())
     except PlatformError as exc:

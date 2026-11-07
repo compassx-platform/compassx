@@ -12,9 +12,10 @@ _bind()
 def down(
     services: Optional[List[str]] = typer.Argument(None),
     profile: Optional[str] = typer.Option(None, "--profile", "-p"),
+    mode: Optional[str] = typer.Option(None, "--mode", "-m", help="Deployment mode: full or app"),
 ) -> None:
     """Stop the platform (or a subset of services)."""
-    container = _container(profile)
+    container = _container(profile, mode)
     try:
         asyncio.run(container.platform_manager.down(services or None))
     except PlatformError as exc:

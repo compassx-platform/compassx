@@ -1,5 +1,6 @@
 """Docker infrastructure driver for the Sandbox Module."""
 import asyncio
+import base64
 import logging
 import time
 from datetime import datetime, timezone
@@ -126,13 +127,9 @@ class DockerSandboxDriver(BaseSandboxDriver):
         # 6. Run container
         container = client.containers.run(image_name, **kwargs)
 
-        # Seed Antigravity credentials and workspace trust from host storage if available
+        # Workspace trust and the agy wrapper. The login itself is the workspace
+        # credential sync, not a host file copied in at create time.
         try:
-            backend_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
-            token_storage_dir = os.path.join(backend_dir, "storage", "credentials", "antigravity")
-            host_token_file = os.path.join(token_storage_dir, "antigravity-oauth-token")
-            user_token_file = os.path.expanduser("~/.gemini/antigravity-cli/antigravity-oauth-token")
-            source_token = host_token_file if os.path.isfile(host_token_file) else (user_token_file if os.path.isfile(user_token_file) else None)
             from app.ai_gateway.mcp.omnigent_sync import get_mcp_sync_shell_script
             mcp_sync_cmd = get_mcp_sync_shell_script()
             init_script = (
@@ -145,15 +142,6 @@ class DockerSandboxDriver(BaseSandboxDriver):
                 "fi; "
                 f"{mcp_sync_cmd}; "
             )
-            if source_token:
-                import base64
-                with open(source_token, "rb") as tf:
-                    token_bytes = tf.read()
-                b64 = base64.b64encode(token_bytes).decode("ascii")
-                init_script += (
-                    f"echo '{b64}' | base64 -d > /root/.gemini/antigravity-cli/antigravity-oauth-token 2>/dev/null && "
-                    "cp -f /root/.gemini/antigravity-cli/antigravity-oauth-token /root/.gemini/oauth_creds.json 2>/dev/null || true; "
-                )
             container.exec_run(f"/bin/sh -c \"{init_script}\"")
         except Exception as seed_err:
             logger.debug("Sandbox token seed notice: %s", seed_err)
@@ -437,58 +425,79 @@ class DockerSandboxDriver(BaseSandboxDriver):
         target_container = container.id
         workdir = working_dir or instance.working_dir or "/workspace"
 
-        resolved_agent = (agent or "").lower().strip()
-        cli_cmd = command
-        if not cli_cmd:
-            if resolved_agent in ("antigravity", "agy"):
-                sess_f = f"/root/.gemini/sessions/{session_id}.conv_id" if session_id else ""
-                cli_cmd = (
-                    "export AGY_TRUST_ALL=true ANTIGRAVITY_TRUST_ALL_WORKSPACES=true AGY_NON_INTERACTIVE=true; "
-                    f"if [ -n \"{sess_f}\" ] && [ -f \"{sess_f}\" ] && [ -n \"$(cat '{sess_f}' 2>/dev/null)\" ]; then "
-                    f"  exec agy --dangerously-skip-permissions --conversation \"$(cat '{sess_f}')\"; "
-                    f"else "
-                    f"  exec agy --dangerously-skip-permissions; "
-                    f"fi"
-                )
-            elif resolved_agent == "pi":
-                cli_cmd = "pi --approve"
-            elif resolved_agent == "opencode":
-                cli_cmd = "opencode"
-            elif resolved_agent in ("bash", "shell", "sh"):
-                cli_cmd = "if [ -x /bin/bash ]; then exec /bin/bash -l; else exec /bin/sh -l; fi"
-            else:
-                cli_cmd = "if [ -x /bin/bash ]; then exec /bin/bash -l; else exec /bin/sh -l; fi"
+        from app.sandbox.agent_cli import interactive_shell_command
 
-        if session_id and resolved_agent and resolved_agent not in ("bash", "shell", "sh"):
-            tmux_target = f"cx_{session_id.replace('-', '_')}"
-            clean_cmd = cli_cmd.replace("'", "'\\''")
-            cli_cmd = (
-                f"(which tmux >/dev/null 2>&1 && tmux new-session -A -D -s '{tmux_target}' -c '{workdir}' '{clean_cmd} || exec /bin/bash -l') "
-                f"|| ( {cli_cmd} )"
-            )
+        cli_cmd = interactive_shell_command(agent, session_id, workdir, command=command)
 
         prep_cmd = (
             "export AGY_TRUST_ALL=true ANTIGRAVITY_TRUST_ALL_WORKSPACES=true AGY_NON_INTERACTIVE=true; "
             "alias agy='agy --dangerously-skip-permissions' 2>/dev/null || true; "
             "alias antigravity='agy --dangerously-skip-permissions' 2>/dev/null || true; "
             "if [ ! -f /root/.tmux.conf ]; then printf 'set -g mouse on\\nset -s set-clipboard on\\nset -g allow-passthrough on\\nset -g status off\\n' > /root/.tmux.conf 2>/dev/null || true; fi; "
+            "grep -q 'status off' /root/.tmux.conf 2>/dev/null || printf '\\nset -g status off\\n' >> /root/.tmux.conf 2>/dev/null || true; "
+            "tmux set-option -g status off >/dev/null 2>&1 || true; "
         )
         full_cli = f"{prep_cmd}{cli_cmd}"
+        encoded_cli = base64.b64encode(full_cli.encode("utf-8")).decode("ascii")
 
-        py_pty_script = (
-            "import pty, os, sys, fcntl, termios, struct; "
-            f"cols = int(os.environ.get('COLUMNS', {cols})); "
-            f"rows = int(os.environ.get('LINES', {rows})); "
-            "pid, m = pty.fork(); "
-            "("
-            f"    os.execlp('sh', 'sh', '-c', '{full_cli}') if pid == 0 else ("
-            "        fcntl.ioctl(m, termios.TIOCSWINSZ, struct.pack('HHHH', rows, cols, 0, 0)), "
-            "        pty._copy(m, pty._read, pty._read), "
-            "        os.close(m), "
-            "        os.waitpid(pid, 0)"
-            "    )"
-            ")"
-        )
+        # OSC 531 is a private resize marker written by the host. The wrapper applies
+        # it to the PTY and does not forward it to the shell.
+        py_pty_script = f"""
+import pty, os, sys, fcntl, termios, struct, base64, select
+cols = int(os.environ.get('COLUMNS', {cols}))
+rows = int(os.environ.get('LINES', {rows}))
+pid, master = pty.fork()
+if pid == 0:
+    os.execlp('sh', 'sh', '-c', base64.b64decode('{encoded_cli}').decode())
+def set_size(c, r):
+    fcntl.ioctl(master, termios.TIOCSWINSZ, struct.pack('HHHH', int(r), int(c), 0, 0))
+set_size(cols, rows)
+stdin_fd = sys.stdin.buffer.fileno()
+stdout_fd = sys.stdout.buffer.fileno()
+pending = b''
+mark = b'\\x1b]531;'
+def take_plain(buf):
+    start = buf.find(mark)
+    if start != -1:
+        return buf[:start], buf[start:]
+    hold = 0
+    for n in range(min(len(mark) - 1, len(buf)), 0, -1):
+        if mark.startswith(buf[-n:]):
+            hold = n
+            break
+    if hold:
+        return buf[:-hold], buf[-hold:]
+    return buf, b''
+while True:
+    readable, _, _ = select.select([master, stdin_fd], [], [])
+    if master in readable:
+        data = os.read(master, 65536)
+        if not data:
+            break
+        os.write(stdout_fd, data)
+    if stdin_fd in readable:
+        data = os.read(stdin_fd, 65536)
+        if not data:
+            break
+        pending += data
+        while True:
+            plain, pending = take_plain(pending)
+            if plain:
+                os.write(master, plain)
+            if not pending.startswith(mark):
+                break
+            end = pending.find(b'\\x07', len(mark))
+            if end == -1:
+                break
+            try:
+                c_str, r_str = pending[len(mark):end].split(b';', 1)
+                set_size(c_str, r_str)
+            except Exception:
+                pass
+            pending = pending[end + 1:]
+os.close(master)
+os.waitpid(pid, 0)
+"""
         cmd = [
             "docker", "exec", "-i", "-w", workdir,
             "-e", f"COLUMNS={cols}", "-e", f"LINES={rows}",

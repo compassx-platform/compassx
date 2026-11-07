@@ -24,6 +24,7 @@ class AIProviderCreate(BaseModel):
     config: dict[str, Any] = Field(default_factory=dict)
     is_active: bool = True
     created_by: str | None = None
+    allowed_models: list[str] | None = None
 
 
 class AIProviderUpdate(BaseModel):
@@ -36,6 +37,7 @@ class AIProviderUpdate(BaseModel):
     config: dict[str, Any] | None = None
     is_active: bool | None = None
     created_by: str | None = None
+    allowed_models: list[str] | None = None
 
 
 class AIProviderResponse(BaseModel):

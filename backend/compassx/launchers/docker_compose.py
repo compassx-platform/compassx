@@ -14,6 +14,7 @@ from pathlib import Path
 
 from compassx.interfaces.launcher import Launcher, LauncherStatus, ServiceStatus
 from compassx.models import LauncherError
+from compassx.registry.deployment_mode import DeploymentMode
 from compassx.registry.profile import DeploymentProfile
 
 logger = logging.getLogger(__name__)
@@ -21,10 +22,35 @@ logger = logging.getLogger(__name__)
 # Platform service name -> compose service names. Services not listed map 1:1.
 # Empty list = no dedicated container (served by another container).
 COMPOSE_SERVICE_MAP: dict[str, list[str]] = {
-    "airflow": ["airflow-webserver", "airflow-scheduler"],
+    "airflow": [
+        "jobs-runner-image",
+        "airflow-init",
+        "airflow-webserver",
+        "airflow-scheduler",
+    ],
+    "mlflow": ["mlflow-init", "mlflow"],
     "minio-console": [],        # same container as minio
     "jupyter-server": [],       # served via enterprise-gateway/notebook flow
 }
+
+# Custom images built on demand. An image is built only when one of its
+# platform services is actually being started.
+_IMAGE_SPECS: tuple[tuple[str, str, float, frozenset[str]], ...] = (
+    ("compassx-enterprise-gateway:latest", "Dockerfile.eg", 2.5, frozenset({"enterprise-gateway"})),
+    ("compassx-airflow-notebook-runner:latest", "Dockerfile.airflow-notebook", 2.0, frozenset({"airflow"})),
+    ("compassx-compute-duckdb:latest", "Dockerfile.compute-duckdb", 1.5, frozenset({"enterprise-gateway"})),
+    ("compassx-jupyter-server:latest", "Dockerfile.jupyter-server", 1.5, frozenset({"jupyter-server", "enterprise-gateway"})),
+)
+
+
+def images_for_services(services: list[str]) -> list[tuple[str, str, float]]:
+    """Return (tag, dockerfile, estimate minutes) for images the services need."""
+    requested = set(services)
+    return [
+        (tag, dockerfile, estimate)
+        for tag, dockerfile, estimate, owners in _IMAGE_SPECS
+        if owners & requested
+    ]
 
 
 def _to_compose_services(services: list[str]) -> list[str]:
@@ -38,11 +64,18 @@ def _to_compose_services(services: list[str]) -> list[str]:
 class DockerComposeLauncher(Launcher):
     name = "docker"
 
-    def __init__(self, profile: DeploymentProfile, repo_root: Path) -> None:
+    def __init__(
+        self,
+        profile: DeploymentProfile,
+        repo_root: Path,
+        deployment_mode: DeploymentMode | None = None,
+    ) -> None:
         self._profile = profile
         self._repo_root = repo_root
         self._backend_dir = repo_root / "backend"
-        files = profile.compose_files or ([profile.compose_file] if profile.compose_file else [])
+        files = list(profile.compose_files or ([profile.compose_file] if profile.compose_file else []))
+        if deployment_mode is not None:
+            files.extend(deployment_mode.compose_files)
         self._compose_files = [repo_root / f for f in files]
         self._compose_file = (
             self._compose_files[0]
@@ -70,13 +103,15 @@ class DockerComposeLauncher(Launcher):
         )
         return result.returncode == 0
 
-    async def ensure_images(self) -> None:
-        """Build custom Docker images if not already present in the local Docker daemon."""
+    async def ensure_images(self, services: list[str] | None = None) -> None:
+        """Build custom Docker images the requested services need, if missing."""
+        selected = images_for_services(services or [])
+        if not selected:
+            logger.info("docker-launcher: no custom images required for this mode")
+            return
         images = [
-            ("compassx-enterprise-gateway:latest", "Dockerfile.eg", self._backend_dir, 2.5),
-            ("compassx-airflow-notebook-runner:latest", "Dockerfile.airflow-notebook", self._backend_dir, 2.0),
-            ("compassx-compute-duckdb:latest", "Dockerfile.compute-duckdb", self._backend_dir, 1.5),
-            ("compassx-jupyter-server:latest", "Dockerfile.jupyter-server", self._backend_dir, 1.5),
+            (tag, dockerfile, self._backend_dir, est_min)
+            for tag, dockerfile, est_min in selected
         ]
 
         missing = []
@@ -165,7 +200,7 @@ class DockerComposeLauncher(Launcher):
 
     async def start(self, services: list[str]) -> None:
         if self._profile.docker_ensure_images:
-            await self.ensure_images()
+            await self.ensure_images(services)
         targets = _to_compose_services(services)
         if not targets:
             return

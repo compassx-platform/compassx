@@ -16,6 +16,11 @@ from compassx.interfaces.launcher import Launcher
 from compassx.models import ServiceMode
 from compassx.platform_manager import HealthChecker, PlatformManager
 from compassx.registry import DeploymentProfile, YamlServiceRegistry, load_profile
+from compassx.registry.deployment_mode import (
+    DeploymentMode,
+    apply_mode_environment,
+    load_deployment_mode,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -35,13 +40,22 @@ class PlatformContainer:
         self,
         profile_name: str | None = None,
         repo_root: Path | None = None,
+        mode_name: str | None = None,
     ) -> None:
         self._profile_name = profile_name
+        self._mode_name = mode_name
         self._repo_root = repo_root or _find_repo_root()
 
     @property
     def repo_root(self) -> Path:
         return self._repo_root
+
+    @cached_property
+    def deployment_mode(self) -> DeploymentMode:
+        mode = load_deployment_mode(self._mode_name, repo_root=self._repo_root)
+        logger.info("platform: active mode '%s'", mode.name)
+        apply_mode_environment(mode)
+        return mode
 
     @cached_property
     def profile(self) -> DeploymentProfile:
@@ -84,13 +98,20 @@ class PlatformContainer:
 
         return {
             ServiceMode.LOCAL: LocalProcessLauncher(self.profile, self._repo_root),
-            ServiceMode.DOCKER: DockerComposeLauncher(self.profile, self._repo_root),
+            ServiceMode.DOCKER: DockerComposeLauncher(
+                self.profile, self._repo_root, deployment_mode=self.deployment_mode
+            ),
             ServiceMode.KUBERNETES: KubernetesLauncher(self.profile, self._repo_root),
         }
 
     @cached_property
     def platform_manager(self) -> PlatformManager:
-        return PlatformManager(self.profile, self.launchers, self.health_checker)
+        return PlatformManager(
+            self.profile,
+            self.launchers,
+            self.health_checker,
+            deployment_mode=self.deployment_mode,
+        )
 
     @cached_property
     def monitoring_resource_manager(self):

@@ -2044,10 +2044,108 @@ html {
 .page-content:has(.connections-page),
 .page-content:has(.monitoring-root),
 .page-content:has(.ai-gateway-page),
-.page-content:has(.ai-gateway-root) {
+.page-content:has(.ai-gateway-root),
+.page-content:has(.agent-runtime-page) {
   padding: 0;
   overflow: hidden;
   height: 100%;
+}
+
+.agent-runtime-markdown > :last-child {
+  margin-bottom: 0;
+}
+
+.agent-runtime-session [data-session-menu] {
+  opacity: 0;
+}
+
+.agent-runtime-session:hover [data-session-menu],
+.agent-runtime-session [data-session-menu].is-open {
+  opacity: 1;
+}
+
+.agent-runtime-session:hover .agent-runtime-session-time,
+.agent-runtime-session:has([data-session-menu].is-open) .agent-runtime-session-time {
+  opacity: 0;
+}
+
+.agent-runtime-project [data-project-delete] {
+  display: none;
+}
+
+.agent-runtime-project:hover [data-project-delete] {
+  display: inline-flex;
+}
+
+.agent-runtime-tab-strip {
+  scrollbar-width: none;
+}
+
+.agent-runtime-tab-strip::-webkit-scrollbar {
+  height: 0;
+}
+
+.agent-runtime-editor-tab {
+  background: transparent;
+  color: #6b7280;
+}
+
+.agent-runtime-editor-tab:hover,
+.agent-runtime-editor-tab.is-active:hover {
+  background: #e4e4e7;
+  color: #111827;
+}
+
+.agent-runtime-editor-tab.is-active {
+  background: #ffffff;
+  color: #111827;
+}
+
+.agent-runtime-editor-tab [data-tab-close] {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.agent-runtime-editor-tab:hover [data-tab-close] {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.agent-runtime-editor-tab:hover [data-tab-dirty] {
+  opacity: 0;
+}
+
+.agent-runtime-editor-tab [data-tab-close]:hover {
+  background: #d4d4d8;
+  color: #111827;
+}
+
+.agent-runtime-rail-resize {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 6px;
+  margin-left: -3px;
+  cursor: col-resize;
+  z-index: 25;
+  background: transparent;
+}
+
+.agent-runtime-rail-resize::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 1px;
+  transform: translateX(-50%);
+  background: transparent;
+}
+
+.agent-runtime-rail-resize:hover::after,
+.agent-runtime-rail-resize:active::after {
+  background: #d4d4d8;
 }
 
 .dashboard-page {
@@ -2072,6 +2170,16 @@ html {
   box-sizing: border-box;
   padding: 24px 32px 80px;
   background: var(--color-surface);
+}
+
+.ai-gateway-page .section-help,
+.ai-gateway-root .section-help {
+  display: none;
+}
+
+.ai-gateway-page form > div:hover .section-help,
+.ai-gateway-root form > div:hover .section-help {
+  display: inline-flex;
 }
 
 .app-topbar {

@@ -1,0 +1,35 @@
+# Application platform. Use with a cloud values file:
+#   helm install compassx ./deployments/helm/compassx -n compassx \
+#     -f ./deployments/azure/values-managed.yaml \
+#     -f ./deployments/helm/compassx/values-app.yaml
+#
+# Leaves MinIO, Airflow, MLflow, Prometheus, Enterprise Gateway, and the
+# compute pool off. Postgres and Redis still come from the cloud values file.
+minio:
+  enabled: false
+
+airflow:
+  enabled: false
+
+mlflow:
+  enabled: false
+
+prometheus:
+  enabled: false
+
+enterpriseGateway:
+  enabled: false
+
+computePool:
+  enabled: false
+
+externalStorage:
+  backend: local
+
+backend:
+  env:
+    COMPASSX_PLATFORM_MODE: app
+
+ingress:
+  annotations:
+    nginx.ingress.kubernetes.io/websocket-services: "compassx-backend"

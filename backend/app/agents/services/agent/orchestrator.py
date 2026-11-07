@@ -238,8 +238,16 @@ def _resolve_llm_connection(
     db: Session,
     agent: Agent,
     override_llm_connection_id: int | None = None,
+    gateway_model: str | None = None,
+    workspace_id: str | None = None,
 ) -> LLMConnection | None:
     """Resolve the chat-time LLM connection."""
+    if gateway_model:
+        from app.agents.services.gateway_llm import connection_from_gateway_model
+
+        gateway_conn = connection_from_gateway_model(gateway_model, workspace_id)
+        if gateway_conn:
+            return gateway_conn
     from app.database import AccountSessionLocal
     sys_db = AccountSessionLocal()
     try:
@@ -303,6 +311,7 @@ async def orchestrate_stream(
     context: dict | None = None,
     user_id: str = "default_user",
     workspace_id: str = "default",
+    gateway_model: str | None = None,
 ) -> AsyncIterator[dict]:
     """
     Main agent turn loop.
@@ -398,7 +407,13 @@ async def orchestrate_stream(
             pass
 
     try:
-        llm_connection = _resolve_llm_connection(db, agent, llm_connection_id)
+        llm_connection = _resolve_llm_connection(
+            db,
+            agent,
+            llm_connection_id,
+            gateway_model=gateway_model,
+            workspace_id=workspace_id,
+        )
     except Exception as exc:
         err_msg = f"Failed resolving LLM connection: {str(exc)}"
         err_id = _record_error(err_msg)

@@ -40,6 +40,7 @@ import { useToast } from '@/lib/toast';
 import { useCatalogs } from '@/modules/agents/hooks/useCatalogConnections';
 import {
   fetchAIProviders,
+  fetchAIModelEndpoints,
   createAIProvider,
   updateAIProvider,
   deleteAIProvider,
@@ -58,6 +59,7 @@ import {
 } from '../api';
 import {
   AIProvider,
+  AIModelEndpoint,
   MCPServer,
   MCPServerType,
   MCPToolDefinition,
@@ -65,7 +67,7 @@ import {
   AIProviderType,
 } from '../types';
 
-type AIGatewayTab = 'providers' | 'mcp' | 'logs';
+type AIGatewayTab = 'providers' | 'models' | 'mcp' | 'logs';
 type ViewMode =
   | 'list'
   | 'add_provider'
@@ -89,6 +91,7 @@ type McpServerItem =
 
 const AI_GATEWAY_TABS = [
   { value: 'providers', label: 'Providers' },
+  { value: 'models', label: 'Models' },
   { value: 'mcp', label: 'MCP' },
   { value: 'logs', label: 'Inference & Audit Logs' },
 ] as const;
@@ -126,6 +129,12 @@ const PROVIDER_METADATA: Record<
     description: 'Self-hosted open-source models (Llama 3, Mistral, DeepSeek).',
     defaultBaseUrl: 'http://localhost:11434/v1',
     keyPlaceholder: 'Optional (leave blank if unauthenticated)',
+  },
+  grok: {
+    label: 'xAI Grok',
+    description: 'Grok 4, Grok 3, and Grok 3 Mini via the xAI API.',
+    defaultBaseUrl: 'https://api.x.ai/v1',
+    keyPlaceholder: 'xai-...',
   },
   compatible: {
     label: 'OpenAI-Compatible',
@@ -216,6 +225,15 @@ const VertexIcon: React.FC<{ size?: number }> = ({ size = 15 }) => (
   </svg>
 );
 
+const GrokIcon: React.FC<{ size?: number }> = ({ size = 15 }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" style={{ flexShrink: 0 }}>
+    <path
+      d="M4 4l7.2 8L4 20h3.5L12 14.4 16.5 20H20l-7.2-8L20 4h-3.5L12 9.6 7.5 4H4z"
+      fill="#111827"
+    />
+  </svg>
+);
+
 interface ProviderPillOption {
   type: AIProviderType;
   label: string;
@@ -226,6 +244,7 @@ const PROVIDER_PILLS: ProviderPillOption[] = [
   { type: 'openai', label: 'OpenAI', icon: <OpenAIIcon size={15} /> },
   { type: 'azure', label: 'Azure OpenAI', icon: <AzureIcon size={15} /> },
   { type: 'anthropic', label: 'Anthropic', icon: <AnthropicIcon size={15} /> },
+  { type: 'grok', label: 'xAI Grok', icon: <GrokIcon size={15} /> },
   { type: 'compatible', label: 'Microsoft Foundry', icon: <MicrosoftIcon size={15} /> },
   { type: 'gemini', label: 'Gemini Enterprise', icon: <GeminiIcon size={15} /> },
   { type: 'bedrock', label: 'Amazon Bedrock', icon: <BedrockIcon size={15} /> },
@@ -239,14 +258,21 @@ interface CatalogModelItem {
   provider: AIProviderType;
 }
 
+function looksLikeGrokApiKey(value: string): boolean {
+  const text = value.trim();
+  if (!text) return false;
+  if (/^(xai-|grok_[0-9a-f]{16,}_)/i.test(text)) return true;
+  return text.startsWith('grok_') && text.length > 40;
+}
+
 const HelpTooltip: React.FC<{ content: string }> = ({ content }) => {
   const [visible, setVisible] = useState(false);
 
   return (
     <div
+      className="section-help"
       style={{
         position: 'relative',
-        display: 'inline-flex',
         alignItems: 'center',
         justifyContent: 'center',
         cursor: 'default',
@@ -255,9 +281,11 @@ const HelpTooltip: React.FC<{ content: string }> = ({ content }) => {
       onMouseLeave={() => setVisible(false)}
     >
       <HelpCircle
-        size={14}
+        size={13}
+        strokeWidth={1.75}
         style={{
           color: 'var(--color-text-muted, #71717A)',
+          opacity: 0.45,
           cursor: 'default',
           flexShrink: 0,
         }}
@@ -268,8 +296,7 @@ const HelpTooltip: React.FC<{ content: string }> = ({ content }) => {
           style={{
             position: 'absolute',
             bottom: 'calc(100% + 7px)',
-            left: '50%',
-            transform: 'translateX(-50%)',
+            left: 0,
             backgroundColor: '#0F172A',
             color: '#FFFFFF',
             fontSize: '0.74rem',
@@ -292,8 +319,7 @@ const HelpTooltip: React.FC<{ content: string }> = ({ content }) => {
             style={{
               position: 'absolute',
               top: '100%',
-              left: '50%',
-              transform: 'translateX(-50%)',
+              left: 4,
               borderWidth: '5px',
               borderStyle: 'solid',
               borderColor: '#0F172A transparent transparent transparent',
@@ -317,6 +343,7 @@ export default function AIGatewayPage() {
 
   // Data State
   const [providers, setProviders] = useState<AIProvider[]>([]);
+  const [modelEndpoints, setModelEndpoints] = useState<AIModelEndpoint[]>([]);
   const [mcpServers, setMcpServers] = useState<MCPServer[]>([]);
   const [mcpTools, setMcpTools] = useState<MCPToolDefinition[]>([]);
   const [logs, setLogs] = useState<InferenceLog[]>([]);
@@ -431,6 +458,10 @@ export default function AIGatewayPage() {
       toast.error('Model name is required');
       return;
     }
+    if (providerForm.provider_type === 'grok' && looksLikeGrokApiKey(modelName)) {
+      toast.error('That value is an API key, not a model id. Put it in API key. Model ids look like grok-4 or grok-3-mini.');
+      return;
+    }
 
     const newItem: CatalogModelItem = {
       id: modelName,
@@ -522,6 +553,9 @@ export default function AIGatewayPage() {
         }));
 
         setCustomModelsMap((prev) => {
+          if (providerForm.provider_type === 'grok') {
+            return { ...prev, grok: discoveredItems };
+          }
           const existing = prev[providerForm.provider_type] || [];
           const map = new Map<string, CatalogModelItem>();
           discoveredItems.forEach((m) => map.set(m.id, m));
@@ -664,6 +698,10 @@ export default function AIGatewayPage() {
       if (activeTab === 'providers') {
         const data = await fetchAIProviders();
         setProviders(data);
+      } else if (activeTab === 'models') {
+        const [endpointData, providerData] = await Promise.all([fetchAIModelEndpoints(), fetchAIProviders()]);
+        setModelEndpoints(endpointData);
+        setProviders(providerData);
       } else if (activeTab === 'mcp') {
         const [servers, tools] = await Promise.all([fetchMCPServers(), fetchMCPTools()]);
         setMcpServers(servers);
@@ -702,6 +740,8 @@ export default function AIGatewayPage() {
       is_active: true,
     });
     setShowApiKey(false);
+    setAllowAllModels(true);
+    setSelectedModels(new Set());
     setViewMode('add_provider');
   };
 
@@ -721,6 +761,22 @@ export default function AIGatewayPage() {
     });
     setShowApiKey(false);
     setViewMode('edit_provider');
+    fetchAIModelEndpoints()
+      .then((endpoints) => {
+        const mine = endpoints.filter((item) => item.provider_id === p.id);
+        if (!mine.length) return;
+        setAllowAllModels(false);
+        setSelectedModels(new Set(mine.map((item) => item.upstream_model_name)));
+        setCustomModelsMap((prev) => ({
+          ...prev,
+          [p.provider_type]: mine.map((item) => ({
+            id: item.upstream_model_name,
+            name: item.upstream_model_name,
+            provider: p.provider_type,
+          })),
+        }));
+      })
+      .catch(() => undefined);
   };
 
   const handleSelectProviderType = (type: AIProviderType) => {
@@ -730,6 +786,11 @@ export default function AIGatewayPage() {
       provider_type: type,
       base_url: type === 'azure' ? '' : meta.defaultBaseUrl,
     }));
+    if (type === 'grok') {
+      setCustomModelsMap((prev) => ({ ...prev, grok: [] }));
+      setSelectedModels(new Set());
+      setAllowAllModels(false);
+    }
   };
 
   const handleSaveProviderForm = async (e: React.FormEvent) => {
@@ -756,6 +817,9 @@ export default function AIGatewayPage() {
         config.azure_resource_name = providerForm.azure_resource_name;
         config.api_version = providerForm.azure_api_version;
       }
+      const allowedModels = allowAllModels
+        ? currentModels.map((item) => item.id)
+        : Array.from(selectedModels);
 
       if (viewMode === 'edit_provider' && providerForm.id) {
         await updateAIProvider(providerForm.id, {
@@ -767,6 +831,7 @@ export default function AIGatewayPage() {
           base_url: providerForm.base_url || undefined,
           config,
           is_active: providerForm.is_active,
+          allowed_models: allowedModels,
         });
         toast.success('Provider updated successfully');
       } else {
@@ -779,6 +844,7 @@ export default function AIGatewayPage() {
           base_url: providerForm.base_url || undefined,
           config,
           is_active: providerForm.is_active,
+          allowed_models: allowedModels,
         });
         toast.success('Provider created successfully');
       }
@@ -1080,6 +1146,18 @@ export default function AIGatewayPage() {
   }, [serverTools, toolSearchTerm]);
 
   // Filtered lists
+  const filteredModelEndpoints = useMemo(() => {
+    if (!searchTerm) return modelEndpoints;
+    const q = searchTerm.toLowerCase();
+    return modelEndpoints.filter(
+      (item) =>
+        item.name.toLowerCase().includes(q) ||
+        item.upstream_model_name.toLowerCase().includes(q) ||
+        (item.provider_name && item.provider_name.toLowerCase().includes(q)) ||
+        (item.provider_type && item.provider_type.toLowerCase().includes(q))
+    );
+  }, [modelEndpoints, searchTerm]);
+
   const filteredProviders = useMemo(() => {
     if (!searchTerm) return providers;
     const q = searchTerm.toLowerCase();
@@ -1229,6 +1307,102 @@ export default function AIGatewayPage() {
           </button>
         </div>
       ),
+    },
+  ];
+
+  const modelColumns: AppTableColumn<AIModelEndpoint>[] = [
+    {
+      key: 'name',
+      header: 'Model',
+      render: (row) => (
+        <div>
+          <div style={{ fontWeight: 600, fontSize: '0.84rem', color: 'var(--color-text)' }}>{row.name}</div>
+          {row.upstream_model_name !== row.name && (
+            <div style={{ fontSize: '0.72rem', color: 'var(--color-text-muted)' }}>{row.upstream_model_name}</div>
+          )}
+        </div>
+      ),
+    },
+    {
+      key: 'provider',
+      header: 'Provider',
+      render: (row) => {
+        const type = (row.provider_type || 'compatible') as AIProviderType;
+        const meta = PROVIDER_METADATA[type];
+        const pill = PROVIDER_PILLS.find((item) => item.type === type);
+        const owner = providers.find((item) => item.id === row.provider_id);
+        return (
+          <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+            {pill?.icon}
+            <span style={{ fontSize: '0.78rem', fontWeight: 500, color: 'var(--color-text)' }}>
+              {row.provider_name || owner?.name || meta?.label || type}
+            </span>
+          </div>
+        );
+      },
+    },
+    {
+      key: 'kind',
+      header: 'Kind',
+      render: (row) => (
+        <span style={{ fontSize: '0.78rem', color: 'var(--color-text-muted)' }}>
+          {row.use_for_embedding ? 'Embedding' : 'Chat'}
+        </span>
+      ),
+    },
+    {
+      key: 'status',
+      header: 'Status',
+      render: (row) => (
+        <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+          <span
+            style={{
+              padding: '2px 8px',
+              borderRadius: 4,
+              fontSize: '0.72rem',
+              fontWeight: 600,
+              background: row.is_active ? 'rgba(34, 197, 94, 0.1)' : 'rgba(148, 163, 184, 0.16)',
+              color: row.is_active ? '#16A34A' : '#64748B',
+            }}
+          >
+            {row.is_active ? 'Active' : 'Inactive'}
+          </span>
+          {row.is_default && (
+            <span
+              style={{
+                padding: '2px 8px',
+                borderRadius: 4,
+                fontSize: '0.72rem',
+                fontWeight: 600,
+                background: 'rgba(27, 110, 243, 0.1)',
+                color: 'var(--color-primary, #1B6EF3)',
+              }}
+            >
+              Default
+            </span>
+          )}
+        </div>
+      ),
+    },
+    {
+      key: 'updated',
+      header: 'Last modified',
+      render: (row) => {
+        const dateVal = row.updated_at || row.created_at;
+        return (
+          <span style={{ fontSize: '0.78rem', color: 'var(--color-text-muted)' }}>
+            {dateVal
+              ? new Date(dateVal).toLocaleString([], {
+                  year: 'numeric',
+                  month: 'short',
+                  day: 'numeric',
+                  hour: '2-digit',
+                  minute: '2-digit',
+                })
+              : '—'}
+          </span>
+        );
+      },
     },
   ];
 
@@ -1849,7 +2023,7 @@ export default function AIGatewayPage() {
               alignItems: 'start',
             }}
           >
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6, paddingTop: 4 }}>
+            <div className="section-help-label" style={{ display: 'flex', alignItems: 'center', gap: 6, paddingTop: 4 }}>
               <span style={{ fontSize: '0.84rem', fontWeight: 600, color: 'var(--color-text)' }}>
                 Name
               </span>
@@ -1996,7 +2170,7 @@ export default function AIGatewayPage() {
               alignItems: 'start',
             }}
           >
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6, paddingTop: 4 }}>
+            <div className="section-help-label" style={{ display: 'flex', alignItems: 'center', gap: 6, paddingTop: 4 }}>
               <span style={{ fontSize: '0.84rem', fontWeight: 600, color: 'var(--color-text)' }}>
                 Provider
               </span>
@@ -2050,7 +2224,7 @@ export default function AIGatewayPage() {
               alignItems: 'start',
             }}
           >
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6, paddingTop: 4 }}>
+            <div className="section-help-label" style={{ display: 'flex', alignItems: 'center', gap: 6, paddingTop: 4 }}>
               <span style={{ fontSize: '0.84rem', fontWeight: 600, color: 'var(--color-text)' }}>
                 Authentication
               </span>
@@ -2213,7 +2387,7 @@ export default function AIGatewayPage() {
               alignItems: 'start',
             }}
           >
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6, paddingTop: 4 }}>
+            <div className="section-help-label" style={{ display: 'flex', alignItems: 'center', gap: 6, paddingTop: 4 }}>
               <span style={{ fontSize: '0.84rem', fontWeight: 600, color: 'var(--color-text)' }}>
                 Models
               </span>
@@ -2471,6 +2645,7 @@ export default function AIGatewayPage() {
             }}
           >
             <div
+              className="section-help-label"
               onClick={() => setAdvancedOpen(!advancedOpen)}
               style={{
                 display: 'flex',
@@ -2635,7 +2810,7 @@ export default function AIGatewayPage() {
               alignItems: 'start',
             }}
           >
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6, paddingTop: 4 }}>
+            <div className="section-help-label" style={{ display: 'flex', alignItems: 'center', gap: 6, paddingTop: 4 }}>
               <span style={{ fontSize: '0.84rem', fontWeight: 600, color: 'var(--color-text)' }}>
                 Name
               </span>
@@ -2785,7 +2960,7 @@ export default function AIGatewayPage() {
               alignItems: 'start',
             }}
           >
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6, paddingTop: 4 }}>
+            <div className="section-help-label" style={{ display: 'flex', alignItems: 'center', gap: 6, paddingTop: 4 }}>
               <span style={{ fontSize: '0.84rem', fontWeight: 600, color: 'var(--color-text)' }}>
                 Transport Type
               </span>
@@ -2867,7 +3042,7 @@ export default function AIGatewayPage() {
               alignItems: 'start',
             }}
           >
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6, paddingTop: 4 }}>
+            <div className="section-help-label" style={{ display: 'flex', alignItems: 'center', gap: 6, paddingTop: 4 }}>
               <span style={{ fontSize: '0.84rem', fontWeight: 600, color: 'var(--color-text)' }}>
                 Connection
               </span>
@@ -3017,7 +3192,7 @@ export default function AIGatewayPage() {
               alignItems: 'start',
             }}
           >
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6, paddingTop: 4 }}>
+            <div className="section-help-label" style={{ display: 'flex', alignItems: 'center', gap: 6, paddingTop: 4 }}>
               <span style={{ fontSize: '0.84rem', fontWeight: 600, color: 'var(--color-text)' }}>
                 Description
               </span>
@@ -3494,7 +3669,7 @@ export default function AIGatewayPage() {
           <Search size={14} className="search-icon" />
           <input
             className="search-input"
-            placeholder={`Search ${activeTab}...`}
+            placeholder={activeTab === 'models' ? 'Search models...' : `Search ${activeTab}...`}
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
           />
@@ -3505,6 +3680,11 @@ export default function AIGatewayPage() {
             <button className="btn btn-primary" onClick={handleOpenAddProvider} style={{ fontSize: '0.82rem' }}>
               <Plus size={14} /> Add Provider
             </button>
+          )}
+          {activeTab === 'models' && (
+            <span style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>
+              {filteredModelEndpoints.length} model{filteredModelEndpoints.length === 1 ? '' : 's'}
+            </span>
           )}
 
           {activeTab === 'mcp' && (
@@ -3522,6 +3702,16 @@ export default function AIGatewayPage() {
           rows={filteredProviders}
           rowKey={(row) => row.id}
           emptyText="No AI model providers registered. Click 'Add Provider' to connect OpenAI, Anthropic, Gemini, Azure, or Ollama."
+          isLoading={loading}
+        />
+      )}
+
+      {activeTab === 'models' && (
+        <AppTable
+          columns={modelColumns}
+          rows={filteredModelEndpoints}
+          rowKey={(row) => row.id}
+          emptyText="No models yet. Add a provider and select the models to serve. They will appear here across all providers."
           isLoading={loading}
         />
       )}

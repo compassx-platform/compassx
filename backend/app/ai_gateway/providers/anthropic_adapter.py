@@ -88,17 +88,26 @@ class AnthropicAdapter(BaseProviderAdapter):
         return system_prompt, anthropic_messages
 
     def _convert_tools(self, request: ChatCompletionRequest) -> list[dict[str, Any]] | None:
-        if not request.tools:
-            return None
-        tools = []
-        for t in request.tools:
-            if t.type == "function":
-                tools.append({
-                    "name": t.function.name,
-                    "description": t.function.description or "",
-                    "input_schema": t.function.parameters or {"type": "object", "properties": {}},
-                })
-        return tools if tools else None
+        from app.ai_gateway.schemas.chat import function_tool_specs
+
+        tools = [
+            {
+                "name": spec["name"],
+                "description": spec["description"],
+                "input_schema": spec["parameters"],
+            }
+            for spec in function_tool_specs(request.tools)
+        ]
+        return tools or None
+
+    def _apply_sampling(self, payload: dict[str, Any], request: ChatCompletionRequest, upstream_model: str) -> None:
+        # Claude 4/5 models reject temperature and top_p.
+        if "claude-3" not in (upstream_model or "").lower():
+            return
+        if request.temperature is not None:
+            payload["temperature"] = request.temperature
+        if request.top_p is not None:
+            payload["top_p"] = request.top_p
 
     async def chat_stream(
         self,
@@ -121,10 +130,7 @@ class AnthropicAdapter(BaseProviderAdapter):
             payload["system"] = system_prompt
         if tools:
             payload["tools"] = tools
-        if request.temperature is not None:
-            payload["temperature"] = request.temperature
-        if request.top_p is not None:
-            payload["top_p"] = request.top_p
+        self._apply_sampling(payload, request, upstream_model)
 
         call_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
         created = int(time.time())
@@ -249,10 +255,7 @@ class AnthropicAdapter(BaseProviderAdapter):
             payload["system"] = system_prompt
         if tools:
             payload["tools"] = tools
-        if request.temperature is not None:
-            payload["temperature"] = request.temperature
-        if request.top_p is not None:
-            payload["top_p"] = request.top_p
+        self._apply_sampling(payload, request, upstream_model)
 
         timeout = httpx.Timeout(120.0, connect=10.0)
         async with gateway_http_client(timeout) as client:

@@ -782,35 +782,9 @@ class KubernetesSandboxDriver(BaseSandboxDriver):
         ns = self.namespace
         workdir = working_dir or instance.working_dir or "/workspace"
 
-        resolved_agent = (agent or "").lower().strip()
-        cli_cmd = command
-        if not cli_cmd:
-            if resolved_agent in ("antigravity", "agy"):
-                sess_f = f"/root/.gemini/sessions/{session_id}.conv_id" if session_id else ""
-                cli_cmd = (
-                    "export AGY_TRUST_ALL=true ANTIGRAVITY_TRUST_ALL_WORKSPACES=true AGY_NON_INTERACTIVE=true; "
-                    f"if [ -n \"{sess_f}\" ] && [ -f \"{sess_f}\" ] && [ -n \"$(cat '{sess_f}' 2>/dev/null)\" ]; then "
-                    f"  exec agy --dangerously-skip-permissions --conversation \"$(cat '{sess_f}')\"; "
-                    f"else "
-                    f"  exec agy --dangerously-skip-permissions; "
-                    f"fi"
-                )
-            elif resolved_agent == "pi":
-                cli_cmd = "pi --approve"
-            elif resolved_agent == "opencode":
-                cli_cmd = "opencode"
-            elif resolved_agent in ("bash", "shell", "sh"):
-                cli_cmd = "if [ -x /bin/bash ]; then exec /bin/bash -l; else exec /bin/sh -l; fi"
-            else:
-                cli_cmd = "if [ -x /bin/bash ]; then exec /bin/bash -l; else exec /bin/sh -l; fi"
+        from app.sandbox.agent_cli import interactive_shell_command
 
-        if session_id and resolved_agent and resolved_agent not in ("bash", "shell", "sh"):
-            tmux_target = f"cx_{session_id.replace('-', '_')}"
-            clean_cmd = cli_cmd.replace("'", "'\\''")
-            cli_cmd = (
-                f"(which tmux >/dev/null 2>&1 && tmux new-session -A -D -s '{tmux_target}' -c '{workdir}' '{clean_cmd} || exec /bin/bash -l') "
-                f"|| ( {cli_cmd} )"
-            )
+        cli_cmd = interactive_shell_command(agent, session_id, workdir, command=command)
 
         from app.ai_gateway.mcp.omnigent_sync import get_mcp_sync_shell_script
         mcp_sync_cmd = get_mcp_sync_shell_script()
@@ -828,6 +802,8 @@ class KubernetesSandboxDriver(BaseSandboxDriver):
             "alias agy='agy --dangerously-skip-permissions' 2>/dev/null || true; "
             "alias antigravity='agy --dangerously-skip-permissions' 2>/dev/null || true; "
             "if [ ! -f /root/.tmux.conf ]; then printf 'set -g mouse on\\nset -s set-clipboard on\\nset -g allow-passthrough on\\nset -g status off\\n' > /root/.tmux.conf 2>/dev/null || true; fi; "
+            "grep -q 'status off' /root/.tmux.conf 2>/dev/null || printf '\\nset -g status off\\n' >> /root/.tmux.conf 2>/dev/null || true; "
+            "tmux set-option -g status off >/dev/null 2>&1 || true; "
         )
 
         shell_cmd = [

@@ -18,5 +18,8 @@ async def status(
         launcher_status = await launcher.status(group)
         statuses.extend(launcher_status.services)
     return PlatformStatus(
-        profile=self._profile.name, services=statuses, health=health
+        profile=self._profile.name,
+        mode=self._mode.name,
+        services=statuses,
+        health=health,
     )

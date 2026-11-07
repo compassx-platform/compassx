@@ -1,6 +1,7 @@
 import api from '@/lib/api';
 import {
   AIProvider,
+  AIModelEndpoint,
   MCPServer,
   MCPToolDefinition,
   InferenceLog,
@@ -8,17 +9,40 @@ import {
 
 // --- Provider Endpoints ---
 
+export interface GatewayModelOption {
+  id: string;
+  provider_type?: string | null;
+  is_default?: boolean;
+  use_for_embedding?: boolean;
+}
+
+export async function fetchAIGatewayModels(): Promise<GatewayModelOption[]> {
+  const { data } = await api.get<{ data?: GatewayModelOption[] }>('/ai-gateway/v1/models');
+  const models = data?.data || [];
+  return models.filter((model) => !model.use_for_embedding);
+}
+
 export async function fetchAIProviders(): Promise<AIProvider[]> {
   const { data } = await api.get('/ai-gateway/providers');
   return data;
 }
 
-export async function createAIProvider(payload: Partial<AIProvider> & { api_key?: string }): Promise<AIProvider> {
+export async function fetchAIModelEndpoints(): Promise<AIModelEndpoint[]> {
+  const { data } = await api.get('/ai-gateway/endpoints');
+  return data || [];
+}
+
+export async function createAIProvider(
+  payload: Partial<AIProvider> & { api_key?: string; allowed_models?: string[] }
+): Promise<AIProvider> {
   const { data } = await api.post('/ai-gateway/providers', payload);
   return data;
 }
 
-export async function updateAIProvider(id: number, payload: Partial<AIProvider> & { api_key?: string }): Promise<AIProvider> {
+export async function updateAIProvider(
+  id: number,
+  payload: Partial<AIProvider> & { api_key?: string; allowed_models?: string[] }
+): Promise<AIProvider> {
   const { data } = await api.put(`/ai-gateway/providers/${id}`, payload);
   return data;
 }

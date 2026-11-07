@@ -1,0 +1,21 @@
+# Deployment modes select which platform services start.
+# A profile still selects where each service runs (local, docker, kubernetes).
+#
+# full — every service in the active profile (default)
+# app  — application platform: postgres, redis, backend, frontend
+
+modes:
+  full:
+    description: Entire platform
+
+  app:
+    description: Application platform for a small VM
+    services:
+      - postgres
+      - redis
+      - backend
+      - frontend
+    env:
+      STORAGE_BACKEND: local
+    compose_files:
+      - deployments/docker-compose/docker-compose.app.yml

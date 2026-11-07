@@ -1,0 +1,10 @@
+# App deployment mode. Appended by `compassx up --mode app`.
+# The backend no longer waits on MinIO, so Compose does not start it.
+services:
+  backend:
+    depends_on: !override
+      postgres:
+        condition: service_healthy
+    environment:
+      COMPASSX_PLATFORM_MODE: app
+      STORAGE_BACKEND: local

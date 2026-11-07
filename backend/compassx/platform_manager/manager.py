@@ -15,8 +15,9 @@ import logging
 from dataclasses import dataclass, field
 
 from compassx.interfaces.launcher import Launcher, ServiceStatus
-from compassx.models import ServiceMode
+from compassx.models import PlatformError, ServiceMode
 from compassx.platform_manager.health import HealthChecker, HealthReport
+from compassx.registry.deployment_mode import DeploymentMode
 from compassx.registry.profile import DeploymentProfile
 
 logger = logging.getLogger(__name__)
@@ -25,6 +26,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class PlatformStatus:
     profile: str
+    mode: str = "full"
     services: list[ServiceStatus] = field(default_factory=list)
     health: HealthReport | None = None
 
@@ -39,10 +41,14 @@ class PlatformManager:
         profile: DeploymentProfile,
         launchers: dict[ServiceMode, Launcher],
         health_checker: HealthChecker,
+        deployment_mode: DeploymentMode | None = None,
     ) -> None:
         self._profile = profile
         self._launchers = launchers
         self._health = health_checker
+        # Callers that omit a mode start every profile service. The container
+        # passes the resolved mode so CLI runs honor --mode / the saved marker.
+        self._mode = deployment_mode or DeploymentMode(name="full")
 
     @property
     def profile(self) -> DeploymentProfile:
@@ -55,7 +61,20 @@ class PlatformManager:
         order = [s for s in self._profile.startup_order if s in known]
         # Any profile services not in startup_order are appended at the end.
         order += [s for s in known if s not in order]
+        order = self._mode.filter(order)
         if services:
+            unknown = [s for s in services if s not in known]
+            if unknown:
+                raise PlatformError(
+                    f"Unknown service(s): {', '.join(unknown)}. "
+                    f"Known: {', '.join(known)}"
+                )
+            excluded = [s for s in services if not self._mode.includes(s)]
+            if excluded:
+                raise PlatformError(
+                    f"Service(s) {', '.join(excluded)} are not part of deployment "
+                    f"mode '{self._mode.name}'. Use --mode full to start them."
+                )
             order = [s for s in order if s in services]
         return order
 

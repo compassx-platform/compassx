@@ -30,6 +30,110 @@ export const WS_CLOSE_WRONG_REPLICA = 4400;
 
 export type TerminalFileLinkListener = (uri: string) => boolean;
 
+const URL_PIECE = /^[A-Za-z0-9\-._~:/?#\[\]@!$&'()*+,;=%]+$/;
+
+function urlPiece(line: string): string | null {
+  const text = line.trim();
+  if (!text || text.length > 2000 || !URL_PIECE.test(text)) return null;
+  return text;
+}
+
+function lineHasUrlScheme(text: string): boolean {
+  return /https?:\/\//i.test(text) || /https?:$/i.test(text);
+}
+
+/** Join a URL that the terminal wrapped across several lines into one address. */
+export function stitchTerminalUrl(
+  lines: string[],
+  index: number,
+): { url: string; start: number; end: number } | null {
+  if (urlPiece(lines[index] ?? '') == null) return null;
+
+  let start = index;
+  while (start > 0 && index - start < 80) {
+    const current = urlPiece(lines[start] ?? '');
+    if (current && lineHasUrlScheme(current)) break;
+    if (urlPiece(lines[start - 1] ?? '') == null) break;
+    start -= 1;
+  }
+
+  const head = urlPiece(lines[start] ?? '');
+  if (!head || !lineHasUrlScheme(head)) return null;
+
+  let end = start;
+  while (end + 1 < lines.length && end - start < 80) {
+    const next = urlPiece(lines[end + 1] ?? '');
+    if (!next || /^https?:\/\//i.test(next)) break;
+    end += 1;
+  }
+
+  const url = lines.slice(start, end + 1).map((line) => line.trim()).join('');
+  if (!/^https?:\/\//i.test(url)) return null;
+  try {
+    const parsed = new URL(url);
+    if ((parsed.protocol !== 'http:' && parsed.protocol !== 'https:') || !parsed.hostname.includes('.')) return null;
+  } catch {
+    return null;
+  }
+  return { url, start, end };
+}
+
+function urlAtPointer(term: Terminal, event: MouseEvent): string | null {
+  const screen = term.element?.querySelector('.xterm-screen');
+  if (!(screen instanceof HTMLElement) || term.cols < 1 || term.rows < 1) return null;
+  const rect = screen.getBoundingClientRect();
+  if (rect.width <= 0 || rect.height <= 0) return null;
+  const style = window.getComputedStyle(screen);
+  const padLeft = parseInt(style.paddingLeft, 10) || 0;
+  const padTop = parseInt(style.paddingTop, 10) || 0;
+  const col = Math.ceil((event.clientX - rect.left - padLeft) / (rect.width / term.cols));
+  const row = Math.ceil((event.clientY - rect.top - padTop) / (rect.height / term.rows));
+  if (col < 1 || row < 1 || col > term.cols || row > term.rows) return null;
+  const buffer = term.buffer.active;
+  const index = buffer.viewportY + row - 1;
+  const from = Math.max(0, index - 80);
+  const to = Math.min(buffer.length - 1, index + 80);
+  const lines: string[] = [];
+  for (let i = from; i <= to; i += 1) lines.push(buffer.getLine(i)?.translateToString(false) ?? '');
+  return stitchTerminalUrl(lines, index - from)?.url ?? null;
+}
+
+function registerWrappedUrlLinks(term: Terminal, onFileLink?: TerminalFileLinkListener): void {
+  term.registerLinkProvider({
+    provideLinks(bufferLineNumber, callback) {
+      const buffer = term.buffer.active;
+      const index = bufferLineNumber - 1;
+      const from = Math.max(0, index - 80);
+      const to = Math.min(buffer.length - 1, index + 80);
+      const lines: string[] = [];
+      const cells: { start: number; end: number }[] = [];
+      for (let row = from; row <= to; row += 1) {
+        const full = buffer.getLine(row)?.translateToString(false) ?? '';
+        const trimmed = full.trim();
+        lines.push(full);
+        cells.push({ start: trimmed ? full.indexOf(trimmed) : 0, end: trimmed ? full.indexOf(trimmed) + trimmed.length : 0 });
+      }
+      const stitched = stitchTerminalUrl(lines, index - from);
+      if (!stitched) {
+        callback(undefined);
+        return;
+      }
+      const startCell = cells[stitched.start];
+      const endCell = cells[stitched.end];
+      callback([
+        {
+          text: stitched.url,
+          range: {
+            start: { x: startCell.start + 1, y: from + stitched.start + 1 },
+            end: { x: Math.max(startCell.start + 1, endCell.end), y: from + stitched.end + 1 },
+          },
+          activate: (event: MouseEvent, text: string) => openTerminalLink(event, text, onFileLink),
+        },
+      ]);
+    },
+  });
+}
+
 export function openTerminalLink(
   event: MouseEvent,
   uri: string,
@@ -268,6 +372,7 @@ export const RECONNECT_BACKOFF_MS = [
 export const RECONNECT_STABLE_MS = 30_000;
 
 export class TerminalSession {
+  private readonly container: HTMLElement;
   private readonly term: Terminal;
   private readonly fit: FitAddon;
   private readonly ws: WebSocket;
@@ -302,6 +407,7 @@ export class TerminalSession {
     adaptCodexPalette = false,
     onFileLink?: TerminalFileLinkListener,
   ) {
+    this.container = container;
     this.codexPalette = adaptCodexPalette ? new CodexTerminalPalette() : null;
     this.clipboardEnabled = clipboardEnabled;
     this.focusOnConnect = focusOnConnect;
@@ -342,6 +448,7 @@ export class TerminalSession {
     this.fit = new FitAddon();
     this.term.loadAddon(this.fit);
     this.term.open(container);
+    registerWrappedUrlLinks(this.term, onFileLink);
 
     try {
       this.fit.fit();
@@ -528,10 +635,11 @@ export class TerminalSession {
         }
         return;
       }
-      // If the active buffer is alternate (e.g. tmux or full-screen TUI) and mouse tracking
-      // is not active, prevent xterm's default fallback of synthesizing Up/Down arrow keystrokes
-      // which cycles prompt history into the message composer input line.
-      if (this.term.buffer.active.type === 'alternate') {
+      if (this.term.modes.mouseTrackingMode !== 'none') return;
+      // Alternate-screen apps such as tmux have no xterm scrollback. Swallow the wheel only
+      // then, so it does not become Up/Down arrows in the agent composer. When the viewport
+      // itself has history, leave the event for xterm to scroll.
+      if (this.term.buffer.active.type === 'alternate' && this.term.buffer.active.viewportY >= this.term.buffer.active.baseY) {
         e.preventDefault();
         e.stopPropagation();
       }
@@ -601,6 +709,34 @@ export class TerminalSession {
     };
     container.addEventListener('touchend', endTouch, { signal });
     container.addEventListener('touchcancel', endTouch, { signal });
+
+    let armedLink: string | null = null;
+    container.addEventListener(
+      'mousedown',
+      (event) => {
+        if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey) return;
+        const url = urlAtPointer(this.term, event);
+        armedLink = url;
+        if (!url) return;
+        event.preventDefault();
+        event.stopPropagation();
+      },
+      { capture: true, signal },
+    );
+    container.addEventListener(
+      'mouseup',
+      (event) => {
+        const armed = armedLink;
+        armedLink = null;
+        if (!armed || event.button !== 0) return;
+        const url = urlAtPointer(this.term, event);
+        if (url !== armed) return;
+        event.preventDefault();
+        event.stopPropagation();
+        openTerminalLink(event, url, onFileLink);
+      },
+      { capture: true, signal },
+    );
 
     this.resizeObserver = new ResizeObserver(() => this.sendResize());
     this.resizeObserver.observe(container);
@@ -710,6 +846,7 @@ export class TerminalSession {
 
   private sendResize(): void {
     if (this.ws.readyState !== WebSocket.OPEN) return;
+    if (this.container.clientWidth < 160 || this.container.clientHeight < 80) return;
     try {
       this.fit.fit();
     } catch {

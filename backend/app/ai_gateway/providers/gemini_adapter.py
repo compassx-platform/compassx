@@ -79,16 +79,9 @@ class GeminiAdapter(BaseProviderAdapter):
         return system_instruction, contents
 
     def _convert_tools(self, request: ChatCompletionRequest) -> list[dict[str, Any]] | None:
-        if not request.tools:
-            return None
-        declarations = []
-        for t in request.tools:
-            if t.type == "function":
-                declarations.append({
-                    "name": t.function.name,
-                    "description": t.function.description or "",
-                    "parameters": t.function.parameters or {"type": "object", "properties": {}},
-                })
+        from app.ai_gateway.schemas.chat import function_tool_specs
+
+        declarations = function_tool_specs(request.tools)
         return [{"functionDeclarations": declarations}] if declarations else None
 
     async def chat_stream(

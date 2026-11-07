@@ -1,4 +1,4 @@
-{{- if .Values.enterpriseGateway.rbac.create }}
+{{- if and (eq (include "compassx.enterpriseGatewayEnabled" .) "true") .Values.enterpriseGateway.rbac.create }}
 apiVersion: v1
 kind: ServiceAccount
 metadata:

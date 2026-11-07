@@ -38,11 +38,38 @@ const AGENT_OPTIONS = [
     bg: 'rgba(16, 185, 129, 0.1)',
     desc: 'Flexible multi-model code generation, automated refactoring, and test suite verification.',
   },
+  {
+    id: 'claude',
+    name: 'Claude Code',
+    tag: 'claude',
+    badge: 'Anthropic',
+    color: '#d97706',
+    bg: 'rgba(217, 119, 6, 0.1)',
+    desc: 'Anthropic Claude Code CLI for repository edits, terminal tools, and agentic coding.',
+  },
+  {
+    id: 'codex',
+    name: 'Codex',
+    tag: 'codex',
+    badge: 'OpenAI',
+    color: '#10b981',
+    bg: 'rgba(16, 185, 129, 0.1)',
+    desc: 'OpenAI Codex CLI for coding tasks inside the sandbox terminal.',
+  },
+  {
+    id: 'cursor',
+    name: 'Cursor',
+    tag: 'cursor',
+    badge: 'Agent CLI',
+    color: '#6366f1',
+    bg: 'rgba(99, 102, 241, 0.1)',
+    desc: 'Cursor Agent CLI for coding sessions in the sandbox terminal.',
+  },
 ];
 
 export function CreateAgentSessionModal({ isOpen, onClose, onSubmit }: Props) {
   const [title, setTitle] = useState('');
-  const [selectedAgent, setSelectedAgent] = useState<'antigravity' | 'pi' | 'opencode'>('antigravity');
+  const [selectedAgent, setSelectedAgent] = useState('antigravity');
   const [sandboxMode, setSandboxMode] = useState<'new' | 'existing'>('new');
   const [selectedSandboxId, setSelectedSandboxId] = useState('');
   const [availableSandboxes, setAvailableSandboxes] = useState([]);

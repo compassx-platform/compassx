@@ -15,8 +15,16 @@ class RuntimeInfo:
                 profile_name = platform.profile.name
         except Exception:
             pass
+        deployment_mode = "full"
+        try:
+            from compassx.registry.deployment_mode import load_deployment_mode
+
+            deployment_mode = load_deployment_mode().name
+        except Exception:
+            pass
         return {
             "profile": profile_name,
+            "mode": deployment_mode,
             "backend_url": backend_url,
             "compassx_env": compute_settings.COMPASSX_ENV,
         }

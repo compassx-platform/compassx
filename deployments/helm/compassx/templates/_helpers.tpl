@@ -192,6 +192,18 @@ Redis host & port helpers
 {{- end }}
 
 {{/*
+Enterprise Gateway is on unless a values file sets enabled: false.
+A missing key stays on so older overlays that only set replicaCount still install it.
+*/}}
+{{- define "compassx.enterpriseGatewayEnabled" -}}
+{{- if hasKey .Values.enterpriseGateway "enabled" -}}
+{{- .Values.enterpriseGateway.enabled -}}
+{{- else -}}
+true
+{{- end -}}
+{{- end -}}
+
+{{/*
 MinIO / Storage endpoint helpers
 */}}
 {{- define "compassx.storageEndpoint" -}}

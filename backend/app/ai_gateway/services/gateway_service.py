@@ -18,6 +18,7 @@ from app.ai_gateway.schemas.chat import (
     ChatCompletionChunk,
     ChatCompletionRequest,
     ChatCompletionResponse,
+    serialize_tools,
 )
 from app.ai_gateway.services.guardrails import AIGuardrails
 from app.ai_gateway.services.rate_limiter import gateway_rate_limiter
@@ -101,6 +102,7 @@ class GatewayService:
                 logger.warning("Failed to decrypt API key for provider %s: %s", provider.name, e)
 
         return ProviderCredentials(
+            provider_type=provider.provider_type,
             api_key=api_key,
             base_url=provider.base_url,
             config=provider.config or {},
@@ -221,7 +223,7 @@ class GatewayService:
                         provider_type=executed_endpoint.provider.provider_type.value,
                         upstream_model_name=executed_endpoint.upstream_model_name,
                         request_messages=[m.model_dump(exclude_none=True) for m in request.messages],
-                        tools_passed=[t.model_dump(exclude_none=True) for t in request.tools] if request.tools else None,
+                        tools_passed=serialize_tools(request.tools),
                         response_text=accumulated_text or None,
                         response_tool_calls=accumulated_tools or None,
                         finish_reason=finish_reason,
@@ -336,7 +338,7 @@ class GatewayService:
                         provider_type=executed_endpoint.provider.provider_type.value,
                         upstream_model_name=executed_endpoint.upstream_model_name,
                         request_messages=[m.model_dump(exclude_none=True) for m in request.messages],
-                        tools_passed=[t.model_dump(exclude_none=True) for t in request.tools] if request.tools else None,
+                        tools_passed=serialize_tools(request.tools),
                         response_text=choice.message.content if choice and choice.message else None,
                         response_tool_calls=[tc.model_dump(exclude_none=True) for tc in choice.message.tool_calls] if choice and choice.message and choice.message.tool_calls else None,
                         finish_reason=choice.finish_reason if choice else "stop",

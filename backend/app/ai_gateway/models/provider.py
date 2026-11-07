@@ -34,6 +34,7 @@ class AIProviderType(str, enum.Enum):
     bedrock = "bedrock"
     vertex = "vertex"
     ollama = "ollama"
+    grok = "grok"
     compatible = "compatible"
 
 

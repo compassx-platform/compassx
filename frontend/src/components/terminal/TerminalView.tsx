@@ -358,7 +358,7 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(
     return (
       <div
         data-state={state.kind}
-        className={`relative isolate flex min-h-0 flex-1 flex-col ${className}`}
+        className={`relative isolate flex min-h-0 min-w-0 flex-1 flex-col ${className}`}
         style={style}
       >
         <style>{`
@@ -406,13 +406,13 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(
         <div
           ref={containerRef}
           onContextMenu={handleContextMenu}
-          className="relative min-h-0 flex-1 overflow-hidden p-0"
+          className="relative min-h-0 min-w-0 flex-1 overflow-hidden p-0"
           style={{ backgroundColor: terminalBackground }}
         >
           <div
             key={connectAttempt}
             ref={attachSession}
-            className="h-full w-full overflow-hidden"
+            className="h-full w-full min-h-0 min-w-0 overflow-hidden"
           />
           {contextMenu && (
             <div

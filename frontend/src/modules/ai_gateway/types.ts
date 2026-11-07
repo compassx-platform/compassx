@@ -6,6 +6,7 @@ export type AIProviderType =
   | 'bedrock'
   | 'vertex'
   | 'ollama'
+  | 'grok'
   | 'compatible';
 
 export interface AIProvider {

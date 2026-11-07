@@ -12,9 +12,10 @@ _bind()
 def restart(
     services: Optional[List[str]] = typer.Argument(None),
     profile: Optional[str] = typer.Option(None, "--profile", "-p"),
+    mode: Optional[str] = typer.Option(None, "--mode", "-m", help="Deployment mode: full or app"),
 ) -> None:
     """Restart platform services."""
-    container = _container(profile)
+    container = _container(profile, mode)
     try:
         status = asyncio.run(container.platform_manager.restart(services or None))
     except PlatformError as exc:

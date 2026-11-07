@@ -25,6 +25,9 @@ class ControlComputeService:
             raise HTTPException(status_code=404, detail=f"Unknown compute service: {service_name}")
         if action not in actions:
             raise HTTPException(status_code=400, detail=f"Unsupported action: {action}")
+        from app.platform_mode import ensure_deployed
+
+        ensure_deployed(service_name)
 
         label, manager = managers[service_name]
         if service_name == "airflow":

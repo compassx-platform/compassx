@@ -53,6 +53,34 @@ docker compose -f deployments/docker-compose/docker-compose.yml up -d
 ./compassx up --profile docker
 ```
 
+### Deployment mode
+
+A profile chooses where services run. A mode chooses which services start. The default mode is `full` (the whole platform). `app` starts only Postgres, Redis, the backend, and the frontend. MinIO, Airflow, Enterprise Gateway, MLflow, and Prometheus stay off, and object storage is set to `local`.
+
+```bash
+./compassx up --mode app
+./compassx up --mode app --profile docker
+./compassx mode use app          # remember the mode for later commands
+./compassx up --mode full        # bring the data services back
+```
+
+`up --mode` restarts the backend and frontend when the mode changes, so the API picks up the new set of services. Services that were already running and are outside the new mode are left as they are. Stop the whole stack first when you want those gone:
+
+```bash
+./compassx down
+./compassx up --mode app
+```
+
+On Kubernetes, pass the app values file after the cloud values file:
+
+```bash
+helm install compassx ./deployments/helm/compassx -n compassx \
+  -f ./deployments/azure/values-managed.yaml \
+  -f ./deployments/helm/compassx/values-app.yaml
+```
+
+Leave `values-app.yaml` off to install the full platform. Notebooks, scheduled jobs, and file volumes need the services `app` does not start.
+
 ### 3. Kubernetes Cloud Deployments (Helm)
 
 Pick your cloud provider and deploy:

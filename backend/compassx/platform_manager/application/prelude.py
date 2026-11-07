@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 
+from compassx.interfaces.launcher import ServiceStatus
 from compassx.platform_manager.health import HealthReport
 from compassx.platform_manager.manager import PlatformStatus
 

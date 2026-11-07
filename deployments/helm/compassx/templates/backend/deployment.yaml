@@ -35,6 +35,8 @@ spec:
           env:
             - name: COMPASSX_PLATFORM_PROFILE
               value: {{ .Values.backend.env.COMPASSX_PLATFORM_PROFILE | quote }}
+            - name: COMPASSX_PLATFORM_MODE
+              value: {{ .Values.backend.env.COMPASSX_PLATFORM_MODE | default "full" | quote }}
             - name: COMPASSX_ENV
               value: {{ .Values.backend.env.COMPASSX_ENV | quote }}
             - name: COMPASSX_NAMESPACE
@@ -68,11 +70,13 @@ spec:
               value: {{ if .Values.minio.enabled }}"compassx"{{ else }}{{ .Values.externalStorage.bucket | quote }}{{ end }}
             - name: STORAGE_ACCESS_KEY
               value: {{ if .Values.minio.enabled }}{{ .Values.minio.auth.rootUser | quote }}{{ else }}{{ .Values.externalStorage.accessKey | quote }}{{ end }}
+            {{- if or .Values.minio.enabled (ne (default "" .Values.externalStorage.backend) "local") }}
             - name: STORAGE_SECRET_KEY
               valueFrom:
                 secretKeyRef:
                   name: {{ include "compassx.storageSecretName" . }}
                   key: {{ include "compassx.storageSecretKey" . }}
+            {{- end }}
             - name: STORAGE_REGION
               value: {{ if .Values.minio.enabled }}"us-east-1"{{ else }}{{ .Values.externalStorage.region | quote }}{{ end }}
             - name: JWT_SECRET
@@ -101,7 +105,7 @@ spec:
             - name: COMPUTE_NODEPOOL_MAX_NODES
               value: {{ .Values.computePool.maxCount | default 10 | quote }}
             - name: COMPUTE_NODEPOOL_ENABLED
-              value: {{ .Values.computePool.enabled | default true | quote }}
+              value: {{ .Values.computePool.enabled | toString | quote }}
             - name: COMPUTE_NODEPOOL_IS_PROVISIONED
               value: {{ .Values.computePool.isProvisioned | default true | quote }}
           {{- with .Values.backend.probes.liveness }}

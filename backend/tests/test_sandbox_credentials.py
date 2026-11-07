@@ -63,6 +63,49 @@ def test_auth_output_requires_markers():
     assert "antigravity-cli/antigravity-oauth-token" in parsed
 
 
+def test_sandbox_sync_saves_a_login_and_copies_it_into_an_empty_sandbox():
+    import ast
+    import json
+    from unittest.mock import patch
+
+    from app.services.sandbox_credentials import sync_antigravity_for_sandbox
+
+    store = {}
+    pods = {
+        "sb-a": {
+            "antigravity-cli/antigravity-oauth-token": TOKEN,
+            "oauth_creds.json": TOKEN,
+        }
+    }
+
+    def load(workspace_id):
+        return dict(store.get(workspace_id, {}))
+
+    def save(workspace_id, files):
+        store[workspace_id] = dict(files)
+
+    def target(sandbox_id):
+        def run(command):
+            encoded = command.split("b64decode('", 1)[1].split("')", 1)[0]
+            script = base64.b64decode(encoded).decode()
+            if "json.dumps(found)" in script:
+                body = json.dumps(pods.get(sandbox_id, {}))
+                return f"__CX_AUTH_BEGIN__\n{body}\n__CX_AUTH_END__"
+            literal = script.split("json.loads(", 1)[1].split(")\nroots", 1)[0]
+            pods[sandbox_id] = json.loads(ast.literal_eval(literal))
+            return ""
+
+        return run
+
+    with patch("app.services.sandbox_credentials._load_files", load), patch(
+        "app.services.sandbox_credentials._save_files", save
+    ):
+        sync_antigravity_for_sandbox("ws-1", target("sb-a"), sandbox_id="sb-a", force=True)
+        assert store["ws-1"]["antigravity-cli/antigravity-oauth-token"] == TOKEN
+        sync_antigravity_for_sandbox("ws-1", target("sb-b"), sandbox_id="sb-b", force=True)
+        assert pods["sb-b"]["antigravity-cli/antigravity-oauth-token"] == TOKEN
+
+
 def test_pod_commands_are_python_and_do_not_embed_a_shell_secret_unencoded():
     reader = reader_command()
     writer = writer_command({"antigravity-cli/antigravity-oauth-token": TOKEN})

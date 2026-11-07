@@ -44,11 +44,41 @@ class ToolDefinition(BaseModel):
     function: ToolDefinitionFunction
 
 
+def serialize_tools(tools: list[Any] | None) -> list[dict[str, Any]] | None:
+    if not tools:
+        return None
+    dumped: list[dict[str, Any]] = []
+    for tool in tools:
+        if hasattr(tool, "model_dump"):
+            dumped.append(tool.model_dump(exclude_none=True))
+        elif isinstance(tool, dict):
+            dumped.append(tool)
+    return dumped or None
+
+
+def function_tool_specs(tools: list[Any] | None) -> list[dict[str, Any]]:
+    specs: list[dict[str, Any]] = []
+    for tool in serialize_tools(tools) or []:
+        kind = str(tool.get("type") or "function")
+        if kind != "function":
+            continue
+        function = tool.get("function") if isinstance(tool.get("function"), dict) else {}
+        name = str(function.get("name") or "").strip()
+        if not name:
+            continue
+        specs.append({
+            "name": name,
+            "description": str(function.get("description") or ""),
+            "parameters": function.get("parameters") or {"type": "object", "properties": {}},
+        })
+    return specs
+
+
 class ChatCompletionRequest(BaseModel):
     model_config = ConfigDict(extra="ignore")
     model: str = Field(..., description="Target model endpoint name or alias")
     messages: list[ChatMessage]
-    tools: list[Any] | None = None
+    tools: list[ToolDefinition] | None = None
     tool_choice: str | dict[str, Any] | None = None
     temperature: float | None = None
     top_p: float | None = None

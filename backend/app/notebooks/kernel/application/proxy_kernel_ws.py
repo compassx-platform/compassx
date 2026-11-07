@@ -19,6 +19,15 @@ logger = logging.getLogger("app.notebooks.routes.jupyter_proxy")
 
 class ProxyKernelWs:
     async def execute(self, websocket: WebSocket, kernel_id: str) -> None:
+        from app.platform_mode import ensure_deployed
+
+        try:
+            ensure_deployed("enterprise-gateway")
+        except HTTPException as exc:
+            await websocket.accept()
+            await websocket.close(code=1008, reason=str(exc.detail)[:120])
+            return
+
         try:
             guard, db = _ws_guard(websocket)
         except _WSDenied as denied:

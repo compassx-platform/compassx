@@ -26,7 +26,7 @@ if os.name != "nt" and os.path.exists("/etc/ssl/certs/ca-certificates.crt"):
     except Exception:
         pass
 
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy.exc import OperationalError
@@ -39,6 +39,13 @@ logging.basicConfig(
 )
 
 logger = logging.getLogger("app.main")
+
+# Apply the deployment mode before settings are loaded so app mode uses local
+# storage instead of dialing MinIO. The compassx CLI also exports these vars
+# for child processes; this covers shells that do not inherit them.
+from compassx.registry.deployment_mode import apply_mode_environment  # noqa: E402
+
+apply_mode_environment()
 
 # Import all models so SQLAlchemy knows about them BEFORE importing routes
 from app.data.models import data_catalog, dataset  # noqa: E402, F401
@@ -117,6 +124,7 @@ from app.ai_gateway.routes import (  # noqa: E402
     mcp_router as ai_gateway_mcp_router,
     proxy_router as ai_gateway_proxy_router,
     log_router as ai_gateway_log_router,
+    endpoint_router as ai_gateway_endpoint_router,
 )
 
 @asynccontextmanager
@@ -138,10 +146,11 @@ async def lifespan(app: FastAPI):
     try:
         # The backend cannot answer its own health endpoint until lifespan
         # startup completes. Waiting on itself creates a guaranteed timeout.
+        mode = container.deployment_mode
         required = [
             service
             for service in container.profile.required_healthy
-            if service != "backend"
+            if service != "backend" and mode.includes(service)
         ]
         if required:
             timeout = float(os.environ.get("COMPASSX_STARTUP_TIMEOUT", "5"))
@@ -420,6 +429,18 @@ async def lifespan(app: FastAPI):
                         );
                         CREATE INDEX IF NOT EXISTS ix_agent_runtime_sessions_workspace_id ON agent_runtime_sessions (workspace_id);
                         CREATE INDEX IF NOT EXISTS ix_agent_runtime_sessions_sandbox_id ON agent_runtime_sessions (sandbox_id);
+                        ALTER TABLE agent_runtime_sessions ADD COLUMN IF NOT EXISTS project_id VARCHAR(64);
+                        ALTER TABLE agent_runtime_sessions ADD COLUMN IF NOT EXISTS llm_model VARCHAR(255);
+                        ALTER TABLE agent_runtime_sessions ADD COLUMN IF NOT EXISTS nova_chat_session_id INTEGER;
+                        CREATE INDEX IF NOT EXISTS ix_agent_runtime_sessions_project_id ON agent_runtime_sessions (project_id);
+                        CREATE TABLE IF NOT EXISTS agent_runtime_projects (
+                            id VARCHAR(64) PRIMARY KEY,
+                            workspace_id VARCHAR(64),
+                            name VARCHAR(255) NOT NULL,
+                            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                        );
+                        CREATE INDEX IF NOT EXISTS ix_agent_runtime_projects_workspace_id ON agent_runtime_projects (workspace_id);
                     """))
                     _conn.commit()
             except Exception as _ars_err:
@@ -502,7 +523,14 @@ async def lifespan(app: FastAPI):
     from app.services.sandbox_reaper_service import sandbox_reaper_service
     await sandbox_reaper_service.start()
 
-    jobs_reconciliation_task = asyncio.create_task(_jobs_reconciliation_loop())
+    jobs_reconciliation_task = None
+    if container.deployment_mode.includes("airflow"):
+        jobs_reconciliation_task = asyncio.create_task(_jobs_reconciliation_loop())
+    else:
+        logger.info(
+            "Airflow reconciliation skipped; airflow is not in mode '%s'",
+            container.deployment_mode.name,
+        )
     try:
         yield
     except (asyncio.CancelledError, KeyboardInterrupt):
@@ -512,11 +540,12 @@ async def lifespan(app: FastAPI):
             await sandbox_reaper_service.shutdown()
         except Exception:
             pass
-        jobs_reconciliation_task.cancel()
-        try:
-            await jobs_reconciliation_task
-        except (asyncio.CancelledError, Exception):
-            pass
+        if jobs_reconciliation_task is not None:
+            jobs_reconciliation_task.cancel()
+            try:
+                await jobs_reconciliation_task
+            except (asyncio.CancelledError, Exception):
+                pass
 
 
 app = FastAPI(
@@ -599,6 +628,7 @@ app.include_router(ai_gateway_provider_router)
 app.include_router(ai_gateway_mcp_router)
 app.include_router(ai_gateway_proxy_router)
 app.include_router(ai_gateway_log_router)
+app.include_router(ai_gateway_endpoint_router)
 
 app.include_router(notebook_routes.router)
 app.include_router(jupyter_proxy.router)
@@ -653,10 +683,28 @@ from services.enterprise_gateway.router import router as eg_router  # noqa: E402
 from services.airflow.router import router as airflow_router  # noqa: E402
 from services.jupyter_server.router import router as js_router  # noqa: E402
 from services.omnigent.router import router as omnigent_router  # noqa: E402
-app.include_router(eg_router, prefix="/api/v1/services/enterprise-gateway")
-app.include_router(airflow_router, prefix="/api/v1/services/airflow")
-app.include_router(js_router, prefix="/api/v1/services/jupyter-server")
-app.include_router(omnigent_router, prefix="/api/v1/services/omnigent")
+from app.platform_mode import require_deployed  # noqa: E402
+
+app.include_router(
+    eg_router,
+    prefix="/api/v1/services/enterprise-gateway",
+    dependencies=[Depends(require_deployed("enterprise-gateway"))],
+)
+app.include_router(
+    airflow_router,
+    prefix="/api/v1/services/airflow",
+    dependencies=[Depends(require_deployed("airflow"))],
+)
+app.include_router(
+    js_router,
+    prefix="/api/v1/services/jupyter-server",
+    dependencies=[Depends(require_deployed("jupyter-server"))],
+)
+app.include_router(
+    omnigent_router,
+    prefix="/api/v1/services/omnigent",
+    dependencies=[Depends(require_deployed("omnigent-server"))],
+)
 
 from app.sandbox.routes import router as sandbox_router  # noqa: E402
 app.include_router(sandbox_router, prefix="/api/v1")

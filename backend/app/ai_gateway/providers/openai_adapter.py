@@ -34,7 +34,7 @@ class OpenAIAdapter(BaseProviderAdapter):
 
     def _is_azure(self, creds: ProviderCredentials) -> bool:
         config = creds.config or {}
-        if config.get("is_azure"):
+        if config.get("is_azure") or config.get("is_foundry"):
             return True
         p_type = getattr(creds, "provider_type", None)
         if p_type:
@@ -47,6 +47,12 @@ class OpenAIAdapter(BaseProviderAdapter):
         if config.get("azure_resource_name"):
             return True
         return False
+
+    def _is_azure_foundry(self, creds: ProviderCredentials) -> bool:
+        config = creds.config or {}
+        if config.get("is_foundry"):
+            return True
+        return "services.ai.azure.com" in (creds.base_url or "").lower()
 
     def _get_api_version(self, creds: ProviderCredentials) -> str:
         config = creds.config or {}
@@ -71,8 +77,11 @@ class OpenAIAdapter(BaseProviderAdapter):
             url = raw_url.rstrip("/")
             if is_azure:
                 url_lower = url.lower()
-                # If it's an Azure domain and doesn't have /openai or /models or /v1, append /openai
-                if any(domain in url_lower for domain in ["openai.azure.com", "services.ai.azure.com", "cognitiveservices.azure.com", "azure.com"]):
+                if "services.ai.azure.com" in url_lower:
+                    if url_lower.endswith("/openai"):
+                        url = url[: -len("/openai")]
+                    return url.rstrip("/")
+                if any(domain in url_lower for domain in ["openai.azure.com", "cognitiveservices.azure.com", "azure.com"]):
                     if not url_lower.endswith("/openai") and not url_lower.endswith("/models") and not url_lower.endswith("/v1"):
                         url = f"{url}/openai"
             return url
@@ -130,6 +139,20 @@ class OpenAIAdapter(BaseProviderAdapter):
             payload["tool_choice"] = request.tool_choice
         return payload
 
+    def _azure_resource_url(
+        self,
+        creds: ProviderCredentials,
+        base_url: str,
+        upstream_model: str,
+        kind: str,
+    ) -> str:
+        api_version = self._get_api_version(creds)
+        path = "chat/completions" if kind == "chat" else "embeddings"
+        if self._is_azure_foundry(creds) or base_url.endswith("/models"):
+            root = base_url[: -len("/models")] if base_url.endswith("/models") else base_url
+            return f"{root}/models/{path}?api-version={api_version}"
+        return f"{base_url}/deployments/{upstream_model}/{path}?api-version={api_version}"
+
     async def chat_stream(
         self,
         request: ChatCompletionRequest,
@@ -141,11 +164,7 @@ class OpenAIAdapter(BaseProviderAdapter):
         headers = self._get_headers(creds, is_azure)
 
         if is_azure:
-            api_version = self._get_api_version(creds)
-            if base_url.endswith("/models"):
-                url = f"{base_url}/chat/completions?api-version={api_version}"
-            else:
-                url = f"{base_url}/deployments/{upstream_model}/chat/completions?api-version={api_version}"
+            url = self._azure_resource_url(creds, base_url, upstream_model, "chat")
         else:
             url = f"{base_url}/chat/completions"
 
@@ -187,11 +206,7 @@ class OpenAIAdapter(BaseProviderAdapter):
         headers = self._get_headers(creds, is_azure)
 
         if is_azure:
-            api_version = self._get_api_version(creds)
-            if base_url.endswith("/models"):
-                url = f"{base_url}/chat/completions?api-version={api_version}"
-            else:
-                url = f"{base_url}/deployments/{upstream_model}/chat/completions?api-version={api_version}"
+            url = self._azure_resource_url(creds, base_url, upstream_model, "chat")
         else:
             url = f"{base_url}/chat/completions"
 
@@ -217,11 +232,7 @@ class OpenAIAdapter(BaseProviderAdapter):
         headers = self._get_headers(creds, is_azure)
 
         if is_azure:
-            api_version = self._get_api_version(creds)
-            if base_url.endswith("/models"):
-                url = f"{base_url}/embeddings?api-version={api_version}"
-            else:
-                url = f"{base_url}/deployments/{upstream_model}/embeddings?api-version={api_version}"
+            url = self._azure_resource_url(creds, base_url, upstream_model, "embeddings")
         else:
             url = f"{base_url}/embeddings"
 
@@ -324,31 +335,33 @@ class OpenAIAdapter(BaseProviderAdapter):
         last_error = ""
         try:
             async with gateway_http_client(timeout) as client:
-                # 1. Primary check: Query /deployments endpoint (discovering real, active Azure deployments)
-                for ver in candidate_versions:
-                    deployments_urls = [
-                        f"{url_with_openai}/deployments?api-version={ver}",
-                        f"{url_without_openai}/deployments?api-version={ver}",
-                    ]
+                foundry = self._is_azure_foundry(creds)
 
-                    for dep_url in deployments_urls:
-                        try:
-                            resp = await client.get(dep_url, headers=headers)
-                        except Exception as req_err:
-                            last_error = str(req_err)
-                            continue
+                # 1. Primary check: Query /deployments endpoint (classic Azure OpenAI)
+                if not foundry:
+                    for ver in candidate_versions:
+                        deployments_urls = [
+                            f"{url_with_openai}/deployments?api-version={ver}",
+                            f"{url_without_openai}/deployments?api-version={ver}",
+                        ]
 
-                        if resp.status_code == 200:
-                            dep_ids = self._extract_model_ids(resp.json())
-                            if dep_ids:
-                                return True, f"Successfully discovered {len(dep_ids)} active deployments from Azure AI ({ver})", dep_ids
-                            else:
+                        for dep_url in deployments_urls:
+                            try:
+                                resp = await client.get(dep_url, headers=headers)
+                            except Exception as req_err:
+                                last_error = str(req_err)
+                                continue
+
+                            if resp.status_code == 200:
+                                dep_ids = self._extract_model_ids(resp.json())
+                                if dep_ids:
+                                    return True, f"Successfully discovered {len(dep_ids)} active deployments from Azure AI ({ver})", dep_ids
                                 return True, f"Connected to Azure OpenAI ({ver}), but no active deployments were found. You can add your deployment name manually.", []
 
-                        if resp.status_code in (401, 403):
-                            return False, "Invalid Azure API key or unauthorized access to resource (HTTP 401/403)", []
+                            if resp.status_code in (401, 403):
+                                return False, "Invalid Azure API key or unauthorized access to resource (HTTP 401/403)", []
 
-                        last_error = f"HTTP {resp.status_code}: {resp.text[:120]}"
+                            last_error = f"HTTP {resp.status_code}: {resp.text[:120]}"
 
                 # 2. Secondary check for Serverless / Model-as-a-Service on Azure AI Foundry (/models)
                 for ver in candidate_versions:

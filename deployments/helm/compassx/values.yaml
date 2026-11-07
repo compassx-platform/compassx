@@ -65,6 +65,7 @@ backend:
 
   env:
     COMPASSX_PLATFORM_PROFILE: "kubernetes-cloud"
+    COMPASSX_PLATFORM_MODE: "full"
     COMPASSX_ENV: "production"
     COMPASSX_BACKEND_RUNTIME: "pod"
     UVICORN_RELOAD: "0"
@@ -159,6 +160,7 @@ frontend:
 # Enterprise Gateway (Jupyter EG)
 # ------------------------------------------------------------------------------
 enterpriseGateway:
+  enabled: true
   replicaCount: 1
 
   image:

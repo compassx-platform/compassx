@@ -85,6 +85,8 @@ azure-identity>=1.16.0
 
 # ── Kernel Gateway integration ───────────────────────────────────────────────
 websockets>=13,<15.1
+# Agent Runtime browser host. Uses installed Chrome or Edge; no bundled browser download.
+playwright>=1.49.0
 
 # SQL Warehouse engines
 duckdb>=0.10.0
