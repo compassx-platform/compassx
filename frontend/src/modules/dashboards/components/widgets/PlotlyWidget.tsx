@@ -4,7 +4,7 @@
  *   histogram/line/pie/point_map/sankey/scatter/waterfall charts.
  */
 
-import { useRef, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Loader2 } from 'lucide-react';
 import { useDashboardStore } from '@/modules/dashboards/stores/dashboardStore';
 import { useDatasetQuery } from '@/modules/dashboards/hooks/useDashboard';
@@ -212,20 +212,38 @@ function buildTraces(rows: Record<string, unknown>[], cfg: ChartConfig): Partial
       } as any));
 
     case 'line':
-    case 'area':
-      return (yFields.length > 0 ? yFields : ['value']).map((yf, idx) => ({
+    case 'area': {
+      const measures = yFields.length > 0 ? yFields : ['value'];
+      const lineSeries = colorField
+        ? measures.flatMap((yf) => {
+            const groups = new Map<string, Record<string, unknown>[]>();
+            for (const row of rows) {
+              const key = String(row[colorField] ?? '');
+              const bucket = groups.get(key);
+              if (bucket) bucket.push(row);
+              else groups.set(key, [row]);
+            }
+            return [...groups.entries()].map(([key, groupRows]) => ({
+              name: measures.length > 1 ? `${key} · ${yf}` : key,
+              yField: yf,
+              rows: groupRows,
+            }));
+          })
+        : measures.map((yf) => ({ name: yf, yField: yf, rows }));
+      return lineSeries.map((series, idx) => ({
         type: 'scatter',
         mode: cfg.showValueLabels ? 'lines+markers+text' : 'lines+markers',
-        x: xValues,
-        y: rows.map((r) => r[yf]),
-        name: getSeriesTitle(yf, cfg),
+        x: series.rows.map((row) => row[xField!]),
+        y: series.rows.map((row) => row[series.yField]),
+        name: getSeriesTitle(series.name, cfg),
         hoverinfo: 'none',
-        line: { color: getSeriesColor(yf, idx, cfg), width: cfg.lineThickness || 2 },
-        marker: { color: getSeriesColor(yf, idx, cfg) },
+        line: { color: getSeriesColor(series.name, idx, cfg), width: cfg.lineThickness || 2 },
+        marker: { color: getSeriesColor(series.name, idx, cfg) },
         ...(cfg.showValueLabels ? { texttemplate: '%{y}', textposition: 'top center' } : {}),
         ...(chartType === 'area' ? { fill: 'tozeroy' } : {}),
         ...(cfg.layout === 'stack' ? { stackgroup: 'one' } : {}),
       } as any));
+    }
 
     case 'scatter':
       return [{
@@ -421,6 +439,14 @@ function getAxisRange(
   return { autorange: false, range: [finalMin, finalMax] };
 }
 
+function isDateLike(value: unknown): boolean {
+  if (value instanceof Date) return !Number.isNaN(value.getTime());
+  if (typeof value !== 'string') return false;
+  const text = value.trim();
+  if (!/^\d{4}-\d{2}-\d{2}(?:[T\s]\d{2}:\d{2}(?::\d{2})?)?/.test(text)) return false;
+  return !Number.isNaN(Date.parse(text));
+}
+
 function buildLayout(cfg: ChartConfig, rows?: Record<string, unknown>[]): Partial<Plotly.Layout> {
   const legendPos = cfg.legend?.position ?? 'bottom';
   const legendLayout = {
@@ -450,9 +476,12 @@ function buildLayout(cfg: ChartConfig, rows?: Record<string, unknown>[]): Partia
   const xFields = cfg.xField ? [cfg.xField] : [];
   const xRangeOpts = getAxisRange(cfg.xAxis, rows, xFields);
 
-  const isXCategory = cfg.xAxis?.scaleType === 'categorical' ||
-    (rows && rows.length > 0 && typeof rows[0][cfg.xField ?? ''] === 'string') ||
-    cfg.xAxis?.scaleType !== 'continuous';
+  const xSample = rows && rows.length > 0 ? rows[0][cfg.xField ?? ''] : undefined;
+  const xIsText = typeof xSample === 'string' && Number.isNaN(Number(xSample));
+  const scaleType = cfg.xAxis?.scaleType;
+  const isXDate = scaleType !== 'categorical' && scaleType !== 'continuous'
+    && Boolean(cfg.xField && rows?.some((row) => isDateLike(row[cfg.xField!])));
+  const isXCategory = !isXDate && (scaleType === 'categorical' || (scaleType !== 'continuous' && xIsText));
 
   const xCategoryStep = isXCategory && cfg.xAxis?.tickCount && rows && rows.length > 0
     ? Math.max(1, Math.ceil(rows.length / cfg.xAxis.tickCount))
@@ -484,8 +513,10 @@ function buildLayout(cfg: ChartConfig, rows?: Record<string, unknown>[]): Partia
       autorange: xRangeOpts.autorange,
       ...(xRangeOpts.range ? { range: xRangeOpts.range } : {}),
       ...(cfg.xAxis?.labelAngle !== undefined ? { tickangle: cfg.xAxis.labelAngle } : {}),
-      ...(isXCategory ? { dtick: xCategoryStep ?? 1, tickmode: 'linear' } : (cfg.xAxis?.tickCount ? { nticks: cfg.xAxis.tickCount } : {})),
-      type: isXCategory ? 'category' : (cfg.xAxis?.scaleType === 'continuous' ? 'linear' : (cfg.xAxis?.logScale ? 'log' : undefined)),
+      ...(isXCategory
+        ? { dtick: xCategoryStep ?? 1, tickmode: 'linear' as const }
+        : (cfg.xAxis?.tickCount ? { nticks: cfg.xAxis.tickCount } : {})),
+      type: isXDate ? 'date' : (isXCategory ? 'category' : (scaleType === 'continuous' ? 'linear' : (cfg.xAxis?.logScale ? 'log' : undefined))),
       showgrid: cfg.showGridlines !== false,
       gridcolor: '#E0E0E0',
       zeroline: false,
@@ -701,33 +732,31 @@ export default function PlotlyWidget({ widget }: Props) {
     return () => { cancelled = true; };
   }, [effectiveCfg, queryResult]);
 
-  // ResizeObserver to automatically resize chart when widget or sidebar size changes
-  useEffect(() => {
-    if (!plotRef.current) return;
-    const el = plotRef.current;
-    const parent = el.parentElement;
+  // The plot node does not exist on the loading render, so the observer has to
+  // attach from the ref callback. Otherwise a page resize leaves the drawing
+  // at the size it had when Plotly first painted.
+  const resizeObserverRef = useRef<ResizeObserver | null>(null);
+  const setPlotNode = useCallback((node: HTMLDivElement | null) => {
+    plotRef.current = node;
+    resizeObserverRef.current?.disconnect();
+    resizeObserverRef.current = null;
+    if (!node) return;
+    const box = node.parentElement ?? node;
     let frameId: number | null = null;
-
-    const doResize = () => {
+    const observer = new ResizeObserver(() => {
       if (frameId !== null) cancelAnimationFrame(frameId);
       frameId = requestAnimationFrame(() => {
-        if (el && ((el as any)._fullLayout || (el as any).layout || el.querySelector('.svg-container'))) {
-          getPlotly().then((P) => {
-            P.Plots.resize(el);
-          });
-        }
+        if (!(node as any)._fullLayout && !node.querySelector('.svg-container')) return;
+        getPlotly().then((P) => {
+          if (plotRef.current === node) P.Plots.resize(node);
+        });
       });
-    };
-
-    const observer = new ResizeObserver(doResize);
-    observer.observe(el);
-    if (parent) observer.observe(parent);
-
-    return () => {
-      if (frameId !== null) cancelAnimationFrame(frameId);
-      observer.disconnect();
-    };
+    });
+    observer.observe(box);
+    resizeObserverRef.current = observer;
   }, []);
+
+  useEffect(() => () => resizeObserverRef.current?.disconnect(), []);
 
   function handleMouseMove(e: React.MouseEvent<HTMLDivElement>) {
     if (!tooltipState || !containerRef.current) return;
@@ -824,7 +853,7 @@ export default function PlotlyWidget({ widget }: Props) {
 
       <div style={{ flex: 1, position: 'relative', width: '100%', height: '100%', minHeight: 0 }}>
         <div
-          ref={plotRef}
+          ref={setPlotNode}
           className="widget-content-interactive"
           style={{ width: '100%', height: '100%', overflow: 'hidden', minWidth: 0, minHeight: 0 }}
         />

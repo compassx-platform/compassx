@@ -16,6 +16,7 @@ export type SecurableType =
   | 'dashboard'
   | 'query'
   | 'tool'
+  | 'model'
   | 'job'
   | 'agent'
   | 'compute'

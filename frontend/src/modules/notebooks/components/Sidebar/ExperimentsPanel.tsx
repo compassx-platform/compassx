@@ -145,8 +145,19 @@ export default function ExperimentsPanel() {
 
   // Register Model dialog state
   const [registeringRunId, setRegisteringRunId] = useState<string | null>(null);
+  const catalogFromUrl = () => {
+    const match = window.location.pathname.match(/data-catalog\/([^/]+)\/([^/]+)/);
+    return {
+      catalog: match ? decodeURIComponent(match[1]) : '',
+      schema: match ? decodeURIComponent(match[2]) : 'default',
+    };
+  };
+  const initialCatalog = catalogFromUrl();
+  const [regCatalog, setRegCatalog] = useState(initialCatalog.catalog);
+  const [regSchema, setRegSchema] = useState(initialCatalog.schema);
   const [regModelName, setRegModelName] = useState('');
-  const [regArtifactPath, setRegArtifactPath] = useState('model');
+  const [regArtifactPath, setRegArtifactPath] = useState('');
+  const [regAlias, setRegAlias] = useState('champion');
   const [regDescription, setRegDescription] = useState('');
   const [regSubmitting, setRegSubmitting] = useState(false);
   const [regFeedback, setRegFeedback] = useState<{ success: boolean; message: string } | null>(null);
@@ -174,16 +185,30 @@ export default function ExperimentsPanel() {
   const fetchModels = useCallback(async (showSpinner = false) => {
     if (showSpinner) setModelsLoading(true);
     try {
-      const res = await api.get('/notebook/experiments/models', {
-        params: { max_results: 50 },
-      });
-      setModelsData(res.data);
+      const res = await api.get('/catalog/models');
+      const slug = window.location.pathname.match(/\/w\/([^/]+)/)?.[1];
+      const models = (res.data || []).map((model: any) => ({
+        name: model.full_name,
+        description: model.comment,
+        latest_versions: model.latest_version
+          ? [{
+              version: String(model.latest_version),
+              current_stage: (model.aliases || []).map((item: { alias: string }) => item.alias).join(', '),
+              status: 'READY',
+            }]
+          : [],
+        tags: {},
+        ui_url: slug
+          ? `/w/${slug}/platform/data-catalog/${encodeURIComponent(model.catalog_name)}/${encodeURIComponent(model.schema_name)}/model/${encodeURIComponent(model.name)}`
+          : undefined,
+      }));
+      setModelsData({ connected: true, models });
     } catch (err: any) {
-      console.warn('[notebook] Failed to fetch MLflow models:', err);
+      console.warn('[notebook] Failed to fetch catalog models:', err);
       setModelsData({
         connected: false,
         models: [],
-        message: err.response?.data?.message || err.message || 'Failed to query Model Registry',
+        message: err.response?.data?.detail || err.message || 'Failed to query the catalog model registry',
       });
     } finally {
       if (showSpinner) setModelsLoading(false);
@@ -211,19 +236,23 @@ export default function ExperimentsPanel() {
 
   const handleRegisterModel = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!registeringRunId || !regModelName.trim()) return;
+    if (!registeringRunId || !regModelName.trim() || !regCatalog.trim() || !regSchema.trim()) return;
     setRegSubmitting(true);
     setRegFeedback(null);
     try {
-      const res = await api.post('/notebook/experiments/models/register', {
-        run_id: registeringRunId,
-        model_name: regModelName.trim(),
-        artifact_path: regArtifactPath.trim() || 'model',
-        description: regDescription.trim(),
-      });
+      const res = await api.post(
+        `/catalog/catalogs/${encodeURIComponent(regCatalog.trim())}/schemas/${encodeURIComponent(regSchema.trim())}/models/${encodeURIComponent(regModelName.trim())}/versions`,
+        {
+          run_id: registeringRunId,
+          artifact_path: regArtifactPath.trim(),
+          comment: regDescription.trim() || null,
+          alias: regAlias.trim() || null,
+        },
+      );
+      const version = res.data?.versions?.[0]?.version;
       setRegFeedback({
         success: true,
-        message: `Successfully registered version ${res.data?.version || '1'} of '${regModelName.trim()}'!`,
+        message: `Registered version ${version || '1'} of '${regCatalog.trim()}.${regSchema.trim()}.${regModelName.trim()}' in the catalog.`,
       });
       fetchModels(false);
       setTimeout(() => {
@@ -933,7 +962,7 @@ with mlflow.start_run():
                                 color: '#166534',
                                 cursor: 'pointer',
                               }}
-                              title="Register model from this run into the MLflow Model Registry"
+                              title="Register this run in the data catalog"
                             >
                               <Package size={11} />
                               <span>Register Model</span>
@@ -1035,7 +1064,7 @@ with mlflow.start_run():
                   No Registered Models Yet
                 </h4>
                 <p style={{ margin: 0, fontSize: '11px', color: '#64748b', maxWidth: '280px' }}>
-                  Register models directly from your experiment runs in the <b>Runs</b> tab or use <code>mlflow.register_model()</code>.
+                  Register a run from the Runs tab. The model is stored as catalog.schema.name, with versions and aliases.
                 </p>
               </div>
             ) : (
@@ -1073,7 +1102,7 @@ with mlflow.start_run():
                             textDecoration: 'none',
                           }}
                         >
-                          <span>Registry UI</span>
+                          <span>Open in catalog</span>
                           <ExternalLink size={10} />
                         </a>
                       )}
@@ -1197,6 +1226,34 @@ with mlflow.start_run():
             </div>
 
             <form onSubmit={handleRegisterModel} style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <div style={{ flex: 1 }}>
+                  <label style={{ display: 'block', fontSize: '11px', fontWeight: 600, color: '#334155', marginBottom: '3px' }}>
+                    Catalog *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={regCatalog}
+                    onChange={(e) => setRegCatalog(e.target.value)}
+                    placeholder="main"
+                    style={{ width: '100%', padding: '6px 8px', borderRadius: '4px', border: '1px solid #cbd5e1', fontSize: '12px', boxSizing: 'border-box' }}
+                  />
+                </div>
+                <div style={{ flex: 1 }}>
+                  <label style={{ display: 'block', fontSize: '11px', fontWeight: 600, color: '#334155', marginBottom: '3px' }}>
+                    Schema *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={regSchema}
+                    onChange={(e) => setRegSchema(e.target.value)}
+                    placeholder="default"
+                    style={{ width: '100%', padding: '6px 8px', borderRadius: '4px', border: '1px solid #cbd5e1', fontSize: '12px', boxSizing: 'border-box' }}
+                  />
+                </div>
+              </div>
               <div>
                 <label style={{ display: 'block', fontSize: '11px', fontWeight: 600, color: '#334155', marginBottom: '3px' }}>
                   Model Name *
@@ -1226,7 +1283,7 @@ with mlflow.start_run():
                   type="text"
                   value={regArtifactPath}
                   onChange={(e) => setRegArtifactPath(e.target.value)}
-                  placeholder="model"
+                  placeholder="Leave blank for every logged file"
                   style={{
                     width: '100%',
                     padding: '6px 8px',
@@ -1237,8 +1294,20 @@ with mlflow.start_run():
                   }}
                 />
                 <span style={{ fontSize: '10px', color: '#94a3b8' }}>
-                  Subpath under run artifacts (defaults to <code>model</code>).
+                  Artifact path inside the run. Blank copies every logged file into the catalog.
                 </span>
+              </div>
+              <div>
+                <label style={{ display: 'block', fontSize: '11px', fontWeight: 600, color: '#334155', marginBottom: '3px' }}>
+                  Alias
+                </label>
+                <input
+                  type="text"
+                  value={regAlias}
+                  onChange={(e) => setRegAlias(e.target.value)}
+                  placeholder="champion"
+                  style={{ width: '100%', padding: '6px 8px', borderRadius: '4px', border: '1px solid #cbd5e1', fontSize: '12px', boxSizing: 'border-box' }}
+                />
               </div>
 
               <div>
@@ -1294,7 +1363,7 @@ with mlflow.start_run():
                 </button>
                 <button
                   type="submit"
-                  disabled={regSubmitting || !regModelName.trim()}
+                  disabled={regSubmitting || !regModelName.trim() || !regCatalog.trim() || !regSchema.trim()}
                   style={{
                     padding: '5px 12px',
                     borderRadius: '4px',

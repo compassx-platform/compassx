@@ -67,6 +67,7 @@ class UnifiedCatalogSchema(Base):
     tools: Mapped[list["UnifiedCatalogTool"]] = relationship(back_populates="schema", cascade="all, delete-orphan")
     connections: Mapped[list["UnifiedCatalogConnection"]] = relationship(back_populates="schema", cascade="all, delete-orphan")
     queries: Mapped[list["UnifiedCatalogQuery"]] = relationship(back_populates="schema", cascade="all, delete-orphan")
+    registered_models: Mapped[list["CatalogRegisteredModel"]] = relationship(back_populates="schema", cascade="all, delete-orphan")
 
     # Blob storage association (Iceberg schemas only)
     storage_backend_id: Mapped[str | None] = mapped_column(String(36), nullable=True)  # FK resolved via service
@@ -410,3 +411,82 @@ class UnifiedCatalogQueryVersion(Base):
     )
 
     query: Mapped[UnifiedCatalogQuery] = relationship(back_populates="versions")
+
+
+class CatalogRegisteredModel(Base):
+    """A Unity Catalog-style registered model: catalog.schema.name."""
+
+    __tablename__ = "catalog_registered_models"
+    __table_args__ = (
+        UniqueConstraint("catalog_name", "schema_name", "name", name="uq_catalog_registered_models_name"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    schema_id: Mapped[str] = mapped_column(ForeignKey("catalog_v2_schemas.id", ondelete="CASCADE"), nullable=False)
+    catalog_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    schema_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    full_name: Mapped[str] = mapped_column(
+        String(765),
+        Computed("catalog_name || '.' || schema_name || '.' || name", persisted=True),
+        nullable=False,
+    )
+    comment: Mapped[str | None] = mapped_column(Text, nullable=True)
+    owner: Mapped[str] = mapped_column(String(255), nullable=False)
+    storage_location: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+    created_by: Mapped[str] = mapped_column(String(255), nullable=False)
+    updated_by: Mapped[str] = mapped_column(String(255), nullable=False)
+
+    schema: Mapped[UnifiedCatalogSchema] = relationship(back_populates="registered_models")
+    versions: Mapped[list["CatalogModelVersion"]] = relationship(
+        back_populates="model", cascade="all, delete-orphan", order_by="CatalogModelVersion.version"
+    )
+    aliases: Mapped[list["CatalogModelAlias"]] = relationship(
+        back_populates="model", cascade="all, delete-orphan"
+    )
+
+
+class CatalogModelVersion(Base):
+    """One immutable version of a registered model, copied from an MLflow run."""
+
+    __tablename__ = "catalog_model_versions"
+    __table_args__ = (
+        UniqueConstraint("model_id", "version", name="uq_catalog_model_versions_version"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    model_id: Mapped[str] = mapped_column(ForeignKey("catalog_registered_models.id", ondelete="CASCADE"), nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    run_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    source: Mapped[str] = mapped_column(Text, nullable=False)
+    artifact_path: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="PENDING_REGISTRATION")
+    comment: Mapped[str | None] = mapped_column(Text, nullable=True)
+    storage_location: Mapped[str | None] = mapped_column(Text, nullable=True)
+    files: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    metrics: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    params: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    created_by: Mapped[str] = mapped_column(String(255), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    model: Mapped[CatalogRegisteredModel] = relationship(back_populates="versions")
+
+
+class CatalogModelAlias(Base):
+    """A movable pointer from an alias such as champion onto one version."""
+
+    __tablename__ = "catalog_model_aliases"
+    __table_args__ = (
+        UniqueConstraint("model_id", "alias", name="uq_catalog_model_aliases_alias"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    model_id: Mapped[str] = mapped_column(ForeignKey("catalog_registered_models.id", ondelete="CASCADE"), nullable=False)
+    alias: Mapped[str] = mapped_column(String(64), nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    model: Mapped[CatalogRegisteredModel] = relationship(back_populates="aliases")

@@ -604,6 +604,8 @@ async def db_error_handler(request: Request, call_next):
 
 app.include_router(data_catalog_routes.router)
 app.include_router(catalog_routes.router)
+from app.catalog.registered_models.routes import router as registered_model_routes
+app.include_router(registered_model_routes)
 app.include_router(storage_router_module.router)
 
 app.include_router(llm_connection_routes.router)

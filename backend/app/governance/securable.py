@@ -102,6 +102,10 @@ class Securable:
         return cls(SecurableType.TOOL, catalog=catalog, schema=schema, asset=name)
 
     @classmethod
+    def model(cls, catalog: str, schema: str, name: str) -> "Securable":
+        return cls(SecurableType.MODEL, catalog=catalog, schema=schema, asset=name)
+
+    @classmethod
     def job(cls, job_id: str) -> "Securable":
         return cls(SecurableType.JOB, asset=job_id)
 

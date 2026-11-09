@@ -42,6 +42,8 @@ def test_build_kernelspec_configmap_includes_mlflow():
 
 def test_compassx_sql_ambient_mlflow_binding(monkeypatch):
     """Verify importing services.compassx_sql automatically binds active notebook experiment."""
+    monkeypatch.delenv("COMPASSX_BOUND_EXPERIMENT", raising=False)
+    monkeypatch.delenv("COMPASSX_MLFLOW_AUTOLOG_DONE", raising=False)
     monkeypatch.setenv("COMPASSX_NOTEBOOK_PATH", "users/admin/churn_prediction.ipynb")
 
     mock_mlflow = MagicMock()
@@ -54,6 +56,19 @@ def test_compassx_sql_ambient_mlflow_binding(monkeypatch):
 
         mock_mlflow.create_experiment.assert_called_with("/users/admin/churn_prediction.ipynb")
         mock_mlflow.set_experiment.assert_called_with("/users/admin/churn_prediction.ipynb")
+
+
+def test_bind_keeps_an_experiment_the_notebook_already_selected(monkeypatch):
+    """An explicit mlflow.set_experiment() stays selected, as it does in Databricks."""
+    from services.mlflow_notebook import bind_notebook_experiment
+
+    monkeypatch.setenv("COMPASSX_BOUND_EXPERIMENT", "/users/admin/churn_prediction.ipynb")
+    mock_mlflow = MagicMock()
+    with patch("services.mlflow_notebook._active_experiment_name", return_value="team_forecast"):
+        with patch.dict("sys.modules", {"mlflow": mock_mlflow}):
+            name = bind_notebook_experiment("users/admin/churn_prediction.ipynb")
+    assert name == "/users/admin/churn_prediction.ipynb"
+    mock_mlflow.set_experiment.assert_not_called()
 
 
 import pytest

@@ -38,6 +38,7 @@ import {
   HardDrive,
   GitCommit,
   History,
+  Package,
 } from 'lucide-react';
 import api from '@/lib/api';
 import { useScopedNavigate } from '@/lib/appNavigation';
@@ -49,6 +50,7 @@ import DashboardEditorPage from '@/modules/dashboards/pages/DashboardEditorPage'
 import { useNotebookStore } from '@/modules/notebooks/store/notebookStore';
 import { CatalogQueryEditorTab, CatalogQueryVersion } from '../components/CatalogQueryEditorTab';
 import { VolumeExplorer } from '../components/VolumeExplorer';
+import RegisteredModelDetail from '../components/RegisteredModelDetail';
 import { useCatalogConnections } from '@/modules/agents/hooks/useCatalogConnections';
 import { OwnerName, PermissionsPanel, useMyPrivileges } from '@/modules/governance';
 import type { SecurableType } from '@/modules/governance';
@@ -67,6 +69,7 @@ type Selection =
   | { kind: 'dashboard'; catalog: string; schema: string; dashboard: string; dashboard_id?: string }
   | { kind: 'tool'; catalog: string; schema: string; tool: string; tool_id?: string }
   | { kind: 'query'; catalog: string; schema: string; query: string }
+  | { kind: 'model'; catalog: string; schema: string; model: string }
   | null;
 
 type DBConnection = { 
@@ -309,6 +312,7 @@ const catalogApi = {
   moveNotebook: (catalog: string, schema: string, notebook: string, body: { target_catalog: string; target_schema: string; new_name?: string }) => api.post<CatalogNotebook>(`/catalog/catalogs/${encodeURIComponent(catalog)}/schemas/${encodeURIComponent(schema)}/notebooks/${encodeURIComponent(notebook)}/move`, body).then((r) => r.data),
   deleteNotebook: (catalog: string, schema: string, notebook: string) => api.delete(`/catalog/catalogs/${encodeURIComponent(catalog)}/schemas/${encodeURIComponent(schema)}/notebooks/${encodeURIComponent(notebook)}`).then((r) => r.data),
   runNotebook: (catalog: string, schema: string, notebook: string) => api.post<{ status: string; notebook: CatalogNotebook; cells: any[] }>(`/catalog/catalogs/${encodeURIComponent(catalog)}/schemas/${encodeURIComponent(schema)}/notebooks/${encodeURIComponent(notebook)}/run`).then((r) => r.data),
+  listModels: (catalog: string, schema_name: string) => api.get<Array<{ id: string; name: string; full_name: string; owner: string; comment: string | null; updated_at: string; latest_version: number | null; aliases: Array<{ alias: string; version: number }> }>>(`/catalog/catalogs/${encodeURIComponent(catalog)}/schemas/${encodeURIComponent(schema_name)}/models`).then((r) => r.data),
   listDashboards: (catalog: string, schema_name: string) => api.get<CatalogDashboard[]>(`/catalog/catalogs/${encodeURIComponent(catalog)}/schemas/${encodeURIComponent(schema_name)}/dashboards`).then((r) => r.data),
   createDashboard: (catalog: string, schema_name: string, body: { name: string; comment?: string }) => api.post<CatalogDashboard>(`/catalog/catalogs/${encodeURIComponent(catalog)}/schemas/${encodeURIComponent(schema_name)}/dashboards`, body).then((r) => r.data),
   getDashboard: (catalog: string, schema_name: string, dashboard: string) => api.get<CatalogDashboard>(`/catalog/catalogs/${encodeURIComponent(catalog)}/schemas/${encodeURIComponent(schema_name)}/dashboards/${encodeURIComponent(dashboard)}`).then((r) => r.data),
@@ -390,6 +394,7 @@ export default function DataCatalog() {
     table: urlTable,
     volume: urlVolume,
     notebook: urlNotebook,
+    model: urlModel,
     dashboard: urlDashboard,
     tool: urlTool,
     query: urlQuery,
@@ -399,6 +404,7 @@ export default function DataCatalog() {
     table?: string;
     volume?: string;
     notebook?: string;
+    model?: string;
     dashboard?: string;
     tool?: string;
     query?: string;
@@ -408,6 +414,9 @@ export default function DataCatalog() {
   // Derive initial selection from URL params & query string
   const initialSelection = useMemo<Selection>(() => {
     if (urlCatalog && urlSchema) {
+      if (urlModel) {
+        return { kind: 'model', catalog: urlCatalog, schema: urlSchema, model: decodeURIComponent(urlModel) };
+      }
       if (urlNotebook) {
         const decodedNb = decodeURIComponent(urlNotebook);
         const nbName = decodedNb.endsWith('.ipynb') ? decodedNb.slice(0, -6) : decodedNb;
@@ -475,7 +484,7 @@ export default function DataCatalog() {
     if (urlCatalog && urlSchema) return { kind: 'schema', catalog: urlCatalog, schema: urlSchema };
     if (urlCatalog) return { kind: 'catalog', catalog: urlCatalog };
     return { kind: 'root' };
-  }, [urlCatalog, urlSchema, urlTable, urlVolume, urlNotebook, urlDashboard, urlTool, urlQuery, searchParams]);
+  }, [urlCatalog, urlSchema, urlTable, urlVolume, urlNotebook, urlModel, urlDashboard, urlTool, urlQuery, searchParams]);
 
   // Selection and Search States
   const [selection, setSelection] = useState<Selection>(initialSelection);
@@ -520,6 +529,7 @@ export default function DataCatalog() {
   const [loadingSchemaVolumes, setLoadingSchemaVolumes] = useState<Record<string, boolean>>({});
 
   const [schemaNotebooksCache, setSchemaNotebooksCache] = useState<Record<string, CatalogNotebook[]>>({});
+  const [schemaModelsCache, setSchemaModelsCache] = useState<Record<string, Array<{ id: string; name: string; full_name: string; owner: string; comment: string | null; updated_at: string; latest_version: number | null; aliases: Array<{ alias: string; version: number }> }>>>({});
   const [loadingSchemaNotebooks, setLoadingSchemaNotebooks] = useState<Record<string, boolean>>({});
 
   const [schemaDashboardsCache, setSchemaDashboardsCache] = useState<Record<string, CatalogDashboard[]>>({});
@@ -571,7 +581,8 @@ export default function DataCatalog() {
   const [editingDbComment, setEditingDbComment] = useState<string | null>(null);
 
   // Schema overview subtab state
-  const [schemaSubTab, setSchemaSubTab] = useState<'tables' | 'volumes' | 'notebooks' | 'dashboards' | 'tools' | 'queries'>(() => {
+  const [schemaSubTab, setSchemaSubTab] = useState<'tables' | 'volumes' | 'notebooks' | 'dashboards' | 'tools' | 'queries' | 'models'>(() => {
+    if (urlModel) return 'models';
     if (urlNotebook || searchParams.get('kind') === 'notebook' || urlTable?.endsWith('.ipynb')) return 'notebooks';
     if (urlVolume || searchParams.get('kind') === 'volume') return 'volumes';
     if (urlDashboard || searchParams.get('kind') === 'dashboard') return 'dashboards';
@@ -770,14 +781,6 @@ export default function DataCatalog() {
     }
   }, [initialSelection, getOpenPanelId, getOpenPanelLabel]);
 
-  // Synchronize notebook store active path whenever a notebook is selected
-  useEffect(() => {
-    if (selection && selection.kind === 'notebook') {
-      const path = selection.blob_path || `${selection.catalog}/${selection.schema}/${selection.notebook}.ipynb`;
-      useNotebookStore.getState().setNotebookPath(path);
-    }
-  }, [selection]);
-
   const setDetailsPanelSelection = useCallback((next: Selection) => {
     setDetailsSelection(next);
     setSelection(next);
@@ -830,6 +833,8 @@ export default function DataCatalog() {
         navigate(`/data-catalog/${encodeURIComponent(detailsSelection.catalog)}/${encodeURIComponent(detailsSelection.schema)}/table/${encodeURIComponent(detailsSelection.table)}`);
       } else if (detailsSelection.kind === 'volume') {
         navigate(`/data-catalog/${encodeURIComponent(detailsSelection.catalog)}/${encodeURIComponent(detailsSelection.schema)}/volume/${encodeURIComponent(detailsSelection.volume)}`);
+      } else if (detailsSelection.kind === 'model') {
+        navigate(`/data-catalog/${encodeURIComponent(detailsSelection.catalog)}/${encodeURIComponent(detailsSelection.schema)}/model/${encodeURIComponent(detailsSelection.model)}`);
       } else if (detailsSelection.kind === 'tool') {
         const q = (detailsSelection as any).tool_id ? `?tool_id=${encodeURIComponent((detailsSelection as any).tool_id)}` : '';
         navigate(`/data-catalog/${encodeURIComponent(detailsSelection.catalog)}/${encodeURIComponent(detailsSelection.schema)}/tool/${encodeURIComponent((detailsSelection as any).tool)}${q}`);
@@ -873,6 +878,8 @@ export default function DataCatalog() {
       navigate(`/data-catalog/${encodeURIComponent(next.catalog)}/${encodeURIComponent(next.schema)}/table/${encodeURIComponent(next.table)}`);
     } else if (next.kind === 'volume') {
       navigate(`/data-catalog/${encodeURIComponent(next.catalog)}/${encodeURIComponent(next.schema)}/volume/${encodeURIComponent(next.volume)}`);
+    } else if (next.kind === 'model') {
+      navigate(`/data-catalog/${encodeURIComponent(next.catalog)}/${encodeURIComponent(next.schema)}/model/${encodeURIComponent(next.model)}`);
     } else if (next.kind === 'tool') {
       const q = (next as any).tool_id ? `?tool_id=${encodeURIComponent((next as any).tool_id)}` : '';
       navigate(`/data-catalog/${encodeURIComponent(next.catalog)}/${encodeURIComponent(next.schema)}/tool/${encodeURIComponent((next as any).tool)}${q}`);
@@ -983,6 +990,12 @@ export default function DataCatalog() {
   const schemaNotebooksQuery = useQuery({
     queryKey: ['uc-schema-notebooks', activeCatalog, activeSchema],
     queryFn: () => catalogApi.listNotebooks(activeCatalog!, activeSchema!),
+    enabled: !!activeCatalog && !!activeSchema,
+  });
+
+  const schemaModelsQuery = useQuery({
+    queryKey: ['uc-schema-models', activeCatalog, activeSchema],
+    queryFn: () => catalogApi.listModels(activeCatalog!, activeSchema!),
     enabled: !!activeCatalog && !!activeSchema,
   });
 
@@ -1106,6 +1119,14 @@ export default function DataCatalog() {
     queryFn: () => catalogApi.getNotebook((selection as any).catalog, (selection as any).schema, (selection as any).notebook),
     enabled: !!selection && selection.kind === 'notebook',
   });
+
+  // The stored notebook file is the MLflow experiment name. A catalog URL
+  // without ?path= only knows catalog/schema/name, which is not that file.
+  useEffect(() => {
+    if (selection && selection.kind === 'notebook' && notebookQuery.data?.blob_path) {
+      useNotebookStore.getState().setNotebookPath(notebookQuery.data.blob_path);
+    }
+  }, [selection, notebookQuery.data?.blob_path]);
 
   const dashboardQuery = useQuery({
     queryKey: ['uc-dashboard', selection?.kind === 'dashboard' ? selection.catalog : null, selection?.kind === 'dashboard' ? selection.schema : null, selection?.kind === 'dashboard' ? (selection as any).dashboard : null],
@@ -1339,6 +1360,16 @@ export default function DataCatalog() {
     }
   }, [schemaNotebooksQuery.data, activeCatalog, activeSchema]);
 
+  useEffect(() => {
+    if (schemaModelsQuery.data && activeCatalog && activeSchema) {
+      const key = `${activeCatalog}.${activeSchema}`;
+      setSchemaModelsCache((prev) => ({
+        ...prev,
+        [key]: schemaModelsQuery.data,
+      }));
+    }
+  }, [schemaModelsQuery.data, activeCatalog, activeSchema]);
+
   // Keep dashboards cache updated
   useEffect(() => {
     if (schemaDashboardsQuery.data && activeCatalog && activeSchema) {
@@ -1409,6 +1440,18 @@ export default function DataCatalog() {
               });
           }
 
+          if (!schemaModelsCache[schemaKey] && !loadingSchemasRef.current[`${schemaKey}-models`]) {
+            loadingSchemasRef.current[`${schemaKey}-models`] = true;
+            catalogApi.listModels(catalogName, schemaName)
+              .then((models) => {
+                setSchemaModelsCache(prev => ({ ...prev, [schemaKey]: models }));
+              })
+              .catch((err) => console.error("Failed to load models for schema", schemaKey, err))
+              .finally(() => {
+                loadingSchemasRef.current[`${schemaKey}-models`] = false;
+              });
+          }
+
           if (!schemaNotebooksCache[schemaKey] && !loadingSchemasRef.current[`${schemaKey}-notebooks`]) {
             loadingSchemasRef.current[`${schemaKey}-notebooks`] = true;
             setLoadingSchemaNotebooks(prev => ({ ...prev, [schemaKey]: true }));
@@ -1467,7 +1510,7 @@ export default function DataCatalog() {
         }
       }
     });
-  }, [expandedSchemas, schemaTablesCache, schemaVolumesCache, schemaNotebooksCache, schemaDashboardsCache, schemaToolsCache, schemaQueriesCache]);
+  }, [expandedSchemas, schemaTablesCache, schemaVolumesCache, schemaNotebooksCache, schemaModelsCache, schemaDashboardsCache, schemaToolsCache, schemaQueriesCache]);
 
   // Keep connection lists refetched whenever catalog modal opens
   useEffect(() => {
@@ -2056,6 +2099,7 @@ export default function DataCatalog() {
     if (sel.kind === 'dashboard') return `${sel.catalog}.${sel.schema}.${sel.dashboard}`;
     if (sel.kind === 'tool') return `${sel.catalog}.${sel.schema}.${sel.tool}`;
     if (sel.kind === 'query') return `${sel.catalog}.${sel.schema}.${sel.query}`;
+    if (sel.kind === 'model') return `${sel.catalog}.${sel.schema}.${sel.model}`;
     return '';
   };
 
@@ -2148,7 +2192,7 @@ export default function DataCatalog() {
               </button>
             </>
           )}
-          {selection && (selection.kind === 'schema' || selection.kind === 'table' || selection.kind === 'volume' || selection.kind === 'notebook' || selection.kind === 'dashboard' || selection.kind === 'tool' || selection.kind === 'query') && (
+          {selection && (selection.kind === 'schema' || selection.kind === 'table' || selection.kind === 'volume' || selection.kind === 'notebook' || selection.kind === 'dashboard' || selection.kind === 'tool' || selection.kind === 'query' || selection.kind === 'model') && (
             <>
               <span style={{ color: 'var(--color-text-subtle)' }}>&gt;</span>
               <button 
@@ -2171,6 +2215,12 @@ export default function DataCatalog() {
             <>
               <span style={{ color: 'var(--color-text-subtle)' }}>&gt;</span>
               <span className="asset-breadcrumb-current">{selection.volume}</span>
+            </>
+          )}
+          {selection && selection.kind === 'model' && (
+            <>
+              <span style={{ color: 'var(--color-text-subtle)' }}>&gt;</span>
+              <span className="asset-breadcrumb-current">{selection.model}</span>
             </>
           )}
           {selection && selection.kind === 'notebook' && (
@@ -2206,6 +2256,7 @@ export default function DataCatalog() {
             {kind === 'schema' && <Folder size={22} className="text-primary" />}
             {kind === 'table' && <Table2 size={22} className="text-primary" />}
             {kind === 'volume' && <Folder size={22} className="text-primary" />}
+            {kind === 'model' && <Package size={22} className="text-primary" />}
             {kind === 'notebook' && <FileCode size={22} className="text-primary" />}
             {kind === 'dashboard' && <SlidersHorizontal size={22} className="text-primary" />}
             {kind === 'tool' && <Wrench size={22} className="text-primary" style={{ color: '#2563eb' }} />}
@@ -2402,6 +2453,7 @@ export default function DataCatalog() {
     const schemaKey = selection && selection.kind === 'schema' ? `${selection.catalog}.${selection.schema}` : '';
     const volumes = schemaVolumesCache[schemaKey] || [];
     const notebooks = schemaNotebooksCache[schemaKey] || [];
+    const models = schemaModelsCache[schemaKey] || [];
     const dashboards = schemaDashboardsCache[schemaKey] || [];
     const tools = schemaToolsCache[schemaKey] || [];
     const queries = schemaQueriesCache[schemaKey] || [];
@@ -2413,6 +2465,8 @@ export default function DataCatalog() {
       itemsToRender = volumes;
     } else if (schemaSubTab === 'notebooks') {
       itemsToRender = notebooks;
+    } else if (schemaSubTab === 'models') {
+      itemsToRender = models;
     } else if (schemaSubTab === 'dashboards') {
       itemsToRender = dashboards;
     } else if (schemaSubTab === 'tools') {
@@ -2469,6 +2523,13 @@ export default function DataCatalog() {
               onClick={() => { setSchemaSubTab('notebooks'); setSchemaTableFilter(''); }}
             >
               Notebooks {notebooks.length}
+            </button>
+            <button
+              type="button"
+              className={cx("uc-subtab-btn", schemaSubTab === 'models' && "is-active")}
+              onClick={() => { setSchemaSubTab('models'); setSchemaTableFilter(''); }}
+            >
+              Models {models.length}
             </button>
             <button 
               type="button" 
@@ -2534,6 +2595,14 @@ export default function DataCatalog() {
                   <th>Owner</th>
                   <th>Storage Location</th>
                   <th>Last Modified</th>
+                </tr>
+              )}
+              {schemaSubTab === 'models' && (
+                <tr>
+                  <th>Name</th>
+                  <th>Latest version</th>
+                  <th>Aliases</th>
+                  <th>Updated</th>
                 </tr>
               )}
               {schemaSubTab === 'dashboards' && (
@@ -2647,6 +2716,26 @@ export default function DataCatalog() {
                     <td>{nb.owner || 'catalog-admin'}</td>
                     <td style={{ fontSize: '11px', fontFamily: 'monospace' }}>{nb.blob_path}</td>
                     <td>{new Date(nb.updated_at || nb.created_at).toLocaleDateString()}</td>
+                  </tr>
+                );
+              })}
+
+              {schemaSubTab === 'models' && sorted.map(modelItem => {
+                return (
+                  <tr
+                    key={modelItem.id}
+                    onClick={() => selectAndNavigate({ kind: 'model', catalog: (selection as any)?.catalog || '', schema: (selection as any)?.schema || '', model: modelItem.name })}
+                    style={{ cursor: 'pointer' }}
+                  >
+                    <td>
+                      <div className="uc-item-meta-row" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <Package size={15} className="text-muted" style={{ flexShrink: 0 }} />
+                        <span style={{ fontWeight: 500, color: 'var(--color-primary)' }}>{modelItem.name}</span>
+                      </div>
+                    </td>
+                    <td>{modelItem.latest_version ?? '—'}</td>
+                    <td>{(modelItem.aliases || []).map((item: { alias: string; version: number }) => item.alias).join(', ') || '—'}</td>
+                    <td>{new Date(modelItem.updated_at).toLocaleDateString()}</td>
                   </tr>
                 );
               })}
@@ -2869,6 +2958,10 @@ export default function DataCatalog() {
       );
     }
 
+    if (selection && selection.kind === 'model') {
+      return <RegisteredModelDetail catalog={selection.catalog} schema={selection.schema} name={selection.model} />;
+    }
+
     // ── VOLUME level ──────────────────────────────────────────────────────────
     if (selection && selection.kind === 'volume') {
       const vol = activeVolume;
@@ -2901,10 +2994,19 @@ export default function DataCatalog() {
 
     // ── Embedded notebook/dashboard interfaces ───────────────────────────────
     if (mainTabId !== 'details' && selection && selection.kind === 'notebook') {
+      const notebookPath = notebookQuery.data?.blob_path;
+      if (!notebookPath) {
+        return (
+          <div className="uc-empty-state">
+            <Loader2 className="spin" size={24} />
+            <p>Loading notebook...</p>
+          </div>
+        );
+      }
       return (
         <div style={{ height: '100%', overflow: 'hidden' }}>
           <NotebookPage 
-            notebookPath={selection.blob_path || notebookQuery.data?.blob_path || 'notebooks/untitled.ipynb'} 
+            notebookPath={notebookPath} 
             embedded 
             onDelete={() => {
               queryClient.invalidateQueries({ queryKey: ['uc-schema-notebooks', selection.catalog, selection.schema] });
@@ -5434,6 +5536,7 @@ export default function DataCatalog() {
                         const tables = schemaTablesCache[schemaKey] || [];
                         const volumes = schemaVolumesCache[schemaKey] || [];
                         const notebooks = schemaNotebooksCache[schemaKey] || [];
+                        const models = schemaModelsCache[schemaKey] || [];
                         const dashboards = schemaDashboardsCache[schemaKey] || [];
                         const tools = schemaToolsCache[schemaKey] || [];
                         const queries = schemaQueriesCache[schemaKey] || [];
@@ -5446,10 +5549,11 @@ export default function DataCatalog() {
                         const hasTables = tables.length + pendingTables.length > 0;
                         const hasVolumes = volumes.length + pendingVolumes.length > 0;
                         const hasNotebooks = notebooks.length + pendingNotebooks.length > 0;
+                        const hasModels = models.length > 0;
                         const hasDashboards = dashboards.length + pendingDashboards.length > 0;
                         const hasTools = tools.length > 0;
                         const hasQueries = queries.length > 0;
-                        const typesCount = (hasTables ? 1 : 0) + (hasVolumes ? 1 : 0) + (hasNotebooks ? 1 : 0) + (hasDashboards ? 1 : 0) + (hasTools ? 1 : 0) + (hasQueries ? 1 : 0);
+                        const typesCount = (hasTables ? 1 : 0) + (hasVolumes ? 1 : 0) + (hasNotebooks ? 1 : 0) + (hasModels ? 1 : 0) + (hasDashboards ? 1 : 0) + (hasTools ? 1 : 0) + (hasQueries ? 1 : 0);
                         const showGroups = typesCount > 1;
 
                         return (
@@ -5604,6 +5708,52 @@ export default function DataCatalog() {
                                                           <FileCode size={10} />
                                                         </span>
                                                         <span className="uc-tree-row-label">{nb.name}</span>
+                                                      </button>
+                                                    );
+                                                  })}
+                                                </div>
+                                              )}
+                                            </>
+                                          );
+                                        })()}
+                                      </div>
+                                    )}
+
+                                    {/* Models Group */}
+                                    {hasModels && (
+                                      <div className="uc-tree-group">
+                                        {(() => {
+                                          const modelsGroupOpen = expandedGroups[`${schemaKey}-models`] !== false;
+                                          return (
+                                            <>
+                                              <button
+                                                className="uc-tree-row"
+                                                onClick={() => {
+                                                  setExpandedGroups(prev => ({ ...prev, [`${schemaKey}-models`]: !modelsGroupOpen }));
+                                                }}
+                                              >
+                                                <span className="uc-tree-row-chevron">
+                                                  {modelsGroupOpen ? <ChevronDown size={10} /> : <ChevronRight size={10} />}
+                                                </span>
+                                                <span className="uc-tree-row-label">Models ({models.length})</span>
+                                              </button>
+                                              {modelsGroupOpen && (
+                                                <div className="uc-tree-indent">
+                                                  {models.map((modelItem) => {
+                                                    const isModelSelected = selection?.kind === 'model' && selection.catalog === catalog.name && selection.schema === schema.name && selection.model === modelItem.name;
+                                                    return (
+                                                      <button
+                                                        key={`model-${modelItem.id}`}
+                                                        className={cx('uc-tree-row', isModelSelected && 'is-selected')}
+                                                        onClick={() => {
+                                                          selectAndNavigate({ kind: 'model', catalog: catalog.name, schema: schema.name, model: modelItem.name });
+                                                        }}
+                                                      >
+                                                        <span style={{ width: '12px' }} />
+                                                        <span className="uc-tree-row-icon">
+                                                          <Package size={10} />
+                                                        </span>
+                                                        <span className="uc-tree-row-label">{modelItem.name}</span>
                                                       </button>
                                                     );
                                                   })}

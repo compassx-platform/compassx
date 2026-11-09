@@ -2,6 +2,7 @@ from fastapi import Request
 
 from app.governance.dependencies import Guard
 from app.notebooks.shared.support import _jupyter_base_url, _jupyter_ws_url
+from services.mlflow_notebook import _tracking_uri
 
 
 class GetNotebookConfig:
@@ -14,6 +15,7 @@ class GetNotebookConfig:
             ws_url=_jupyter_ws_url(),
             token="",
             workspace_slug=ctx.workspace_slug if ctx else "",
+            mlflow_tracking_uri=_tracking_uri(),
         )
 
 

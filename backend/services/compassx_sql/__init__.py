@@ -18,24 +18,11 @@ except Exception:
 # Ambient MLflow tracking: automatically bind active notebook experiment and autologging
 try:
     import os
-    _nb_exp = os.environ.get("MLFLOW_EXPERIMENT_NAME") or os.environ.get("COMPASSX_NOTEBOOK_PATH") or os.environ.get("NOTEBOOK_PATH")
+    from services.mlflow_notebook import bind_notebook_experiment
+
+    _nb_path = os.environ.get("COMPASSX_NOTEBOOK_PATH") or os.environ.get("NOTEBOOK_PATH") or ""
+    _nb_exp = bind_notebook_experiment(_nb_path) if _nb_path else ""
     if _nb_exp:
-        _nb_exp = _nb_exp if _nb_exp.startswith("/") else f"/{_nb_exp}"
-        import mlflow
-        if not mlflow.get_experiment_by_name(_nb_exp):
-            try:
-                mlflow.create_experiment(_nb_exp)
-            except Exception:
-                pass
-        mlflow.set_experiment(_nb_exp)
-
-        # Ambient autologging (Databricks parity)
-        if os.environ.get("COMPASSX_MLFLOW_AUTOLOG", "true").lower() in ("true", "1", "yes"):
-            try:
-                mlflow.autolog(log_models=True, silent=True)
-            except Exception:
-                pass
-
         # Cell execution hook: link cell runs and display inline run banner
         try:
             import IPython

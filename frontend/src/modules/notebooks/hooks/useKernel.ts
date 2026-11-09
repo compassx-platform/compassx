@@ -4,6 +4,7 @@ import { getManagers } from '../lib/jupyter';
 import { useNotebookStore } from '../store/notebookStore';
 import type { KernelStatus, SelectedPod } from '../store/notebookStore';
 import api from '@/lib/api';
+import { notebookMlflowPreamble } from '../lib/notebookMlflow';
 import { getPrincipalInfo } from '@/lib/auth';
 import { computeApi } from '@/modules/compute/computeApi';
 
@@ -13,6 +14,7 @@ interface ServerConfig {
   ws_url: string;
   token: string;
   workspace_slug: string;
+  mlflow_tracking_uri?: string;
 }
 
 async function fetchJupyterConfig(): Promise<ServerConfig> {
@@ -75,29 +77,11 @@ export function useKernel(notebookPath: string) {
 
       // Inject notebook path context & MLflow ambient experiment scoping into kernel environment
       const currentNbPath = useNotebookStore.getState().notebookPath;
-      const currentNbId = (useNotebookStore.getState() as any).notebookId || '';
-      if (currentNbPath) {
-        const expName = currentNbPath.startsWith('/') ? currentNbPath : `/${currentNbPath}`;
-        const initCode = [
-          `import os`,
-          `os.environ['COMPASSX_NOTEBOOK_PATH'] = ${JSON.stringify(currentNbPath)}`,
-          `os.environ['NOTEBOOK_PATH'] = ${JSON.stringify(currentNbPath)}`,
-          `os.environ['NOTEBOOK_ID'] = ${JSON.stringify(currentNbId)}`,
-          `os.environ['MLFLOW_EXPERIMENT_NAME'] = ${JSON.stringify(expName)}`,
-          `try:`,
-          `    import mlflow`,
-          `    if not mlflow.get_experiment_by_name(${JSON.stringify(expName)}):`,
-          `        try:`,
-          `            mlflow.create_experiment(${JSON.stringify(expName)})`,
-          `        except Exception:`,
-          `            pass`,
-          `    mlflow.set_experiment(${JSON.stringify(expName)})`,
-          `except Exception:`,
-          `    pass`,
-        ].join('; ');
-
+      const currentNbId = (useNotebookStore.getState() as { notebookId?: string }).notebookId || '';
+      const preamble = notebookMlflowPreamble(currentNbPath, currentNbId, resolvedConfig.mlflow_tracking_uri || '');
+      if (preamble) {
         kernel.requestExecute({
-          code: initCode,
+          code: preamble,
           store_history: false,
           silent: true,
         });

@@ -1,5 +1,7 @@
 import { useCallback, useRef } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { useNotebookStore } from '../store/notebookStore';
+import { notebookMlflowPreamble } from '../lib/notebookMlflow';
 import type { IKernelConnection } from '@jupyterlab/services/lib/kernel/kernel';
 
 export function useExecuteCell() {
@@ -10,6 +12,7 @@ export function useExecuteCell() {
   const setExecutionCount = useNotebookStore((s) => s.setExecutionCount);
   const setVariables = useNotebookStore((s) => s.setVariables);
 
+  const queryClient = useQueryClient();
   const streamBuffer = useRef<Map<string, string>>(new Map());
   const flushTimer = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -54,8 +57,10 @@ export function useExecuteCell() {
       flushTimer.current = setInterval(flushStreams, 100);
 
       const nbPath = useNotebookStore.getState().notebookPath;
-      const initCode = nbPath ? `import os; os.environ['COMPASSX_NOTEBOOK_PATH'] = ${JSON.stringify(nbPath)}; os.environ['NOTEBOOK_PATH'] = ${JSON.stringify(nbPath)}\n` : '';
-      const future = kernel.requestExecute({ code: initCode + source, store_history: true });
+      const nbId = String((useNotebookStore.getState() as { notebookId?: string }).notebookId || '');
+      const trackingUri = queryClient.getQueryData<{ mlflow_tracking_uri?: string }>(['notebook-config'])?.mlflow_tracking_uri || '';
+      const preamble = nbPath ? `${notebookMlflowPreamble(nbPath, nbId, trackingUri)}\n` : '';
+      const future = kernel.requestExecute({ code: preamble + source, store_history: true });
       console.log('[notebook] future created:', future);
 
       future.onIOPub = (msg) => {
@@ -120,7 +125,7 @@ export function useExecuteCell() {
       // Poll variable list after execution
       pollVariables(kernel);
     },
-    [kernelRef, appendOutput, clearOutput, setCellRunning, setExecutionCount, flushStreams, pollVariables],
+    [kernelRef, appendOutput, clearOutput, setCellRunning, setExecutionCount, flushStreams, pollVariables, queryClient],
   );
 
   return { executeCell };

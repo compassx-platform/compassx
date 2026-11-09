@@ -1,7 +1,8 @@
 /**
  * DashboardCanvas — react-grid-layout surface.
  * 12-col grid, rowHeight=40, drag+resize in edit mode.
- * Reference: Databricks dashboard canvas with grid widgets.
+ * react-grid-layout v2 reads size from gridConfig. Top-level cols,
+ * rowHeight, and margin are ignored and fall back to a 150px row.
  */
 
 import { useCallback, useRef, useState, useEffect } from 'react';
@@ -64,7 +65,6 @@ export default function DashboardCanvas() {
   const { activeDashboard, activePageId, editMode, updateLayout } = useDashboardStore();
   const containerRef = useRef<HTMLDivElement>(null);
   const containerWidth = useContainerWidth(containerRef, editMode);
-  const Grid = GridLayout as any;
 
   const gridCols = activeDashboard?.settings?.gridCols ?? 12;
   const gridRowHeight = activeDashboard?.settings?.gridRowHeight ?? 40;
@@ -143,6 +143,8 @@ export default function DashboardCanvas() {
       ref={containerRef}
       style={{
         flex: 1,
+        minWidth: 0,
+        width: '100%',
         overflowY: 'auto',
         background: canvasBackground,
         padding: editMode ? 12 : '16px 16px 16px',
@@ -150,25 +152,31 @@ export default function DashboardCanvas() {
         ...gridOverlayStyle,
       }}
     >
-      <Grid
+      <GridLayout
         layout={layout}
-        cols={gridCols}
-        rowHeight={gridRowHeight}
         width={containerWidth}
-        isDraggable={editMode}
-        isResizable={editMode}
-        draggableHandle=".widget-drag-handle"
-        draggableCancel=".widget-content-interactive, .js-plotly-plot, .plot-container, .modebar, .html-report-interactive, input, textarea, button, select, a"
-        resizeHandles={RESIZE_HANDLES}
-        resizeHandle={(axis: 'n' | 's' | 'e' | 'w' | 'ne' | 'nw' | 'se' | 'sw', ref: React.Ref<HTMLElement>) => (
-          <span
-            ref={ref}
-            className={`react-resizable-handle react-resizable-handle-${axis}`}
-          />
-        )}
+        gridConfig={{
+          cols: gridCols,
+          rowHeight: gridRowHeight,
+          margin: [marginX, marginY],
+          containerPadding: [containerPaddingX, containerPaddingY],
+        }}
+        dragConfig={{
+          enabled: editMode,
+          handle: '.widget-drag-handle',
+          cancel: '.widget-content-interactive, .js-plotly-plot, .plot-container, .modebar, .html-report-interactive, input, textarea, button, select, a',
+        }}
+        resizeConfig={{
+          enabled: editMode,
+          handles: RESIZE_HANDLES,
+          handleComponent: (axis, ref) => (
+            <span
+              ref={ref}
+              className={`react-resizable-handle react-resizable-handle-${axis}`}
+            />
+          ),
+        }}
         onLayoutChange={handleLayoutChange}
-        margin={[marginX, marginY]}
-        containerPadding={[containerPaddingX, containerPaddingY]}
       >
         {widgets.map((widget) => (
           <div
@@ -184,7 +192,7 @@ export default function DashboardCanvas() {
             </WidgetCard>
           </div>
         ))}
-      </Grid>
+      </GridLayout>
     </div>
   );
 }

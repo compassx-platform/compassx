@@ -141,6 +141,7 @@ _SEARCH_TYPE_TO_SECURABLE = {
     "notebook": Securable.notebook,
     "dashboard": Securable.dashboard,
     "query": Securable.query,
+    "model": Securable.model,
 }
 
 
@@ -1687,13 +1688,16 @@ async def run_catalog_notebook(
     cells = nb.get("cells", [])
     exec_globals = {}
     from contextlib import redirect_stdout, redirect_stderr
+    from services.mlflow_notebook import bind_notebook_experiment
+
+    bind_notebook_experiment(notebook.blob_path, str(notebook.id) if getattr(notebook, "id", None) else None)
 
     for cell in cells:
         if cell.get("cell_type") != "code":
             continue
 
         cell["outputs"] = []
-        cell["execution_count"] = cell.get("execution_count", 0) + 1
+        cell["execution_count"] = (cell.get("execution_count") or 0) + 1
 
         source = cell.get("source", "")
         if isinstance(source, list):

@@ -338,6 +338,8 @@ def _make_test_app(db: Session) -> FastAPI:
 
     app.include_router(data_catalog_routes.router)
     app.include_router(catalog_routes.router)
+    from app.catalog.registered_models.routes import router as registered_model_routes
+    app.include_router(registered_model_routes)
     app.include_router(workspace_routes.router)
     app.include_router(llm_connection_routes.router)
 

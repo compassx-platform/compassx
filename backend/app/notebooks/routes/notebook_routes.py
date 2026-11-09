@@ -59,6 +59,7 @@ class NotebookServerConfig(BaseModel):
     ws_url: str
     token: str
     workspace_slug: str
+    mlflow_tracking_uri: str = ""
 
 
 @router.get("/config", response_model=NotebookServerConfig)

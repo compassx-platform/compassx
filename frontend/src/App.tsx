@@ -305,6 +305,7 @@ export default function App() {
                   <Route path="data-catalog/:catalog/:schema" element={<DataCatalog />} />
                   <Route path="data-catalog/:catalog/:schema/table/:table" element={<DataCatalog />} />
                   <Route path="data-catalog/:catalog/:schema/volume/:volume" element={<DataCatalog />} />
+                  <Route path="data-catalog/:catalog/:schema/model/:model" element={<DataCatalog />} />
                   <Route path="data-catalog/:catalog/:schema/notebook/:notebook" element={<DataCatalog />} />
                   <Route path="data-catalog/:catalog/:schema/dashboard/:dashboard" element={<DataCatalog />} />
                   <Route path="data-catalog/:catalog/:schema/tool/:tool" element={<DataCatalog />} />

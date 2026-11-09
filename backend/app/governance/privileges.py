@@ -31,6 +31,7 @@ class SecurableType(str, enum.Enum):
     DASHBOARD = "dashboard"
     QUERY = "query"
     TOOL = "tool"
+    MODEL = "model"
 
     # Workspace-scoped securables — no catalog path, one level of inheritance
     # from the workspace role only.
@@ -50,6 +51,7 @@ CATALOG_PATH_SECURABLES: frozenset[SecurableType] = frozenset({
     SecurableType.DASHBOARD,
     SecurableType.QUERY,
     SecurableType.TOOL,
+    SecurableType.MODEL,
 })
 
 #: Securables scoped directly to a workspace, with no catalog path.
@@ -110,6 +112,9 @@ APPLICABLE_PRIVILEGES: dict[SecurableType, frozenset[Privilege]] = {
         Privilege.BROWSE, Privilege.SELECT, Privilege.EXECUTE, Privilege.EDIT, Privilege.MANAGE,
     }),
     SecurableType.TOOL: frozenset({
+        Privilege.BROWSE, Privilege.EXECUTE, Privilege.EDIT, Privilege.MANAGE,
+    }),
+    SecurableType.MODEL: frozenset({
         Privilege.BROWSE, Privilege.EXECUTE, Privilege.EDIT, Privilege.MANAGE,
     }),
     SecurableType.JOB: frozenset({
