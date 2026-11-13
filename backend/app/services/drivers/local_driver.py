@@ -14,8 +14,52 @@ from app.services.ingress_service import ingress_service
 
 logger = logging.getLogger(__name__)
 
-# Active background local processes
-_LOCAL_PROCESSES: Dict[str, subprocess.Popen] = {}
+# Active background local processes. A manifest can start more than one.
+_LOCAL_PROCESSES: Dict[str, List[subprocess.Popen]] = {}
+
+
+def _tracked(app_id: str) -> List[subprocess.Popen]:
+    procs = _LOCAL_PROCESSES.get(app_id) or []
+    if isinstance(procs, subprocess.Popen):
+        return [procs]
+    return list(procs)
+
+
+def _stop_tracked(app_id: str) -> bool:
+    procs = _LOCAL_PROCESSES.pop(app_id, None)
+    if not procs:
+        return False
+    if isinstance(procs, subprocess.Popen):
+        procs = [procs]
+    stopped = False
+    for proc in procs:
+        if proc.poll() is not None:
+            continue
+        stopped = True
+        if sys.platform == "win32":
+            subprocess.run(["taskkill", "/F", "/T", "/PID", str(proc.pid)], capture_output=True, text=True, check=False)
+        else:
+            proc.terminate()
+    return stopped
+
+
+def _env_from_app(app) -> Dict[str, str]:
+    env = dict(os.environ)
+    cfg = getattr(app, "config", None) or {}
+    raw = cfg.get("env") or cfg.get("env_vars") or {}
+    if isinstance(raw, dict):
+        for key, value in raw.items():
+            if key and value is not None:
+                env[str(key)] = str(value)
+    env["APP_ID"] = str(app.id)
+    return env
+
+
+def _host_command(command: str) -> str:
+    stripped = command.strip()
+    if stripped.startswith("uvicorn "):
+        return f'"{sys.executable}" -m {stripped}'
+    return stripped
 
 
 def find_free_tcp_port(start_port: int, max_port: int) -> int:
@@ -34,29 +78,54 @@ class LocalAppDriver(BaseAppDriver):
     """Spawns native host processes for local testing when containers are unavailable."""
 
     def deploy(self, app, repo_dir: str, build_logs: List[str]) -> Dict[str, Any]:
-        port = find_free_tcp_port(9101, 9200)
-        backend_dir = os.path.join(repo_dir, "backend") if os.path.exists(os.path.join(repo_dir, "backend")) else repo_dir
-        log_file = os.path.join(repo_dir, "..", "runtime.log")
-
-        env = dict(os.environ)
-        env["PORT"] = str(port)
-        env["APP_ID"] = app.id
-
+        _stop_tracked(app.id)
+        log_file = os.path.abspath(os.path.join(repo_dir, "..", "runtime.log"))
+        os.makedirs(os.path.dirname(log_file), exist_ok=True)
+        env = _env_from_app(app)
         now_ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
-        build_logs.append(f"[{now_ts}] [INFO] Starting local process on port {port} in {backend_dir}")
+        log_handle = open(log_file, "a", encoding="utf-8")
 
-        f_out = open(log_file, "a", encoding="utf-8")
-        cmd = [sys.executable, "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", str(port)]
-        proc = subprocess.Popen(cmd, cwd=backend_dir, env=env, stdout=f_out, stderr=f_out)
-        _LOCAL_PROCESSES[app.id] = proc
+        from app.services.app_manifest_service import app_manifest_service
 
+        manifest = app_manifest_service.load_manifest(repo_dir)
+        run_cfg = app_manifest_service.get_run_config(manifest) if manifest else None
+        processes: List[subprocess.Popen] = []
+        if run_cfg and (run_cfg.get("backend_command") or run_cfg.get("frontend_command")):
+            backend_port = int(run_cfg.get("backend_port") or 8000)
+            frontend_port = int(run_cfg.get("frontend_port") or backend_port)
+            env["VITE_API_TARGET"] = f"http://127.0.0.1:{backend_port}"
+            commands = []
+            if run_cfg.get("backend_command"):
+                backend_dir = run_cfg.get("backend_dir") or "."
+                commands.append((os.path.join(repo_dir, backend_dir), _host_command(run_cfg["backend_command"])))
+            if run_cfg.get("frontend_command"):
+                frontend_dir = os.path.join(repo_dir, run_cfg.get("frontend_dir") or ".")
+                if os.path.isfile(os.path.join(frontend_dir, "package.json")) and not os.path.isdir(os.path.join(frontend_dir, "node_modules")):
+                    build_logs.append(f"[{now_ts}] [INFO] Installing frontend dependencies")
+                    subprocess.run("npm install", cwd=frontend_dir, shell=True, check=False, stdout=log_handle, stderr=log_handle)
+                commands.append((frontend_dir, run_cfg["frontend_command"]))
+            port = frontend_port if run_cfg.get("frontend_command") else backend_port
+            for cwd, command in commands:
+                build_logs.append(f"[{now_ts}] [INFO] Starting '{command}' in {cwd}")
+                proc = subprocess.Popen(command, cwd=cwd, env=env, shell=True, stdout=log_handle, stderr=log_handle)
+                processes.append(proc)
+        else:
+            port = find_free_tcp_port(9101, 9200)
+            backend_dir = os.path.join(repo_dir, "backend") if os.path.exists(os.path.join(repo_dir, "backend")) else repo_dir
+            env["PORT"] = str(port)
+            command = f'"{sys.executable}" -m uvicorn main:app --host 0.0.0.0 --port {port}'
+            build_logs.append(f"[{now_ts}] [INFO] Starting local process on port {port} in {backend_dir}")
+            proc = subprocess.Popen(command, cwd=backend_dir, env=env, shell=True, stdout=log_handle, stderr=log_handle)
+            processes.append(proc)
+
+        _LOCAL_PROCESSES[app.id] = processes
         live_url = ingress_service.get_app_url(app, host_port=port)
-        build_logs.append(f"[{now_ts}] [SUCCESS] Local process active (PID: {proc.pid}) at {live_url}")
-
+        pids = ", ".join(str(item.pid) for item in processes)
+        build_logs.append(f"[{now_ts}] [SUCCESS] Local process active (PID: {pids}) at {live_url}")
         return {
             "app_id": app.id,
             "mode": "local",
-            "pid": proc.pid,
+            "pid": processes[0].pid if processes else None,
             "host_port": port,
             "url": live_url,
             "deployed_at": datetime.now(timezone.utc).isoformat(),
@@ -92,14 +161,11 @@ class LocalAppDriver(BaseAppDriver):
         }
 
     def stop(self, app) -> bool:
-        proc = _LOCAL_PROCESSES.pop(app.id, None)
-        if proc:
-            proc.terminate()
-            return True
-        return False
+        return _stop_tracked(app.id)
 
     def get_status(self, app) -> Dict[str, Any]:
-        proc = _LOCAL_PROCESSES.get(app.id)
+        running = [proc for proc in _tracked(app.id) if proc.poll() is None]
+        proc = running[0] if running else None
         now_iso = datetime.now(timezone.utc).isoformat()
         if proc and proc.poll() is None:
             return {

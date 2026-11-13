@@ -559,8 +559,10 @@ function buildLayout(cfg: ChartConfig, rows?: Record<string, unknown>[]): Partia
     (base as any).geo = { showframe: false, showcoastlines: true };
   }
 
-  // Annotations
+  // Annotations. A label is drawn beside the line; the value stays on the chart axis.
   if (cfg.annotations && cfg.annotations.length > 0) {
+    const labeled = cfg.annotations.some((ann) => ann.label);
+    if (labeled) base.margin = { ...base.margin, t: Math.max(Number(base.margin?.t ?? 0), 36) };
     base.shapes = cfg.annotations.map((ann) => ({
       type: 'line',
       ...(ann.axis === 'x'
@@ -568,6 +570,31 @@ function buildLayout(cfg: ChartConfig, rows?: Record<string, unknown>[]): Partia
         : { y0: ann.value, y1: ann.value, x0: 0, x1: 1, xref: 'paper' }),
       line: { color: ann.color ?? '#666', dash: 'dot', width: 1.5 },
     })) as any;
+    base.annotations = cfg.annotations.filter((ann) => ann.label).map((ann, index) => (
+      ann.axis === 'x'
+        ? {
+            x: ann.value,
+            y: 1.01,
+            xref: 'x',
+            yref: 'paper',
+            text: ann.label,
+            showarrow: false,
+            xanchor: index % 2 === 0 ? 'right' : 'left',
+            yanchor: 'bottom',
+            font: { size: 10, color: ann.color ?? '#666' },
+          }
+        : {
+            x: 1,
+            y: ann.value,
+            xref: 'paper',
+            yref: 'y',
+            text: ann.label,
+            showarrow: false,
+            xanchor: 'right',
+            yanchor: 'bottom',
+            font: { size: 10, color: ann.color ?? '#666' },
+          }
+    )) as any;
   }
 
   return base;

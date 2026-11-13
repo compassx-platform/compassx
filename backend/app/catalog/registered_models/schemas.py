@@ -77,6 +77,18 @@ class RegisteredModelRead(BaseModel):
     versions: list[ModelVersionRead] = Field(default_factory=list)
 
 
+class ModelInvocation(BaseModel):
+    dataframe_records: list[dict[str, Any]] = Field(..., min_length=1, max_length=5000)
+    alias: str | None = Field(None, pattern=_ALIAS)
+    version: int | None = Field(None, ge=1)
+
+
+class ModelInvocationResult(BaseModel):
+    model: str
+    version: int
+    predictions: list[dict[str, Any]]
+
+
 class RegisteredModelSummary(BaseModel):
     id: str
     catalog_name: str
