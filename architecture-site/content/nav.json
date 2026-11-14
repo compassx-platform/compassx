@@ -44,6 +44,7 @@
     { "title": "Platform", "items": [
         { "title": "Overview", "slug": "platform" },
         { "title": "Profiles", "slug": "platform/profiles" },
+        { "title": "Deployment modes", "slug": "platform/modes" },
         { "title": "Command line", "slug": "platform/cli" },
         { "title": "Lifecycle", "slug": "platform/lifecycle" },
         { "title": "Launchers", "slug": "platform/launchers" },
@@ -64,6 +65,7 @@
         { "title": "Volumes", "slug": "catalog/volumes" },
         { "title": "Notebooks, dashboards, and queries", "slug": "catalog/assets" },
         { "title": "Search", "slug": "catalog/search" },
+        { "title": "Registered models", "slug": "catalog/models" },
         { "title": "Tools", "slug": "catalog/tools" },
         { "title": "Test cases", "slug": "catalog/test-cases" }
       ]
@@ -158,6 +160,7 @@
         { "title": "Overview", "slug": "sandbox" },
         { "title": "Lifecycle", "slug": "sandbox/lifecycle" },
         { "title": "Commands and terminal", "slug": "sandbox/commands" },
+        { "title": "Coding agents", "slug": "sandbox/agents" },
         { "title": "Screen", "slug": "sandbox/screen" },
         { "title": "Test cases", "slug": "sandbox/test-cases" }
       ]
@@ -212,6 +215,10 @@
     { "title": "Agent runtime", "items": [
         { "title": "Overview", "slug": "agent-runtime" },
         { "title": "Sessions", "slug": "agent-runtime/sessions" },
+        { "title": "Projects", "slug": "agent-runtime/projects" },
+        { "title": "Workspace files", "slug": "agent-runtime/workspace" },
+        { "title": "Browser", "slug": "agent-runtime/browser" },
+        { "title": "Tools", "slug": "agent-runtime/tools" },
         { "title": "Screen", "slug": "agent-runtime/screen" },
         { "title": "Test cases", "slug": "agent-runtime/test-cases" }
       ]

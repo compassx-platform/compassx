@@ -98,26 +98,20 @@ def _setup_logging(verbose: bool = typer.Option(False, "--verbose", "-v")) -> No
 
 
 
+from compassx.cli.application.mode_list import mode_list as mode_list_action
+from compassx.cli.application.mode_use import mode_use as mode_use_action
+
+
 @mode_app.command("list")
 def mode_list() -> None:
     """List available deployment modes."""
-    container = PlatformContainer()
-    marker = container.repo_root / _ACTIVE_MODE_FILE
-    active = marker.read_text(encoding="utf-8").strip() if marker.exists() else None
-    for name in list_modes():
-        prefix = "*" if name == active else " "
-        console.print(f"{prefix} {name}")
+    return mode_list_action()
 
 
 @mode_app.command("use")
 def mode_use(name: str = typer.Argument(...)) -> None:
     """Set the default deployment mode for subsequent commands."""
-    try:
-        _persist_mode(name)
-    except PlatformError as exc:
-        _fail(exc)
-        return
-    console.print(f"Active mode set to [bold]{name}[/bold]")
+    return mode_use_action(name=name)
 
 
 def _print_status(status) -> None:

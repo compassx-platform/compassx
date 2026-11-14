@@ -2,7 +2,9 @@
 
 `/api/v1/ai-gateway/providers` stores vendor connections in the account table `ai_providers`. The id is an integer. The API key is stored encrypted in `api_key_enc`. Responses expose `has_api_key` and `masked_api_key`. They do not return the plain key.
 
-Provider types are `openai`, `anthropic`, `azure`, `gemini`, `bedrock`, `vertex`, `ollama`, and `compatible`. An unknown stored type is returned as `compatible`.
+Provider types are `openai`, `anthropic`, `azure`, `gemini`, `grok`, `bedrock`, `vertex`, `ollama`, and `compatible`. An unknown stored type is returned as `compatible`.
+
+`grok` uses `GrokAdapter` in `app.ai_gateway.providers.grok_adapter`. It speaks the OpenAI-compatible API at `https://api.x.ai/v1` when the provider has no base URL. Creating a provider with type `grok` and an empty base URL stores that same URL. Ping requires an xAI key. A missing key returns `Enter an xAI API key from console.x.ai.` Ping reads `/language-models` and then `/models`. A 200 with model ids returns `Successfully connected to xAI`. HTTP 401 or 403 returns `Invalid xAI API key (HTTP 401/403).` Ids that look like an API key (`xai-...` or a long `grok_` token) are left out of the model list. A model whose output modalities do not include `text` is left out too.
 
 ## List and create
 

@@ -4,11 +4,11 @@ These are product checks inside a workspace, signed in as someone who can open a
 
 ## See why access was denied
 
-Open a table you can browse but cannot modify. Open its permissions panel. Effective access should show `SELECT` as Allowed and `MODIFY` as Denied, with the reason `No grant` or `Inherited from a parent` when a parent grant is what allows the read. You should see the owner name. You should not see the grant editor unless you hold `MANAGE`.
+Open a table you can browse but cannot modify. Open its permissions panel, then open `Effective access`. Effective access should show `SELECT` as Allowed and `MODIFY` as Denied, with the reason `No grant` or `Inherited from a parent` when a parent grant is what allows the read. You should see the owner name. You should not see the grant editor unless you hold `MANAGE`.
 
 ## Grant and revoke
 
-As the owner, open the same panel. You should see `Grant access` and `Grants on this table`. Grant `SELECT` to another user. The toast should say `Granted 1 privilege to {name}.` Grant `SELECT` to that user again. The toast should say `Granted 0 privileges to {name}`, and the grant list should still show one `SELECT` row. Revoke it. The list should drop that privilege. The response of the revoke call should be `{ revoked: 1 }`.
+As the owner, open the same panel. You should see `Grant` and a grants table with Principal, Privilege, and Granted. Grant `SELECT` to another user. The toast should say `Granted 1 privilege to {name}.` Grant `SELECT` to that user again. The toast should say `{name} already had those privileges.`, and the grant list should still show one `SELECT` row. Revoke it. The list should drop that privilege. The response of the revoke call should be `{ revoked: 1 }`.
 
 Grant `SELECT` on a job. You should see that `SELECT` is not applicable to `job`.
 

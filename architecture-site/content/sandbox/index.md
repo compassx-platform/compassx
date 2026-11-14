@@ -29,10 +29,14 @@ The local driver stores each sandbox under `~/.compassx/sandboxes/{id}`. Kuberne
 - `shared/support.py` — `_normalize_key` and logger name `app.sandbox.service`
 - `drivers/` — local, docker, and kubernetes
 - `models.py`, `interfaces.py`
+- `agents.py` — one class per coding agent, plus `agent_registry`
+- `agent_cli.py` — tmux command text those agents share
+- `activity.py` — facade for transcript parsers. Each agent family lives in `activity_sources/`
 
 ## Pages
 
 - [Lifecycle](lifecycle.md)
 - [Commands and terminal](commands.md)
+- [Coding agents](agents.md)
 - [Screen](screen.md)
 - [Test cases](test-cases.md)

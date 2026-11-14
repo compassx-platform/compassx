@@ -38,6 +38,7 @@ The OpenAI-compatible routes also accept `Authorization: Bearer cx_gw_ws_<secret
 - `app/ai_gateway/routes/proxy_routes.py` — OpenAI-compatible ingress facade
 - `app/ai_gateway/http/ingress/application/` — one file per ingress action
 - `app/ai_gateway/services/gateway_service.py` — routing, guardrails, failover, inference logs
+- `app/ai_gateway/providers/grok_adapter.py` — xAI Grok adapter. The other adapters stay beside it. `GrokAdapter` is exported from `app.ai_gateway.providers`
 - `app/ai_gateway/routes/mcp_routes.py` — MCP HTTP facade
 - `app/ai_gateway/http/mcp/application/` — one file per MCP action
 - `app/ai_gateway/routes/log_routes.py` — log HTTP facade

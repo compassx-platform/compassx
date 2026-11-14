@@ -32,6 +32,12 @@ Open the logs for `app-build-sandbox-1`. You should see the init output, includi
 
 Request logs for an id that was never created. The call should succeed and the log text should be `[Sandbox '{id}' not found]`.
 
+## See which coding agents can launch
+
+Ask the agent runtime for its agent list, or read `agent_registry.catalog()`.
+
+You should see `nova`, `antigravity`, `pi`, `opencode`, `claude`, `codex`, and `cursor`. Nova is not treated as a CLI agent. Antigravity is.
+
 ## Terminate
 
 Choose **Terminate Sandbox**. The confirm title should be **Terminate Sandbox**, and the message should say the running processes and ephemeral state will be permanently removed. Confirm **Terminate**.

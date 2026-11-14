@@ -160,277 +160,38 @@ class AgentRuntimeService:
             logger.debug("[AgentRuntimeService] Initial DB sync non-fatal: %s", e)
 
     def list_sessions(self, workspace_id: Optional[str] = None) -> List[AgentRuntimeSession]:
-        try:
-            from app.database import SystemSessionLocal
-            if SystemSessionLocal is not None:
-                with SystemSessionLocal() as db:
-                    query = db.query(AgentRuntimeSessionDB)
-                    if workspace_id:
-                        query = query.filter(
-                            (AgentRuntimeSessionDB.workspace_id == workspace_id) |
-                            (AgentRuntimeSessionDB.workspace_id.is_(None))
-                        )
-                    rows = query.order_by(AgentRuntimeSessionDB.updated_at.desc()).all()
-                    db_sessions = [r.to_pydantic() for r in rows]
-                    with self._lock:
-                        for s in db_sessions:
-                            self._sessions[s.id] = s
-                    return db_sessions
-        except Exception as e:
-            logger.warning("[AgentRuntimeService] Failed to query sessions from DB, falling back to memory: %s", e)
-
-        with self._lock:
-            sessions = list(self._sessions.values())
-            if workspace_id:
-                sessions = [s for s in sessions if not s.workspace_id or s.workspace_id == workspace_id]
-            return sorted(sessions, key=lambda s: s.updated_at, reverse=True)
+        from app.agent_runtime.lifecycle.application.list_sessions import list_sessions as _action
+        return _action(self, workspace_id)
 
     def get_session(self, session_id: str) -> Optional[AgentRuntimeSession]:
-        try:
-            from app.database import SystemSessionLocal
-            if SystemSessionLocal is not None:
-                with SystemSessionLocal() as db:
-                    row = db.query(AgentRuntimeSessionDB).filter(AgentRuntimeSessionDB.id == session_id).first()
-                    if row:
-                        sess = row.to_pydantic()
-                        with self._lock:
-                            self._sessions[sess.id] = sess
-                        return sess
-        except Exception as e:
-            logger.warning("[AgentRuntimeService] Failed to get session from DB, falling back to memory: %s", e)
-
-        with self._lock:
-            return self._sessions.get(session_id)
+        from app.agent_runtime.lifecycle.application.get_session import get_session as _action
+        return _action(self, session_id)
 
     def create_session(
         self, req: CreateAgentSessionRequest, workspace_id: Optional[str] = None
     ) -> AgentRuntimeSession:
-        with self._lock:
-            session_id = f"ars_{uuid.uuid4().hex[:12]}"
-            clean_title = (req.title or "").strip() or "Agent Session"
-            clean_agent = (req.agent_type or "nova").lower().strip()
-            if clean_agent == "agy":
-                clean_agent = "antigravity"
-            elif clean_agent in ("claude-code", "claudecode"):
-                clean_agent = "claude"
-            elif clean_agent in ("cursor-agent", "cursorcli"):
-                clean_agent = "cursor"
-            elif clean_agent in ("compassx", "compass"):
-                clean_agent = "nova"
-            known = {item["id"] for item in agent_registry.catalog()}
-            known.update({"bash"})
-            if clean_agent not in known:
-                clean_agent = "nova"
-            llm_model = (req.llm_model or "").strip() or None
-            project_id = (req.project_id or "").strip() or None
-            if project_id and not self.get_project(project_id):
-                raise ValueError(f"Project '{project_id}' does not exist.")
-
-            bound_sandbox_id: str = ""
-
-            instance = None
-            # 1. Resolve or provision the bound sandbox
-            if req.sandbox_mode == "existing" and req.sandbox_id:
-                existing = sandbox_service.get_sandbox(req.sandbox_id)
-                if not existing:
-                    raise ValueError(f"Selected sandbox '{req.sandbox_id}' does not exist.")
-                bound_sandbox_id = existing.id
-                instance = existing
-            else:
-                # Provision a new sandbox running compassx-sandbox-host
-                spec = SandboxSpec(
-                    name=f"{clean_title} ({clean_agent.capitalize()})",
-                    consumer_module="agent",
-                    image=os.environ.get("COMPASSX_SANDBOX_IMAGE") or "ghcr.io/compassx-platform/compassx-sandbox-host:latest",
-                    ports=[8080],
-                    working_dir="/workspace",
-                    workspace_id=workspace_id,
-                )
-                instance = sandbox_service.ensure_sandbox(spec)
-                bound_sandbox_id = instance.id
-
-            branch = (req.branch or "").strip()
-            if branch and req.sandbox_mode == "existing" and bound_sandbox_id:
-                self._checkout_workspace_branch(bound_sandbox_id, branch)
-
-            init_status = "active"
-            if hasattr(instance, "status"):
-                status_val = instance.status.value if hasattr(instance.status, "value") else str(instance.status)
-                if status_val in ("failed", "provisioning"):
-                    init_status = status_val
-
-            now_utc = datetime.now(timezone.utc)
-            session = AgentRuntimeSession(
-                id=session_id,
-                workspace_id=workspace_id,
-                title=clean_title,
-                agent_type=clean_agent,
-                sandbox_id=bound_sandbox_id,
-                project_id=project_id,
-                llm_model=llm_model,
-                status=init_status,
-                created_at=now_utc.isoformat(),
-                updated_at=now_utc.isoformat(),
-                messages=[],
-            )
-
-            # Persist to PostgreSQL
-            try:
-                from app.database import SystemSessionLocal
-                if SystemSessionLocal is not None:
-                    with SystemSessionLocal() as db:
-                        db_row = AgentRuntimeSessionDB(
-                            id=session_id,
-                            workspace_id=workspace_id,
-                            title=clean_title,
-                            agent_type=clean_agent,
-                            sandbox_id=bound_sandbox_id,
-                            project_id=project_id,
-                            llm_model=llm_model,
-                            status=init_status,
-                            created_at=now_utc,
-                            updated_at=now_utc,
-                            messages=[],
-                        )
-                        db.add(db_row)
-                        db.commit()
-            except Exception as db_err:
-                logger.warning("[AgentRuntimeService] Failed to save session to DB: %s", db_err)
-
-            self._sessions[session_id] = session
-            self._persist_sessions()
-            if clean_agent == "antigravity":
-                self._sync_antigravity_login(session, force=True)
-            return session
+        from app.agent_runtime.lifecycle.application.create_session import create_session as _action
+        return _action(self, req, workspace_id)
 
     def delete_session(self, session_id: str) -> bool:
-        with self._lock:
-            deleted = False
-            try:
-                from app.database import SystemSessionLocal
-                if SystemSessionLocal is not None:
-                    with SystemSessionLocal() as db:
-                        row = db.query(AgentRuntimeSessionDB).filter(AgentRuntimeSessionDB.id == session_id).first()
-                        if row:
-                            db.delete(row)
-                            db.commit()
-                            deleted = True
-            except Exception as db_err:
-                logger.warning("[AgentRuntimeService] Failed to delete session from DB: %s", db_err)
-
-            if session_id in self._sessions:
-                del self._sessions[session_id]
-                self._persist_sessions()
-                deleted = True
-
-            return deleted
+        from app.agent_runtime.lifecycle.application.delete_session import delete_session as _action
+        return _action(self, session_id)
 
     def list_projects(self, workspace_id: Optional[str] = None) -> List[AgentRuntimeProject]:
-        try:
-            from app.database import SystemSessionLocal
-            if SystemSessionLocal is not None:
-                with SystemSessionLocal() as db:
-                    query = db.query(AgentRuntimeProjectDB)
-                    if workspace_id:
-                        query = query.filter(
-                            (AgentRuntimeProjectDB.workspace_id == workspace_id) |
-                            (AgentRuntimeProjectDB.workspace_id.is_(None))
-                        )
-                    rows = query.order_by(AgentRuntimeProjectDB.updated_at.desc()).all()
-                    projects = [row.to_pydantic() for row in rows]
-                    with self._lock:
-                        for project in projects:
-                            self._projects[project.id] = project
-                    return projects
-        except Exception as e:
-            logger.warning("[AgentRuntimeService] Failed to query projects from DB, falling back to memory: %s", e)
-
-        with self._lock:
-            projects = list(self._projects.values())
-            if workspace_id:
-                projects = [project for project in projects if not project.workspace_id or project.workspace_id == workspace_id]
-            return sorted(projects, key=lambda project: project.updated_at, reverse=True)
+        from app.agent_runtime.lifecycle.application.list_projects import list_projects as _action
+        return _action(self, workspace_id)
 
     def get_project(self, project_id: str) -> Optional[AgentRuntimeProject]:
-        try:
-            from app.database import SystemSessionLocal
-            if SystemSessionLocal is not None:
-                with SystemSessionLocal() as db:
-                    row = db.query(AgentRuntimeProjectDB).filter(AgentRuntimeProjectDB.id == project_id).first()
-                    if row:
-                        project = row.to_pydantic()
-                        with self._lock:
-                            self._projects[project.id] = project
-                        return project
-        except Exception as e:
-            logger.warning("[AgentRuntimeService] Failed to get project from DB, falling back to memory: %s", e)
-
-        with self._lock:
-            return self._projects.get(project_id)
+        from app.agent_runtime.lifecycle.application.get_project import get_project as _action
+        return _action(self, project_id)
 
     def create_project(self, req: CreateProjectRequest, workspace_id: Optional[str] = None) -> AgentRuntimeProject:
-        name = (req.name or "").strip()
-        if not name:
-            raise ValueError("Project name is empty.")
-        if len(name) > 80:
-            name = name[:80]
-        now_utc = datetime.now(timezone.utc)
-        project = AgentRuntimeProject(
-            id=f"arp_{uuid.uuid4().hex[:12]}",
-            workspace_id=workspace_id,
-            name=name,
-            created_at=now_utc.isoformat(),
-            updated_at=now_utc.isoformat(),
-        )
-        try:
-            from app.database import SystemSessionLocal
-            if SystemSessionLocal is not None:
-                with SystemSessionLocal() as db:
-                    db.add(AgentRuntimeProjectDB(
-                        id=project.id,
-                        workspace_id=workspace_id,
-                        name=name,
-                        created_at=now_utc,
-                        updated_at=now_utc,
-                    ))
-                    db.commit()
-        except Exception as db_err:
-            logger.warning("[AgentRuntimeService] Failed to save project to DB: %s", db_err)
-
-        with self._lock:
-            self._projects[project.id] = project
-            self._persist_projects()
-        return project
+        from app.agent_runtime.lifecycle.application.create_project import create_project as _action
+        return _action(self, req, workspace_id)
 
     def delete_project(self, project_id: str) -> bool:
-        deleted = False
-        now_utc = datetime.now(timezone.utc)
-        try:
-            from app.database import SystemSessionLocal
-            if SystemSessionLocal is not None:
-                with SystemSessionLocal() as db:
-                    row = db.query(AgentRuntimeProjectDB).filter(AgentRuntimeProjectDB.id == project_id).first()
-                    if row:
-                        db.query(AgentRuntimeSessionDB).filter(
-                            AgentRuntimeSessionDB.project_id == project_id
-                        ).update({AgentRuntimeSessionDB.project_id: None, AgentRuntimeSessionDB.updated_at: now_utc})
-                        db.delete(row)
-                        db.commit()
-                        deleted = True
-        except Exception as db_err:
-            logger.warning("[AgentRuntimeService] Failed to delete project from DB: %s", db_err)
-
-        with self._lock:
-            if project_id in self._projects:
-                del self._projects[project_id]
-                deleted = True
-            for session in self._sessions.values():
-                if session.project_id == project_id:
-                    session.project_id = None
-                    session.updated_at = now_utc.isoformat()
-            self._persist_projects()
-            self._persist_sessions()
-        return deleted
+        from app.agent_runtime.lifecycle.application.delete_project import delete_project as _action
+        return _action(self, project_id)
 
     def _load_projects(self):
         try:
@@ -452,7 +213,8 @@ class AgentRuntimeService:
 
     def send_message(self, session_id: str, content: str) -> AgentChatMessage:
         """Deliver a follow-up prompt into the session's tmux agent."""
-        return self.deliver_prompt(session_id, content)
+        from app.agent_runtime.lifecycle.application.send_message import send_message as _action
+        return _action(self, session_id, content)
 
     def _browser_key(self, session_id: str, tab_id: str) -> str:
         self._require_session(session_id)
@@ -462,44 +224,25 @@ class AgentRuntimeService:
         return f"{session_id}:{raw}"
 
     def open_browser(self, session_id: str, tab_id: str, url: str, width: int, height: int) -> dict:
-        from app.agent_runtime.browser_host import browser_host
-
-        return browser_host.open(self._browser_key(session_id, tab_id), url, width, height)
+        from app.agent_runtime.lifecycle.application.open_browser import open_browser as _action
+        return _action(self, session_id, tab_id, url, width, height)
 
     def browser_frame(self, session_id: str, tab_id: str) -> tuple[bytes, int, int]:
-        from app.agent_runtime.browser_host import browser_host
-
-        return browser_host.frame(self._browser_key(session_id, tab_id))
+        from app.agent_runtime.lifecycle.application.browser_frame import browser_frame as _action
+        return _action(self, session_id, tab_id)
 
     def inspect_browser(self, session_id: str, tab_id: str, x: float, y: float) -> dict:
-        from app.agent_runtime.browser_host import browser_host
-
-        return browser_host.inspect(self._browser_key(session_id, tab_id), x, y)
+        from app.agent_runtime.lifecycle.application.inspect_browser import inspect_browser as _action
+        return _action(self, session_id, tab_id, x, y)
 
     def browser_input(self, session_id: str, tab_id: str, kind: str, x: float, y: float, delta_y: float, key_name: str, text: str) -> None:
-        from app.agent_runtime.browser_host import browser_host
-
-        browser_host.input(self._browser_key(session_id, tab_id), kind, x, y, delta_y, key_name, text)
+        from app.agent_runtime.lifecycle.application.browser_input import browser_input as _action
+        return _action(self, session_id, tab_id, kind, x, y, delta_y, key_name, text)
 
     def send_browser_note(self, session_id: str, tab_id: str, instruction: str, x: float, y: float, width: float, height: float) -> AgentChatMessage:
         """Capture the host browser and deliver the note plus screenshot to the agent."""
-        from app.agent_runtime.browser_host import browser_host
-
-        note = (instruction or "").strip()
-        if not note:
-            raise ValueError("Message is empty.")
-        shot, target = browser_host.capture(self._browser_key(session_id, tab_id), x, y, width, height)
-        session = self._require_session(session_id)
-        path = ""
-        try:
-            path = self._save_note_image(session.sandbox_id, shot)
-        except Exception as exc:
-            logger.warning("[AgentRuntimeService] Could not store the annotation screenshot: %s", exc)
-        prompt = f"Browser annotation\n{target['detail']}\n\n{note}"
-        if path:
-            prompt += f"\n\nScreenshot file: {path}\nRead that screenshot file before changing the page."
-        image = "data:image/jpeg;base64," + base64.b64encode(shot).decode("ascii")
-        return self.deliver_prompt(session_id, prompt, image=image)
+        from app.agent_runtime.lifecycle.application.send_browser_note import send_browser_note as _action
+        return _action(self, session_id, tab_id, instruction, x, y, width, height)
 
     def _save_note_image(self, sandbox_id: str, data: bytes) -> str:
         self._require_running_sandbox(sandbox_id)
@@ -528,96 +271,32 @@ print(json.dumps({"path": path, "bytes": len(raw)}))
 
     def deliver_prompt(self, session_id: str, content: str, image: str | None = None, llm_model: str | None = None) -> AgentChatMessage:
         """Start the agent tmux session if needed, then type the prompt into it."""
-        session = self._require_session(session_id)
-        prompt = (content or "").strip()
-        if not prompt:
-            raise ValueError("Message is empty.")
-        self._require_running_sandbox(session.sandbox_id)
-        if llm_model and llm_model.strip():
-            session.llm_model = llm_model.strip()
-            self._persist_session_row(session)
-        if is_nova_agent(session.agent_type):
-            return self._deliver_nova(session, prompt, image=image, llm_model=llm_model)
-        self._sync_antigravity_login(session, force=True)
-        self._ensure_agent_tmux(session)
-        self._wait_for_agent_pane(session)
-        self._type_prompt(session, prompt)
-        return self._append_message(session, "user", prompt, image=image)
+        from app.agent_runtime.lifecycle.application.deliver_prompt import deliver_prompt as _action
+        return _action(self, session_id, content, image, llm_model)
 
     def list_workspace_files(self, session_id: str) -> WorkspaceFilesResponse:
-        session = self._require_session(session_id)
-        self._require_running_sandbox(session.sandbox_id)
-        payload = self._exec_json(session.sandbox_id, files_command(), timeout=30)
-        entries = [
-            WorkspaceEntry(
-                path=str(item.get("path") or ""),
-                type=str(item.get("type") or "file"),
-                size=int(item.get("size") or 0),
-            )
-            for item in payload.get("entries") or []
-            if item.get("path")
-        ]
-        return WorkspaceFilesResponse(root=str(payload.get("root") or "/workspace"), entries=entries)
+        from app.agent_runtime.lifecycle.application.list_workspace_files import list_workspace_files as _action
+        return _action(self, session_id)
 
     def read_workspace_file(self, session_id: str, path: str) -> FileContentResponse:
-        session = self._require_session(session_id)
-        self._require_running_sandbox(session.sandbox_id)
-        relative = safe_relative_path(path)
-        payload = self._exec_json(session.sandbox_id, file_content_command(relative), timeout=20)
-        return FileContentResponse(
-            path=str(payload.get("path") or relative),
-            content=str(payload.get("content") or ""),
-            truncated=bool(payload.get("truncated")),
-            missing=bool(payload.get("missing")),
-        )
+        from app.agent_runtime.lifecycle.application.read_workspace_file import read_workspace_file as _action
+        return _action(self, session_id, path)
 
     def write_workspace_file(self, session_id: str, path: str, content: str) -> WriteFileResponse:
-        session = self._require_session(session_id)
-        self._require_running_sandbox(session.sandbox_id)
-        relative = safe_relative_path(path)
-        payload = self._exec_json(session.sandbox_id, write_file_command(relative, content or ""), timeout=30)
-        return WriteFileResponse(path=str(payload.get("path") or relative), bytes=int(payload.get("bytes") or 0))
+        from app.agent_runtime.lifecycle.application.write_workspace_file import write_workspace_file as _action
+        return _action(self, session_id, path, content)
 
     def list_workspace_changes(self, session_id: str) -> ChangesResponse:
-        session = self._require_session(session_id)
-        self._require_running_sandbox(session.sandbox_id)
-        payload = self._exec_json(session.sandbox_id, changes_command(), timeout=30)
-        entries = [
-            ChangeEntry(
-                path=str(item.get("path") or ""),
-                status=str(item.get("status") or "modified"),
-                additions=int(item.get("additions") or 0),
-                deletions=int(item.get("deletions") or 0),
-                staged=bool(item.get("staged")),
-                unstaged=bool(item.get("unstaged", True)),
-            )
-            for item in payload.get("entries") or []
-            if item.get("path")
-        ]
-        commits = [
-            CommitEntry(
-                hash=str(item.get("hash") or ""),
-                subject=str(item.get("subject") or ""),
-                author=str(item.get("author") or ""),
-                date=str(item.get("date") or ""),
-            )
-            for item in payload.get("commits") or []
-            if item.get("hash")
-        ]
-        return ChangesResponse(entries=entries, branch=str(payload.get("branch") or ""), commits=commits)
+        from app.agent_runtime.lifecycle.application.list_workspace_changes import list_workspace_changes as _action
+        return _action(self, session_id)
 
     def read_workspace_patch(self, session_id: str) -> DiffResponse:
-        session = self._require_session(session_id)
-        self._require_running_sandbox(session.sandbox_id)
-        payload = self._exec_json(session.sandbox_id, patch_command(), timeout=30)
-        return DiffResponse(path="", diff=str(payload.get("diff") or ""))
+        from app.agent_runtime.lifecycle.application.read_workspace_patch import read_workspace_patch as _action
+        return _action(self, session_id)
 
     def read_workspace_diff(self, session_id: str, path: str) -> DiffResponse:
-        session = self._require_session(session_id)
-        self._require_running_sandbox(session.sandbox_id)
-        relative = safe_relative_path(path)
-        payload = self._exec_json(session.sandbox_id, diff_command(relative), timeout=30)
-        return DiffResponse(path=str(payload.get("path") or relative), diff=str(payload.get("diff") or ""))
+        from app.agent_runtime.lifecycle.application.read_workspace_diff import read_workspace_diff as _action
+        return _action(self, session_id, path)
 
     def _require_session(self, session_id: str) -> AgentRuntimeSession:
         session = self.get_session(session_id)
@@ -626,14 +305,8 @@ print(json.dumps({"path": path, "bytes": len(raw)}))
         return session
 
     def sandbox_git(self, sandbox_id: str) -> GitInfoResponse:
-        self._require_running_sandbox(sandbox_id)
-        payload = self._exec_json(sandbox_id, git_info_command(), timeout=15)
-        branches = [str(name) for name in (payload.get("branches") or []) if name]
-        return GitInfoResponse(
-            repo=bool(payload.get("repo")),
-            branch=str(payload.get("branch") or ""),
-            branches=branches,
-        )
+        from app.agent_runtime.lifecycle.application.sandbox_git import sandbox_git as _action
+        return _action(self, sandbox_id)
 
     def _checkout_workspace_branch(self, sandbox_id: str, branch: str) -> None:
         self._require_running_sandbox(sandbox_id)
@@ -725,10 +398,8 @@ print(json.dumps({"path": path, "bytes": len(raw)}))
 
     def capture_agent_output(self, session_id: str) -> str:
         """Read the live agent pane so the chat view stays aligned with the terminal."""
-        session = self._require_session(session_id)
-        self._require_running_sandbox(session.sandbox_id)
-        result = self._exec(session.sandbox_id, pane_capture_command(session.id), timeout=10)
-        return result.stdout or ""
+        from app.agent_runtime.lifecycle.application.capture_agent_output import capture_agent_output as _action
+        return _action(self, session_id)
 
     def _type_prompt(self, session: AgentRuntimeSession, prompt: str) -> None:
         adapter = agent_registry.get(session.agent_type)
@@ -743,42 +414,8 @@ print(json.dumps({"path": path, "bytes": len(raw)}))
 
     def sync_terminal_notices(self, session_id: str) -> AgentRuntimeSession:
         """Store terminal errors that are not already in the chat."""
-        session = self._require_session(session_id)
-        if is_nova_agent(session.agent_type):
-            self._require_running_sandbox(session.sandbox_id)
-            from app.agent_runtime.sandbox_controller import nova_sandbox_controller
-
-            self._sync_activities(session, nova_sandbox_controller.read_activities(session, self._exec))
-            return self._require_session(session_id)
-        self._require_running_sandbox(session.sandbox_id)
-        self._sync_antigravity_login(session)
-        self._exec(session.sandbox_id, ensure_pane_log_command(session.id), timeout=10)
-        captured = self._exec(session.sandbox_id, pane_capture_command(session.id, 200), timeout=10)
-        logged = self._exec(session.sandbox_id, read_pane_log_command(session.id), timeout=10)
-        pane_text = f"{captured.stdout or ''}\n{logged.stdout or ''}"
-        adapter = agent_registry.get(session.agent_type)
-        # Antigravity already emits thoughts, tool calls, and replies from its transcript.
-        # The pane scrape treats status lines such as "2 failed" as errors and copies the reply into them.
-        if (session.agent_type or "").lower().strip() in ("antigravity", "agy"):
-            self._drop_terminal_errors(session)
-            notices = []
-        else:
-            notices = list(dict.fromkeys(adapter.extract_notices(pane_text) if adapter else []))
-        self._collapse_duplicate_notices(session)
-        session = self._require_session(session_id)
-        self._sync_activities(session, self._read_activities(session, adapter, pane_text))
-        session = self._require_session(session_id)
-        stored = {
-            message.content
-            for message in session.messages
-            if message.role == "assistant" and (message.kind in (None, "", "error")) and not (message.content or "").startswith("👋")
-        }
-        for notice in notices:
-            if _notice_already_shown(notice, stored):
-                continue
-            self._append_message(session, "assistant", notice, kind="error")
-            stored.add(notice)
-        return self._require_session(session_id)
+        from app.agent_runtime.lifecycle.application.sync_terminal_notices import sync_terminal_notices as _action
+        return _action(self, session_id)
 
     def _read_activities(self, session: AgentRuntimeSession, adapter, pane_text: str) -> list[dict]:
         from app.sandbox.activity import activities_from_pane

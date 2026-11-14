@@ -25,7 +25,7 @@ from rich.table import Table
 
 from compassx.container import PlatformContainer
 from compassx.models import PlatformError
-from compassx.registry.deployment_mode import active_mode_name, load_deployment_mode
+from compassx.registry.deployment_mode import active_mode_name, list_modes, load_deployment_mode
 from compassx.registry.profile import PROFILE_ENV_VAR, list_profiles, load_profile
 
 

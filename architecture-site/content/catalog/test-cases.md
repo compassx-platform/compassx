@@ -68,6 +68,12 @@ With a table already in a catalog this workspace can see, ask an agent that has 
 
 You should see the catalog in the list, and the table's `catalog.schema.table` name in the search result. A catalog bound only to another workspace should be absent from the list.
 
+## Register a model and score it
+
+In a schema you can edit, create a registered model. Register a version from an MLflow run that has a ready artifact, and point the `champion` alias at that version. Score a few records with that alias.
+
+You should see the model under the schema, the version files stored with the schema's storage, and predictions for those records. A second model with the same name should be refused because it already exists. Scoring a model you cannot execute should be refused.
+
 ## Delete an Iceberg table
 
 Delete an Iceberg table you created for this check. Try the same delete on a foreign table.

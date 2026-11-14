@@ -8,7 +8,6 @@
  * to the object.
  */
 import { useState } from 'react';
-import { ShieldCheck } from 'lucide-react';
 
 import { useToast } from '@/lib/toast';
 
@@ -57,12 +56,9 @@ export default function OwnerBadge({ securable, canManage = false }: Props) {
   };
 
   return (
-    <div className="gov-owner-block">
-      <div className="gov-owner-row">
-        <span className="gov-owner-icon" aria-hidden="true">
-          <ShieldCheck size={14} />
-        </span>
-        <span className="uc-field-label" style={{ margin: 0 }}>Owner</span>
+    <>
+      <div className="gov-owner-line">
+        <span className="gov-owner-label">Owner</span>
         <span className="gov-owner-name">
           {ownerQuery.isLoading && 'Loading…'}
           {!ownerQuery.isLoading && ownerLabel}
@@ -76,19 +72,13 @@ export default function OwnerBadge({ securable, canManage = false }: Props) {
             className="gov-link-btn"
             onClick={() => setIsTransferring(true)}
           >
-            Transfer
+            Change owner
           </button>
         )}
       </div>
 
-      {owner && (
-        <p className="gov-field-help">
-          The owner holds full control and is who a denied user asks for access.
-        </p>
-      )}
-
       {isTransferring && (
-        <div className="gov-transfer-panel">
+        <div className="gov-transfer">
           <div className="uc-field">
             <label className="uc-field-label">New owner</label>
             <PrincipalPicker
@@ -124,7 +114,7 @@ export default function OwnerBadge({ securable, canManage = false }: Props) {
           </div>
         </div>
       )}
-    </div>
+    </>
   );
 }
 

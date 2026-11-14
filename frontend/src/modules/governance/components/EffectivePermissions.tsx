@@ -1,17 +1,11 @@
 /**
  * What a principal can actually do on an object, and why.
  *
- * This is the diagnostic half of the Permissions tab. Most access problems are
- * diagnosed rather than granted, and the question an administrator actually has
- * is "why can this person not open this table?" — which the grant list alone
- * cannot answer, because the reason is usually a missing USE somewhere up the
- * catalog path rather than a missing grant on the object itself.
- *
- * Denials are shown alongside allows for exactly that reason: an empty list
- * would tell the administrator nothing about where the chain broke.
+ * Shown only after the user opens the Effective access disclosure. Denials stay
+ * in the table: an empty allow-list would not say where the chain broke.
  */
 import { useState } from 'react';
-import { Check, ChevronDown, X as XIcon } from 'lucide-react';
+import { ChevronDown } from 'lucide-react';
 
 import { useEffectivePermissions, usePrincipalOptions } from '../hooks/useGovernance';
 import type { SecurableRef } from '../governanceTypes';
@@ -34,34 +28,25 @@ export default function EffectivePermissions({
 
   return (
     <div className="gov-effective">
-      <div className="gov-effective-header">
-        <div>
-          <div className="uc-detail-title">Effective access</div>
-          <p className="gov-field-help">
-            What is actually resolved here, after inherited grants and the USE chain.
-          </p>
-        </div>
-
-        {canInspectOthers && (
-          <label className="gov-effective-picker">
-            <span className="uc-field-label">Check for</span>
-            <span className="gov-select-wrap">
-              <select
-                value={principalId}
-                onChange={(event) => setPrincipalId(event.target.value)}
-              >
-                <option value="">Me</option>
-                {principals.options.map((option) => (
-                  <option key={option.id} value={option.id}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-              <ChevronDown size={14} aria-hidden="true" />
-            </span>
-          </label>
-        )}
-      </div>
+      {canInspectOthers && (
+        <label className="gov-effective-picker">
+          <span className="uc-field-label">Check for</span>
+          <span className="gov-select-wrap">
+            <select
+              value={principalId}
+              onChange={(event) => setPrincipalId(event.target.value)}
+            >
+              <option value="">Me</option>
+              {principals.options.map((option) => (
+                <option key={option.id} value={option.id}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+            <ChevronDown size={14} aria-hidden="true" />
+          </span>
+        </label>
+      )}
 
       {query.isLoading && <div className="uc-empty-inline">Resolving…</div>}
 
@@ -72,21 +57,12 @@ export default function EffectivePermissions({
       )}
 
       {result && (
-        <>
-          {result.is_owner && (
-            <div className="gov-owner-callout">
-              This principal owns {securable.name}, which confers full control.
-            </div>
-          )}
-
+        <div className="uc-columns-table-wrap">
           <table className="uc-columns-table gov-effective-table">
             <thead>
               <tr>
-                <th style={{ width: '32px' }}>
-                  <span className="sr-only">Allowed</span>
-                </th>
                 <th>Privilege</th>
-                <th>Reason</th>
+                <th>Access</th>
               </tr>
             </thead>
             <tbody>
@@ -94,25 +70,19 @@ export default function EffectivePermissions({
                 const allowed = result.privileges.includes(privilege as never);
                 return (
                   <tr key={privilege} className={allowed ? undefined : 'gov-row-denied'}>
-                    <td>
-                      {allowed ? (
-                        <span className="gov-allow-icon" title="Allowed">
-                          <Check size={14} />
-                        </span>
-                      ) : (
-                        <span className="gov-deny-icon" title="Denied">
-                          <XIcon size={14} />
-                        </span>
-                      )}
-                    </td>
                     <td className="gov-privilege-cell">{privilege}</td>
-                    <td className="gov-reason-cell">{humanizeReason(reason)}</td>
+                    <td className="gov-access-cell">
+                      <span className={allowed ? 'gov-access-allow' : 'gov-access-deny'}>
+                        {allowed ? 'Allowed' : 'Denied'}
+                      </span>
+                      <span className="gov-reason-cell">{humanizeReason(reason)}</span>
+                    </td>
                   </tr>
                 );
               })}
             </tbody>
           </table>
-        </>
+        </div>
       )}
     </div>
   );

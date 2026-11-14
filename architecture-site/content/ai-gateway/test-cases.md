@@ -18,6 +18,12 @@ Enter a key and discover again. A reachable provider should toast `Discovered {c
 
 From the provider list, ping the saved provider. Success should toast `Connection successful` and include the latency. Failure should toast `Connection failed:` or `Ping failed`.
 
+## Add a Grok provider
+
+Create a provider named `Lab Grok`, type Grok, with an xAI key and no base URL.
+
+The stored base URL should be `https://api.x.ai/v1`. Discover models. A valid key should return text model ids such as `grok-4` and should not return an id that looks like the API key. A missing key should say `Enter an xAI API key from console.x.ai.`
+
 ## Call a model
 
 Send `POST /api/v1/ai-gateway/v1/chat/completions` with a model name that matches an active endpoint, and a single user message.

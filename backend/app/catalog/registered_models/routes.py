@@ -28,8 +28,8 @@ from app.catalog.registered_models.service import (
     register_version,
     set_alias,
     update_model,
+    invoke_registered_model as invoke_registered_model_action,
 )
-from app.catalog.registered_models.serving import invoke_model
 from app.database import get_account_db as get_db
 from app.dependencies import get_current_user
 from app.governance.dependencies import Guard, get_guard
@@ -298,24 +298,6 @@ def remove_model_alias(
         raise _http(exc) from exc
 
 
-def _version_for_invocation(model: CatalogRegisteredModel, body: ModelInvocation):
-    if body.version is not None:
-        match = next((item for item in model.versions if item.version == body.version), None)
-        if match is None:
-            raise RegistryError(404, f"Version {body.version} was not found.")
-        return match
-    alias_name = body.alias or "champion"
-    alias = next((item for item in model.aliases if item.alias == alias_name), None)
-    if alias is not None:
-        match = next((item for item in model.versions if item.version == alias.version), None)
-        if match is not None:
-            return match
-    ready = [item for item in model.versions if item.status == "READY"]
-    if not ready:
-        raise RegistryError(404, "The model has no ready version to score.")
-    return max(ready, key=lambda item: item.version)
-
-
 @router.post(
     "/catalogs/{catalog_name}/schemas/{schema_name}/models/{model_name}/invocations",
     response_model=ModelInvocationResult,
@@ -331,9 +313,6 @@ async def invoke_registered_model(
     """Score records with a registered model. The artifact supplies its own feature contract."""
     guard.require(Privilege.EXECUTE, Securable.model(catalog_name, schema_name, model_name))
     try:
-        model = get_model(db, catalog_name, schema_name, model_name)
-        version = _version_for_invocation(model, body)
-        predictions = await invoke_model(db, model, version, body.dataframe_records)
+        return await invoke_registered_model_action(db, catalog_name, schema_name, model_name, body)
     except RegistryError as exc:
         raise _http(exc) from exc
-    return ModelInvocationResult(model=model.full_name, version=version.version, predictions=predictions)

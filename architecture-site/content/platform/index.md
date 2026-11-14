@@ -10,7 +10,7 @@ Platform stays in this process. Compute, Jobs, and Monitoring call the container
 
 ## What stays public
 
-`compassx.cli.main` still defines `app` and the command names `up`, `down`, `restart`, `status`, `health`, `logs`, `profile_list`, and `profile_use`. Each command forwards to one file under `compassx/cli/application/`.
+`compassx.cli.main` still defines `app` and the command names `up`, `down`, `restart`, `status`, `health`, `logs`, `profile_list`, `profile_use`, `mode_list`, and `mode_use`. Each command forwards to one file under `compassx/cli/application/`.
 
 `PlatformManager` still defines `up`, `down`, `restart`, `status`, `health`, and `logs`. Each method forwards to one file under `compassx/platform_manager/application/`. The logger stays `compassx.platform_manager.manager`.
 
@@ -26,7 +26,7 @@ Platform stays in this process. Compute, Jobs, and Monitoring call the container
 - `compassx/platform_manager/manager.py` — lifecycle facade
 - `compassx/platform_manager/application/` — one file per lifecycle action
 - `compassx/platform_manager/health.py` — checks and root-cause text
-- `compassx/registry/` — profiles and `services.yaml`
+- `compassx/registry/` — profiles, `services.yaml`, and `modes.yaml`
 - `compassx/lookup.py` — endpoint lookup for other modules
 - `compassx/launchers/` — local process, Docker Compose, Kubernetes
 - `compassx/drivers/` — local, Docker, and Kubernetes runtime drivers
@@ -39,6 +39,7 @@ Platform stays in this process. Compute, Jobs, and Monitoring call the container
 ## Pages
 
 - [Profiles](profiles.md)
+- [Deployment modes](modes.md)
 - [Command line](cli.md)
 - [Lifecycle](lifecycle.md)
 - [Launchers](launchers.md)

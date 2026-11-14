@@ -19,6 +19,7 @@ Nova registers one agent tool, `fetch_attachment`. It is documented on the [Tool
 - `app/nova/services/attachment_service.py` — storage and extraction
 - `app/nova/services/tools/fetch_attachment_tool.py` — agent tool
 - `app/nova/services/notebook_tools.py` and `dashboard_tools.py` — helpers for the agent tools
+- `backend/sandbox_nova/` — the Nova process that runs inside a sandbox. `loop.py` is the turn loop and re-exports `InboxServer`. Local tools stay importable from `sandbox_nova.tools.local`. Platform tools call `POST /api/v1/agent-runtime/sandbox/tools`, documented with [Agent runtime tools](../agent-runtime/tools.md).
 
 ## Pages
 

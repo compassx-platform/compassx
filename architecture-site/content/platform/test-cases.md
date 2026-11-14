@@ -18,17 +18,23 @@ Run `compassx profile use local-dev`.
 
 You should see `Active profile set to local-dev`. The next `compassx profile list` should mark `local-dev` with `*`.
 
+## Choose a deployment mode
+
+Run `compassx mode list`, then `compassx mode use app`, then `compassx mode list` again. Run `compassx mode use tiny`.
+
+The first list should show `app` and `full`. After `mode use app` you should see `Active mode set to app`, and the next list should mark `app` with `*`. `tiny` should exit `1` and print `Error: Deployment mode 'tiny' is not defined. Available: app, full`.
+
 ## Start the local profile
 
-Run `compassx up --profile local-dev`.
+Run `compassx mode use full`, then `compassx up --profile local-dev`.
 
-You should see `Starting platform with profile local-dev...` and a status table with columns Service, Running, Healthy, and Detail. When every row is running, the last line is `Platform ready.` If any row is not running, the last line is `Platform started (some services not running).`
+You should see `Starting platform with profile local-dev mode full...` and a status table titled with that profile and mode. Columns are Service, Running, Healthy, and Detail. When every row is running, the last line is `Platform ready.` If any row is not running, the last line is `Platform started (some services not running).`
 
 ## Status and health
 
 With the platform up, run `compassx status`, then `compassx health`.
 
-Status should print `Platform status — profile local-dev`. Health should print `Health — profile local-dev` with columns Service, Endpoint, Status, Latency, and Root cause. A service that is not listening should name the host and port and tell you to run `compassx up` or check `compassx status`. The health command exits `0` only when every row is healthy.
+Status should print `Platform status — profile local-dev — mode full`. Health should print `Health — profile local-dev — mode full` with columns Service, Endpoint, Status, Latency, and Root cause. A service that is not listening should name the host and port and tell you to run `compassx up` or check `compassx status`. The health command exits `0` only when every row is healthy.
 
 ## Logs and stop
 

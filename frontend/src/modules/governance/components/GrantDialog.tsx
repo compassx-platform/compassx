@@ -1,12 +1,10 @@
 /**
  * Grant privileges on one securable.
  *
- * Two ways to choose, because administrators think in roles but occasionally
- * need a single privilege: a bundle picker ("Viewer", "Contributor") that
- * expands to a privilege set, and the raw checkboxes underneath. The privilege
- * list comes from `GET /governance/privileges` filtered to what is applicable
- * to this securable type, so the dialog cannot offer a grant the backend would
- * reject as unevaluatable (SELECT on a job, say).
+ * A small form: who receives the grant, then one picker that offers a bundle
+ * or a single privilege. Bundles expand to the privileges that apply on this
+ * securable type. The privilege list comes from `GET /governance/privileges`,
+ * so the dialog cannot offer a grant the backend would reject.
  */
 import { useEffect, useMemo, useState } from 'react';
 import { X } from 'lucide-react';
@@ -28,19 +26,6 @@ interface Props {
   existingIds?: ReadonlySet<string>;
   onClose: () => void;
 }
-
-/** What each privilege means on this object, in the terms a grantee would use. */
-const PRIVILEGE_HELP: Record<Privilege, string> = {
-  USE: 'Traverse into this container. Required to reach anything inside it, but grants no sight of the contents on its own.',
-  BROWSE: 'See that the object exists and read its metadata.',
-  SELECT: 'Read the data or file contents.',
-  MODIFY: 'Insert, update, and delete data. Does not allow dropping the object.',
-  CREATE: 'Create children inside it. The creator owns what they create.',
-  EXECUTE: 'Run it.',
-  EDIT: 'Change its definition.',
-  USE_COMPUTE: 'Attach to it and run work through it.',
-  MANAGE: 'Full control, including granting access to others and deleting it.',
-};
 
 export default function GrantDialog({ securable, existingIds, onClose }: Props) {
   const toast = useToast();
@@ -69,20 +54,6 @@ export default function GrantDialog({ securable, existingIds, onClose }: Props) 
       .filter((bundle) => bundle.privileges.length > 0);
   }, [vocabulary.data, applicable]);
 
-  // A bundle is "active" when its privileges are exactly what is selected, so
-  // clicking it twice does not appear to do nothing.
-  const activeBundle = useMemo(() => {
-    for (const bundle of bundles) {
-      if (
-        bundle.privileges.length === selected.size &&
-        bundle.privileges.every((privilege) => selected.has(privilege))
-      ) {
-        return bundle.name;
-      }
-    }
-    return null;
-  }, [bundles, selected]);
-
   // Close on Escape, like every other modal in the app.
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -105,7 +76,18 @@ export default function GrantDialog({ securable, existingIds, onClose }: Props) 
     setSelected(new Set(privileges));
   };
 
+  const onPick = (value: string) => {
+    if (!value) return;
+    if (value.startsWith('bundle:')) {
+      const bundle = bundles.find((item) => item.name === value.slice('bundle:'.length));
+      if (bundle) applyBundle(bundle.privileges);
+      return;
+    }
+    togglePrivilege(value as Privilege);
+  };
+
   const canSubmit = Boolean(principal) && selected.size > 0 && !createGrant.isPending;
+  const selectedList = useMemo(() => Array.from(selected).sort(), [selected]);
 
   const handleSubmit = () => {
     if (!principal || selected.size === 0) return;
@@ -143,17 +125,16 @@ export default function GrantDialog({ securable, existingIds, onClose }: Props) 
         aria-labelledby="gov-grant-title"
       >
         <div className="uc-modal-header">
-          <h3 id="gov-grant-title" style={{ margin: 0 }}>Grant access</h3>
+          <div>
+            <h3 id="gov-grant-title">Grant</h3>
+            <p>{securable.name}</p>
+          </div>
           <button type="button" className="uc-icon-btn" aria-label="Close" onClick={onClose}>
             <X size={16} />
           </button>
         </div>
 
         <div className="uc-modal-body">
-          <p className="gov-modal-subtitle">
-            On <code>{securable.name}</code> ({securable.securable_type})
-          </p>
-
           <div className="uc-field">
             <label className="uc-field-label">Grant to</label>
             <PrincipalPicker
@@ -165,51 +146,66 @@ export default function GrantDialog({ securable, existingIds, onClose }: Props) 
             />
           </div>
 
-          {bundles.length > 0 && (
-            <div className="uc-field">
-              <label className="uc-field-label">Preset</label>
-              <div className="gov-bundle-row">
-                {bundles.map((bundle) => (
-                  <button
-                    key={bundle.name}
-                    type="button"
-                    className={`gov-bundle-chip${activeBundle === bundle.name ? ' is-active' : ''}`}
-                    onClick={() => applyBundle(bundle.privileges)}
-                    title={bundle.privileges.join(', ')}
-                  >
-                    {bundle.name}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-
           <div className="uc-field">
-            <label className="uc-field-label">Privileges</label>
-            {vocabulary.isLoading && <div className="uc-empty-inline">Loading privileges…</div>}
+            <label className="uc-field-label" htmlFor="gov-grant-privilege">
+              Privilege
+            </label>
             {vocabulary.isError && (
               <div className="uc-empty-inline">Could not load the privilege list.</div>
             )}
-            <div className="gov-privilege-grid">
-              {applicable.map((privilege) => (
-                <label key={privilege} className="gov-privilege-option">
-                  <input
-                    type="checkbox"
-                    checked={selected.has(privilege)}
-                    onChange={() => togglePrivilege(privilege)}
-                  />
-                  <span className="gov-privilege-text">
-                    <span className="gov-privilege-name">{privilege}</span>
-                    <span className="gov-privilege-help">{PRIVILEGE_HELP[privilege]}</span>
-                  </span>
-                </label>
-              ))}
-            </div>
+            <select
+              id="gov-grant-privilege"
+              className="gov-privilege-select"
+              value=""
+              disabled={vocabulary.isLoading || vocabulary.isError}
+              onChange={(event) => {
+                onPick(event.target.value);
+                event.target.value = '';
+              }}
+            >
+              <option value="">
+                {vocabulary.isLoading ? 'Loading privileges…' : 'Choose a privilege or bundle'}
+              </option>
+              {bundles.length > 0 && (
+                <optgroup label="Bundles">
+                  {bundles.map((bundle) => (
+                    <option key={bundle.name} value={`bundle:${bundle.name}`}>
+                      {bundleLabel(bundle.name)}
+                    </option>
+                  ))}
+                </optgroup>
+              )}
+              {applicable.length > 0 && (
+                <optgroup label="Privileges">
+                  {applicable.map((privilege) => (
+                    <option key={privilege} value={privilege}>
+                      {privilege}
+                    </option>
+                  ))}
+                </optgroup>
+              )}
+            </select>
+            {selectedList.length > 0 && (
+              <div className="gov-selected-row">
+                {selectedList.map((privilege) => (
+                  <button
+                    key={privilege}
+                    type="button"
+                    className="gov-bundle-chip is-active"
+                    onClick={() => togglePrivilege(privilege)}
+                  >
+                    {privilege}
+                    <X size={12} aria-hidden="true" />
+                    <span className="sr-only">Remove {privilege}</span>
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
 
           <div className="uc-field">
             <label className="uc-field-label" htmlFor="gov-grant-expiry">
-              Expires (optional)
+              Expires
             </label>
             <input
               id="gov-grant-expiry"
@@ -218,9 +214,6 @@ export default function GrantDialog({ securable, existingIds, onClose }: Props) 
               value={expiresAt}
               onChange={(event) => setExpiresAt(event.target.value)}
             />
-            <p className="gov-field-help">
-              Leave empty for a grant that does not expire.
-            </p>
           </div>
         </div>
 
@@ -240,6 +233,10 @@ export default function GrantDialog({ securable, existingIds, onClose }: Props) 
       </div>
     </div>
   );
+}
+
+function bundleLabel(name: string): string {
+  return name.charAt(0).toUpperCase() + name.slice(1);
 }
 
 function errorMessage(error: unknown, fallback: string): string {

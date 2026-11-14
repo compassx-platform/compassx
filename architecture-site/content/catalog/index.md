@@ -1,6 +1,6 @@
 # Catalog
 
-Product module. Unified metadata for catalogs, schemas, tables, volumes, lineage, promoted tools, and the catalog copies of notebooks, dashboards, and queries.
+Product module. Unified metadata for catalogs, schemas, tables, volumes, registered models, lineage, promoted tools, and the catalog copies of notebooks, dashboards, and queries.
 
 The public HTTP router is still `app.catalog.routes.router` at `/api/v1/catalog`. The public Python functions are still imported from `app.catalog.service`. Both are facades. Each service function constructs one application type and calls it. Callers do not change.
 
@@ -14,12 +14,13 @@ The public HTTP router is still `app.catalog.routes.router` at `/api/v1/catalog`
 - `backend/app/catalog/tables/repository.py` and `schema/repository.py` — shared SQLAlchemy lookups and column replacement.
 - `backend/app/catalog/infrastructure/` — Iceberg, volumes, search indexing, embeddings, storage context, and Z-order. The old import paths (`app.catalog.iceberg_manager`, `app.catalog.search_indexer`, and the others) are shims.
 - `backend/app/catalog/connections/` — left in place.
+- `backend/app/catalog/registered_models/routes.py` — HTTP for registered models. `service.py` keeps the same function names and forwards to `registered_models/application/`. Shared lookups are in `repository.py`. Scoring stays in `serving.py`. Artifact download stays in `artifacts.py`. The logger for indexing is `app.catalog.registered_models`.
 - `backend/app/catalog/tool_routes.py`, `tool_service.py`, and `tools.py` — promoted tools, and the built-in `catalog` agent tool. These files stay at those import paths.
 - Catalog UI in `frontend/src/modules/data`.
 
 ## Owns
 
-Catalog, schema, table, column, volume, lineage, notebook, dashboard, query, tool, and connection rows. Search-index rows and embedding jobs. Iceberg metadata files written through the storage backend.
+Catalog, schema, table, column, volume, registered model, model version, model alias, lineage, notebook, dashboard, query, tool, and connection rows. Search-index rows and embedding jobs. Iceberg metadata files and model artifact bytes written through the storage backend.
 
 ## Calls
 
@@ -38,6 +39,7 @@ The same shape is used for volumes, notebooks, dashboards, queries, and Iceberg 
 - [Volumes](volumes.md)
 - [Notebooks, dashboards, and queries](assets.md)
 - [Search](search.md)
+- [Registered models](models.md)
 - [Tools](tools.md)
 
 ## Test cases
