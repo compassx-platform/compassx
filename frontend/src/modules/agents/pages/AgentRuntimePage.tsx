@@ -20,6 +20,7 @@ import {
   Globe,
   GitCompare,
   Terminal,
+  LayoutDashboard,
 } from 'lucide-react';
 import { useScopedNavigate } from '@/lib/appNavigation';
 import { useBreakpoint } from '@/design-system/hooks/useBreakpoint';
@@ -203,7 +204,7 @@ export default function AgentRuntimePage() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => sessionStorage.getItem('agent-runtime-sidebar') === 'collapsed');
   const { isMobile } = useBreakpoint();
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
-  const [railRequest, setRailRequest] = useState<{ kind: 'files' | 'terminal' | 'browser' | 'changes'; nonce: number } | null>(null);
+  const [railRequest, setRailRequest] = useState<{ kind: 'files' | 'terminal' | 'browser' | 'changes' | 'canvas'; nonce: number; canvasName?: string } | null>(null);
   const sidebarCompact = sidebarCollapsed && !isMobile;
   const [draftMessage, setDraftMessage] = useState('');
   const [draftSandboxId, setDraftSandboxId] = useState(() => sessionStorage.getItem('agent-runtime-sandbox') || 'new');
@@ -1541,6 +1542,7 @@ export default function AgentRuntimePage() {
                       {activeSession.title}
                     </div>
                   </div>
+                  <button type="button" aria-label="Canvas" title="Canvas" onClick={() => setRailRequest({ kind: 'canvas', nonce: Date.now() })} style={mobileToolButton}><LayoutDashboard size={16} /></button>
                   {isMobile && (
                     <div style={{ display: 'flex', alignItems: 'center', flexShrink: 0 }}>
                       <button type="button" aria-label="Files" title="Files" onClick={() => setRailRequest({ kind: 'files', nonce: Date.now() })} style={mobileToolButton}><File size={16} /></button>
@@ -1623,6 +1625,7 @@ export default function AgentRuntimePage() {
                     onSync={(messages) => {
                       setActiveSession((prev) => (prev ? { ...prev, messages } : prev));
                     }}
+                    onOpenCanvas={(canvasName) => setRailRequest({ kind: 'canvas', canvasName, nonce: Date.now() })}
                   />
                 )}
               </div>

@@ -3,6 +3,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { ArrowUp, ChevronDown, ChevronRight, Loader2 } from 'lucide-react';
 import { agentRuntimeApi, type AgentChatMessage } from '@/modules/agents/agentRuntimeApi';
+import { canvasNamesInText } from '@/modules/agents/canvas/canvasSourceGate';
 
 const TOOL_TITLES: Record<string, string> = {
   read_file: 'Read',
@@ -29,7 +30,19 @@ function parseToolCall(content: string) {
   return { name, detail, output };
 }
 
-function ChatMarkdown({ text, color }: { text: string; color: string }) {
+function canvasLinkText(text: string) {
+  const names = new Set(canvasNamesInText(text));
+  const linked = text.replace(/`([a-z0-9]+(?:-[a-z0-9]+)*)`/gi, (full, name: string) => {
+    if (!names.has(name)) return full;
+    return `[${name}](#canvas/${encodeURIComponent(name)})`;
+  });
+  return linked.replace(/\bcanvas\s+([a-z0-9]+(?:-[a-z0-9]+)*)\b/gi, (full, name: string) => {
+    if (!names.has(name) || linked.includes(`(#canvas/${encodeURIComponent(name)})`)) return full;
+    return `canvas [${name}](#canvas/${encodeURIComponent(name)})`;
+  });
+}
+
+function ChatMarkdown({ text, color, onOpenCanvas }: { text: string; color: string; onOpenCanvas?: (name: string) => void }) {
   return (
     <div className="agent-runtime-markdown" style={{ color, fontSize: '0.88rem', lineHeight: 1.55 }}>
       <ReactMarkdown
@@ -46,6 +59,18 @@ function ChatMarkdown({ text, color }: { text: string; color: string }) {
             <blockquote style={{ margin: '0 0 8px', paddingLeft: 10, borderLeft: '3px solid #d4d4d8', color: '#3f3f46' }}>{children}</blockquote>
           ),
           a: ({ href, children }) => {
+            if (href?.includes('#canvas/')) {
+              const name = decodeURIComponent(href.slice(href.indexOf('#canvas/') + '#canvas/'.length));
+              return (
+                <button
+                  type="button"
+                  onClick={() => onOpenCanvas?.(name)}
+                  style={{ border: 'none', background: 'transparent', padding: 0, color: '#1d4ed8', font: 'inherit', cursor: 'pointer', textDecoration: 'underline' }}
+                >
+                  {children}
+                </button>
+              );
+            }
             if (!href || href.startsWith('file:')) return <span>{children}</span>;
             return (
               <a href={href} target="_blank" rel="noopener noreferrer" style={{ color: '#1d4ed8' }}>
@@ -79,7 +104,7 @@ function ChatMarkdown({ text, color }: { text: string; color: string }) {
           },
         }}
       >
-        {text}
+        {canvasLinkText(text)}
       </ReactMarkdown>
     </div>
   );
@@ -154,6 +179,7 @@ export function AgentRuntimeChat({
   llmModels = [],
   llmModelsLoading = false,
   onLlmModelChange,
+  onOpenCanvas,
 }: {
   sessionId: string;
   agentLabel: string;
@@ -166,6 +192,7 @@ export function AgentRuntimeChat({
   llmModels?: { id: string; label?: string }[];
   llmModelsLoading?: boolean;
   onLlmModelChange?: (modelId: string) => void;
+  onOpenCanvas?: (name: string) => void;
 }) {
   const [draft, setDraft] = useState('');
   const [sending, setSending] = useState(false);
@@ -279,7 +306,7 @@ export function AgentRuntimeChat({
           if (kind === 'reply') {
             return (
               <div key={message.id} style={{ margin: '4px 0 14px', maxWidth: '100%', color: '#18181b', fontSize: '0.92rem', lineHeight: 1.6 }}>
-                <ChatMarkdown text={message.content} color="#18181b" />
+                <ChatMarkdown text={message.content} color="#18181b" onOpenCanvas={onOpenCanvas} />
               </div>
             );
           }
@@ -315,7 +342,7 @@ export function AgentRuntimeChat({
                     {message.content}
                   </div>
                 ) : (
-                  <ChatMarkdown text={message.content} color={palette.color} />
+                  <ChatMarkdown text={message.content} color={palette.color} onOpenCanvas={onOpenCanvas} />
                 )}
               </div>
             </div>

@@ -23,5 +23,5 @@
     }
   },
   "include": ["src"],
-  "exclude": ["src/pages/EntityExplorer.tsx"]
+  "exclude": ["src/pages/EntityExplorer.tsx", "src/**/*.test.ts"]
 }

@@ -34,9 +34,12 @@ class NovaSandboxController:
     """Start Nova in the bound sandbox and exchange turns via inbox + transcript."""
 
     def prepare(self, session: RuntimeSession, exec_fn: ExecFn, llm_model: str | None = None) -> None:
-        self._ensure_package(session.sandbox_id, exec_fn)
+        refreshed = self._ensure_package(session.sandbox_id, exec_fn)
         env = self._runtime_env(session, llm_model)
         self._write_env_file(session.sandbox_id, exec_fn, env)
+        if refreshed:
+            name = f"cx_{session.id.replace('-', '_')}"
+            exec_fn(session.sandbox_id, f"tmux kill-session -t {name} 2>/dev/null || true", timeout=10)
         self._ensure_nova_process(session, exec_fn)
         exec_fn(session.sandbox_id, f"mkdir -p /var/lib/compassx/nova/{session.id}/inbox", timeout=10)
 
@@ -133,14 +136,27 @@ class NovaSandboxController:
         if not result.success:
             logger.warning("Failed to write Nova env file: %s", (result.stderr or result.stdout or "")[:200])
 
-    def _ensure_package(self, sandbox_id: str, exec_fn: ExecFn) -> None:
+    def _package_version(self) -> str:
+        path = PACKAGE_ROOT / "VERSION"
+        version = path.read_text(encoding="utf-8").strip() if path.is_file() else ""
+        if not version:
+            raise RuntimeError(f"Nova package version is missing ({path}).")
+        return version
+
+    def _ensure_package(self, sandbox_id: str, exec_fn: ExecFn) -> bool:
+        """Install the host Nova package when the sandbox copy is missing or older."""
+        version = self._package_version()
         probe = exec_fn(
             sandbox_id,
-            "command -v nova >/dev/null 2>&1 || test -d /opt/compassx/sandbox_nova && echo ok",
+            "cat /opt/compassx/sandbox_nova/VERSION 2>/dev/null || true",
             timeout=10,
         )
-        if probe.success and "ok" in (probe.stdout or ""):
-            return
+        if (probe.stdout or "").strip() == version:
+            return False
+        self._install_package(sandbox_id, exec_fn)
+        return True
+
+    def _install_package(self, sandbox_id: str, exec_fn: ExecFn) -> None:
         if not PACKAGE_ROOT.is_dir():
             raise RuntimeError(f"Nova package is missing on the host ({PACKAGE_ROOT}).")
         buffer = io.BytesIO()

@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ChevronDown, ChevronRight, File, Folder, FolderOpen, GitCompare, Globe, LucideIcon, Maximize2, Minimize2, PenLine, Plus, Search, Terminal, X } from 'lucide-react';
+import { ChevronDown, ChevronRight, File, Folder, FolderOpen, GitCompare, Globe, LayoutDashboard, LucideIcon, Maximize2, Minimize2, PenLine, Plus, Search, Terminal, X } from 'lucide-react';
 import { computeApi } from '@/modules/compute/computeApi';
 import { SandboxTerminal } from '@/components/sandbox/SandboxTerminal';
 import {
@@ -11,9 +11,11 @@ import {
 } from '@/modules/agents/agentRuntimeApi';
 import { WorkspaceFileEditor } from '@/modules/agents/components/WorkspaceFileEditor';
 import { BrowserAnnotate } from '@/modules/agents/components/BrowserAnnotate';
+import { CanvasPanel } from '@/modules/agents/canvas/CanvasPanel';
+import { canvasPathForName, isCanvasFile } from '@/modules/agents/canvas/canvasSourceGate';
 
-type EditorKind = 'files' | 'file' | 'changes' | 'browser' | 'terminal';
-type MenuKind = 'files' | 'terminal' | 'browser' | 'changes';
+type EditorKind = 'files' | 'file' | 'changes' | 'browser' | 'terminal' | 'canvas';
+type MenuKind = 'files' | 'terminal' | 'browser' | 'changes' | 'canvas';
 type ChangeView = 'files' | 'unstaged' | 'uncommitted' | 'diff' | 'commits';
 
 const CHANGE_VIEWS: { id: ChangeView; label: string }[] = [
@@ -48,7 +50,7 @@ interface AgentRuntimeRailProps {
   onNote?: (message: AgentChatMessage) => void;
   showTerminal?: boolean;
   overlay?: boolean;
-  openRequest?: { kind: MenuKind; nonce: number } | null;
+  openRequest?: { kind: MenuKind; nonce: number; canvasName?: string } | null;
 }
 
 const EDITOR_ACTIONS: { kind: MenuKind; label: string; Icon: LucideIcon }[] = [
@@ -56,6 +58,7 @@ const EDITOR_ACTIONS: { kind: MenuKind; label: string; Icon: LucideIcon }[] = [
   { kind: 'terminal', label: 'Terminal', Icon: Terminal },
   { kind: 'browser', label: 'Browser', Icon: Globe },
   { kind: 'changes', label: 'Changes', Icon: GitCompare },
+  { kind: 'canvas', label: 'Canvas', Icon: LayoutDashboard },
 ];
 
 function filesExplorerTab(): EditorTab {
@@ -110,6 +113,11 @@ export function AgentRuntimeRail({
   const [openChange, setOpenChange] = useState<string | null>(null);
   const [diffText, setDiffText] = useState('');
   const [diffLoading, setDiffLoading] = useState(false);
+  const [canvasChoice, setCanvasChoice] = useState('');
+  const [pendingCanvasName, setPendingCanvasName] = useState('');
+  const knownCanvases = useRef<Set<string> | null>(null);
+  const onOpenRef = useRef(onOpen);
+  onOpenRef.current = onOpen;
 
   const load = useCallback(async () => {
     try {
@@ -314,13 +322,17 @@ export function AgentRuntimeRail({
     onOpen?.();
     setMenuOpen(false);
     setMenuQuery('');
-    if (kind === 'files' || kind === 'changes') {
+    if (kind === 'files' || kind === 'changes' || kind === 'canvas') {
       const existing = tabs.find((item) => item.kind === kind);
       if (existing) {
         setActiveId(existing.id);
         return;
       }
-      const created: EditorTab = kind === 'files' ? filesExplorerTab() : { id: 'changes', kind: 'changes', title: 'Changes' };
+      const created: EditorTab = kind === 'files'
+        ? filesExplorerTab()
+        : kind === 'changes'
+          ? { id: 'changes', kind: 'changes', title: 'Changes' }
+          : { id: 'canvas', kind: 'canvas', title: 'Canvas' };
       setTabs((current) => (current.some((item) => item.kind === kind) ? current : [...current, created]));
       setActiveId(created.id);
       return;
@@ -349,6 +361,7 @@ export function AgentRuntimeRail({
   useEffect(() => {
     if (!openRequest || openRequest.nonce === seenRailRequest.current) return;
     seenRailRequest.current = openRequest.nonce;
+    if (openRequest.canvasName) setPendingCanvasName(openRequest.canvasName);
     openTab(openRequest.kind);
   }, [openRequest]);
 
@@ -376,6 +389,35 @@ export function AgentRuntimeRail({
   const activeTab = tabs.find((item) => item.id === activeId) || null;
   const showFiles = tabs.some((item) => item.kind === 'files');
   const showChanges = tabs.some((item) => item.kind === 'changes');
+  const showCanvas = tabs.some((item) => item.kind === 'canvas');
+  const canvasPaths = useMemo(
+    () => entries.map((entry) => entry.path).filter((path) => isCanvasFile(path)).sort(),
+    [entries],
+  );
+  const activeCanvas = canvasPaths.includes(canvasChoice) ? canvasChoice : canvasPaths[0] || '';
+
+  useEffect(() => {
+    if (!pendingCanvasName) return;
+    const match = canvasPathForName(canvasPaths, pendingCanvasName);
+    if (!match) return;
+    setCanvasChoice(match);
+    setPendingCanvasName('');
+  }, [canvasPaths, pendingCanvasName]);
+
+  useEffect(() => {
+    if (loading) return;
+    if (knownCanvases.current === null) {
+      knownCanvases.current = new Set(canvasPaths);
+      return;
+    }
+    const fresh = canvasPaths.filter((path) => !knownCanvases.current?.has(path));
+    knownCanvases.current = new Set(canvasPaths);
+    if (!fresh.length) return;
+    setCanvasChoice(fresh[fresh.length - 1]);
+    onOpenRef.current?.();
+    setTabs((current) => (current.some((item) => item.kind === 'canvas') ? current : [...current, { id: 'canvas', kind: 'canvas', title: 'Canvas' }]));
+    setActiveId('canvas');
+  }, [canvasPaths, loading]);
   const collapsedIcon = (kind: MenuKind) => {
     const match = tabs.find((item) => item.kind === kind);
     return Boolean(match && match.id === activeId);
@@ -540,7 +582,7 @@ export function AgentRuntimeRail({
                 </label>
               </form>
               {menuActions.map((action) => {
-                const singletonOpen = (action.kind === 'files' || action.kind === 'changes') && tabs.some((item) => item.kind === action.kind);
+                const singletonOpen = (action.kind === 'files' || action.kind === 'changes' || action.kind === 'canvas') && tabs.some((item) => item.kind === action.kind);
                 return (
                   <button
                     key={action.kind}
@@ -577,6 +619,16 @@ export function AgentRuntimeRail({
       </div>
       <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', position: 'relative' }}>
       {!tabs.length && <EditorPicker onOpen={openTab} showTerminal={showTerminal} />}
+      {showCanvas && (
+      <section style={{ flex: 1, minHeight: 0, display: activeTab?.kind === 'canvas' ? 'flex' : 'none', flexDirection: 'column' }}>
+        <CanvasPanel
+          sessionId={sessionId}
+          paths={canvasPaths}
+          activePath={activeCanvas}
+          onSelect={setCanvasChoice}
+        />
+      </section>
+      )}
       {showFiles && (
       <section style={{ flex: 1, minHeight: 0, display: activeTab?.kind === 'files' ? 'flex' : 'none', flexDirection: 'column' }}>
         <div style={{ flex: 1, overflow: 'auto', padding: '6px 8px 10px' }}>
@@ -826,6 +878,7 @@ function EditorTabButton({
 
 function EditorPicker({ onOpen, showTerminal = true }: { onOpen: (kind: MenuKind) => void; showTerminal?: boolean }) {
   const tiles = [
+    EDITOR_ACTIONS.find((action) => action.kind === 'canvas')!,
     EDITOR_ACTIONS.find((action) => action.kind === 'changes')!,
     EDITOR_ACTIONS.find((action) => action.kind === 'browser')!,
     showTerminal ? EDITOR_ACTIONS.find((action) => action.kind === 'terminal') : null,

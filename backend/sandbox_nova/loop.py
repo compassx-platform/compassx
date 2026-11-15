@@ -31,6 +31,7 @@ class NovaAgentLoop:
             message = _assistant_message(payload)
             content = str(message.get("content") or "").strip()
             tool_calls = message.get("tool_calls") or []
+            thought, reply = "", ""
             if content:
                 thought, reply = _split_thought(content)
                 if thought:
@@ -41,8 +42,8 @@ class NovaAgentLoop:
                     print(reply + "\n", flush=True)
             self.messages.append(message)
             if not tool_calls:
-                if not content:
-                    self.transcript.append("reply", "Nova finished this turn without a text reply.")
+                if not reply:
+                    self.transcript.append("reply", thought or "Nova finished this turn without a text reply.")
                 return
             for call in tool_calls:
                 function = call.get("function") or {}
@@ -81,10 +82,17 @@ def _assistant_message(payload: dict[str, Any]) -> dict[str, Any]:
 
 def _split_thought(content: str) -> tuple[str, str]:
     text = content.strip()
-    if text.lower().startswith("thought:"):
-        rest = text[8:].lstrip()
-        parts = rest.split("\n\n", 1)
-        return parts[0].strip(), (parts[1].strip() if len(parts) > 1 else "")
-    return "", text
+    if not text.lower().startswith("thought:"):
+        return "", text
+    rest = text[8:].lstrip()
+    if not rest:
+        return "", ""
+    if "\n\n" in rest:
+        thought, reply = rest.split("\n\n", 1)
+        return thought.strip(), reply.strip()
+    head, _, tail = rest.partition("\n")
+    if tail.strip():
+        return head.strip(), tail.strip()
+    return rest.strip(), ""
 
 

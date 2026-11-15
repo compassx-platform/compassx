@@ -125,6 +125,10 @@ export default defineConfig({
       transformMixedEsModules: true,
     },
     rollupOptions: {
+      input: {
+        main: path.resolve(__dirname, "index.html"),
+        canvas: path.resolve(__dirname, "canvas.html"),
+      },
       output: {
         manualChunks: {
           "ui-vendor": [],
@@ -136,6 +140,8 @@ export default defineConfig({
     chunkSizeWarningLimit: 3000,
   },
   server: {
+    // The sandboxed canvas frame has an opaque origin and loads this dev server.
+    cors: true,
     proxy: {
       // Proxy Jupyter kernel WebSocket and REST traffic through the backend proxy.
       // Must come before the generic /api rule so it takes priority.

@@ -74,3 +74,35 @@ class TestSandboxNova(unittest.TestCase):
             replies = [item for item in loop.messages if item.get("role") == "assistant"]
             self.assertTrue(replies[0].get("tool_calls"))
             self.assertNotIn("tool_calls", replies[-1])
+
+    def test_reply_on_the_next_line_is_not_left_inside_the_thought(self):
+        with tempfile.TemporaryDirectory() as root:
+            settings = NovaSettings(
+                session_id="ars_test",
+                workspace_root=root,
+                state_dir=root,
+                model="gpt-test",
+                gateway_url="http://gateway",
+                gateway_key="secret",
+                platform_url="http://platform",
+                workspace_id="ws",
+                max_turns=2,
+            )
+            transcript = TranscriptStore(os.path.join(root, "transcript.jsonl"))
+            llm = MagicMock()
+            llm.complete.return_value = {
+                "choices": [{
+                    "message": {
+                        "content": "Thought: The user wants another canvas.\nSure — what should the new canvas contain?",
+                    }
+                }]
+            }
+            from sandbox_nova.tools.registry import build_default_registry
+
+            loop = NovaAgentLoop(settings, llm, build_default_registry(settings), transcript)
+            loop.handle_turn("another canvas")
+            rows = transcript.read_all()
+            self.assertEqual(rows[1]["kind"], "thinking")
+            self.assertEqual(rows[1]["content"], "The user wants another canvas.")
+            self.assertEqual(rows[2]["kind"], "reply")
+            self.assertEqual(rows[2]["content"], "Sure — what should the new canvas contain?")
