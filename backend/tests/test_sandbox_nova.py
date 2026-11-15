@@ -71,3 +71,6 @@ class TestSandboxNova(unittest.TestCase):
             self.assertIn("tool", kinds)
             self.assertIn("reply", kinds)
             self.assertEqual(llm.complete.call_count, 2)
+            replies = [item for item in loop.messages if item.get("role") == "assistant"]
+            self.assertTrue(replies[0].get("tool_calls"))
+            self.assertNotIn("tool_calls", replies[-1])

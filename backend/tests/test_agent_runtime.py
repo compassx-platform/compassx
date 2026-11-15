@@ -1,4 +1,6 @@
 """Tests for the Agent Runtime Module."""
+import os
+import tempfile
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -9,8 +11,21 @@ from app.sandbox.models import SandboxInstance, SandboxStatus
 
 class TestAgentRuntime(unittest.TestCase):
     def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self._patches = [
+            patch("app.agent_runtime.service.SESSIONS_STORE_PATH", os.path.join(self.tmp.name, "sessions.json")),
+            patch("app.agent_runtime.service.PROJECTS_STORE_PATH", os.path.join(self.tmp.name, "projects.json")),
+            patch("app.database.SystemSessionLocal", None),
+        ]
+        for item in self._patches:
+            item.start()
         self.service = AgentRuntimeService()
         self.service._sessions.clear()
+
+    def tearDown(self):
+        for item in self._patches:
+            item.stop()
+        self.tmp.cleanup()
 
     @patch("app.agent_runtime.service.sandbox_service")
     def test_create_session_with_new_sandbox(self, mock_sb):

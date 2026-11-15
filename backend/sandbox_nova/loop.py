@@ -69,11 +69,14 @@ def _assistant_message(payload: dict[str, Any]) -> dict[str, Any]:
     if not choices:
         raise RuntimeError("AI Gateway returned no choices.")
     message = choices[0].get("message") or {}
-    return {
+    result: dict[str, Any] = {
         "role": "assistant",
         "content": message.get("content"),
-        "tool_calls": message.get("tool_calls") or [],
     }
+    tool_calls = message.get("tool_calls") or []
+    if tool_calls:
+        result["tool_calls"] = tool_calls
+    return result
 
 
 def _split_thought(content: str) -> tuple[str, str]:

@@ -16,6 +16,7 @@ from app.agent_runtime.models import (
     AgentRuntimeProjectDB,
     AgentRuntimeSession,
     AgentRuntimeSessionDB,
+    AgentRuntimeTaskDB,
     ChangeEntry,
     ChangesResponse,
     CommitEntry,
@@ -75,9 +76,13 @@ class AgentRuntimeService:
         self._lock = threading.RLock()
         self._sessions: Dict[str, AgentRuntimeSession] = {}
         self._projects: Dict[str, AgentRuntimeProject] = {}
+        self._tasks: Dict[str, object] = {}
+        self._starting_task_ids: set[str] = set()
         self._ensure_table_exists()
         self._sync_and_load_sessions()
         self._load_projects()
+        from app.agent_runtime.tasks import load_tasks
+        load_tasks(self)
 
     def _ensure_table_exists(self):
         try:
@@ -86,7 +91,11 @@ class AgentRuntimeService:
             if system_engine is not None:
                 SystemBase.metadata.create_all(
                     bind=system_engine,
-                    tables=[AgentRuntimeProjectDB.__table__, AgentRuntimeSessionDB.__table__],
+                    tables=[
+                        AgentRuntimeProjectDB.__table__,
+                        AgentRuntimeSessionDB.__table__,
+                        AgentRuntimeTaskDB.__table__,
+                    ],
                     checkfirst=True,
                 )
                 if system_engine.dialect.name == "postgresql":
@@ -137,6 +146,8 @@ class AgentRuntimeService:
                 with SystemSessionLocal() as db:
                     for sid, s in list(self._sessions.items()):
                         try:
+                            if not (s.workspace_id or "").strip():
+                                continue
                             existing = db.query(AgentRuntimeSessionDB).filter(AgentRuntimeSessionDB.id == sid).first()
                             if not existing:
                                 db_row = AgentRuntimeSessionDB(
@@ -623,6 +634,7 @@ print(json.dumps({"path": path, "bytes": len(raw)}))
                 with SystemSessionLocal() as db:
                     row = db.query(AgentRuntimeSessionDB).filter(AgentRuntimeSessionDB.id == session.id).first()
                     if row:
+                        row.status = session.status
                         row.llm_model = session.llm_model
                         row.nova_chat_session_id = session.nova_chat_session_id
                         row.messages = [m.model_dump() for m in session.messages]

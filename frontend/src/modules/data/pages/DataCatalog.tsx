@@ -2157,7 +2157,7 @@ export default function DataCatalog() {
     }
   };
 
-  const renderDetailHeader = (title: string, kind: 'catalog' | 'schema' | 'table' | 'volume' | 'notebook' | 'dashboard' | 'tool' | 'query') => {
+  const renderDetailHeader = (title: string, kind: 'catalog' | 'schema' | 'table' | 'volume' | 'notebook' | 'dashboard' | 'tool' | 'query' | 'model') => {
     const fqn = getFqn(selection);
     const isFav = !!favorites[fqn];
 

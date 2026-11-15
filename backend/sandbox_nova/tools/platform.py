@@ -11,6 +11,14 @@ from sandbox_nova.config import NovaSettings
 from sandbox_nova.tools.base import NovaTool
 
 PLATFORM_TOOL_SPECS = (
+    ("file_task", "File a draft task in this session for work the person wants done later. Filing does not start the task.", {
+        "type": "object",
+        "properties": {
+            "title": {"type": "string"},
+            "brief": {"type": "string"},
+        },
+        "required": ["title", "brief"],
+    }),
     ("sql_warehouse", "Run SQL against the CompassX SQL warehouse.", {
         "type": "object",
         "properties": {

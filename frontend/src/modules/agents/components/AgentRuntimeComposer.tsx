@@ -48,7 +48,7 @@ const AGENTS: { id: RuntimeAgentType; label: string }[] = [
   { id: 'cursor', label: 'Cursor' },
 ];
 
-type ChipId = 'project' | 'sandbox' | 'branch' | 'agent' | 'llm' | 'add';
+type ChipId = 'project' | 'sandbox' | 'branch' | 'agent' | 'llm';
 
 export interface RuntimeLlmOption {
   id: string;
@@ -268,7 +268,7 @@ export function AgentRuntimeComposer({
             resize: 'none',
             outline: 'none',
             padding: '12px 14px 4px',
-            fontSize: 15,
+            fontSize: 14,
             lineHeight: 1.45,
             color: '#18181b',
             background: 'transparent',
@@ -276,31 +276,20 @@ export function AgentRuntimeComposer({
             boxSizing: 'border-box',
           }}
         />
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 8px 8px' }}>
-          <span style={{ position: 'relative' }}>
-            <button
-              type="button"
-              aria-label="Add"
-              aria-expanded={openChip === 'add'}
-              onClick={() => setOpenChip(openChip === 'add' ? null : 'add')}
-              style={circleButtonStyle(openChip === 'add')}
-            >
-              <Plus size={16} strokeWidth={1.75} />
-            </button>
-            {openChip === 'add' && (
-              <Menu upward>
-                <form onSubmit={createProject} style={{ padding: 6 }}>
-                  <input
-                    value={projectName}
-                    aria-label="New project name"
-                    placeholder="New project"
-                    onChange={(event) => setProjectName(event.target.value)}
-                    style={menuInputStyle}
-                  />
-                </form>
-              </Menu>
-            )}
-          </span>
+        <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 8, padding: '4px 8px 8px' }}>
+          <button
+            type="button"
+            aria-label="Start session"
+            title="Start session"
+            disabled={submitting}
+            onClick={() => {
+              if (value.trim()) submit();
+              else textareaRef.current?.focus();
+            }}
+            style={circleButtonStyle(false)}
+          >
+            {submitting ? <Loader2 size={15} className="spin" /> : <Plus size={16} strokeWidth={1.75} />}
+          </button>
           <span style={{ flex: 1 }} />
           <span style={{ position: 'relative' }}>
             <button

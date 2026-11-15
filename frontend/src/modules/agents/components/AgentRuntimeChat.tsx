@@ -174,6 +174,8 @@ export function AgentRuntimeChat({
   const showLlm = agentType === 'nova';
   const selectedLlm = llmModels.find((item) => item.id === llmModel);
   const scrollerRef = useRef<HTMLDivElement>(null);
+  const composerRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
   const syncSeq = useRef(0);
   const visibleMessages = messages
     .filter((message) => {
@@ -218,6 +220,24 @@ export function AgentRuntimeChat({
     if (scroller) scroller.scrollTop = scroller.scrollHeight;
   }, [working, visibleMessages.map((message) => `${message.id}:${message.content}`).join('\n')]);
 
+  useEffect(() => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+    textarea.style.height = 'auto';
+    textarea.style.height = `${Math.min(textarea.scrollHeight, 180)}px`;
+  }, [draft]);
+
+  useEffect(() => {
+    if (!llmOpen) return undefined;
+    const close = (event: MouseEvent) => {
+      const target = event.target;
+      if (target instanceof Node && composerRef.current?.contains(target)) return;
+      setLlmOpen(false);
+    };
+    document.addEventListener('mousedown', close);
+    return () => document.removeEventListener('mousedown', close);
+  }, [llmOpen]);
+
   const send = async () => {
     const content = draft.trim();
     if (!content || sending || !sandboxReady) return;
@@ -242,7 +262,7 @@ export function AgentRuntimeChat({
 
   return (
     <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', background: '#ffffff' }}>
-      <div ref={scrollerRef} style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: '16px 16px 8px' }}>
+      <div ref={scrollerRef} style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: '12px 12px 8px' }}>
         {visibleMessages.map((message) => {
           const kind = message.role === 'user'
             ? 'user'
@@ -279,6 +299,7 @@ export function AgentRuntimeChat({
                   padding: '8px 12px',
                   fontSize: '0.88rem',
                   lineHeight: 1.5,
+                  overflowWrap: 'anywhere',
                 }}
               >
                 {palette.label && (
@@ -321,85 +342,21 @@ export function AgentRuntimeChat({
           </div>
         )}
       </div>
-      <div style={{ padding: '8px 12px 12px', borderTop: '1px solid #e2e8f0' }}>
+      <div style={{ padding: '8px 10px calc(10px + env(safe-area-inset-bottom))' }}>
         {error && <div style={{ color: '#b91c1c', fontSize: '0.75rem', marginBottom: 6 }}>{error}</div>}
-        <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end', border: '1px solid #e2e8f0', borderRadius: 12, padding: 8 }}>
-          {showLlm && (
-            <div style={{ position: 'relative', alignSelf: 'center' }}>
-              <button
-                type="button"
-                aria-label="Select model"
-                onClick={() => setLlmOpen((open) => !open)}
-                style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: 4,
-                  maxWidth: 140,
-                  border: 'none',
-                  background: 'transparent',
-                  color: '#3f3f46',
-                  fontSize: 12,
-                  cursor: 'pointer',
-                  padding: '4px 2px',
-                }}
-              >
-                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {selectedLlm?.label || selectedLlm?.id || llmModel || 'Model'}
-                </span>
-                <ChevronDown size={12} />
-              </button>
-              {llmOpen && (
-                <div
-                  role="menu"
-                  style={{
-                    position: 'absolute',
-                    bottom: '100%',
-                    left: 0,
-                    zIndex: 20,
-                    minWidth: 200,
-                    maxHeight: 220,
-                    overflow: 'auto',
-                    marginBottom: 6,
-                    background: '#ffffff',
-                    border: '1px solid #e4e4e7',
-                    borderRadius: 10,
-                    boxShadow: '0 12px 32px rgba(15, 23, 42, 0.12)',
-                    padding: 4,
-                  }}
-                >
-                  {llmModelsLoading && <div style={{ padding: '7px 8px', color: '#71717a', fontSize: 13 }}>Loading models…</div>}
-                  {!llmModelsLoading && llmModels.length === 0 && (
-                    <div style={{ padding: '7px 8px', color: '#71717a', fontSize: 13 }}>No AI Gateway models.</div>
-                  )}
-                  {llmModels.map((item) => (
-                    <button
-                      key={item.id}
-                      type="button"
-                      onClick={() => {
-                        onLlmModelChange?.(item.id);
-                        setLlmOpen(false);
-                      }}
-                      style={{
-                        display: 'block',
-                        width: '100%',
-                        textAlign: 'left',
-                        border: 'none',
-                        background: item.id === llmModel ? '#f4f4f5' : 'transparent',
-                        color: '#18181b',
-                        borderRadius: 6,
-                        padding: '7px 8px',
-                        fontSize: 13,
-                        cursor: 'pointer',
-                      }}
-                    >
-                      {item.label || item.id}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
+        <div
+          ref={composerRef}
+          className="agent-runtime-chat-composer"
+          style={{
+            background: '#ffffff',
+            border: '1px solid #e4e4e7',
+            boxShadow: '0 1px 2px rgba(15, 23, 42, 0.04)',
+            borderRadius: 12,
+          }}
+        >
+          <style>{`.agent-runtime-chat-composer textarea::placeholder { color: #a1a1aa; }`}</style>
           <textarea
+            ref={textareaRef}
             value={draft}
             aria-label={`Message ${agentLabel}`}
             placeholder={`Message ${agentLabel}`}
@@ -413,37 +370,122 @@ export function AgentRuntimeChat({
               }
             }}
             style={{
-              flex: 1,
+              display: 'block',
+              width: '100%',
+              minHeight: 52,
+              boxSizing: 'border-box',
               resize: 'none',
               border: 'none',
               outline: 'none',
+              padding: '12px 14px 4px',
               font: 'inherit',
-              fontSize: '0.9rem',
+              fontSize: 16,
               lineHeight: 1.45,
-              color: '#0f172a',
+              color: '#18181b',
               background: 'transparent',
             }}
           />
-          <button
-            type="button"
-            aria-label="Send message"
-            disabled={sending || !sandboxReady || !draft.trim()}
-            onClick={send}
-            style={{
-              width: 32,
-              height: 32,
-              border: 'none',
-              borderRadius: 999,
-              background: sending || !draft.trim() ? '#e2e8f0' : '#18181b',
-              color: sending || !draft.trim() ? '#94a3b8' : '#ffffff',
-              display: 'inline-flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              cursor: sending || !draft.trim() ? 'default' : 'pointer',
-            }}
-          >
-            {sending ? <Loader2 size={15} className="spin" /> : <ArrowUp size={15} />}
-          </button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 8px 8px' }}>
+            {showLlm && (
+              <div style={{ position: 'relative' }}>
+                <button
+                  type="button"
+                  aria-label="Select model"
+                  aria-expanded={llmOpen}
+                  onClick={() => setLlmOpen((open) => !open)}
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 4,
+                    maxWidth: 220,
+                    border: 'none',
+                    background: llmOpen ? '#f4f4f5' : 'transparent',
+                    color: '#3f3f46',
+                    borderRadius: 6,
+                    fontSize: 13,
+                    cursor: 'pointer',
+                    padding: '4px 6px',
+                  }}
+                >
+                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {selectedLlm?.label || selectedLlm?.id || llmModel || 'Model'}
+                  </span>
+                  <ChevronDown size={13} />
+                </button>
+                {llmOpen && (
+                  <div
+                    role="menu"
+                    style={{
+                      position: 'absolute',
+                      bottom: '100%',
+                      left: 0,
+                      zIndex: 20,
+                      minWidth: 200,
+                      maxHeight: 220,
+                      overflow: 'auto',
+                      marginBottom: 6,
+                      background: '#ffffff',
+                      border: '1px solid #e4e4e7',
+                      borderRadius: 10,
+                      boxShadow: '0 12px 32px rgba(15, 23, 42, 0.12)',
+                      padding: 4,
+                    }}
+                  >
+                    {llmModelsLoading && <div style={{ padding: '7px 8px', color: '#71717a', fontSize: 13 }}>Loading models…</div>}
+                    {!llmModelsLoading && llmModels.length === 0 && (
+                      <div style={{ padding: '7px 8px', color: '#71717a', fontSize: 13 }}>No AI Gateway models.</div>
+                    )}
+                    {llmModels.map((item) => (
+                      <button
+                        key={item.id}
+                        type="button"
+                        onClick={() => {
+                          onLlmModelChange?.(item.id);
+                          setLlmOpen(false);
+                        }}
+                        style={{
+                          display: 'block',
+                          width: '100%',
+                          textAlign: 'left',
+                          border: 'none',
+                          background: item.id === llmModel ? '#f4f4f5' : 'transparent',
+                          color: '#18181b',
+                          borderRadius: 6,
+                          padding: '7px 8px',
+                          fontSize: 13,
+                          cursor: 'pointer',
+                        }}
+                      >
+                        {item.label || item.id}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+            <span style={{ flex: 1 }} />
+            <button
+              type="button"
+              aria-label="Send message"
+              disabled={sending || !sandboxReady || !draft.trim()}
+              onClick={send}
+              style={{
+                width: 28,
+                height: 28,
+                border: 'none',
+                borderRadius: 999,
+                background: sending || !sandboxReady || !draft.trim() ? '#f4f4f5' : '#18181b',
+                color: sending || !sandboxReady || !draft.trim() ? '#a1a1aa' : '#ffffff',
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                cursor: sending || !sandboxReady || !draft.trim() ? 'default' : 'pointer',
+                flexShrink: 0,
+              }}
+            >
+              {sending ? <Loader2 size={15} className="spin" /> : <ArrowUp size={15} />}
+            </button>
+          </div>
         </div>
       </div>
     </div>

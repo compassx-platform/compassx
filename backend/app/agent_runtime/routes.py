@@ -11,7 +11,10 @@ from app.agent_runtime.models import (
     ChangesResponse,
     CreateAgentSessionRequest,
     GitInfoResponse,
+    AgentRuntimeTask,
+    CreateAgentTaskRequest,
     CreateProjectRequest,
+    TaskNoteRequest,
     DiffResponse,
     AgentCatalogItem,
     AgentOutputResponse,
@@ -28,6 +31,7 @@ from app.agent_runtime.models import (
 )
 
 from app.agent_runtime.service import agent_runtime_service
+from app.agent_runtime import tasks as agent_tasks
 
 import app.agent_runtime.http.sessions.prelude as _prelude
 for _name, _value in vars(_prelude).items():
@@ -67,6 +71,99 @@ def create_project(request: Request, body: CreateProjectRequest):
     """Create a project that sessions can be added to."""
     from app.agent_runtime.http.projects.application.create_project import create_project as create_project_action
     return create_project_action(request, body)
+
+
+def _task_actor(request: Request, claimed: str) -> str:
+    """A signed-in person cannot take the agent actor by writing it in the body."""
+    ctx = getattr(request.state, "workspace", None)
+    if ctx is not None:
+        return "person"
+    return claimed or "person"
+
+
+@router.get("/tasks", response_model=List[AgentRuntimeTask])
+def list_tasks(request: Request, workspace_id: Optional[str] = Query(default=None)):
+    """List agent runtime tasks for the workspace."""
+    ctx = getattr(request.state, "workspace", None)
+    ws_id = workspace_id or (str(ctx.workspace_id) if ctx else None)
+    return agent_tasks.list_tasks(agent_runtime_service, workspace_id=ws_id)
+
+
+@router.post("/tasks", response_model=AgentRuntimeTask, status_code=201)
+def create_task(request: Request, body: CreateAgentTaskRequest):
+    """File a task in draft. This does not start a session."""
+    ctx = getattr(request.state, "workspace", None)
+    ws_id = str(ctx.workspace_id) if ctx else None
+    body.actor = _task_actor(request, body.actor)
+    try:
+        return agent_tasks.create_task(agent_runtime_service, body, workspace_id=ws_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to create task: {str(exc)}")
+
+
+@router.get("/tasks/{task_id}", response_model=AgentRuntimeTask)
+def get_task(task_id: str):
+    """Read one agent runtime task, including its stage history."""
+    task = agent_tasks.get_task(agent_runtime_service, task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found.")
+    return task
+
+
+def _task_action(task_id: str, fn):
+    try:
+        return fn()
+    except ValueError as exc:
+        missing = "not found" in str(exc).lower()
+        raise HTTPException(status_code=404 if missing else 400, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to update task: {str(exc)}")
+
+
+@router.post("/tasks/{task_id}/waiting", response_model=AgentRuntimeTask)
+def park_task(request: Request, task_id: str, body: TaskNoteRequest):
+    """Park a task that is not ready, or that the agent cannot continue."""
+    return _task_action(
+        task_id,
+        lambda: agent_tasks.mark_waiting(agent_runtime_service, task_id, body.note, body.actor or "person"),
+    )
+
+
+@router.post("/tasks/{task_id}/ready", response_model=AgentRuntimeTask)
+def ready_task(request: Request, task_id: str):
+    """A person marks the task ready. Agent Runtime starts a session."""
+    actor = _task_actor(request, "person")
+    return _task_action(task_id, lambda: agent_tasks.mark_ready(agent_runtime_service, task_id, actor))
+
+
+@router.post("/tasks/{task_id}/submit", response_model=AgentRuntimeTask)
+def submit_task(request: Request, task_id: str, body: TaskNoteRequest):
+    """The agent submits the outcome for a person to review."""
+    actor = body.actor if getattr(request.state, "workspace", None) is None else "agent"
+    return _task_action(task_id, lambda: agent_tasks.submit_task(agent_runtime_service, task_id, body.note, actor))
+
+
+@router.post("/tasks/{task_id}/accept", response_model=AgentRuntimeTask)
+def accept_task(request: Request, task_id: str):
+    """A person accepts the outcome. The task is done."""
+    actor = _task_actor(request, "person")
+    return _task_action(task_id, lambda: agent_tasks.accept_task(agent_runtime_service, task_id, actor))
+
+
+@router.post("/tasks/{task_id}/changes", response_model=AgentRuntimeTask)
+def request_task_changes(request: Request, task_id: str, body: TaskNoteRequest):
+    """A person sends the task back. The session continues with the comment."""
+    actor = _task_actor(request, "person")
+    return _task_action(task_id, lambda: agent_tasks.request_changes(agent_runtime_service, task_id, body.note, actor))
+
+
+@router.post("/tasks/{task_id}/cancel", response_model=AgentRuntimeTask)
+def cancel_task(request: Request, task_id: str, body: TaskNoteRequest):
+    """A person cancels the task. An in-progress session is stopped."""
+    actor = _task_actor(request, "person")
+    return _task_action(task_id, lambda: agent_tasks.cancel_task(agent_runtime_service, task_id, actor, body.note))
 
 
 @router.delete("/projects/{project_id}")

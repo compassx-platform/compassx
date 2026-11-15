@@ -16,13 +16,19 @@ import {
   Plus,
   Folder,
   ChevronRight,
+  File,
+  Globe,
+  GitCompare,
+  Terminal,
 } from 'lucide-react';
 import { useScopedNavigate } from '@/lib/appNavigation';
+import { useBreakpoint } from '@/design-system/hooks/useBreakpoint';
 import { useToast } from '@/lib/toast';
-import { agentRuntimeApi, type AgentCatalogItem, type AgentRuntimeProject, type AgentRuntimeSession } from '@/modules/agents/agentRuntimeApi';
+import { agentRuntimeApi, type AgentCatalogItem, type AgentRuntimeProject, type AgentRuntimeSession, type AgentRuntimeTask } from '@/modules/agents/agentRuntimeApi';
 import { AgentRuntimeComposer, type RuntimeAgentType } from '@/modules/agents/components/AgentRuntimeComposer';
 import { AgentRuntimeChat } from '@/modules/agents/components/AgentRuntimeChat';
 import { AgentRuntimeRail } from '@/modules/agents/components/AgentRuntimeRail';
+import { AgentRuntimeTaskCreate, AgentRuntimeTaskDetail, AgentRuntimeTaskList, AgentRuntimeTaskStrip } from '@/modules/agents/components/AgentRuntimeTasks';
 import { SandboxTerminal } from '@/components/sandbox/SandboxTerminal';
 import { computeApi } from '@/modules/compute/computeApi';
 import { fetchAIGatewayModels } from '@/modules/ai_gateway/api';
@@ -100,6 +106,20 @@ const sidebarIconButton = {
   padding: 0,
 };
 
+const mobileToolButton = {
+  width: 32,
+  height: 32,
+  border: 'none',
+  borderRadius: 8,
+  background: 'transparent',
+  color: '#3f3f46',
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  cursor: 'pointer',
+  padding: 0,
+};
+
 const sidebarRow = {
   display: 'flex',
   alignItems: 'center',
@@ -114,10 +134,20 @@ const sidebarRow = {
 };
 
 const sidebarSectionLabel = {
-  padding: '10px 8px 4px',
+  padding: '10px 4px 4px 2px',
   fontSize: '0.75rem',
   fontWeight: 500,
   color: '#8a8a93',
+};
+
+const sectionTitleButton = {
+  ...sidebarSectionLabel,
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: 2,
+  border: 'none',
+  background: 'transparent',
+  cursor: 'pointer',
 };
 
 function relativeTime(value) {
@@ -145,8 +175,19 @@ export default function AgentRuntimePage() {
 
   const [sessions, setSessions] = useState<AgentRuntimeSession[]>([]);
   const [projects, setProjects] = useState<AgentRuntimeProject[]>([]);
+  const [tasks, setTasks] = useState<AgentRuntimeTask[]>([]);
+  const [selectedTask, setSelectedTask] = useState<AgentRuntimeTask | null>(null);
+  const [creatingTask, setCreatingTask] = useState(false);
   const [activeProjectId, setActiveProjectId] = useState<string | null>(() => sessionStorage.getItem('agent-runtime-project'));
   const [expandedProjectIds, setExpandedProjectIds] = useState<string[]>([]);
+  const [collapsedSections, setCollapsedSections] = useState(() => {
+    try {
+      const saved = JSON.parse(sessionStorage.getItem('agent-runtime-section-state') || '{}');
+      return { tasks: true, ...(saved && typeof saved === 'object' ? saved : {}) };
+    } catch {
+      return { tasks: true };
+    }
+  });
   const [creatingProject, setCreatingProject] = useState(false);
   const [projectDraft, setProjectDraft] = useState('');
   const [savingProject, setSavingProject] = useState(false);
@@ -157,6 +198,10 @@ export default function AgentRuntimePage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [searchOpen, setSearchOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => sessionStorage.getItem('agent-runtime-sidebar') === 'collapsed');
+  const { isMobile } = useBreakpoint();
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [railRequest, setRailRequest] = useState<{ kind: 'files' | 'terminal' | 'browser' | 'changes'; nonce: number } | null>(null);
+  const sidebarCompact = sidebarCollapsed && !isMobile;
   const [draftMessage, setDraftMessage] = useState('');
   const [draftSandboxId, setDraftSandboxId] = useState(() => sessionStorage.getItem('agent-runtime-sandbox') || 'new');
   const [draftAgent, setDraftAgent] = useState<string>(() => sessionStorage.getItem('agent-runtime-agent') || 'nova');
@@ -236,6 +281,7 @@ export default function AgentRuntimePage() {
   useEffect(() => {
     fetchSessions();
     agentRuntimeApi.listProjects().then((data) => setProjects(data || [])).catch(() => toast.error('Failed to load projects'));
+    agentRuntimeApi.listTasks().then((data) => setTasks(data || [])).catch(() => toast.error('Failed to load tasks'));
     agentRuntimeApi.listAgents().then((data) => {
       if (data?.length) setAgentCatalog(data);
     }).catch(() => undefined);
@@ -341,6 +387,9 @@ export default function AgentRuntimePage() {
 
   // Handle Session Select
   const handleSelectSession = (s: AgentRuntimeSession) => {
+    setMobileNavOpen(false);
+    setCreatingTask(false);
+    setSelectedTask(null);
     setActiveSessionId(s.id);
     setActiveSession(s);
     if (s.project_id) {
@@ -430,13 +479,64 @@ export default function AgentRuntimePage() {
       .finally(() => setStarting(false));
   }, [activeSession, isSandboxReady, toast]);
 
-  const beginNewSession = (projectId?: string) => {
+  const rememberTask = (task: AgentRuntimeTask) => {
+    setTasks((current) => [task, ...current.filter((item) => item.id !== task.id)]);
+    setSelectedTask(task);
+  };
+
+  const openTaskSession = (sessionId: string) => {
+    const match = sessions.find((session) => session.id === sessionId);
+    if (match) {
+      handleSelectSession(match);
+      return;
+    }
+    agentRuntimeApi.getSession(sessionId).then((session) => {
+      setSessions((current) => [session, ...current.filter((item) => item.id !== session.id)]);
+      handleSelectSession(session);
+    }).catch((err) => {
+      toast.error(err?.response?.data?.detail || 'Failed to open the task session');
+    });
+  };
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      agentRuntimeApi.listTasks().then((data) => setTasks(data || [])).catch(() => undefined);
+    }, 4000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  const handleTaskChanged = (task: AgentRuntimeTask) => {
+    rememberTask(task);
+    if (task.stage === 'in_progress' && task.session_id) {
+      openTaskSession(task.session_id);
+    }
+  };
+
+  const openTask = (task: AgentRuntimeTask) => {
+    setMobileNavOpen(false);
+    setCreatingTask(false);
+    setSelectedTask(task);
+    if ((task.stage === 'in_progress' || task.stage === 'in_review') && task.session_id) {
+      openTaskSession(task.session_id);
+      return;
+    }
+    setActiveSessionId(null);
+    setActiveSession(null);
+    navigate('/agent-runtime');
+  };
+
+  const beginNewSession = (projectId?: string | null) => {
     if (projectId) {
       setActiveProjectId(projectId);
       sessionStorage.setItem('agent-runtime-project', projectId);
       setExpandedProjectIds((current) => (current.includes(projectId) ? current : [...current, projectId]));
+    } else if (projectId === null) {
+      setActiveProjectId(null);
     }
     setDraftMessage('');
+    setSelectedTask(null);
+    setCreatingTask(false);
+    setMobileNavOpen(false);
     navigate('/agent-runtime');
   };
 
@@ -571,17 +671,28 @@ export default function AgentRuntimePage() {
 
   const projectIds = useMemo(() => new Set(projects.map((project) => project.id)), [projects]);
   const looseSessions = filteredSessions.filter((session) => !session.project_id || !projectIds.has(session.project_id));
+  const projectsOpen = !collapsedSections.projects;
+  const looseOpen = !collapsedSections.loose;
+  const toggleSection = (id) => {
+    setCollapsedSections((current) => {
+      const next = { ...current, [id]: !current[id] };
+      sessionStorage.setItem('agent-runtime-section-state', JSON.stringify(next));
+      return next;
+    });
+  };
   const sidebarEntries = [];
-  projects.forEach((project) => {
-    sidebarEntries.push({ kind: 'project', id: `project-${project.id}`, project });
-    if (!expandedProjectIds.includes(project.id)) return;
-    const children = filteredSessions.filter((session) => session.project_id === project.id);
-    if (children.length === 0) sidebarEntries.push({ kind: 'empty', id: `empty-${project.id}` });
-    children.forEach((session) => sidebarEntries.push({ kind: 'session', id: session.id, session, nested: true }));
-  });
+  if (projectsOpen) {
+    projects.forEach((project) => {
+      sidebarEntries.push({ kind: 'project', id: `project-${project.id}`, project });
+      if (!expandedProjectIds.includes(project.id)) return;
+      const children = filteredSessions.filter((session) => session.project_id === project.id);
+      if (children.length === 0) sidebarEntries.push({ kind: 'empty', id: `empty-${project.id}` });
+      children.forEach((session) => sidebarEntries.push({ kind: 'session', id: session.id, session, nested: true }));
+    });
+  }
   if (looseSessions.length > 0) {
     sidebarEntries.push({ kind: 'label', id: 'loose-label' });
-    looseSessions.forEach((session) => sidebarEntries.push({ kind: 'session', id: session.id, session, nested: false }));
+    if (looseOpen) looseSessions.forEach((session) => sidebarEntries.push({ kind: 'session', id: session.id, session, nested: false }));
   }
 
   useEffect(() => {
@@ -605,6 +716,7 @@ export default function AgentRuntimePage() {
         minHeight: 0,
         width: '100%',
         overflow: 'hidden',
+        position: 'relative',
         background: '#f8fafc',
         color: '#0f172a',
       }}
@@ -612,8 +724,8 @@ export default function AgentRuntimePage() {
       {/* ── Left Sidebar: Sessions List (Refined App UI styling) ── */}
       <aside
         style={{
-          width: sidebarCollapsed ? 48 : 272,
-          minWidth: sidebarCollapsed ? 48 : 272,
+          width: isMobile ? 'min(300px, calc(100% - 40px))' : sidebarCompact ? 48 : 272,
+          minWidth: isMobile ? 0 : sidebarCompact ? 48 : 272,
           flexShrink: 0,
           borderRight: '1px solid #e7e7e9',
           display: 'flex',
@@ -621,11 +733,19 @@ export default function AgentRuntimePage() {
           background: '#f7f7f8',
           color: '#1c1c1f',
           overflow: 'hidden',
-          transition: 'width 160ms ease, min-width 160ms ease',
+          position: isMobile ? 'absolute' : 'relative',
+          top: 0,
+          bottom: 0,
+          left: 0,
+          zIndex: isMobile ? 40 : undefined,
+          transform: isMobile && !mobileNavOpen ? 'translateX(-105%)' : 'none',
+          pointerEvents: isMobile && !mobileNavOpen ? 'none' : 'auto',
+          boxShadow: isMobile && mobileNavOpen ? '8px 0 24px rgba(15, 23, 42, 0.16)' : 'none',
+          transition: 'width 160ms ease, min-width 160ms ease, transform 160ms ease',
         }}
       >
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: sidebarCollapsed ? 'center' : 'space-between', gap: 2, padding: '8px 8px 2px' }}>
-          {!sidebarCollapsed && (
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: sidebarCompact ? 'center' : 'space-between', gap: 2, padding: '8px 8px 2px' }}>
+          {!sidebarCompact && (
             <button
               type="button"
               aria-label="Search sessions"
@@ -642,17 +762,20 @@ export default function AgentRuntimePage() {
           )}
           <button
             type="button"
-            aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-            title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-            onClick={() => setSidebarCollapsed((collapsed) => !collapsed)}
+            aria-label={isMobile ? 'Close sessions' : sidebarCompact ? 'Expand sidebar' : 'Collapse sidebar'}
+            title={isMobile ? 'Close sessions' : sidebarCompact ? 'Expand sidebar' : 'Collapse sidebar'}
+            onClick={() => {
+              if (isMobile) setMobileNavOpen(false);
+              else setSidebarCollapsed((collapsed) => !collapsed);
+            }}
             style={{ ...sidebarIconButton }}
             className="agent-runtime-sidebar-icon"
           >
-            {sidebarCollapsed ? <PanelLeft size={15} /> : <PanelLeftClose size={15} />}
+            {sidebarCompact ? <PanelLeft size={15} /> : <PanelLeftClose size={15} />}
           </button>
         </div>
 
-        {sidebarCollapsed ? (
+        {sidebarCompact ? (
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, padding: '8px 0' }}>
             <button
               type="button"
@@ -736,8 +859,26 @@ export default function AgentRuntimePage() {
         </button>
 
         <div style={{ flex: 1, overflowY: 'auto', padding: '8px 8px 12px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', paddingRight: 2 }}>
-            <div style={sidebarSectionLabel}>Projects</div>
+          <AgentRuntimeTaskList
+            tasks={tasks}
+            selectedId={selectedTask?.id}
+            collapsed={Boolean(collapsedSections.tasks)}
+            onToggle={() => toggleSection('tasks')}
+            onSelect={openTask}
+            onCreate={() => {
+              setMobileNavOpen(false);
+              setSelectedTask(null);
+              setCreatingTask(true);
+              setActiveSessionId(null);
+              setActiveSession(null);
+              navigate('/agent-runtime');
+            }}
+          />
+          <div className="agent-runtime-section" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', paddingRight: 2 }}>
+            <button type="button" aria-expanded={projectsOpen} onClick={() => toggleSection('projects')} style={sectionTitleButton}>
+              <ChevronRight size={14} style={{ transform: projectsOpen ? 'rotate(90deg)' : undefined, color: '#71717a' }} />
+              Projects
+            </button>
             <button
               type="button"
               aria-label="New project"
@@ -752,7 +893,7 @@ export default function AgentRuntimePage() {
               <Plus size={14} />
             </button>
           </div>
-          {projects.length === 0 && (
+          {projectsOpen && projects.length === 0 && (
             <div style={{ padding: '2px 8px 8px', color: '#8a8a93', fontSize: '0.75rem' }}>Create a project, then add a session.</div>
           )}
           {loadingSessions ? (
@@ -760,7 +901,24 @@ export default function AgentRuntimePage() {
           ) : (
             sidebarEntries.map((entry) => {
               if (entry.kind === 'label') {
-                return <div key={entry.id} style={sidebarSectionLabel}>No project</div>;
+                return (
+                  <div key={entry.id} className="agent-runtime-section" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', paddingRight: 2 }}>
+                    <button type="button" aria-expanded={looseOpen} onClick={() => toggleSection('loose')} style={sectionTitleButton}>
+                      <ChevronRight size={14} style={{ transform: looseOpen ? 'rotate(90deg)' : undefined, color: '#71717a' }} />
+                      No project
+                    </button>
+                    <button
+                      type="button"
+                      aria-label="New session"
+                      title="New session"
+                      className="agent-runtime-sidebar-icon"
+                      onClick={() => beginNewSession(null)}
+                      style={sidebarIconButton}
+                    >
+                      <Plus size={14} />
+                    </button>
+                  </div>
+                );
               }
               if (entry.kind === 'empty') {
                 return <div key={entry.id} style={{ padding: '2px 8px 8px 28px', color: '#8a8a93', fontSize: '0.75rem' }}>No sessions yet</div>;
@@ -1021,11 +1179,20 @@ export default function AgentRuntimePage() {
         </>
         )}
       </aside>
+      {isMobile && mobileNavOpen && (
+        <button
+          type="button"
+          aria-label="Close sessions"
+          onClick={() => setMobileNavOpen(false)}
+          style={{ position: 'absolute', inset: 0, zIndex: 35, border: 'none', background: 'rgba(15, 23, 42, 0.35)', padding: 0 }}
+        />
+      )}
 
       {/* ── Main Workspace: Reusing Refined App Studio UI ── */}
       <main
         style={{
           flex: 1,
+          minWidth: 0,
           display: 'flex',
           flexDirection: 'column',
           overflow: 'hidden',
@@ -1033,7 +1200,34 @@ export default function AgentRuntimePage() {
           position: 'relative',
         }}
       >
-        {!activeSession ? (
+        {isMobile && !activeSession && (
+          <button
+            type="button"
+            aria-label="Sessions"
+            onClick={() => setMobileNavOpen(true)}
+            style={{ position: 'absolute', top: 8, left: 8, zIndex: 5, width: 36, height: 36, border: '1px solid #e4e4e7', borderRadius: 8, background: '#ffffff', color: '#18181b', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}
+          >
+            <PanelLeft size={16} />
+          </button>
+        )}
+        {!activeSession && creatingTask ? (
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: isMobile ? '56px 12px 16px' : '40px 24px', background: '#f8fafc' }}>
+            <AgentRuntimeTaskCreate
+              projectId={activeProjectId}
+              agentType={draftAgent}
+              llmModel={draftLlmModel}
+              onCreated={(task) => {
+                rememberTask(task);
+                setCreatingTask(false);
+              }}
+              onClose={() => setCreatingTask(false)}
+            />
+          </div>
+        ) : !activeSession && selectedTask ? (
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'flex-start', padding: isMobile ? '56px 12px 16px' : '40px 24px', background: '#f8fafc', overflow: 'auto' }}>
+            <AgentRuntimeTaskDetail task={selectedTask} onChanged={handleTaskChanged} onOpenSession={openTaskSession} />
+          </div>
+        ) : !activeSession ? (
           <div
             style={{
               flex: 1,
@@ -1041,7 +1235,7 @@ export default function AgentRuntimePage() {
               flexDirection: 'column',
               alignItems: 'center',
               justifyContent: 'center',
-              padding: '40px 24px',
+              padding: isMobile ? '56px 12px 16px' : '40px 24px',
               background: '#f8fafc',
             }}
           >
@@ -1286,24 +1480,46 @@ export default function AgentRuntimePage() {
           </div>
         ) : (
           <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
-            <div style={{ flex: 1, minHeight: 0, display: 'flex', position: 'relative' }}>
-              <div style={{ flex: 1, minWidth: 560, minHeight: 0, overflow: 'hidden', display: railFull ? 'none' : 'flex', flexDirection: 'column' }}>
+            <div style={{ flex: 1, minWidth: 0, minHeight: 0, display: 'flex', position: 'relative' }}>
+              <div style={{ flex: 1, minWidth: isMobile ? 0 : 560, minHeight: 0, overflow: 'hidden', display: railFull ? 'none' : 'flex', flexDirection: 'column' }}>
                 <div
                   style={{
-                    height: 35,
+                    height: isMobile ? 44 : 35,
                     flexShrink: 0,
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'space-between',
-                    gap: 12,
-                    padding: '0 12px',
+                    gap: 8,
+                    padding: '0 8px',
                     borderBottom: '1px solid #e2e8f0',
                     background: '#ffffff',
                   }}
                 >
-                  <div style={{ minWidth: 0, fontSize: '0.84rem', fontWeight: 650, color: '#0f172a', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {activeSession.title}
+                  <div style={{ minWidth: 0, display: 'flex', alignItems: 'center', gap: 6, flex: 1 }}>
+                    {isMobile && (
+                      <button
+                        type="button"
+                        aria-label="Sessions"
+                        onClick={() => setMobileNavOpen(true)}
+                        style={{ width: 32, height: 32, flexShrink: 0, border: 'none', borderRadius: 8, background: 'transparent', color: '#18181b', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}
+                      >
+                        <PanelLeft size={16} />
+                      </button>
+                    )}
+                    <div style={{ minWidth: 0, fontSize: '0.84rem', fontWeight: 650, color: '#0f172a', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {activeSession.title}
+                    </div>
                   </div>
+                  {isMobile && (
+                    <div style={{ display: 'flex', alignItems: 'center', flexShrink: 0 }}>
+                      <button type="button" aria-label="Files" title="Files" onClick={() => setRailRequest({ kind: 'files', nonce: Date.now() })} style={mobileToolButton}><File size={16} /></button>
+                      <button type="button" aria-label="Browser" title="Browser" onClick={() => setRailRequest({ kind: 'browser', nonce: Date.now() })} style={mobileToolButton}><Globe size={16} /></button>
+                      <button type="button" aria-label="Changes" title="Changes" onClick={() => setRailRequest({ kind: 'changes', nonce: Date.now() })} style={mobileToolButton}><GitCompare size={16} /></button>
+                      {showCliSurface && (
+                        <button type="button" aria-label="Terminal" title="Terminal" onClick={() => setRailRequest({ kind: 'terminal', nonce: Date.now() })} style={mobileToolButton}><Terminal size={16} /></button>
+                      )}
+                    </div>
+                  )}
                   {showCliSurface && (
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
                     <div role="tablist" aria-label="Agent surface" style={{ display: 'inline-flex', border: '1px solid #e2e8f0', borderRadius: 8, overflow: 'hidden' }}>
@@ -1334,6 +1550,9 @@ export default function AgentRuntimePage() {
                   </div>
                   )}
                 </div>
+                {tasks.filter((task) => task.session_id === activeSession.id && task.stage !== 'done' && task.stage !== 'cancelled').slice(0, 1).map((task) => (
+                  <AgentRuntimeTaskStrip key={task.id} task={task} onChanged={handleTaskChanged} />
+                ))}
                 <div style={{ flex: 1, minWidth: 0, minHeight: 0, width: '100%', display: activeSurface === 'terminal' ? 'flex' : 'none', flexDirection: 'column', overflow: 'hidden', background: '#ffffff' }}>
                   {showCliSurface && (
                   <SandboxTerminal
@@ -1397,6 +1616,8 @@ export default function AgentRuntimePage() {
                 }}
                 onOpen={() => setRailOpen(true)}
                 showTerminal={showCliSurface}
+                overlay={isMobile}
+                openRequest={railRequest}
                 onNote={(message) => {
                   setActiveSession((prev) => (prev ? { ...prev, messages: [...(prev.messages || []), message] } : prev));
                   setSurface('chat');

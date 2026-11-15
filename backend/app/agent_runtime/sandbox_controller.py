@@ -20,7 +20,7 @@ from app.sandbox.models import ExecResult
 logger = logging.getLogger(__name__)
 
 ExecFn = Callable[..., ExecResult]
-PACKAGE_ROOT = Path(__file__).resolve().parents[1] / "sandbox_nova"
+PACKAGE_ROOT = Path(__file__).resolve().parents[2] / "sandbox_nova"
 
 
 class RuntimeSession(Protocol):
@@ -41,12 +41,16 @@ class NovaSandboxController:
         exec_fn(session.sandbox_id, f"mkdir -p /var/lib/compassx/nova/{session.id}/inbox", timeout=10)
 
     def _ensure_nova_process(self, session: RuntimeSession, exec_fn: ExecFn) -> None:
+        # The tmux launcher command mentions "nova serve" even when it fell through to a shell.
+        # Match the server process itself, not that launcher text.
         probe = exec_fn(
             session.sandbox_id,
-            f"ps -eo args 2>/dev/null | grep -E 'sandbox_nova serve|nova serve' | grep -F {session.id} | grep -v grep || true",
+            "ps -eo args 2>/dev/null | grep -F "
+            + session.id
+            + " | grep -E '(^|/)(nova|python3?) .*serve' | grep -v 'tmux ' | grep -v grep || true",
             timeout=10,
         )
-        if session.id in (probe.stdout or "") and ("serve" in (probe.stdout or "")):
+        if session.id in (probe.stdout or "") and "serve" in (probe.stdout or ""):
             return
         name = f"cx_{session.id.replace('-', '_')}"
         exec_fn(session.sandbox_id, f"tmux kill-session -t {name} 2>/dev/null || true", timeout=10)
@@ -69,6 +73,14 @@ class NovaSandboxController:
         if not result.success:
             detail = (result.stderr or result.stdout or "Failed to deliver the Nova prompt.").strip()
             raise RuntimeError(detail[:500])
+
+    def inbox_names(self, session: RuntimeSession, exec_fn: ExecFn) -> list[str]:
+        result = exec_fn(
+            session.sandbox_id,
+            f"ls /var/lib/compassx/nova/{session.id}/inbox 2>/dev/null || true",
+            timeout=10,
+        )
+        return [line.strip() for line in (result.stdout or "").splitlines() if line.strip()]
 
     def read_activities(self, session: RuntimeSession, exec_fn: ExecFn) -> list[dict]:
         command = (
@@ -130,8 +142,7 @@ class NovaSandboxController:
         if probe.success and "ok" in (probe.stdout or ""):
             return
         if not PACKAGE_ROOT.is_dir():
-            logger.warning("sandbox_nova package is missing on the host")
-            return
+            raise RuntimeError(f"Nova package is missing on the host ({PACKAGE_ROOT}).")
         buffer = io.BytesIO()
         with tarfile.open(fileobj=buffer, mode="w:gz") as archive:
             archive.add(PACKAGE_ROOT, arcname="sandbox_nova")

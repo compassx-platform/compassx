@@ -367,6 +367,14 @@ class WorkspaceMiddleware(BaseHTTPMiddleware):
                     return JSONResponse({"error": exc.message}, status_code=exc.status_code)
 
         if _product_api_requires_workspace(request.url.path) and getattr(request.state, "workspace", None) is None:
-            return JSONResponse({"error": "Not authenticated"}, status_code=401)
+            # Sandbox Nova calls the OpenAI-compatible ingress with a workspace
+            # gateway token. That route checks the token itself.
+            sandbox_call = (
+                request.url.path.startswith("/api/v1/ai-gateway/v1")
+                or request.url.path.startswith("/api/v1/agent-runtime/sandbox/tools")
+            )
+            sandbox_token = bool(token) and (token.startswith("cx_gw_ws_") or token.startswith("cx_gw_app_"))
+            if not (sandbox_call and sandbox_token):
+                return JSONResponse({"error": "Not authenticated"}, status_code=401)
 
         return await call_next(request)

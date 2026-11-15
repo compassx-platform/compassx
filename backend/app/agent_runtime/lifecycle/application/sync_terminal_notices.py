@@ -15,6 +15,9 @@ def sync_terminal_notices(service, session_id: str) -> AgentRuntimeSession:
         from app.agent_runtime.sandbox_controller import nova_sandbox_controller
 
         service._sync_activities(session, nova_sandbox_controller.read_activities(session, service._exec))
+        from app.agent_runtime import tasks as agent_tasks
+
+        agent_tasks.release_finished_session(service, session_id)
         return service._require_session(session_id)
     service._require_running_sandbox(session.sandbox_id)
     service._sync_antigravity_login(session)

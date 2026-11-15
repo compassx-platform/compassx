@@ -4,7 +4,7 @@ from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field
 
 
-from sqlalchemy import Column, DateTime, Integer, JSON, String
+from sqlalchemy import Column, DateTime, Integer, JSON, String, Text
 from sqlalchemy.dialects.postgresql import JSONB
 
 from app.database import SystemBase
@@ -199,6 +199,94 @@ class AgentRuntimeProjectDB(SystemBase):
             id=self.id,
             workspace_id=self.workspace_id,
             name=self.name,
+            created_at=self.created_at.isoformat() if self.created_at else datetime.now(timezone.utc).isoformat(),
+            updated_at=self.updated_at.isoformat() if self.updated_at else datetime.now(timezone.utc).isoformat(),
+        )
+
+
+class TaskEvent(BaseModel):
+    """One recorded move of an agent runtime task."""
+    at: str
+    actor: str
+    action: str
+    from_stage: str = ""
+    to_stage: str = ""
+    note: str = ""
+
+
+class CreateAgentTaskRequest(BaseModel):
+    """Payload to file an agent runtime task. It starts in draft and does not run."""
+    title: str
+    brief: str = ""
+    project_id: Optional[str] = None
+    source_session_id: Optional[str] = None
+    agent_type: str = "nova"
+    llm_model: Optional[str] = None
+    actor: str = Field(default="person", description="'person' or 'agent'")
+
+
+class TaskNoteRequest(BaseModel):
+    """A reason or review comment. Waiting and changes requested require one."""
+    note: str = ""
+    actor: str = Field(default="person", description="'person' or 'agent'")
+
+
+class AgentRuntimeTask(BaseModel):
+    """Work that waits in Agent Runtime until a person marks it ready."""
+    id: str
+    workspace_id: Optional[str] = None
+    project_id: Optional[str] = None
+    title: str
+    brief: str = ""
+    stage: str = "draft"
+    waiting_reason: str = ""
+    start_error: str = ""
+    source_session_id: Optional[str] = None
+    session_id: Optional[str] = None
+    agent_type: str = "nova"
+    llm_model: Optional[str] = None
+    events: List[TaskEvent] = Field(default_factory=list)
+    created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    updated_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+
+class AgentRuntimeTaskDB(SystemBase):
+    """SQLAlchemy model for agent runtime tasks."""
+    __tablename__ = "agent_runtime_tasks"
+
+    id = Column(String(64), primary_key=True)
+    workspace_id = Column(String(64), nullable=True, index=True)
+    project_id = Column(String(64), nullable=True, index=True)
+    title = Column(String(255), nullable=False)
+    brief = Column(Text, nullable=False, default="")
+    stage = Column(String(32), nullable=False, default="draft", index=True)
+    waiting_reason = Column(Text, nullable=False, default="")
+    start_error = Column(Text, nullable=False, default="")
+    source_session_id = Column(String(64), nullable=True)
+    session_id = Column(String(64), nullable=True, index=True)
+    agent_type = Column(String(64), nullable=False, default="nova")
+    llm_model = Column(String(255), nullable=True)
+    events = Column(JSON().with_variant(JSONB, "postgresql"), nullable=False, default=list)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
+    updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc), nullable=False)
+
+    def to_pydantic(self) -> AgentRuntimeTask:
+        raw_events = self.events or []
+        events = [TaskEvent(**item) if isinstance(item, dict) else item for item in raw_events]
+        return AgentRuntimeTask(
+            id=self.id,
+            workspace_id=self.workspace_id,
+            project_id=self.project_id,
+            title=self.title,
+            brief=self.brief or "",
+            stage=self.stage,
+            waiting_reason=self.waiting_reason or "",
+            start_error=self.start_error or "",
+            source_session_id=self.source_session_id,
+            session_id=self.session_id,
+            agent_type=self.agent_type,
+            llm_model=self.llm_model,
+            events=events,
             created_at=self.created_at.isoformat() if self.created_at else datetime.now(timezone.utc).isoformat(),
             updated_at=self.updated_at.isoformat() if self.updated_at else datetime.now(timezone.utc).isoformat(),
         )

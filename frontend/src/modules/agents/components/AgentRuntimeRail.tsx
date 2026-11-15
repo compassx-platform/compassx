@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ChevronDown, ChevronRight, File, Folder, FolderOpen, GitCompare, Globe, Maximize2, Minimize2, PenLine, Plus, Search, Terminal, X } from 'lucide-react';
+import { ChevronDown, ChevronRight, File, Folder, FolderOpen, GitCompare, Globe, LucideIcon, Maximize2, Minimize2, PenLine, Plus, Search, Terminal, X } from 'lucide-react';
 import { computeApi } from '@/modules/compute/computeApi';
 import { SandboxTerminal } from '@/components/sandbox/SandboxTerminal';
 import {
@@ -47,9 +47,11 @@ interface AgentRuntimeRailProps {
   onOpen?: () => void;
   onNote?: (message: AgentChatMessage) => void;
   showTerminal?: boolean;
+  overlay?: boolean;
+  openRequest?: { kind: MenuKind; nonce: number } | null;
 }
 
-const EDITOR_ACTIONS: { kind: MenuKind; label: string; Icon: React.ComponentType<{ size?: number; color?: string }> }[] = [
+const EDITOR_ACTIONS: { kind: MenuKind; label: string; Icon: LucideIcon }[] = [
   { kind: 'files', label: 'File', Icon: File },
   { kind: 'terminal', label: 'Terminal', Icon: Terminal },
   { kind: 'browser', label: 'Browser', Icon: Globe },
@@ -82,6 +84,8 @@ export function AgentRuntimeRail({
   onOpen,
   onNote,
   showTerminal = true,
+  overlay = false,
+  openRequest = null,
 }: AgentRuntimeRailProps) {
   const [tabs, setTabs] = useState<EditorTab[]>([]);
   const [activeId, setActiveId] = useState('');
@@ -98,6 +102,7 @@ export function AgentRuntimeRail({
   const [patchText, setPatchText] = useState('');
   const [patchLoading, setPatchLoading] = useState(false);
   const changeMenuRef = useRef<HTMLDivElement | null>(null);
+  const seenRailRequest = useRef(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [fileBodies, setFileBodies] = useState<Record<string, { text: string; saved: string; loading: boolean; saving: boolean; truncated: boolean; missing: boolean; error: string }>>({});
@@ -341,6 +346,12 @@ export function AgentRuntimeRail({
     setActiveId(created.id);
   };
 
+  useEffect(() => {
+    if (!openRequest || openRequest.nonce === seenRailRequest.current) return;
+    seenRailRequest.current = openRequest.nonce;
+    openTab(openRequest.kind);
+  }, [openRequest]);
+
   const closeTab = (id: string) => {
     const index = tabs.findIndex((item) => item.id === id);
     const next = tabs.filter((item) => item.id !== id);
@@ -369,6 +380,8 @@ export function AgentRuntimeRail({
     const match = tabs.find((item) => item.kind === kind);
     return Boolean(match && match.id === activeId);
   };
+
+  if (overlay && collapsed && !fullscreen) return null;
 
   if (collapsed && !fullscreen) {
     return (
@@ -421,7 +434,17 @@ export function AgentRuntimeRail({
 
   return (
     <aside
-      style={{
+      style={overlay ? {
+        position: 'absolute',
+        inset: 0,
+        zIndex: 30,
+        width: '100%',
+        minWidth: 0,
+        background: '#ffffff',
+        display: 'flex',
+        flexDirection: 'column',
+        minHeight: 0,
+      } : {
         width: fullscreen ? undefined : width,
         minWidth: fullscreen ? 0 : width,
         maxWidth: fullscreen ? undefined : width,
@@ -434,7 +457,7 @@ export function AgentRuntimeRail({
         position: 'relative',
       }}
     >
-      {!fullscreen && (
+      {!fullscreen && !overlay && (
         <div
           className="agent-runtime-rail-resize"
           role="separator"
@@ -892,7 +915,7 @@ function BrowserPanel({
   useEffect(() => {
     if (!sandboxId) return undefined;
     let cancelled = false;
-    computeApi.getSandbox(sandboxId).then((sandbox) => {
+    computeApi.getSandbox(sandboxId).then((sandbox: any) => {
       if (cancelled) return;
       const urls = Object.values(sandbox?.endpoints || {}).filter((url) => typeof url === 'string' && url);
       setSandboxUrls(urls as string[]);
@@ -1096,7 +1119,7 @@ function ChangesHeader({
   onToggle,
   onSelect,
 }: {
-  menuRef: React.RefObject<HTMLDivElement | null>;
+  menuRef: React.Ref<HTMLDivElement>;
   open: boolean;
   view: ChangeView;
   branch: string;

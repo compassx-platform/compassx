@@ -441,6 +441,27 @@ async def lifespan(app: FastAPI):
                             updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
                         );
                         CREATE INDEX IF NOT EXISTS ix_agent_runtime_projects_workspace_id ON agent_runtime_projects (workspace_id);
+                        CREATE TABLE IF NOT EXISTS agent_runtime_tasks (
+                            id VARCHAR(64) PRIMARY KEY,
+                            workspace_id VARCHAR(64),
+                            project_id VARCHAR(64),
+                            title VARCHAR(255) NOT NULL,
+                            brief TEXT NOT NULL DEFAULT '',
+                            stage VARCHAR(32) NOT NULL DEFAULT 'draft',
+                            waiting_reason TEXT NOT NULL DEFAULT '',
+                            start_error TEXT NOT NULL DEFAULT '',
+                            source_session_id VARCHAR(64),
+                            session_id VARCHAR(64),
+                            agent_type VARCHAR(64) NOT NULL DEFAULT 'nova',
+                            llm_model VARCHAR(255),
+                            events JSONB NOT NULL DEFAULT '[]'::jsonb,
+                            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                        );
+                        CREATE INDEX IF NOT EXISTS ix_agent_runtime_tasks_workspace_id ON agent_runtime_tasks (workspace_id);
+                        CREATE INDEX IF NOT EXISTS ix_agent_runtime_tasks_project_id ON agent_runtime_tasks (project_id);
+                        CREATE INDEX IF NOT EXISTS ix_agent_runtime_tasks_stage ON agent_runtime_tasks (stage);
+                        CREATE INDEX IF NOT EXISTS ix_agent_runtime_tasks_session_id ON agent_runtime_tasks (session_id);
                     """))
                     _conn.commit()
             except Exception as _ars_err:

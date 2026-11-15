@@ -15,6 +15,37 @@ logger = logging.getLogger(__name__)
 LOCAL_ONLY = {"python_code", "run_shell", "list_files", "read_file", "write_file"}
 
 
+def file_task_from_session(session, arguments: dict[str, Any], service=None) -> dict[str, Any]:
+    """File a draft task linked to the session the person is already in."""
+    from app.agent_runtime.models import CreateAgentTaskRequest
+    from app.agent_runtime import tasks as agent_tasks
+
+    title = str((arguments or {}).get("title") or "").strip()
+    brief = str((arguments or {}).get("brief") or (arguments or {}).get("description") or "").strip()
+    if not title:
+        raise HTTPException(status_code=400, detail="A task title is required.")
+    task = agent_tasks.create_task(
+        service or agent_runtime_service,
+        CreateAgentTaskRequest(
+            title=title,
+            brief=brief,
+            project_id=session.project_id,
+            source_session_id=session.id,
+            agent_type=session.agent_type or "nova",
+            llm_model=session.llm_model,
+            actor="agent",
+        ),
+        workspace_id=session.workspace_id,
+    )
+    return {
+        "task_id": task.id,
+        "title": task.title,
+        "stage": task.stage,
+        "source_session_id": task.source_session_id,
+        "message": "Filed as a draft. It stays in Tasks until a person marks it ready.",
+    }
+
+
 def resolve_sandbox_workspace(request: Request) -> str:
     auth = (request.headers.get("Authorization") or "").strip()
     if not auth.startswith("Bearer "):
@@ -51,6 +82,8 @@ async def execute_platform_tool(request: Request, body: dict[str, Any]) -> dict[
     if SystemSessionLocal is None:
         raise HTTPException(status_code=503, detail="System database is unavailable.")
     arguments = body.get("arguments") if isinstance(body.get("arguments"), dict) else {}
+    if name == "file_task":
+        return file_task_from_session(session, arguments)
     db = SystemSessionLocal()
     try:
         agent = ensure_nova_agent(db, session.workspace_id)

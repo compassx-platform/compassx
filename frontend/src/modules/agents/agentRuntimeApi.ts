@@ -34,6 +34,33 @@ export interface AgentRuntimeProject {
   updated_at: string;
 }
 
+export interface AgentRuntimeTaskEvent {
+  at: string;
+  actor: string;
+  action: string;
+  from_stage: string;
+  to_stage: string;
+  note: string;
+}
+
+export interface AgentRuntimeTask {
+  id: string;
+  workspace_id?: string | null;
+  project_id?: string | null;
+  title: string;
+  brief: string;
+  stage: string;
+  waiting_reason: string;
+  start_error: string;
+  source_session_id?: string | null;
+  session_id?: string | null;
+  agent_type: string;
+  llm_model?: string | null;
+  events: AgentRuntimeTaskEvent[];
+  created_at: string;
+  updated_at: string;
+}
+
 export interface CreateAgentSessionPayload {
   title: string;
   agent_type: string;
@@ -170,6 +197,46 @@ export const agentRuntimeApi = {
 
   sendBrowserNote: async (sessionId: string, tabId: string, body: { instruction: string; x: number; y: number; width: number; height: number }): Promise<AgentChatMessage> => {
     const res = await api.post(`/agent-runtime/sessions/${sessionId}/browser/note`, { tab_id: tabId, ...body });
+    return res.data;
+  },
+
+  listTasks: async (): Promise<AgentRuntimeTask[]> => {
+    const res = await api.get('/agent-runtime/tasks');
+    return res.data;
+  },
+
+  createTask: async (payload: { title: string; brief?: string; project_id?: string; source_session_id?: string; agent_type?: string; llm_model?: string; actor?: string }): Promise<AgentRuntimeTask> => {
+    const res = await api.post('/agent-runtime/tasks', payload);
+    return res.data;
+  },
+
+  parkTask: async (taskId: string, note: string, actor: 'person' | 'agent' = 'person'): Promise<AgentRuntimeTask> => {
+    const res = await api.post(`/agent-runtime/tasks/${taskId}/waiting`, { note, actor });
+    return res.data;
+  },
+
+  readyTask: async (taskId: string): Promise<AgentRuntimeTask> => {
+    const res = await api.post(`/agent-runtime/tasks/${taskId}/ready`);
+    return res.data;
+  },
+
+  submitTask: async (taskId: string, note = ''): Promise<AgentRuntimeTask> => {
+    const res = await api.post(`/agent-runtime/tasks/${taskId}/submit`, { note, actor: 'agent' });
+    return res.data;
+  },
+
+  acceptTask: async (taskId: string): Promise<AgentRuntimeTask> => {
+    const res = await api.post(`/agent-runtime/tasks/${taskId}/accept`);
+    return res.data;
+  },
+
+  requestTaskChanges: async (taskId: string, note: string): Promise<AgentRuntimeTask> => {
+    const res = await api.post(`/agent-runtime/tasks/${taskId}/changes`, { note, actor: 'person' });
+    return res.data;
+  },
+
+  cancelTask: async (taskId: string, note = ''): Promise<AgentRuntimeTask> => {
+    const res = await api.post(`/agent-runtime/tasks/${taskId}/cancel`, { note, actor: 'person' });
     return res.data;
   },
 };

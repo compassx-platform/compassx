@@ -612,7 +612,7 @@ interface CustomTooltipState {
 }
 
 export default function PlotlyWidget({ widget }: Props) {
-  const plotRef = useRef<HTMLDivElement>(null);
+  const plotRef = useRef<HTMLDivElement | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const { activeDashboard, filterState, paramState, setFilterValue } = useDashboardStore();
   const [tooltipState, setTooltipState] = useState<CustomTooltipState | null>(null);
