@@ -53,6 +53,12 @@ export function AgentRuntimeTaskList({
   onSelect: (task: AgentRuntimeTask) => void;
   onCreate: () => void;
 }) {
+  const [showAll, setShowAll] = useState(false);
+  const preview = tasks.slice(0, 5);
+  const selectedHidden = !showAll && selectedId && !preview.some((task) => task.id === selectedId)
+    ? tasks.find((task) => task.id === selectedId)
+    : null;
+  const visible = showAll ? tasks : selectedHidden ? [...preview, selectedHidden] : preview;
   return (
     <div>
       <div className="agent-runtime-section" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', paddingRight: 2 }}>
@@ -72,7 +78,7 @@ export function AgentRuntimeTaskList({
       {!collapsed && tasks.length === 0 && (
         <div style={{ padding: '2px 8px 8px', color: '#8a8a93', fontSize: '0.75rem' }}>File work here until it is ready to run.</div>
       )}
-      {!collapsed && tasks.map((task) => (
+      {!collapsed && visible.map((task) => (
         <button
           key={task.id}
           type="button"
@@ -96,6 +102,15 @@ export function AgentRuntimeTaskList({
           <span style={{ fontSize: '0.68rem', color: '#8a8a93', flexShrink: 0 }}>{STAGE_LABEL[task.stage] || task.stage}</span>
         </button>
       ))}
+      {!collapsed && tasks.length > 5 && (
+        <button
+          type="button"
+          onClick={() => setShowAll((open) => !open)}
+          style={{ border: 'none', background: 'transparent', color: '#3f3f46', fontSize: '0.75rem', fontWeight: 500, cursor: 'pointer', padding: '4px 8px 8px', textAlign: 'left' }}
+        >
+          {showAll ? 'Show less' : 'Show more'}
+        </button>
+      )}
     </div>
   );
 }

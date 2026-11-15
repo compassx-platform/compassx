@@ -133,6 +133,8 @@ const sidebarRow = {
   cursor: 'pointer',
 };
 
+const SIDEBAR_LIST_PREVIEW = 5;
+
 const sidebarSectionLabel = {
   padding: '10px 4px 4px 2px',
   fontSize: '0.75rem',
@@ -180,6 +182,7 @@ export default function AgentRuntimePage() {
   const [creatingTask, setCreatingTask] = useState(false);
   const [activeProjectId, setActiveProjectId] = useState<string | null>(() => sessionStorage.getItem('agent-runtime-project'));
   const [expandedProjectIds, setExpandedProjectIds] = useState<string[]>([]);
+  const [expandedLists, setExpandedLists] = useState<Record<string, boolean>>({});
   const [collapsedSections, setCollapsedSections] = useState(() => {
     try {
       const saved = JSON.parse(sessionStorage.getItem('agent-runtime-section-state') || '{}');
@@ -680,6 +683,16 @@ export default function AgentRuntimePage() {
       return next;
     });
   };
+  const previewSessions = (items, key) => {
+    if (searchQuery.trim() || items.length <= SIDEBAR_LIST_PREVIEW) {
+      return { visible: items, toggle: null };
+    }
+    if (expandedLists[key]) return { visible: items, toggle: 'less' };
+    const visible = items.slice(0, SIDEBAR_LIST_PREVIEW);
+    const active = items.find((session) => session.id === activeSessionId);
+    if (active && !visible.some((session) => session.id === active.id)) visible.push(active);
+    return { visible, toggle: 'more' };
+  };
   const sidebarEntries = [];
   if (projectsOpen) {
     projects.forEach((project) => {
@@ -687,12 +700,18 @@ export default function AgentRuntimePage() {
       if (!expandedProjectIds.includes(project.id)) return;
       const children = filteredSessions.filter((session) => session.project_id === project.id);
       if (children.length === 0) sidebarEntries.push({ kind: 'empty', id: `empty-${project.id}` });
-      children.forEach((session) => sidebarEntries.push({ kind: 'session', id: session.id, session, nested: true }));
+      const { visible, toggle } = previewSessions(children, `project:${project.id}`);
+      visible.forEach((session) => sidebarEntries.push({ kind: 'session', id: session.id, session, nested: true }));
+      if (toggle) sidebarEntries.push({ kind: 'more', id: `more-${project.id}`, listKey: `project:${project.id}`, nested: true, toggle });
     });
   }
   if (looseSessions.length > 0) {
     sidebarEntries.push({ kind: 'label', id: 'loose-label' });
-    if (looseOpen) looseSessions.forEach((session) => sidebarEntries.push({ kind: 'session', id: session.id, session, nested: false }));
+    if (looseOpen) {
+      const { visible, toggle } = previewSessions(looseSessions, 'loose');
+      visible.forEach((session) => sidebarEntries.push({ kind: 'session', id: session.id, session, nested: false }));
+      if (toggle) sidebarEntries.push({ kind: 'more', id: 'more-loose', listKey: 'loose', nested: false, toggle });
+    }
   }
 
   useEffect(() => {
@@ -922,6 +941,18 @@ export default function AgentRuntimePage() {
               }
               if (entry.kind === 'empty') {
                 return <div key={entry.id} style={{ padding: '2px 8px 8px 28px', color: '#8a8a93', fontSize: '0.75rem' }}>No sessions yet</div>;
+              }
+              if (entry.kind === 'more') {
+                return (
+                  <button
+                    key={entry.id}
+                    type="button"
+                    onClick={() => setExpandedLists((current) => ({ ...current, [entry.listKey]: entry.toggle !== 'less' }))}
+                    style={{ border: 'none', background: 'transparent', color: '#3f3f46', fontSize: '0.75rem', fontWeight: 500, cursor: 'pointer', padding: entry.nested ? '4px 8px 8px 26px' : '4px 8px 8px', textAlign: 'left' }}
+                  >
+                    {entry.toggle === 'less' ? 'Show less' : 'Show more'}
+                  </button>
+                );
               }
               if (entry.kind === 'project') {
                 const project = entry.project;
