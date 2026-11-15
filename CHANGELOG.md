@@ -5,6 +5,33 @@ All notable changes to the CompassX Platform will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.17.0] - 2026-11-15
+
+### 🚀 Highlights
+
+CompassX `0.17.0` introduces **Agent Runtime Background Tasks & Task Orchestration**, **Nova Sandbox Isolation**, **Unity Catalog Model Registry & Registered Models Scoring**, **Catalog Permissions Simplification**, and **Platform-Wide Architecture Facades**.
+
+### ✨ Features & Enhancements
+
+#### Agent Runtime Background Tasks & Queue Orchestration
+- **Task Management Engine ([`tasks.py`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/backend/app/agent_runtime/tasks.py), [`models.py`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/backend/app/agent_runtime/models.py))**: Added task lifecycle state machine supporting `draft`, `running`, `waiting`, `done`, `failed`, and `cancelled` stages, queue ordering, dependency execution, and automated session release.
+- **Task Orchestration UI ([`AgentRuntimeTasks.tsx`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/frontend/src/modules/agents/components/AgentRuntimeTasks.tsx), [`AgentRuntimePage.tsx`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/frontend/src/modules/agents/pages/AgentRuntimePage.tsx))**: Integrated live Tasks panel within the Agent Runtime interface for creating, inspecting, starting, restarting, and cancelling background tasks.
+- **Database Schema & Migrations ([`0012_agent_runtime_tasks.py`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/backend/alembic_system/versions/0012_agent_runtime_tasks.py), [`main.py`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/backend/app/main.py))**: Added `agent_runtime_tasks` persistence table with workspace, project, and session indexing.
+
+#### Nova Sandbox Isolation & Execution Loop
+- **Isolated Nova Agent Runtime ([`sandbox_nova/`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/backend/sandbox_nova/))**: Decoupled Nova execution to run inside containerized sandboxes with dedicated inbox loop, tool registry, and platform tool RPC handling.
+- **Sandbox Platform Tools ([`sandbox_tools.py`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/backend/app/agent_runtime/sandbox_tools.py))**: Secure proxying of platform tools (notebooks, dashboards, data warehouse, MLflow) from the sandboxed agent into CompassX core.
+
+#### Unity Catalog Model Registry & Scoring
+- **Registered Model Catalog Integration ([`registered_models/`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/backend/app/catalog/registered_models/))**: Unity Catalog model registry support for versioning, aliases, and model lineage alongside tables and volumes.
+- **Model Scoring & Local Apps ([`DataCatalog.tsx`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/frontend/src/modules/data/pages/DataCatalog.tsx))**: Real-time registered model invocation/scoring endpoints and manifest-driven local app execution.
+
+#### Governance & Platform Facades
+- **Simplified Catalog Permissions ([`PermissionsPanel.tsx`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/frontend/src/modules/governance/components/PermissionsPanel.tsx), [`EffectivePermissions.tsx`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/frontend/src/modules/governance/components/EffectivePermissions.tsx))**: Consolidated catalog privilege tables, grant dialogues, and fast effective permissions evaluation.
+- **Modular Action Facades**: Refactored core modules behind dedicated application actions across AI gateway, catalog, agent runtime, and storage services.
+
+---
+
 ## [0.16.0] - 2026-10-27
 
 ### 🚀 Highlights
