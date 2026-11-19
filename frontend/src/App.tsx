@@ -61,6 +61,7 @@ import AppsHomePage from '@/modules/apps/pages/AppsHomePage';
 import AppDetailPage from '@/modules/apps/pages/AppDetailPage';
 import AppBuildPage from '@/modules/apps/pages/AppBuildPage';
 import PortalPage from '@/modules/portal/pages/PortalPage';
+import PortalSettingsPage from '@/modules/portal/pages/PortalSettingsPage';
 import WorkspaceSettingsPage from '@/pages/workspace/WorkspaceSettingsPage';
 import AIGatewayPage from '@/modules/ai_gateway/pages/AIGatewayPage';
 import { DEFAULT_APP_ID, isAppId, normalizeAppId, stripAppScope, getDefaultPathForApp, useCurrentAppId } from '@/lib/appNavigation';

@@ -130,7 +130,7 @@ function buildTooltipHtml(
   const label = cfg.yAxis?.displayName || (transform && transform !== 'NONE' ? `${transform} of ${yFieldName}` : `Sum of ${yFieldName}`);
   const formattedY = formatCompactNumber(yVal);
 
-  let html = `<div style="font-family:'Inter',system-ui,sans-serif;padding:4px 6px;min-width:150px;background:#ffffff;color:#0f172a;">`;
+  let html = `<div style="font-family:'Segoe UI','Inter',system-ui,sans-serif;padding:4px 6px;min-width:150px;background:#ffffff;color:#0f172a;">`;
   html += `<div style="font-weight:700;font-size:12px;color:#0f172a;margin-bottom:6px;padding-bottom:3px">${String(xVal)}</div>`;
 
   // Primary Y field row
@@ -497,12 +497,12 @@ function buildLayout(cfg: ChartConfig, rows?: Record<string, unknown>[]): Partia
     },
     paper_bgcolor: 'transparent',
     plot_bgcolor: 'transparent',
-    font: { family: 'Inter, system-ui, sans-serif', size: 11 },
+    font: { family: 'Segoe UI, Inter, system-ui, sans-serif', size: 11 },
     hovermode: 'closest',
     hoverlabel: {
       bgcolor: '#ffffff',
       bordercolor: '#e2e8f0',
-      font: { family: 'Inter, system-ui, sans-serif', size: 11, color: '#0f172a' },
+      font: { family: 'Segoe UI, Inter, system-ui, sans-serif', size: 11, color: '#0f172a' },
       align: 'left',
       namelength: -1,
     } as any,

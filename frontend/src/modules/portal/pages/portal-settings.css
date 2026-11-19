@@ -1,0 +1,110 @@
+.portal-settings {
+  height: 100%;
+  overflow: auto;
+  padding: 28px 32px;
+  background: #ffffff;
+  color: #111827;
+}
+
+.portal-settings-head h1 {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+}
+
+.portal-settings-head p,
+.portal-settings-card p {
+  margin: 6px 0 0;
+  max-width: 560px;
+  font-size: 13px;
+  line-height: 1.45;
+  color: #6b7280;
+}
+
+.portal-settings-card {
+  margin-top: 22px;
+  max-width: 640px;
+  padding: 18px;
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  background: #ffffff;
+}
+
+.portal-settings-card h2 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 650;
+}
+
+.portal-settings-logo-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-top: 14px;
+}
+
+.portal-settings-preview {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 180px;
+  height: 72px;
+  padding: 8px 12px;
+  border: 1px dashed #d1d5db;
+  border-radius: 8px;
+  background: #f7f7f7;
+}
+
+.portal-settings-preview img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+
+.portal-settings-preview span {
+  font-size: 12px;
+  color: #9ca3af;
+}
+
+.portal-settings-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.portal-settings-upload,
+.portal-settings-remove {
+  height: 32px;
+  padding: 0 12px;
+  border-radius: 8px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.portal-settings-upload {
+  border: none;
+  background: #0b5cad;
+  color: #ffffff;
+}
+
+.portal-settings-upload:disabled,
+.portal-settings-remove:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.portal-settings-remove {
+  border: 1px solid #e5e7eb;
+  background: #ffffff;
+  color: #374151;
+}
+
+.portal-settings-error {
+  margin-top: 10px;
+  color: #b91c1c;
+  font-size: 12px;
+}
+
+.portal-settings-note {
+  margin-top: 10px;
+}

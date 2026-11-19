@@ -73,3 +73,17 @@ def try_resolve_url_container(name: str, fallback: str) -> str:
         return endpoint.base_url
     except (ServiceNotFoundError, Exception):  # noqa: BLE001
         return fallback
+
+
+def platform_backend_env(*, container: bool) -> dict[str, str]:
+    """CompassX API address for a launched application.
+
+    Container callers get the profile's container address: the host gateway
+    when the backend runs on the host, or cluster DNS on Kubernetes. Host
+    callers get the address a process on this machine can use.
+    """
+    if container:
+        url = try_resolve_url_container("backend", "http://host.docker.internal:8000")
+    else:
+        url = try_resolve_url("backend", "http://localhost:8000")
+    return {"COMPASSX_BACKEND_URL": url}

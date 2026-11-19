@@ -96,6 +96,12 @@ class KubernetesAppDriver(BaseAppDriver):
                     k, v = ev.split("=", 1)
                     env_vars.append(client.V1EnvVar(name=k.strip(), value=v.strip()))
 
+        existing_names = {e.name for e in env_vars}
+        if "COMPASSX_BACKEND_URL" not in existing_names:
+            from compassx.lookup import platform_backend_env
+            backend_url = platform_backend_env(container=True)["COMPASSX_BACKEND_URL"]
+            env_vars.append(client.V1EnvVar(name="COMPASSX_BACKEND_URL", value=backend_url))
+
         # Also inject platform connection env vars (Azure OpenAI, OpenAI, Postgres, etc.)
         try:
             from app.services.omnigent_dev_service import omnigent_dev_service
@@ -1197,6 +1203,11 @@ class KubernetesDevDriver(BaseDevDriver):
                                 dev_env_list.append(client.V1EnvVar(name=k.strip(), value=v.strip()))
                                 custom_export_stmts.append(f"export {k.strip()}={shlex.quote(v.strip())};")
                                 existing_env_keys.add(k.strip())
+                if "COMPASSX_BACKEND_URL" not in existing_env_keys:
+                    from compassx.lookup import platform_backend_env
+                    backend_url = platform_backend_env(container=True)["COMPASSX_BACKEND_URL"]
+                    dev_env_list.append(client.V1EnvVar(name="COMPASSX_BACKEND_URL", value=backend_url))
+                    existing_env_keys.add("COMPASSX_BACKEND_URL")
                 custom_exports_str = " ".join(custom_export_stmts)
 
                 dev_cmd = (

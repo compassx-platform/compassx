@@ -15,15 +15,13 @@ import {
   Palette,
   Image,
   ArrowDownToLine,
-  BarChart2,
-  Globe,
-  LayoutGrid,
 } from 'lucide-react';
 import { CompassXLogo } from '@/components/common/CompassXLogo';
 import AgentSidePanel from '@/modules/agents/components/side_panel/AgentSidePanel';
 import { useAgentSidePanelStore } from '@/modules/agents/stores/agentSidePanelStore';
 import { usePortalConfig } from '@/modules/portal/hooks/usePortalConfig';
-import { CustomizeSidebarDrawer } from '@/modules/portal/components/CustomizeSidebarDrawer';
+import { activePortalItem, portalTargetFromPath } from '@/modules/portal/moduleFrame';
+import { PortalSidebar } from '@/modules/portal/components/PortalSidebar';
 import {
   APP_IDS,
   APP_DEFINITIONS,
@@ -107,9 +105,8 @@ export default function AppShell() {
   const appMenuRef = useRef<HTMLDivElement | null>(null);
   const workspaceMenuRef = useRef<HTMLDivElement | null>(null);
   const [workspaceMenuOpen, setWorkspaceMenuOpen] = useState(false);
-  const [isCustomizeDrawerOpen, setIsCustomizeDrawerOpen] = useState(false);
   const { data: workspaces = [] } = useMyWorkspaces();
-  const { data: portalConfig, refetch: refetchPortalConfig } = usePortalConfig();
+  const { data: portalConfig } = usePortalConfig();
 
   const activeAppId: AppId = isAppId(appId) ? appId : DEFAULT_APP_ID;
 
@@ -125,9 +122,16 @@ export default function AppShell() {
   const navGroups = useMemo(() => getNavGroupsForApp(activeAppId), [activeAppId]);
   const navItems = useMemo(() => getNavItemsForApp(activeAppId), [activeAppId]);
 
+  const portalScreen = useMemo(() => {
+    if (activeAppId !== 'portal') return undefined;
+    const located = portalTargetFromPath(scopedPathname);
+    return activePortalItem(portalConfig?.sections, searchParams.get('item'), located?.id, located?.kind);
+  }, [activeAppId, portalConfig, searchParams, scopedPathname]);
+
   const pageTitle = useMemo(() => {
-    if (scopedPathname.startsWith('/home')) return activeAppId === 'apps' ? 'Apps' : activeAppId === 'portal' ? 'Portal' : 'Home';
-    if (scopedPathname.startsWith('/portal')) return 'Workspace Portal';
+    if (activeAppId === 'portal' && scopedPathname.startsWith('/portal/settings')) return 'Portal settings';
+    if (activeAppId === 'portal') return portalScreen?.title || workspaceCtx?.name || '';
+    if (scopedPathname.startsWith('/home')) return activeAppId === 'apps' ? 'Apps' : 'Home';
     if (scopedPathname.startsWith('/apps')) return 'Apps';
     if (scopedPathname.startsWith('/notebooks/open')) return 'Notebook';
     if (scopedPathname.startsWith('/notebooks')) return 'Notebooks';
@@ -152,7 +156,7 @@ export default function AppShell() {
     if (scopedPathname.startsWith('/ontology') || scopedPathname.startsWith('/topology')) return 'Ontology';
     return 'CompassX';
 
-  }, [scopedPathname, activeAppId]);
+  }, [scopedPathname, activeAppId, portalScreen, workspaceCtx?.name]);
 
   useEffect(() => {
     function handlePointerDown(event: MouseEvent) {
@@ -186,7 +190,7 @@ export default function AppShell() {
   return (
     <div className="app-shell">
       {!hideSidebar && (
-        <nav className={`app-sidebar glass ${isSidebarCollapsed ? 'is-collapsed' : ''}`}>
+        <nav className={`app-sidebar glass ${isSidebarCollapsed ? 'is-collapsed' : ''} ${activeAppId === 'portal' ? 'is-portal' : ''}`}>
           {/* Edge Toggle Handle sitting right on the border */}
           <button
             type="button"
@@ -211,98 +215,27 @@ export default function AppShell() {
               style={{ cursor: 'pointer' }}
               title="Go to home"
             >
-              <CompassXLogo size={26} color="var(--color-primary, #1B6EF3)" />
-              <div className="app-sidebar-logo-text-wrap">
-                <span className="app-sidebar-logo-text">
-                  Compass<span style={{ color: 'var(--color-primary, #1B6EF3)' }}>X</span>
-                </span>
-              </div>
+              {activeAppId === 'portal' && portalConfig?.settings?.logo ? (
+                <img className="app-sidebar-portal-logo" src={portalConfig.settings.logo} alt="Company logo" />
+              ) : (
+                <>
+                  <CompassXLogo size={26} color="var(--color-primary, #1B6EF3)" />
+                  <div className="app-sidebar-logo-text-wrap">
+                    <span className="app-sidebar-logo-text">
+                      Compass<span style={{ color: 'var(--color-primary, #1B6EF3)' }}>X</span>
+                    </span>
+                  </div>
+                </>
+              )}
             </div>
           </div>
 
           {activeAppId === 'portal' ? (
-            <div className="app-sidebar-section" style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-              <div style={{ flex: 1, overflowY: 'auto' }}>
-                {portalConfig?.sections.map((sec) => {
-                  const visibleItems = sec.items.filter((it) => it.is_visible);
-                  if (visibleItems.length === 0) return null;
-                  return (
-                    <div key={sec.id} className="app-sidebar-group">
-                      {sec.title && (
-                        <div className="app-sidebar-divider-label">
-                          {sec.title}
-                        </div>
-                      )}
-                      {visibleItems.map((it) => {
-                        const itemTo =
-                          it.type === 'app'
-                            ? `/portal/app/${it.target_id}`
-                            : it.type === 'dashboard'
-                            ? `/portal/dashboard/${it.target_id}`
-                            : it.url || '/portal';
-
-                        const ItemIcon =
-                          it.type === 'app'
-                            ? (it.app_type === 'streamlit' ? Sparkles : LayoutGrid)
-                            : it.type === 'dashboard'
-                            ? BarChart2
-                            : Globe;
-
-                        if (it.type === 'external_link' && it.url) {
-                          return (
-                            <a
-                              key={it.id}
-                              href={it.url}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="app-sidebar-link"
-                              title={it.title}
-                            >
-                              <ItemIcon size={16} className="app-sidebar-link-icon" />
-                              <span className="app-sidebar-link-label">{it.title}</span>
-                            </a>
-                          );
-                        }
-
-                        return (
-                          <NavLink
-                            key={it.id}
-                            to={appPath(itemTo)}
-                            className={({ isActive }) => `app-sidebar-link ${isActive ? 'is-active' : ''}`}
-                            title={it.title}
-                          >
-                            <ItemIcon size={16} className="app-sidebar-link-icon" />
-                            <span className="app-sidebar-link-label">{it.title}</span>
-                          </NavLink>
-                        );
-                      })}
-                    </div>
-                  );
-                })}
-
-                {(!portalConfig?.sections || portalConfig.sections.every((s) => s.items.filter((i) => i.is_visible).length === 0)) && (
-                  <div style={{ padding: '16px 12px', fontSize: '0.8rem', color: 'var(--color-text-muted)', textAlign: 'center' }}>
-                    No items pinned to sidebar.
-                  </div>
-                )}
-              </div>
-
-              {/* Admin Customize Sidebar Button */}
-              {isWorkspaceAdmin && (
-                <div className="app-sidebar-group" style={{ marginTop: 'auto', paddingTop: 12, borderTop: '1px solid var(--color-border)' }}>
-                  <button
-                    type="button"
-                    onClick={() => setIsCustomizeDrawerOpen(true)}
-                    className="app-sidebar-link"
-                    style={{ width: '100%', background: 'transparent', border: 'none', cursor: 'pointer', textAlign: 'left', color: 'var(--color-primary)' }}
-                    title="Customize Sidebar"
-                  >
-                    <Sliders size={16} className="app-sidebar-link-icon" />
-                    <span className="app-sidebar-link-label" style={{ fontWeight: 600 }}>Customize Sidebar</span>
-                  </button>
-                </div>
-              )}
-            </div>
+            <PortalSidebar
+              sections={portalConfig?.sections}
+              canEdit={isWorkspaceAdmin}
+              selectedItemId={searchParams.get('item')}
+            />
           ) : (
             <div className="app-sidebar-section">
               {navGroups.map((group, groupIdx) => (
@@ -882,14 +815,6 @@ export default function AppShell() {
         </div>
       </main>
 
-      <CustomizeSidebarDrawer
-        isOpen={isCustomizeDrawerOpen}
-        onClose={() => {
-          setIsCustomizeDrawerOpen(false);
-          refetchPortalConfig();
-        }}
-        currentConfig={portalConfig}
-      />
     </div>
   );
 }

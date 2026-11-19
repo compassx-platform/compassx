@@ -388,6 +388,14 @@ async def lifespan(app: FastAPI):
             SystemBase.metadata.create_all(bind=system_engine, checkfirst=True)
             try:
                 with system_engine.connect() as _conn:
+                    _conn.execute(_text(
+                        "ALTER TABLE apps.portal_configs ADD COLUMN IF NOT EXISTS settings JSONB DEFAULT '{}'::jsonb;"
+                    ))
+                    _conn.commit()
+            except Exception as _portal_mig_err:
+                logger.debug("portal settings column check non-fatal: %s", _portal_mig_err)
+            try:
+                with system_engine.connect() as _conn:
                     _conn.execute(_text("""
                         ALTER TABLE um_object_grants ADD COLUMN IF NOT EXISTS securable_type VARCHAR(32) DEFAULT 'workspace';
                         ALTER TABLE um_object_grants ALTER COLUMN securable_type DROP DEFAULT;

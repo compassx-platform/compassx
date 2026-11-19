@@ -8,6 +8,14 @@ def _bind():
 
 _bind()
 
+from app.portal.application.workspace_items import (
+    selected_workspace_id,
+    visible_sections,
+    workspace_apps,
+    workspace_dashboard_ids,
+    workspace_dashboards,
+)
+
 
 def _bootstrap_default_config(
     workspace_id: str,
@@ -17,16 +25,8 @@ def _bootstrap_default_config(
     user_id: Optional[str] = None,
 ) -> PortalConfig:
     """Build a sensible default portal configuration using existing apps & dashboards."""
-    # Query workspace apps
-    app_query = sdb.query(App)
-    if workspace_id:
-        app_query = app_query.filter(App.workspace_id == workspace_id)
-    elif workspace_slug:
-        app_query = app_query.filter(App.workspace_slug == workspace_slug)
-    apps = app_query.order_by(App.created_at.desc()).all()
-
-    # Query dashboards
-    dashboards = adb.query(Dashboard).order_by(Dashboard.created_at.desc()).all()
+    apps = workspace_apps(sdb, workspace_id, workspace_slug)
+    dashboards = workspace_dashboards(adb, workspace_id)
 
     sections: List[dict] = []
 
@@ -115,11 +115,13 @@ def get_portal_config(
     If no configuration exists, automatically bootstraps one from the workspace's
     deployed apps and dashboards.
     """
-    target_ws = workspace_id or guard.workspace_id or "default"
+    target_ws = selected_workspace_id(workspace_id, workspace_slug, guard, adb) or "default"
     cfg = sdb.query(PortalConfig).filter(PortalConfig.workspace_id == target_ws).first()
 
     if not cfg and workspace_slug:
         cfg = sdb.query(PortalConfig).filter(PortalConfig.workspace_slug == workspace_slug).first()
+        if cfg is not None and str(cfg.workspace_id) != target_ws:
+            cfg = None
 
     if not cfg:
         cfg = _bootstrap_default_config(
@@ -130,10 +132,14 @@ def get_portal_config(
             user_id=guard.user_id if hasattr(guard, "user_id") else None,
         )
 
+    app_ids = {str(app.id) for app in workspace_apps(sdb, cfg.workspace_id, cfg.workspace_slug)}
+    dashboard_ids = workspace_dashboard_ids(adb, cfg.workspace_id)
+    stored = cfg.settings if isinstance(getattr(cfg, "settings", None), dict) else {}
     return PortalConfigOut(
         id=cfg.id,
         workspace_id=cfg.workspace_id,
         workspace_slug=cfg.workspace_slug,
-        sections=cfg.sections or [],
+        sections=visible_sections(cfg.sections or [], app_ids, dashboard_ids),
+        settings={"logo": stored.get("logo") or None},
         updated_at=cfg.updated_at or cfg.created_at,
     )

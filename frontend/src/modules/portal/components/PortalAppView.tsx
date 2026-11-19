@@ -1,32 +1,100 @@
-import React, { useState, useEffect } from 'react';
-import { Loader2, Play, AlertCircle, RefreshCw, ExternalLink, Globe } from 'lucide-react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { Loader2, AlertCircle, RefreshCw } from 'lucide-react';
 import { useApp, useAppRuntimeStatus, useStartApp } from '@/modules/apps/hooks/useApps';
-import { useToast } from '@/lib/toast';
+import { getAccessToken } from '@/lib/auth';
+import { useWorkspaceContext } from '@/lib/workspaceContext';
+import { moduleFrameSrc } from '../moduleFrame';
+import { COMPASSX_USER_CONTEXT, COMPASSX_USER_CONTEXT_REQUEST } from '../userContextMessage';
 
 interface PortalAppViewProps {
   appId: string;
+  moduleTitle?: string;
+  modulePath?: string | null;
 }
 
-export function PortalAppView({ appId }: PortalAppViewProps) {
-  const toast = useToast();
+export function PortalAppView({ appId, moduleTitle, modulePath }: PortalAppViewProps) {
   const { data: app, isLoading: appLoading, error: appError, refetch: refetchApp } = useApp(appId);
-  const { data: runtimeStatus, isLoading: runtimeLoading, refetch: refetchRuntime } = useAppRuntimeStatus(appId);
+  const { data: runtimeStatus } = useAppRuntimeStatus(appId);
   const startAppMutation = useStartApp();
+  const workspace = useWorkspaceContext();
+  const iframeRef = useRef<HTMLIFrameElement>(null);
+
+  const postUserContext = useCallback((frame: HTMLIFrameElement) => {
+    const accessToken = getAccessToken();
+    if (!accessToken || !frame.contentWindow) return;
+    let targetOrigin = '';
+    try {
+      targetOrigin = new URL(frame.src, window.location.href).origin;
+    } catch {
+      return;
+    }
+    frame.contentWindow.postMessage(
+      {
+        type: COMPASSX_USER_CONTEXT,
+        accessToken,
+        workspaceId: workspace.id,
+        workspaceSlug: workspace.slug,
+      },
+      targetOrigin,
+    );
+  }, [workspace.id, workspace.slug]);
+
+  useEffect(() => {
+    function onMessage(event: MessageEvent) {
+      const frame = iframeRef.current;
+      if (!frame?.contentWindow) return;
+      let frameOrigin = '';
+      try {
+        frameOrigin = new URL(frame.src, window.location.href).origin;
+      } catch {
+        return;
+      }
+      if (event.origin !== frameOrigin || event.source !== frame.contentWindow) return;
+      if (event.data?.type !== COMPASSX_USER_CONTEXT_REQUEST) return;
+      postUserContext(frame);
+    }
+    window.addEventListener('message', onMessage);
+    return () => window.removeEventListener('message', onMessage);
+  }, [postUserContext]);
 
   const [iframeLoading, setIframeLoading] = useState(true);
-  const [iframeError, setIframeError] = useState(false);
-  const [refreshKey, setRefreshKey] = useState(0);
+  const [openError, setOpenError] = useState<string | null>(null);
+  const attemptedStart = useRef<string | null>(null);
+
+  const screenTitle = moduleTitle || app?.name || '';
 
   useEffect(() => {
     setIframeLoading(true);
-    setIframeError(false);
-  }, [appId, refreshKey]);
+    setOpenError(null);
+    attemptedStart.current = null;
+  }, [appId, modulePath]);
+
+  const isStarting = runtimeStatus?.status === 'starting' || runtimeStatus?.status === 'provisioning' || startAppMutation.isPending;
+  const isStopped = Boolean(
+    app && (
+      app.status === 'stopped'
+      || app.status === 'inactive'
+      || runtimeStatus?.status === 'stopped'
+      || runtimeStatus?.status === 'inactive'
+    ),
+  );
+
+  useEffect(() => {
+    if (!app || !isStopped || isStarting || openError) return;
+    if (attemptedStart.current === app.id) return;
+    attemptedStart.current = app.id;
+    startAppMutation.mutate(app.id, {
+      onError: (err: any) => {
+        setOpenError(err?.response?.data?.detail || err?.message || 'Could not open this screen.');
+      },
+    });
+  }, [app, isStopped, isStarting, openError, startAppMutation]);
 
   if (appLoading) {
     return (
       <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--color-text-muted)', gap: 8 }}>
         <Loader2 size={24} className="spin" />
-        <span>Loading application...</span>
+        <span>{screenTitle ? `Opening ${screenTitle}...` : 'Opening...'}</span>
       </div>
     );
   }
@@ -38,9 +106,9 @@ export function PortalAppView({ appId }: PortalAppViewProps) {
           <AlertCircle size={32} />
         </div>
         <div>
-          <h3 style={{ margin: '0 0 8px', fontSize: '1.1rem', color: 'var(--color-text)' }}>Application Not Found</h3>
+          <h3 style={{ margin: '0 0 8px', fontSize: '1.1rem', color: 'var(--color-text)' }}>This screen could not be opened</h3>
           <p style={{ margin: 0, color: 'var(--color-text-muted)', fontSize: '0.88rem' }}>
-            The requested application could not be loaded. It may have been deleted or moved.
+            The linked application is missing. It may have been removed from this workspace.
           </p>
         </div>
         <button
@@ -54,70 +122,45 @@ export function PortalAppView({ appId }: PortalAppViewProps) {
     );
   }
 
-  const isStarting = runtimeStatus?.status === 'starting' || runtimeStatus?.status === 'provisioning' || startAppMutation.isPending;
-  const isStopped = app.status === 'stopped' || app.status === 'inactive' || runtimeStatus?.status === 'stopped' || runtimeStatus?.status === 'inactive';
-
-  if (isStopped && !isStarting) {
-    return (
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', gap: 20, padding: 32, textAlign: 'center' }}>
-        <div style={{ width: 64, height: 64, borderRadius: '50%', background: 'var(--color-surface)', border: '1px solid var(--color-border)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--color-text-muted)' }}>
-          <Globe size={32} />
-        </div>
-        <div style={{ maxWidth: 460 }}>
-          <h3 style={{ margin: '0 0 8px', fontSize: '1.25rem', fontWeight: 600, color: 'var(--color-text)' }}>
-            {app.name} is currently offline
-          </h3>
-          <p style={{ margin: 0, color: 'var(--color-text-muted)', fontSize: '0.9rem', lineHeight: 1.5 }}>
-            This application is stopped to save compute resources. Click the button below to start the container instance.
-          </p>
-        </div>
-        <button
-          className="btn-primary"
-          onClick={async () => {
-            try {
-              await startAppMutation.mutateAsync(app.id);
-              toast.success(`Starting ${app.name}...`);
-            } catch (err: any) {
-              toast.error(err?.response?.data?.detail || 'Failed to start application.');
-            }
-          }}
-          disabled={startAppMutation.isPending}
-          style={{
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: 8,
-            padding: '10px 24px',
-            borderRadius: 8,
-            fontWeight: 600,
-            cursor: 'pointer',
-            fontSize: '0.92rem',
-          }}
-        >
-          {startAppMutation.isPending ? <Loader2 size={16} className="spin" /> : <Play size={16} fill="currentColor" />}
-          Start Application
-        </button>
-      </div>
-    );
-  }
-
-  if (isStarting) {
+  if (isStopped || isStarting) {
     return (
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', gap: 16, textAlign: 'center' }}>
-        <Loader2 size={36} className="spin" style={{ color: 'var(--color-primary)' }} />
-        <div>
-          <h3 style={{ margin: '0 0 6px', fontSize: '1.1rem', color: 'var(--color-text)' }}>Starting {app.name}...</h3>
-          <p style={{ margin: 0, color: 'var(--color-text-muted)', fontSize: '0.88rem' }}>
-            {runtimeStatus?.step_description || 'Provisioning runtime container and establishing networking...'}
-          </p>
-        </div>
+        {openError ? (
+          <>
+            <AlertCircle size={32} style={{ color: 'var(--color-danger)' }} />
+            <div>
+              <h3 style={{ margin: '0 0 6px', fontSize: '1.1rem', color: 'var(--color-text)' }}>{screenTitle || 'This screen'}</h3>
+              <p style={{ margin: 0, color: 'var(--color-text-muted)', fontSize: '0.88rem' }}>{openError}</p>
+            </div>
+            <button
+              className="btn-outline"
+              onClick={() => {
+                setOpenError(null);
+                attemptedStart.current = null;
+              }}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '8px 16px', borderRadius: 8, cursor: 'pointer' }}
+            >
+              <RefreshCw size={14} /> Retry
+            </button>
+          </>
+        ) : (
+          <>
+            <Loader2 size={36} className="spin" style={{ color: 'var(--color-primary)' }} />
+            <div>
+              <h3 style={{ margin: '0 0 6px', fontSize: '1.1rem', color: 'var(--color-text)' }}>
+                {screenTitle ? `Opening ${screenTitle}` : 'Opening'}
+              </h3>
+              <p style={{ margin: 0, color: 'var(--color-text-muted)', fontSize: '0.88rem' }}>
+                {runtimeStatus?.step_description || 'Getting this screen ready.'}
+              </p>
+            </div>
+          </>
+        )}
       </div>
     );
   }
 
-  // Determine iframe target URL:
-  // 1. Runtime URL if available
-  // 2. Fallback to API proxy URL: /api/v1/apps/{appId}/proxy/
-  const resolvedTargetUrl = runtimeStatus?.url || `/api/v1/apps/${app.id}/proxy/`;
+  const resolvedTargetUrl = moduleFrameSrc(runtimeStatus?.url || `/api/v1/apps/${app.id}/proxy/`, modulePath);
 
   return (
     <div style={{ position: 'relative', width: '100%', height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden', background: '#ffffff' }}>
@@ -136,18 +179,18 @@ export function PortalAppView({ appId }: PortalAppViewProps) {
           }}
         >
           <Loader2 size={24} className="spin" style={{ color: 'var(--color-primary)' }} />
-          <span>Loading {app.name}...</span>
+          <span>{screenTitle ? `Opening ${screenTitle}...` : 'Opening...'}</span>
         </div>
       )}
 
       <iframe
-        key={`${app.id}-${refreshKey}`}
+        ref={iframeRef}
+        key={`${app.id}-${modulePath || ''}`}
         src={resolvedTargetUrl}
-        title={app.name}
-        onLoad={() => setIframeLoading(false)}
-        onError={() => {
+        title={screenTitle || app.name}
+        onLoad={(event) => {
           setIframeLoading(false);
-          setIframeError(true);
+          postUserContext(event.currentTarget);
         }}
         style={{
           width: '100%',

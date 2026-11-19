@@ -1,6 +1,6 @@
 :root,
 [data-theme="light"] {
-  --cx-font-sans: "Inter", "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+  --cx-font-sans: "Segoe UI", "Inter", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
   --cx-font-mono: "JetBrains Mono", "SFMono-Regular", Consolas, "Liberation Mono", monospace;
 
   --cx-space-1: 4px;
@@ -81,10 +81,10 @@
   --cx-color-primary-hover: var(--cx-color-brand-primary-hover);
   --cx-color-primary-bg: #EAF6FF;
   --cx-color-secondary-action: #2374BB;
-  --cx-color-sidebar-bg: #FAFAFA;
-  --cx-color-sidebar-hover: #F1F3F5;
-  --cx-color-sidebar-active-bg: #E4E8EE;
-  --cx-color-sidebar-active-text: #0F172A;
+  --cx-color-sidebar-bg: #F7F7F7;
+  --cx-color-sidebar-hover: #EBEBEB;
+  --cx-color-sidebar-active-bg: #E7EDF2;
+  --cx-color-sidebar-active-text: #0B5CAD;
   --cx-color-sidebar-section-text: #6B7280;
   --cx-color-sidebar-button-bg: #F3F4F6;
   --cx-color-sidebar-button-hover: #E5E7EB;

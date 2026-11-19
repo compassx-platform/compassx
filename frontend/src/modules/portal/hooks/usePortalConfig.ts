@@ -1,7 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import axios from 'axios';
+import api from '@/lib/api';
 import { useCurrentWorkspaceSlug } from '@/lib/appNavigation';
-import { getToken } from '@/lib/auth';
 
 export interface PortalItem {
   id: string;
@@ -12,6 +11,7 @@ export interface PortalItem {
   is_visible: boolean;
   order: number;
   url?: string | null;
+  path?: string | null;
   app_type?: string | null;
   status?: string | null;
 }
@@ -22,11 +22,16 @@ export interface PortalSection {
   items: PortalItem[];
 }
 
+export interface PortalSettings {
+  logo?: string | null;
+}
+
 export interface PortalConfig {
   id?: string;
   workspace_id: string;
   workspace_slug?: string | null;
   sections: PortalSection[];
+  settings?: PortalSettings | null;
   updated_at?: string | null;
 }
 
@@ -53,20 +58,14 @@ export interface PortalAvailableItems {
   dashboards: AvailableDashboardItem[];
 }
 
-function getAuthHeaders() {
-  const token = getToken();
-  return token ? { Authorization: `Bearer ${token}` } : {};
-}
-
 export function usePortalConfig() {
   const workspaceSlug = useCurrentWorkspaceSlug();
 
   return useQuery<PortalConfig>({
     queryKey: ['portal-config', workspaceSlug],
     queryFn: async () => {
-      const { data } = await axios.get('/api/v1/portal/config', {
+      const { data } = await api.get('/portal/config', {
         params: { workspace_slug: workspaceSlug },
-        headers: getAuthHeaders(),
       });
       return data;
     },
@@ -81,19 +80,40 @@ export function useUpdatePortalConfig() {
 
   return useMutation({
     mutationFn: async (sections: PortalSection[]) => {
-      const { data } = await axios.put(
-        '/api/v1/portal/config',
+      const { data } = await api.put(
+        '/portal/config',
         { sections },
-        {
-          params: { workspace_slug: workspaceSlug },
-          headers: getAuthHeaders(),
-        }
+        { params: { workspace_slug: workspaceSlug } }
       );
       return data;
     },
-    onSuccess: (updatedConfig) => {
-      queryClient.setQueryData(['portal-config', workspaceSlug], updatedConfig);
+    onSuccess: (updatedConfig: PortalConfig) => {
+      queryClient.setQueryData(['portal-config', workspaceSlug], (current: PortalConfig | undefined) => ({
+        ...updatedConfig,
+        settings: updatedConfig.settings ?? current?.settings,
+      }));
       queryClient.invalidateQueries({ queryKey: ['portal-config', workspaceSlug] });
+    },
+  });
+}
+
+export function useUpdatePortalSettings() {
+  const queryClient = useQueryClient();
+  const workspaceSlug = useCurrentWorkspaceSlug();
+
+  return useMutation({
+    mutationFn: async (logo: string | null) => {
+      const { data } = await api.patch(
+        '/portal/settings',
+        { logo },
+        { params: { workspace_slug: workspaceSlug } }
+      );
+      return data as PortalSettings;
+    },
+    onSuccess: (settings) => {
+      queryClient.setQueryData(['portal-config', workspaceSlug], (current: PortalConfig | undefined) => (
+        current ? { ...current, settings } : current
+      ));
     },
   });
 }
@@ -104,9 +124,8 @@ export function usePortalAvailableItems() {
   return useQuery<PortalAvailableItems>({
     queryKey: ['portal-available-items', workspaceSlug],
     queryFn: async () => {
-      const { data } = await axios.get('/api/v1/portal/available-items', {
+      const { data } = await api.get('/portal/available-items', {
         params: { workspace_slug: workspaceSlug },
-        headers: getAuthHeaders(),
       });
       return data;
     },

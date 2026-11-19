@@ -67,7 +67,7 @@
   box-shadow: var(--shadow-xl, var(--cx-shadow-4, 0 20px 40px rgba(0, 0, 0, 0.18)));
   overflow: hidden;
   color: var(--color-text, var(--cx-color-text, #1e293b));
-  font-family: var(--font-family, var(--cx-font-sans, "Inter", sans-serif));
+  font-family: var(--font-family, var(--cx-font-sans, "Segoe UI", "Inter", sans-serif));
   animation: cxKgModalSlideUp 0.18s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
@@ -202,7 +202,7 @@
   width: 100%;
   padding: 8px 12px;
   font-size: 13px;
-  font-family: var(--font-family, var(--cx-font-sans, "Inter", sans-serif));
+  font-family: var(--font-family, var(--cx-font-sans, "Segoe UI", "Inter", sans-serif));
   color: var(--color-text, var(--cx-color-text, #0f172a));
   background: var(--color-bg, var(--cx-color-bg, #ffffff));
   border: 1px solid var(--color-border, var(--cx-color-border, #d1d5db));
@@ -276,7 +276,7 @@
   padding: 8px 16px;
   font-size: 12px;
   font-weight: 600;
-  font-family: var(--font-family, var(--cx-font-sans, "Inter", sans-serif));
+  font-family: var(--font-family, var(--cx-font-sans, "Segoe UI", "Inter", sans-serif));
   border-radius: var(--radius-md, var(--cx-radius-md, 8px));
   border: 1px solid transparent;
   cursor: pointer;
@@ -368,7 +368,7 @@
   box-shadow: var(--shadow-xl, var(--cx-shadow-4, 0 16px 36px rgba(0, 0, 0, 0.16)));
   overflow: hidden;
   color: var(--color-text, var(--cx-color-text, #0f172a));
-  font-family: var(--font-family, var(--cx-font-sans, "Inter", sans-serif));
+  font-family: var(--font-family, var(--cx-font-sans, "Segoe UI", "Inter", sans-serif));
   animation: cxKgDrawerSlideIn 0.2s cubic-bezier(0.16, 1, 0.3, 1);
   transition: background-color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
 }

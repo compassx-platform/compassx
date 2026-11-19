@@ -138,7 +138,7 @@
   --color-severity-critical: #B71C1C;
 
   /* Layout */
-  --font-family:    "Inter", system-ui, -apple-system, sans-serif;
+  --font-family:    "Segoe UI", "Inter", system-ui, -apple-system, sans-serif;
   --radius:         0.375rem;
   --radius-lg:      0.5rem;
   --sidebar-width:  220px;
@@ -545,15 +545,15 @@ textarea.form-input { resize: vertical; min-height: 80px; }
 .app-sidebar-link {
   display: flex;
   align-items: center;
-  gap: 0.65rem;
-  min-height: 34px;
-  padding: 0.35rem 0.65rem;
+  gap: 0.625rem;
+  min-height: 28px;
+  padding: 0.375rem 0.625rem;
   border-radius: 6px;
   text-decoration: none;
   color: var(--sb-text);
-  font-size: 0.85rem;
+  font-size: 0.75rem;
   font-weight: 400;
-  letter-spacing: -0.01em;
+  letter-spacing: normal;
   transition: color 0.12s ease, background 0.12s ease;
   position: relative;
 }
@@ -564,7 +564,7 @@ textarea.form-input { resize: vertical; min-height: 80px; }
 .app-sidebar-link.is-active {
   color: var(--sb-active-text);
   background: var(--sb-active-bg);
-  font-weight: 550;
+  font-weight: 600;
 }
 
 .app-sidebar-link-icon {
@@ -610,13 +610,13 @@ textarea.form-input { resize: vertical; min-height: 80px; }
 .app-sidebar-link.is-active .app-sidebar-link-arrow { opacity: 0.5; }
 
 .app-sidebar-divider-label {
-  font-size: 0.72rem;
-  font-weight: 500;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: normal;
+  text-transform: none;
   color: var(--cx-color-sidebar-section-text);
-  padding: 0.75rem 0.6rem 0.25rem;
-  opacity: 0.85;
+  padding: 0.75rem 0.625rem 0.125rem;
+  opacity: 1;
 }
 
 .app-sidebar-footer {
@@ -822,13 +822,27 @@ textarea.form-input { resize: vertical; min-height: 80px; }
 }
 
 .app-nova-sidebar {
-  width: 420px;
+  width: auto;
   flex-shrink: 0;
-  border-left: 1px solid var(--color-border);
-  background: var(--color-surface);
   height: 100%;
   min-height: 100%;
   max-height: 100%;
+  display: flex;
+  box-sizing: border-box;
+  padding: 8px 8px 8px 0;
+  margin-left: -6px;
+  background: #F7F7F7;
+  border-left: none;
+  overflow: hidden;
+}
+
+.app-nova-sidebar > div {
+  height: 100%;
+  min-height: 0;
+  border: 1px solid #E5E7EB !important;
+  border-radius: 12px !important;
+  background: #ffffff !important;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05) !important;
   overflow: hidden;
 }
 
@@ -848,8 +862,9 @@ textarea.form-input { resize: vertical; min-height: 80px; }
     height: min(50vh, 520px);
     min-height: 420px;
     max-height: min(50vh, 520px);
+    padding: 8px;
     border-left: none;
-    border-top: 1px solid var(--color-border);
+    border-top: none;
   }
 }
 
@@ -1717,13 +1732,13 @@ textarea.form-input { resize: vertical; min-height: 80px; }
   --font-family: var(--cx-font-sans);
   --radius: var(--cx-radius-sm);
   --radius-lg: var(--cx-radius-lg);
-  --sidebar-width: 236px;
+  --sidebar-width: 208px;
   --shadow-sm: var(--cx-shadow-1);
   --shadow-md: var(--cx-shadow-2);
   --sb-bg: var(--cx-color-sidebar-bg);
   --sb-border: var(--cx-color-border);
-  --sb-text: var(--cx-color-text);
-  --sb-muted: var(--cx-color-text-muted);
+  --sb-text: #1F2937;
+  --sb-muted: #6B7280;
   --sb-hover: var(--cx-color-sidebar-hover);
   --sb-active-bg: var(--cx-color-sidebar-active-bg);
   --sb-active-text: var(--cx-color-sidebar-active-text);
@@ -1817,6 +1832,8 @@ html {
   top: 0;
   height: 100vh;
   z-index: 1050;
+  -webkit-font-smoothing: auto;
+  -moz-osx-font-smoothing: auto;
 }
 
 /* Edge Toggle Handle - mounts right on the border dividing sidebar & content */
@@ -1926,13 +1943,13 @@ html {
 }
 
 .app-sidebar-link {
-  min-height: 34px;
-  padding: 0.35rem 0.65rem;
+  min-height: 28px;
+  padding: 0.375rem 0.625rem;
   border-radius: 6px;
   font-weight: 400;
   color: var(--sb-text);
-  font-size: 0.85rem;
-  letter-spacing: -0.01em;
+  font-size: 0.75rem;
+  letter-spacing: normal;
 }
 
 .app-sidebar-link:hover {
@@ -1943,7 +1960,89 @@ html {
 .app-sidebar-link.is-active {
   background: var(--sb-active-bg);
   color: var(--sb-active-text);
-  font-weight: 500;
+  font-weight: 600;
+}
+
+.app-sidebar.glass.is-portal {
+  --sb-bg: #F7F7F7;
+  --sb-text: #374151;
+  --sb-muted: #6B7280;
+  --sb-hover: #EBEBEB;
+  --sb-active-bg: #E7EDF2;
+  --sb-active-text: #0B5CAD;
+  background: #F7F7F7;
+  border: none;
+  box-shadow: none;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", "Noto Sans", Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
+  font-feature-settings: normal;
+  font-variation-settings: normal;
+  -webkit-font-smoothing: auto;
+  -moz-osx-font-smoothing: auto;
+}
+
+.app-sidebar.is-portal .app-sidebar-section {
+  padding: 0.25rem 0.5rem 0;
+  gap: 0.125rem;
+  background: #F7F7F7;
+}
+
+.app-sidebar.is-portal .app-sidebar-link,
+.app-sidebar.is-portal .app-sidebar-link-label {
+  font-family: inherit;
+  font-size: 0.75rem;
+  line-height: 1rem;
+  font-weight: 400;
+  font-style: normal;
+  letter-spacing: 0;
+  color: #374151;
+}
+
+.app-sidebar.is-portal .app-sidebar-link {
+  min-height: 28px;
+  padding: 0.375rem 0.625rem;
+  border-radius: 6px;
+  background: transparent;
+}
+
+.app-sidebar.is-portal .app-sidebar-link:hover {
+  color: #030712;
+  background: #EBEBEB;
+}
+
+.app-sidebar.is-portal .app-sidebar-link.is-active,
+.app-sidebar.is-portal .app-sidebar-link.is-active .app-sidebar-link-label {
+  color: #0B5CAD;
+  font-weight: 600;
+}
+
+.app-sidebar.is-portal .app-sidebar-link.is-active {
+  background: #E7EDF2;
+}
+
+.app-sidebar.is-portal .app-sidebar-link-icon {
+  color: #6B7280;
+  width: 16px;
+  height: 16px;
+}
+
+.app-sidebar.is-portal .app-sidebar-link:hover .app-sidebar-link-icon {
+  color: #1F2937;
+}
+
+.app-sidebar.is-portal .app-sidebar-link.is-active .app-sidebar-link-icon {
+  color: #0B5CAD;
+}
+
+.app-sidebar.is-portal .app-sidebar-divider-label {
+  font-family: inherit;
+  font-size: 0.75rem;
+  line-height: 1rem;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+  color: #6B7280;
+  opacity: 1;
+  padding: 0.75rem 0.625rem 0.125rem;
 }
 
 .app-sidebar-footer {

@@ -47,11 +47,16 @@ def _env_from_app(app) -> Dict[str, str]:
     env = dict(os.environ)
     cfg = getattr(app, "config", None) or {}
     raw = cfg.get("env") or cfg.get("env_vars") or {}
+    configured = set()
     if isinstance(raw, dict):
         for key, value in raw.items():
             if key and value is not None:
                 env[str(key)] = str(value)
+                configured.add(str(key))
     env["APP_ID"] = str(app.id)
+    if "COMPASSX_BACKEND_URL" not in configured:
+        from compassx.lookup import platform_backend_env
+        env["COMPASSX_BACKEND_URL"] = platform_backend_env(container=False)["COMPASSX_BACKEND_URL"]
     return env
 
 

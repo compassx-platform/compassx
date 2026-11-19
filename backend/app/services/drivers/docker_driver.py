@@ -150,12 +150,24 @@ class DockerAppDriver(BaseAppDriver):
             env_args.extend(["-e", f"COMPASSX_WORKLOAD_IDENTITY={identity_id}"])
 
         env_vars = cfg.get("env_vars") or []
+        configured_env = set()
         for ev in env_vars:
             if isinstance(ev, dict) and ev.get("key") and ev.get("value"):
+                configured_env.add(str(ev["key"]))
                 env_args.extend(["-e", f"{ev['key']}={ev['value']}"])
+        if "COMPASSX_BACKEND_URL" not in configured_env:
+            from compassx.lookup import platform_backend_env
+            backend_url = platform_backend_env(container=True)["COMPASSX_BACKEND_URL"]
+            env_args.extend(["-e", f"COMPASSX_BACKEND_URL={backend_url}"])
 
         network = get_docker_network()
-        run_cmd = ["docker", "run", "-d", "--name", container_name, "--network", network, "-p", f"{port}:8080"] + env_args + [image_tag]
+        run_cmd = [
+            "docker", "run", "-d",
+            "--name", container_name,
+            "--network", network,
+            "--add-host=host.docker.internal:host-gateway",
+            "-p", f"{port}:8080",
+        ] + env_args + [image_tag]
         run_res = subprocess.run(run_cmd, capture_output=True, text=True, check=False)
         if run_res.returncode != 0:
             raise RuntimeError(f"Docker run failed: {run_res.stderr}")

@@ -8,6 +8,8 @@ def _bind():
 
 _bind()
 
+from app.portal.application.workspace_items import selected_workspace_id
+
 
 def update_portal_config(
     body: PortalConfigUpdate,
@@ -16,9 +18,14 @@ def update_portal_config(
     workspace_slug: Optional[str] = Query(None),
     sdb: Session = Depends(get_system_db),
     guard: Guard = Depends(get_guard),
+    adb: Session = None,
 ):
     """Save updated portal navigation layout (sections, items, ordering, icons, visibility)."""
-    target_ws = workspace_id or guard.workspace_id or "default"
+    principal = getattr(guard, "principal", None)
+    role = principal.workspace_role(guard.workspace_id) if principal is not None else None
+    if role != "admin":
+        guard.require_workspace_admin("Saving the portal sidebar")
+    target_ws = selected_workspace_id(workspace_id, workspace_slug, guard, adb) or "default"
     cfg = sdb.query(PortalConfig).filter(PortalConfig.workspace_id == target_ws).first()
 
     sections_data = [sec.dict() for sec in body.sections]
@@ -42,10 +49,12 @@ def update_portal_config(
     sdb.commit()
     sdb.refresh(cfg)
 
+    stored = cfg.settings if isinstance(getattr(cfg, "settings", None), dict) else {}
     return PortalConfigOut(
         id=cfg.id,
         workspace_id=cfg.workspace_id,
         workspace_slug=cfg.workspace_slug,
         sections=cfg.sections or [],
+        settings={"logo": stored.get("logo") or None},
         updated_at=cfg.updated_at or cfg.created_at,
     )

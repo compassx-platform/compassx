@@ -1,12 +1,11 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { useParams, useNavigate, useLocation } from 'react-router-dom';
-import { Loader2, Plus, Sparkles, LayoutGrid, BarChart2, Globe, Sliders } from 'lucide-react';
+import React, { useEffect, useMemo } from 'react';
+import { useParams, useNavigate, useLocation, useSearchParams } from 'react-router-dom';
+import { Loader2, Sparkles } from 'lucide-react';
 import { usePortalConfig } from '../hooks/usePortalConfig';
+import { activePortalItem, portalItemTo, portalTargetFromPath } from '../moduleFrame';
 import { PortalAppView } from '../components/PortalAppView';
 import { PortalDashboardView } from '../components/PortalDashboardView';
-import { CustomizeSidebarDrawer } from '../components/CustomizeSidebarDrawer';
-import { useWorkspaceContext } from '@/lib/workspaceContext';
-import { useMe } from '@/lib/userManagerApi';
+import { scopePath } from '@/lib/appNavigation';
 
 export default function PortalPage() {
   const params = useParams<{
@@ -19,9 +18,8 @@ export default function PortalPage() {
 
   const navigate = useNavigate();
   const location = useLocation();
-  const { data: me } = useMe();
-  const workspaceCtx = useWorkspaceContext();
-  const { data: config, isLoading, refetch } = usePortalConfig();
+  const [searchParams] = useSearchParams();
+  const { data: config, isLoading } = usePortalConfig();
 
   const activeAppTargetId =
     params.portalAppId ||
@@ -30,31 +28,47 @@ export default function PortalPage() {
 
   const activeDashboardTargetId = params.dashboardId;
 
-  const isAccountAdmin = Boolean(me?.account_role === 'account_admin' || me?.is_account_admin || workspaceCtx?.is_account_admin);
-  const isWorkspaceAdmin = Boolean(isAccountAdmin || workspaceCtx?.current_user_role === 'workspace_admin' || workspaceCtx?.current_user_role === 'admin');
-
-  const [isCustomizeOpen, setIsCustomizeOpen] = useState(false);
-
   // Flatten all visible items in order
   const allVisibleItems = useMemo(() => {
     if (!config?.sections) return [];
     return config.sections.flatMap((sec) => sec.items.filter((it) => it.is_visible));
   }, [config]);
 
+  const located = portalTargetFromPath(location.pathname);
+  const activeItem = activePortalItem(
+    config?.sections,
+    searchParams.get('item'),
+    located?.id || activeAppTargetId || activeDashboardTargetId,
+    located?.kind || (activeAppTargetId ? 'app' : activeDashboardTargetId ? 'dashboard' : undefined),
+  );
+
   // If on /w/:slug/portal with no item selected in URL, navigate to the first visible item
   useEffect(() => {
-    if (isLoading || !config) return;
+    if (isLoading || !config || !params.workspaceSlug) return;
 
     const isRootPortal = !activeAppTargetId && !activeDashboardTargetId;
     if (isRootPortal && allVisibleItems.length > 0) {
-      const first = allVisibleItems[0];
-      if (first.type === 'app') {
-        navigate(`/w/${params.workspaceSlug}/portal/app/${first.target_id}`, { replace: true });
-      } else if (first.type === 'dashboard') {
-        navigate(`/w/${params.workspaceSlug}/portal/dashboard/${first.target_id}`, { replace: true });
+      const first = allVisibleItems.find((item) => item.type === 'app' || item.type === 'dashboard');
+      if (first) {
+        navigate(scopePath('portal', portalItemTo(first), params.workspaceSlug), { replace: true });
       }
+      return;
     }
-  }, [isLoading, config, allVisibleItems, activeAppTargetId, activeDashboardTargetId, navigate, params.workspaceSlug]);
+
+    if ((activeAppTargetId || activeDashboardTargetId) && !searchParams.get('item') && activeItem) {
+      navigate(scopePath('portal', portalItemTo(activeItem), params.workspaceSlug), { replace: true });
+    }
+  }, [
+    isLoading,
+    config,
+    allVisibleItems,
+    activeAppTargetId,
+    activeDashboardTargetId,
+    activeItem,
+    navigate,
+    params.workspaceSlug,
+    searchParams,
+  ]);
 
   if (isLoading) {
     return (
@@ -67,7 +81,13 @@ export default function PortalPage() {
 
   // Active view resolution
   if (activeAppTargetId) {
-    return <PortalAppView appId={activeAppTargetId} />;
+    return (
+      <PortalAppView
+        appId={activeAppTargetId}
+        moduleTitle={activeItem?.type === 'app' ? activeItem.title : undefined}
+        modulePath={activeItem?.type === 'app' ? activeItem.path : undefined}
+      />
+    );
   }
 
   if (activeDashboardTargetId) {
@@ -122,34 +142,7 @@ export default function PortalPage() {
           This is your centralized hub for business applications and dashboards. No items have been published to the sidebar navigation yet.
         </p>
 
-        {isWorkspaceAdmin && (
-          <button
-            className="btn-primary"
-            onClick={() => setIsCustomizeOpen(true)}
-            style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: 8,
-              padding: '10px 20px',
-              borderRadius: 8,
-              fontWeight: 600,
-              cursor: 'pointer',
-              marginTop: 8,
-            }}
-          >
-            <Sliders size={16} /> Customize Sidebar
-          </button>
-        )}
       </div>
-
-      <CustomizeSidebarDrawer
-        isOpen={isCustomizeOpen}
-        onClose={() => {
-          setIsCustomizeOpen(false);
-          refetch();
-        }}
-        currentConfig={config}
-      />
     </div>
   );
 }

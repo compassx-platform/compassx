@@ -26,6 +26,8 @@ from app.schemas.portal_config import (
     PortalConfigOut,
     PortalConfigUpdate,
     PortalItem,
+    PortalSettings,
+    PortalSettingsUpdate,
     PortalSection,
 )
 
@@ -37,6 +39,7 @@ for _name, _value in vars(_prelude).items():
 from app.portal.application.get_portal_config import _bootstrap_default_config
 from app.portal.application.get_portal_config import get_portal_config as get_portal_config_action
 from app.portal.application.update_portal_config import update_portal_config as update_portal_config_action
+from app.portal.application.update_portal_settings import update_portal_settings as update_portal_settings_action
 from app.portal.application.get_available_items import get_available_items as get_available_items_action
 
 logger = logging.getLogger("app.routes.portal_routes")
@@ -75,6 +78,7 @@ def update_portal_config(
     workspace_id: Optional[str] = Query(None),
     workspace_slug: Optional[str] = Query(None),
     sdb: Session = Depends(get_system_db),
+    adb: Session = Depends(get_account_db),
     guard: Guard = Depends(get_guard),
 ):
     """Save updated portal navigation layout (sections, items, ordering, icons, visibility)."""
@@ -85,6 +89,29 @@ def update_portal_config(
         workspace_slug=workspace_slug,
         sdb=sdb,
         guard=guard,
+        adb=adb,
+    )
+
+
+@router.patch("/settings", response_model=PortalSettings)
+def update_portal_settings(
+    body: PortalSettingsUpdate,
+    request: Request,
+    workspace_id: Optional[str] = Query(None),
+    workspace_slug: Optional[str] = Query(None),
+    sdb: Session = Depends(get_system_db),
+    adb: Session = Depends(get_account_db),
+    guard: Guard = Depends(get_guard),
+):
+    """Save portal preferences, such as the company logo. The sidebar layout is left as it is."""
+    return update_portal_settings_action(
+        body=body,
+        request=request,
+        workspace_id=workspace_id,
+        workspace_slug=workspace_slug,
+        sdb=sdb,
+        guard=guard,
+        adb=adb,
     )
 
 

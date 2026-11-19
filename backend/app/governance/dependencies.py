@@ -72,6 +72,29 @@ _AUDITED_ON_ALLOW: frozenset[Privilege] = frozenset({
 # ----------------------------------------------------------------------
 
 
+def _workspace_catalog_access(account_db: Session, workspace_id: str) -> dict[str, str]:
+    """Catalogs this workspace may use, keyed by name.
+
+    A binding's privilege wins. A catalog shared with every workspace and not
+    bound here is readable only.
+    """
+    from app.catalog.models import CatalogWorkspaceBinding, UnifiedCatalog
+
+    access: dict[str, str] = {}
+    shared = account_db.query(UnifiedCatalog).filter(UnifiedCatalog.all_workspaces.is_(True)).all()
+    for catalog in shared:
+        access[catalog.name] = "READ_ONLY"
+    rows = (
+        account_db.query(UnifiedCatalog.name, CatalogWorkspaceBinding.privilege)
+        .join(CatalogWorkspaceBinding, CatalogWorkspaceBinding.catalog_id == UnifiedCatalog.id)
+        .filter(CatalogWorkspaceBinding.workspace_id == workspace_id)
+        .all()
+    )
+    for name, privilege in rows:
+        access[name] = privilege or "READ_ONLY"
+    return access
+
+
 def get_principal(
     request: Request,
     account_db: Session = Depends(get_account_db),
@@ -124,12 +147,18 @@ def get_principal(
 
     # 1. Check for Workload Identity (M2M App Service Principal)
     if user_id.startswith("id_app_"):
+        scopes = frozenset(getattr(ctx, "scopes", ()) or ())
+        catalog_access = {}
+        if "catalog:read" in scopes:
+            catalog_access = _workspace_catalog_access(account_db, str(ctx.workspace_id))
         principal = Principal(
             id=user_id,
             type="service",
             is_account_admin=False,
             group_ids=(),
             workspace_roles={str(ctx.workspace_id): ctx.principal_role or "workspace_developer"},
+            scopes=scopes,
+            catalog_access=catalog_access,
         )
         request.state.governance_principal = principal
         return principal

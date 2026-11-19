@@ -32,6 +32,8 @@ class PortalConfig(SystemBase):
     
     # List of sections containing items (apps, dashboards, external links)
     sections = Column(JSON().with_variant(JSONB, "postgresql"), nullable=False, default=list)
+    # Portal-only preferences, such as the company logo. Sidebar saves do not touch this.
+    settings = Column(JSON().with_variant(JSONB, "postgresql"), nullable=True)
 
     created_by_user_id = Column(String(128), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)

@@ -109,7 +109,7 @@ function buildSrcDoc(html: string, initialDatasets: Record<string, unknown>) {
     <meta http-equiv="Content-Security-Policy" content="connect-src 'none'; frame-src 'none'; form-action 'none';" />
     <style>
       html, body { margin: 0; padding: 0; width: 100%; min-height: 100%; }
-      body { font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+      body { font-family: 'Segoe UI', Inter, system-ui, -apple-system, BlinkMacSystemFont, sans-serif; }
       * { box-sizing: border-box; }
     </style>
     <script>

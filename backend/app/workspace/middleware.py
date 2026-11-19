@@ -30,6 +30,7 @@ class WorkspaceContext:
     principal_id: str
     principal_role: str  # role in this workspace
     is_account_admin: bool
+    scopes: tuple[str, ...] = ()
 
 
 def extract_slug_from_path(path: str) -> str | None:
@@ -122,6 +123,7 @@ def resolve_workspace_context(
         user_id = None
         principal_role = None
         is_account_admin = False
+        scopes: tuple[str, ...] = ()
 
         # 1. Try decoding User Manager v1 JWT token
         try:
@@ -173,6 +175,7 @@ def resolve_workspace_context(
                         if isinstance(app_wi, dict) and app_wi.get("identity_id") == token:
                             user_id = token
                             principal_role = app_wi.get("role") or "workspace_developer"
+                            scopes = tuple(str(item) for item in (app_wi.get("scopes") or []))
                             break
                         clean_id = re.sub(r"[^a-z0-9]", "", str(a.id).lower())
                         if f"id_app_{clean_id[:12]}" == token:
@@ -229,6 +232,7 @@ def resolve_workspace_context(
             principal_id=user_id,
             principal_role=principal_role or "workspace_developer",
             is_account_admin=is_account_admin,
+            scopes=scopes,
         )
     finally:
         db.close()
@@ -348,6 +352,8 @@ class WorkspaceMiddleware(BaseHTTPMiddleware):
             )
         if slug is None:
             slug = request.query_params.get("workspace")
+        if slug is None:
+            slug = request.query_params.get("workspace_slug")
         if slug is None:
             slug = request.query_params.get("workspace_id")
 

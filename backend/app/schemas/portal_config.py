@@ -14,6 +14,7 @@ class PortalItem(BaseModel):
     is_visible: bool = Field(True, description="Whether this item is visible to end users in the portal sidebar")
     order: int = Field(0, description="Display sorting order within the section")
     url: Optional[str] = Field(None, description="Optional URL override for apps or external links")
+    path: Optional[str] = Field(None, description="Path inside a linked app. Empty opens that app's home. A hash path stays in the browser address.")
     app_type: Optional[str] = Field(None, description="Application framework type if type is app (e.g., streamlit, react, fastline)")
     status: Optional[str] = Field(None, description="Runtime status of the underlying app or dashboard")
 
@@ -24,11 +25,16 @@ class PortalSection(BaseModel):
     items: List[PortalItem] = Field(default_factory=list, description="List of items in this section")
 
 
+class PortalSettings(BaseModel):
+    logo: Optional[str] = None
+
+
 class PortalConfigOut(BaseModel):
     id: Optional[str] = None
     workspace_id: str
     workspace_slug: Optional[str] = None
     sections: List[PortalSection] = Field(default_factory=list)
+    settings: PortalSettings = Field(default_factory=PortalSettings)
     updated_at: Optional[datetime] = None
 
     class Config:
@@ -37,6 +43,10 @@ class PortalConfigOut(BaseModel):
 
 class PortalConfigUpdate(BaseModel):
     sections: List[PortalSection] = Field(..., description="Updated structured sections and items")
+
+
+class PortalSettingsUpdate(BaseModel):
+    logo: Optional[str] = None
 
 
 class AvailableAppItem(BaseModel):

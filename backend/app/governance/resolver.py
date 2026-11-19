@@ -39,6 +39,11 @@ from app.governance.securable import WORKSPACE_SENTINEL, Securable
 
 logger = logging.getLogger(__name__)
 
+_APP_CATALOG_READ = frozenset({Privilege.BROWSE, Privilege.USE, Privilege.SELECT})
+_APP_CATALOG_WRITE = _APP_CATALOG_READ | frozenset({
+    Privilege.MODIFY, Privilege.CREATE, Privilege.EXECUTE, Privilege.EDIT,
+})
+
 
 class Decision:
     """Why access was allowed or denied. Recorded in the audit log."""
@@ -52,6 +57,7 @@ class Decision:
     USE_CHAIN_BROKEN = "use_chain_broken"
     AGENT_CEILING = "agent_ceiling_exceeded"
     NO_GRANT = "no_grant"
+    APP_CATALOG_SCOPE = "app_catalog_scope"
 
 
 @dataclass(frozen=True, slots=True)
@@ -80,6 +86,9 @@ class Principal:
     group_ids: tuple[str, ...] = ()
     workspace_roles: dict[str, str] = field(default_factory=dict)
     on_behalf_of: str | None = None
+    scopes: frozenset[str] = field(default_factory=frozenset)
+    #: Catalog name -> workspace binding privilege (READ_ONLY or READ_WRITE).
+    catalog_access: dict[str, str] = field(default_factory=dict)
 
     @property
     def all_ids(self) -> tuple[str, ...]:
@@ -137,6 +146,9 @@ class PermissionSet:
             return AccessResult(False, Decision.NO_WORKSPACE_ACCESS)
         if ws_role == "workspace_admin":
             return AccessResult(True, Decision.WORKSPACE_ADMIN)
+
+        if self._app_catalog_scope_allows(privilege, securable):
+            return AccessResult(True, Decision.APP_CATALOG_SCOPE)
 
         # 4. Ownership implies MANAGE. MANAGE on a container is inherited by
         #    its descendants, matching ALL PRIVILEGES on a Unity Catalog parent.
@@ -206,6 +218,23 @@ class PermissionSet:
     # ------------------------------------------------------------------
     # Internals
     # ------------------------------------------------------------------
+
+    def _app_catalog_scope_allows(self, privilege: Privilege, securable: Securable) -> bool:
+        """An app workload with catalog:read may use catalogs bound to its workspace.
+
+        Grants cannot carry this identity: its id is not a UUID, so the grant
+        loader skips it. The scope recorded when the app was created, limited
+        to catalogs bound to the workspace, is the access it was given.
+        """
+        if "catalog:read" not in self.principal.scopes:
+            return False
+        if not securable.is_catalog_path or not securable.catalog:
+            return False
+        level = self.principal.catalog_access.get(securable.catalog)
+        if level is None:
+            return False
+        allowed = _APP_CATALOG_WRITE if level == "READ_WRITE" else _APP_CATALOG_READ
+        return privilege in allowed
 
     def _is_owner(self, securable: Securable) -> bool:
         key = (

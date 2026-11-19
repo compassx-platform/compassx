@@ -6,7 +6,7 @@
   min-height: 100vh;
   background-color: var(--color-bg, #f5f5f5);
   color: var(--color-text, #111827);
-  font-family: var(--font-family, "Inter", system-ui, sans-serif);
+  font-family: var(--font-family, "Segoe UI", "Inter", system-ui, sans-serif);
   padding-bottom: 5rem;
 }
 

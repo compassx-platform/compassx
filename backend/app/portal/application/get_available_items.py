@@ -8,6 +8,12 @@ def _bind():
 
 _bind()
 
+from app.portal.application.workspace_items import (
+    selected_workspace_id,
+    workspace_apps,
+    workspace_dashboards,
+)
+
 
 def get_available_items(
     request: Request,
@@ -18,15 +24,9 @@ def get_available_items(
     guard: Guard = Depends(get_guard),
 ):
     """Retrieve all candidate apps and dashboards available to be pinned/linked into the Portal."""
-    target_ws = workspace_id or guard.workspace_id
-    app_query = sdb.query(App)
-    if target_ws:
-        app_query = app_query.filter(App.workspace_id == target_ws)
-    elif workspace_slug:
-        app_query = app_query.filter(App.workspace_slug == workspace_slug)
-
-    apps = app_query.order_by(App.created_at.desc()).all()
-    dashboards = adb.query(Dashboard).order_by(Dashboard.created_at.desc()).all()
+    target_ws = selected_workspace_id(workspace_id, workspace_slug, guard, adb)
+    apps = workspace_apps(sdb, target_ws, workspace_slug)
+    dashboards = workspace_dashboards(adb, target_ws)
 
     app_list = [
         AvailableAppItem(
