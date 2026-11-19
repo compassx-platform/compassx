@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ChevronDown, ChevronRight, File, Folder, FolderOpen, GitCompare, Globe, LayoutDashboard, LucideIcon, Maximize2, Minimize2, PenLine, Plus, Search, Terminal, X } from 'lucide-react';
+import { ChevronDown, ChevronRight, File, Folder, FolderOpen, GitCompare, Globe, LayoutDashboard, ListChecks, LucideIcon, Maximize2, Minimize2, PenLine, Plus, Search, Terminal, X } from 'lucide-react';
 import { computeApi } from '@/modules/compute/computeApi';
 import { SandboxTerminal } from '@/components/sandbox/SandboxTerminal';
 import {
@@ -12,10 +12,11 @@ import {
 import { WorkspaceFileEditor } from '@/modules/agents/components/WorkspaceFileEditor';
 import { BrowserAnnotate } from '@/modules/agents/components/BrowserAnnotate';
 import { CanvasPanel } from '@/modules/agents/canvas/CanvasPanel';
+import { PlanPanel, type RuntimePlanDoc } from '@/modules/agents/components/PlanPanel';
 import { canvasPathForName, isCanvasFile } from '@/modules/agents/canvas/canvasSourceGate';
 
-type EditorKind = 'files' | 'file' | 'changes' | 'browser' | 'terminal' | 'canvas';
-type MenuKind = 'files' | 'terminal' | 'browser' | 'changes' | 'canvas';
+type EditorKind = 'files' | 'file' | 'changes' | 'browser' | 'terminal' | 'canvas' | 'plan';
+type MenuKind = 'files' | 'terminal' | 'browser' | 'changes' | 'canvas' | 'plan';
 type ChangeView = 'files' | 'unstaged' | 'uncommitted' | 'diff' | 'commits';
 
 const CHANGE_VIEWS: { id: ChangeView; label: string }[] = [
@@ -51,6 +52,10 @@ interface AgentRuntimeRailProps {
   showTerminal?: boolean;
   overlay?: boolean;
   openRequest?: { kind: MenuKind; nonce: number; canvasName?: string } | null;
+  plan?: RuntimePlanDoc | null;
+  onBuildPlan?: (content: string) => void;
+  agentWorking?: boolean;
+  onStop?: () => void;
 }
 
 const EDITOR_ACTIONS: { kind: MenuKind; label: string; Icon: LucideIcon }[] = [
@@ -59,6 +64,7 @@ const EDITOR_ACTIONS: { kind: MenuKind; label: string; Icon: LucideIcon }[] = [
   { kind: 'browser', label: 'Browser', Icon: Globe },
   { kind: 'changes', label: 'Changes', Icon: GitCompare },
   { kind: 'canvas', label: 'Canvas', Icon: LayoutDashboard },
+  { kind: 'plan', label: 'Plan', Icon: ListChecks },
 ];
 
 function filesExplorerTab(): EditorTab {
@@ -89,6 +95,10 @@ export function AgentRuntimeRail({
   showTerminal = true,
   overlay = false,
   openRequest = null,
+  plan = null,
+  onBuildPlan,
+  agentWorking = false,
+  onStop,
 }: AgentRuntimeRailProps) {
   const [tabs, setTabs] = useState<EditorTab[]>([]);
   const [activeId, setActiveId] = useState('');
@@ -322,7 +332,7 @@ export function AgentRuntimeRail({
     onOpen?.();
     setMenuOpen(false);
     setMenuQuery('');
-    if (kind === 'files' || kind === 'changes' || kind === 'canvas') {
+    if (kind === 'files' || kind === 'changes' || kind === 'canvas' || kind === 'plan') {
       const existing = tabs.find((item) => item.kind === kind);
       if (existing) {
         setActiveId(existing.id);
@@ -332,7 +342,9 @@ export function AgentRuntimeRail({
         ? filesExplorerTab()
         : kind === 'changes'
           ? { id: 'changes', kind: 'changes', title: 'Changes' }
-          : { id: 'canvas', kind: 'canvas', title: 'Canvas' };
+          : kind === 'canvas'
+            ? { id: 'canvas', kind: 'canvas', title: 'Canvas' }
+            : { id: 'plan', kind: 'plan', title: plan?.title || 'Plan' };
       setTabs((current) => (current.some((item) => item.kind === kind) ? current : [...current, created]));
       setActiveId(created.id);
       return;
@@ -390,6 +402,7 @@ export function AgentRuntimeRail({
   const showFiles = tabs.some((item) => item.kind === 'files');
   const showChanges = tabs.some((item) => item.kind === 'changes');
   const showCanvas = tabs.some((item) => item.kind === 'canvas');
+  const showPlan = tabs.some((item) => item.kind === 'plan');
   const canvasPaths = useMemo(
     () => entries.map((entry) => entry.path).filter((path) => isCanvasFile(path)).sort(),
     [entries],
@@ -418,6 +431,11 @@ export function AgentRuntimeRail({
     setTabs((current) => (current.some((item) => item.kind === 'canvas') ? current : [...current, { id: 'canvas', kind: 'canvas', title: 'Canvas' }]));
     setActiveId('canvas');
   }, [canvasPaths, loading]);
+
+  useEffect(() => {
+    if (!plan?.title) return;
+    setTabs((current) => current.map((item) => (item.kind === 'plan' ? { ...item, title: plan.title } : item)));
+  }, [plan?.title]);
   const collapsedIcon = (kind: MenuKind) => {
     const match = tabs.find((item) => item.kind === kind);
     return Boolean(match && match.id === activeId);
@@ -582,7 +600,7 @@ export function AgentRuntimeRail({
                 </label>
               </form>
               {menuActions.map((action) => {
-                const singletonOpen = (action.kind === 'files' || action.kind === 'changes' || action.kind === 'canvas') && tabs.some((item) => item.kind === action.kind);
+                const singletonOpen = (action.kind === 'files' || action.kind === 'changes' || action.kind === 'canvas' || action.kind === 'plan') && tabs.some((item) => item.kind === action.kind);
                 return (
                   <button
                     key={action.kind}
@@ -603,6 +621,17 @@ export function AgentRuntimeRail({
           )}
         </div>
         <div style={{ display: 'flex', alignItems: 'center', flexShrink: 0, paddingRight: 4 }}>
+          {fullscreen && agentWorking && (
+            <button
+              type="button"
+              aria-label="Stop"
+              title="Stop"
+              onClick={onStop}
+              style={{ ...panelIconButton, width: 'auto', padding: '0 8px', fontWeight: 600, color: '#18181b' }}
+            >
+              Stop
+            </button>
+          )}
           <button
             type="button"
             aria-label={fullscreen ? 'Exit full screen' : 'Full screen'}
@@ -619,6 +648,16 @@ export function AgentRuntimeRail({
       </div>
       <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', position: 'relative' }}>
       {!tabs.length && <EditorPicker onOpen={openTab} showTerminal={showTerminal} />}
+      {showPlan && (
+      <section style={{ flex: 1, minHeight: 0, display: activeTab?.kind === 'plan' ? 'flex' : 'none', flexDirection: 'column' }}>
+        <PlanPanel
+          plan={plan}
+          sandboxReady={sandboxReady}
+          building={false}
+          onBuild={(content) => onBuildPlan?.(content)}
+        />
+      </section>
+      )}
       {showCanvas && (
       <section style={{ flex: 1, minHeight: 0, display: activeTab?.kind === 'canvas' ? 'flex' : 'none', flexDirection: 'column' }}>
         <CanvasPanel
@@ -807,8 +846,8 @@ function EditorTabButton({
   onSelect: () => void;
   onClose: () => void;
 }) {
-  const Icon = tab.kind === 'changes' ? GitCompare : tab.kind === 'browser' ? Globe : tab.kind === 'terminal' ? Terminal : tab.kind === 'files' ? Folder : File;
-  const iconColor = tab.kind === 'files' ? '#b45309' : tab.kind === 'changes' ? '#64748b' : tab.kind === 'browser' ? '#2563eb' : tab.kind === 'terminal' ? '#0f766e' : '#64748b';
+  const Icon = tab.kind === 'changes' ? GitCompare : tab.kind === 'browser' ? Globe : tab.kind === 'terminal' ? Terminal : tab.kind === 'files' ? Folder : tab.kind === 'plan' ? ListChecks : tab.kind === 'canvas' ? LayoutDashboard : File;
+  const iconColor = tab.kind === 'files' ? '#b45309' : tab.kind === 'changes' ? '#64748b' : tab.kind === 'browser' ? '#2563eb' : tab.kind === 'terminal' ? '#0f766e' : tab.kind === 'plan' ? '#7c3aed' : '#64748b';
   return (
     <div
       className={`agent-runtime-editor-tab${active ? ' is-active' : ''}`}

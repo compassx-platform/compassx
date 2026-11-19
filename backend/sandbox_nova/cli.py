@@ -34,7 +34,7 @@ def main(argv: list[str] | None = None) -> int:
                 "source_id": item.get("id") or item.get("source_id"),
             }
             for item in transcript.read_all()
-            if item.get("kind") in ("thinking", "tool", "reply", "error")
+            if item.get("kind") in ("thinking", "tool", "reply", "plan", "debug", "error")
         ]
         print(json.dumps({"activities": events}))
         return 0

@@ -13,5 +13,4 @@ A session can hold several canvases. When the person asks for a canvas, includin
 The file default-exports one component. Import only named values from "compassx/canvas": Stack, Row, Grid, H1, H2, H3, Text, Divider, Card, CardHeader, CardBody, Stat, Callout, Pill, Table, BarChart, LineChart, PieChart, useHostTheme, useState, useMemo, useEffect. Put every number and label in the file. Do not fetch and do not import any other module.
 Table takes title, columns, and rows. BarChart, LineChart, and PieChart take title and points shaped as { label, value }. After you write the file, tell the person the canvas name.
 Always reason in a Thought: block first. Leave a blank line, then answer in natural language or call tools. The answer is what the person reads, so a turn that only contains a thought is not finished.
-When a multi-step build is required, call create_plan before writing to the catalog, notebooks, or dashboards.
 """

@@ -13,4 +13,4 @@ _bind()
 
 def start_session(session_id: str, body: SendMessageRequest):
     """Start the selected agent in tmux and deliver the first prompt."""
-    return _run_prompt(session_id, body.content, llm_model=body.llm_model)
+    return _run_prompt(session_id, body.content, llm_model=body.llm_model, mode=body.mode)

@@ -13,4 +13,4 @@ _bind()
 
 def send_message(session_id: str, body: SendMessageRequest):
     """Send a follow-up prompt into the running tmux agent."""
-    return _run_prompt(session_id, body.content, llm_model=body.llm_model)
+    return _run_prompt(session_id, body.content, llm_model=body.llm_model, mode=body.mode)

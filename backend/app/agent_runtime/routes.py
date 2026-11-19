@@ -216,6 +216,13 @@ def sync_notices(session_id: str):
     return sync_notices_action(session_id)
 
 
+@router.post("/sessions/{session_id}/stop", response_model=AgentRuntimeSession)
+def stop_session(session_id: str):
+    """Stop the agent that is working. The session stays open."""
+    from app.agent_runtime.http.sessions.application.stop_session import stop_session as stop_session_action
+    return stop_session_action(session_id)
+
+
 @router.post("/sessions/{session_id}/messages", response_model=AgentChatMessage)
 def send_message(session_id: str, body: SendMessageRequest):
     """Send a follow-up prompt into the running tmux agent."""

@@ -31,9 +31,9 @@ from app.agent_runtime.models import (
 )
 from app.agent_runtime.service import agent_runtime_service
 
-def _run_prompt(session_id: str, content: str, llm_model: str | None = None) -> AgentChatMessage:
+def _run_prompt(session_id: str, content: str, llm_model: str | None = None, mode: str | None = None) -> AgentChatMessage:
     try:
-        return agent_runtime_service.deliver_prompt(session_id, content, llm_model=llm_model)
+        return agent_runtime_service.deliver_prompt(session_id, content, llm_model=llm_model, mode=mode)
     except ValueError as exc:
         status = 400 if "empty" in str(exc).lower() else 404
         raise HTTPException(status_code=status, detail=str(exc))

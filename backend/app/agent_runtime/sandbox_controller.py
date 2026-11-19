@@ -40,6 +40,7 @@ class NovaSandboxController:
         if refreshed:
             name = f"cx_{session.id.replace('-', '_')}"
             exec_fn(session.sandbox_id, f"tmux kill-session -t {name} 2>/dev/null || true", timeout=10)
+        exec_fn(session.sandbox_id, f"rm -f /var/lib/compassx/nova/{session.id}/stop", timeout=10)
         self._ensure_nova_process(session, exec_fn)
         exec_fn(session.sandbox_id, f"mkdir -p /var/lib/compassx/nova/{session.id}/inbox", timeout=10)
 
@@ -62,9 +63,13 @@ class NovaSandboxController:
             detail = (result.stderr or result.stdout or "Failed to start Nova in the sandbox.").strip()
             raise RuntimeError(detail[:500])
 
-    def deliver(self, session: RuntimeSession, prompt: str, exec_fn: ExecFn, llm_model: str | None = None) -> None:
+    def deliver(self, session: RuntimeSession, prompt: str, exec_fn: ExecFn, llm_model: str | None = None, mode: str | None = None) -> None:
         self.prepare(session, exec_fn, llm_model)
-        payload = json.dumps({"prompt": prompt, "model": (llm_model or session.llm_model or "").strip()})
+        payload = json.dumps({
+            "prompt": prompt,
+            "model": (llm_model or session.llm_model or "").strip(),
+            "mode": (mode or "agent").strip().lower() or "agent",
+        })
         encoded = base64.b64encode(payload.encode("utf-8")).decode("ascii")
         command = (
             f"mkdir -p /var/lib/compassx/nova/{session.id}/inbox && "
@@ -76,6 +81,45 @@ class NovaSandboxController:
         if not result.success:
             detail = (result.stderr or result.stdout or "Failed to deliver the Nova prompt.").strip()
             raise RuntimeError(detail[:500])
+
+    def stop(self, session: RuntimeSession, exec_fn: ExecFn) -> None:
+        """End the current Nova turn. The next message starts the agent again."""
+        from app.sandbox.agent_cli import tmux_session_name
+
+        state = f"/var/lib/compassx/nova/{session.id}"
+        script = (
+            "import os, pathlib\n"
+            "state = pathlib.Path(os.environ['NOVA_STATE'])\n"
+            "state.mkdir(parents=True, exist_ok=True)\n"
+            "(state / 'stop').write_text('1', encoding='utf-8')\n"
+            "inbox = state / 'inbox'\n"
+            "if inbox.is_dir():\n"
+            "    for path in list(inbox.iterdir()):\n"
+            "        name = path.name\n"
+            "        if name.endswith('.json.working'):\n"
+            "            dest = path.with_name(name[:-len('.json.working')] + '.done.json')\n"
+            "        elif name.endswith('.json') and not name.endswith('.done.json') and not name.endswith('.bad.json'):\n"
+            "            dest = path.with_name(name[:-len('.json')] + '.done.json')\n"
+            "        else:\n"
+            "            continue\n"
+            "        if dest.exists():\n"
+            "            path.unlink()\n"
+            "        else:\n"
+            "            path.replace(dest)\n"
+        )
+        encoded = base64.b64encode(script.encode("utf-8")).decode("ascii")
+        exec_fn(
+            session.sandbox_id,
+            f"NOVA_STATE={state} python3 -c \"import base64; exec(base64.b64decode('{encoded}').decode())\"",
+            timeout=15,
+        )
+        name = tmux_session_name(session.id)
+        exec_fn(
+            session.sandbox_id,
+            f"tmux kill-session -t {name} 2>/dev/null || true; "
+            f"pkill -f \"[s]erve --session {session.id}\" 2>/dev/null || true",
+            timeout=10,
+        )
 
     def inbox_names(self, session: RuntimeSession, exec_fn: ExecFn) -> list[str]:
         result = exec_fn(

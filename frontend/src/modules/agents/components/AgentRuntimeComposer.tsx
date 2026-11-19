@@ -1,5 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { ArrowUp, AudioLines, ChevronDown, GitBranch, Loader2, Mic, Monitor, Plus } from 'lucide-react';
+import { ArrowUp, AudioLines, ChevronDown, GitBranch, Loader2, Mic, Monitor } from 'lucide-react';
+import { AttachmentChips, ComposerPlusButton, composeMessage } from '@/modules/agents/components/ComposerPlusMenu';
+import { RuntimeModePicker } from '@/modules/agents/components/RuntimeModePicker';
 
 export type RuntimeAgentType = 'nova' | 'antigravity' | 'pi' | 'opencode' | 'claude' | 'codex' | 'cursor';
 
@@ -80,7 +82,7 @@ interface AgentRuntimeComposerProps {
   onLlmModelChange?: (modelId: string) => void;
   onBranchChange?: (branch: string) => void;
   onChange: (value: string) => void;
-  onSubmit: () => void;
+  onSubmit: (content: string) => void | Promise<boolean | void>;
 }
 
 export function AgentRuntimeComposer({
@@ -113,13 +115,14 @@ export function AgentRuntimeComposer({
   const rootRef = useRef<HTMLDivElement>(null);
   const [openChip, setOpenChip] = useState<ChipId | null>(null);
   const [projectName, setProjectName] = useState('');
+  const [files, setFiles] = useState<File[]>([]);
   const project = projects.find((item) => item.id === projectId);
   const sandbox = sandboxes.find((item) => item.id === sandboxId);
   const agent = agents.find((item) => item.id === agentType);
   const showLlm = agentType === 'nova';
   const selectedLlm = llmModels.find((item) => item.id === llmModel);
   const showBranch = branches.length > 0 || branchesLoading;
-  const canSend = Boolean(value.trim()) && !submitting;
+  const canSend = (Boolean(value.trim()) || files.length > 0) && !submitting;
 
   useEffect(() => {
     const textarea = textareaRef.current;
@@ -139,9 +142,19 @@ export function AgentRuntimeComposer({
     return () => document.removeEventListener('mousedown', close);
   }, [openChip]);
 
-  const submit = () => {
-    if (submitting || !value.trim()) return;
-    onSubmit();
+  const addFiles = (incoming: File[]) => {
+    setFiles((current) => [...current, ...incoming]);
+  };
+
+  const submit = async () => {
+    if (submitting) return;
+    const content = (await composeMessage(value, files)).trim();
+    if (!content) {
+      textareaRef.current?.focus();
+      return;
+    }
+    const result = await onSubmit(content);
+    if (result !== false) setFiles([]);
   };
 
   const choose = (action: () => void) => {
@@ -248,6 +261,7 @@ export function AgentRuntimeComposer({
           borderRadius: 12,
         }}
       >
+        <AttachmentChips files={files} onRemove={(index) => setFiles((current) => current.filter((_, item) => item !== index))} />
         <textarea
           ref={textareaRef}
           value={value}
@@ -255,6 +269,12 @@ export function AgentRuntimeComposer({
           rows={2}
           disabled={submitting}
           onChange={(event) => onChange(event.target.value)}
+          onPaste={(event) => {
+            const picked = Array.from(event.clipboardData?.files || []);
+            if (!picked.length) return;
+            event.preventDefault();
+            addFiles(picked);
+          }}
           onKeyDown={(event) => {
             if (event.key === 'Enter' && !event.shiftKey) {
               event.preventDefault();
@@ -277,19 +297,7 @@ export function AgentRuntimeComposer({
           }}
         />
         <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 8, padding: '4px 8px 8px' }}>
-          <button
-            type="button"
-            aria-label="Start session"
-            title="Start session"
-            disabled={submitting}
-            onClick={() => {
-              if (value.trim()) submit();
-              else textareaRef.current?.focus();
-            }}
-            style={circleButtonStyle(false)}
-          >
-            {submitting ? <Loader2 size={15} className="spin" /> : <Plus size={16} strokeWidth={1.75} />}
-          </button>
+          <ComposerPlusButton disabled={submitting} onAddFiles={addFiles} />
           <span style={{ flex: 1 }} />
           <span style={{ position: 'relative' }}>
             <button
@@ -322,6 +330,7 @@ export function AgentRuntimeComposer({
               </Menu>
             )}
           </span>
+          {showLlm && <RuntimeModePicker upward />}
           {showLlm && (
             <span style={{ position: 'relative' }}>
               <button
@@ -513,22 +522,6 @@ function StatusDot({ status }: { status?: string }) {
 
 function MenuNote({ children }: { children: React.ReactNode }) {
   return <div style={{ padding: '7px 8px', color: '#71717a', fontSize: 13 }}>{children}</div>;
-}
-
-function circleButtonStyle(active: boolean): React.CSSProperties {
-  return {
-    width: 28,
-    height: 28,
-    borderRadius: 999,
-    border: '1px solid #e4e4e7',
-    background: active ? '#f4f4f5' : '#ffffff',
-    color: '#3f3f46',
-    display: 'inline-flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    cursor: 'pointer',
-    padding: 0,
-  };
 }
 
 const projectFormStyle: React.CSSProperties = {

@@ -27,6 +27,8 @@ import { useBreakpoint } from '@/design-system/hooks/useBreakpoint';
 import { useToast } from '@/lib/toast';
 import { agentRuntimeApi, type AgentCatalogItem, type AgentRuntimeProject, type AgentRuntimeSession, type AgentRuntimeTask } from '@/modules/agents/agentRuntimeApi';
 import { AgentRuntimeComposer, type RuntimeAgentType } from '@/modules/agents/components/AgentRuntimeComposer';
+import { planTitle } from '@/modules/agents/components/PlanPanel';
+import { rememberTurnMode, takeTurnMode } from '@/modules/agents/components/RuntimeModePicker';
 import { AgentRuntimeChat } from '@/modules/agents/components/AgentRuntimeChat';
 import { AgentRuntimeRail } from '@/modules/agents/components/AgentRuntimeRail';
 import { AgentRuntimeTaskCreate, AgentRuntimeTaskDetail, AgentRuntimeTaskList, AgentRuntimeTaskStrip } from '@/modules/agents/components/AgentRuntimeTasks';
@@ -204,7 +206,9 @@ export default function AgentRuntimePage() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => sessionStorage.getItem('agent-runtime-sidebar') === 'collapsed');
   const { isMobile } = useBreakpoint();
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
-  const [railRequest, setRailRequest] = useState<{ kind: 'files' | 'terminal' | 'browser' | 'changes' | 'canvas'; nonce: number; canvasName?: string } | null>(null);
+  const [railRequest, setRailRequest] = useState<{ kind: 'files' | 'terminal' | 'browser' | 'changes' | 'canvas' | 'plan'; nonce: number; canvasName?: string } | null>(null);
+  const [planDoc, setPlanDoc] = useState<{ id: string; title: string; content: string } | null>(null);
+  const [planBuild, setPlanBuild] = useState<{ nonce: number; content: string } | null>(null);
   const sidebarCompact = sidebarCollapsed && !isMobile;
   const [draftMessage, setDraftMessage] = useState('');
   const [draftSandboxId, setDraftSandboxId] = useState(() => sessionStorage.getItem('agent-runtime-sandbox') || 'new');
@@ -233,6 +237,7 @@ export default function AgentRuntimePage() {
   const [workspaceRefresh, setWorkspaceRefresh] = useState(0);
   const [railOpen, setRailOpen] = useState(false);
   const [railFull, setRailFull] = useState(false);
+  const [agentWorking, setAgentWorking] = useState(false);
   const [railWidth, setRailWidth] = useState(() => {
     const limit = Math.max(320, window.innerWidth - 980);
     const saved = Number(sessionStorage.getItem('agent-runtime-rail-width'));
@@ -465,12 +470,14 @@ export default function AgentRuntimePage() {
     if (startedPromptIds.current.has(activeSession.id)) return;
     startedPromptIds.current.add(activeSession.id);
     sessionStorage.removeItem(key);
+    const turnMode = takeTurnMode(activeSession.id);
     setStarting(true);
     agentRuntimeApi
       .startSession(
         activeSession.id,
         pending,
         isCliAgent(activeSession.agent_type) ? undefined : activeSession.llm_model || draftLlmModel || undefined,
+        turnMode,
       )
       .then((userMessage) => {
         setActiveSession((prev) => (prev ? { ...prev, messages: [...(prev.messages || []), userMessage] } : prev));
@@ -625,12 +632,12 @@ export default function AgentRuntimePage() {
     }
   };
 
-  const handleCreateFromComposer = async () => {
-    const content = draftMessage.trim();
-    if (!content || starting) return;
+  const handleCreateFromComposer = async (content: string) => {
+    const trimmed = content.trim();
+    if (!trimmed || starting) return false;
     setStarting(true);
     try {
-      const title = content.replace(/\s+/g, ' ').slice(0, 72);
+      const title = (draftMessage.trim() || trimmed).replace(/\s+/g, ' ').slice(0, 72);
       sessionStorage.setItem('agent-runtime-sandbox', draftSandboxId);
       sessionStorage.setItem('agent-runtime-agent', draftAgent);
       const nextSurface = isCliAgent(draftAgent) ? 'terminal' : 'chat';
@@ -648,14 +655,17 @@ export default function AgentRuntimePage() {
         branch: draftSandboxId !== 'new' && draftBranch ? draftBranch : undefined,
         llm_model: draftAgent === 'nova' ? draftLlmModel || undefined : undefined,
       });
-      sessionStorage.setItem(promptStorageKey(created.id), content);
+      sessionStorage.setItem(promptStorageKey(created.id), trimmed);
+      if (draftAgent === 'nova') rememberTurnMode(created.id);
       setDraftMessage('');
       setSessions((prev) => [created, ...prev.filter((session) => session.id !== created.id)]);
       setActiveSessionId(created.id);
       setActiveSession(created);
       navigate(`/agent-runtime/${created.id}`);
+      return true;
     } catch (err) {
       toast.error(err?.response?.data?.detail || err?.message || 'Failed to create agent session');
+      return false;
     } finally {
       setStarting(false);
     }
@@ -1626,6 +1636,14 @@ export default function AgentRuntimePage() {
                       setActiveSession((prev) => (prev ? { ...prev, messages } : prev));
                     }}
                     onOpenCanvas={(canvasName) => setRailRequest({ kind: 'canvas', canvasName, nonce: Date.now() })}
+                    onOpenPlan={(message) => {
+                      setPlanDoc({ id: message.id, title: planTitle(message.content), content: message.content });
+                      setRailOpen(true);
+                      setRailFull(true);
+                      setRailRequest({ kind: 'plan', nonce: Date.now() });
+                    }}
+                    buildRequest={planBuild}
+                    onWorkingChange={setAgentWorking}
                   />
                 )}
               </div>
@@ -1652,6 +1670,18 @@ export default function AgentRuntimePage() {
                 showTerminal={showCliSurface}
                 overlay={isMobile}
                 openRequest={railRequest}
+                plan={planDoc}
+                onBuildPlan={(content) => {
+                  setRailFull(false);
+                  setPlanBuild({ nonce: Date.now(), content: `Build this plan.\n\n${content}` });
+                }}
+                agentWorking={agentWorking}
+                onStop={() => {
+                  if (!activeSession) return;
+                  void agentRuntimeApi.stopSession(activeSession.id).then((session) => {
+                    setActiveSession((prev) => (prev ? { ...prev, messages: session.messages || [] } : prev));
+                  }).catch(() => undefined);
+                }}
                 onNote={(message) => {
                   setActiveSession((prev) => (prev ? { ...prev, messages: [...(prev.messages || []), message] } : prev));
                   setSurface('chat');

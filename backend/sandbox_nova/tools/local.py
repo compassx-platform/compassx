@@ -5,6 +5,7 @@ from sandbox_nova.tools.builtin.read_file import ReadFileTool
 from sandbox_nova.tools.builtin.run_python import RunPythonTool
 from sandbox_nova.tools.builtin.run_shell import RunShellTool
 from sandbox_nova.tools.builtin.write_file import WriteFileTool
+from sandbox_nova.tools.builtin.write_plan import WritePlanTool
 
 __all__ = [
     "ListFilesTool",
@@ -12,4 +13,5 @@ __all__ = [
     "RunPythonTool",
     "RunShellTool",
     "WriteFileTool",
+    "WritePlanTool",
 ]

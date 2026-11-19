@@ -86,34 +86,6 @@ PLATFORM_TOOL_SPECS = (
             "prompt": {"type": "string"},
         },
     }),
-    ("create_plan", "Create an execution plan checkpoint.", {
-        "type": "object",
-        "properties": {
-            "goal": {"type": "string"},
-            "steps": {"type": "array"},
-        },
-    }),
-    ("get_plan", "Read the active plan.", {"type": "object", "properties": {"plan_id": {"type": "string"}}}),
-    ("get_next_step", "Get the next pending plan step.", {"type": "object", "properties": {"plan_id": {"type": "string"}}}),
-    ("mark_step", "Mark a plan step status.", {
-        "type": "object",
-        "properties": {
-            "plan_id": {"type": "string"},
-            "step_id": {"type": "string"},
-            "status": {"type": "string"},
-        },
-    }),
-    ("append_correction", "Record a correction on the plan.", {
-        "type": "object",
-        "properties": {
-            "plan_id": {"type": "string"},
-            "note": {"type": "string"},
-        },
-    }),
-    ("escalate_to_plan", "Escalate the current turn into a plan.", {
-        "type": "object",
-        "properties": {"reason": {"type": "string"}},
-    }),
     ("list_available_skills", "List CompassX skills.", {"type": "object", "properties": {}}),
     ("read_skill", "Read a CompassX skill.", {
         "type": "object",

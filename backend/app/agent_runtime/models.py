@@ -39,7 +39,7 @@ class AgentChatMessage(BaseModel):
     content: str = Field(description="Message text / response content")
     timestamp: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     tool_calls: Optional[List[Dict[str, Any]]] = None
-    kind: Optional[str] = Field(default=None, description="'thinking', 'tool', 'reply', or 'error'")
+    kind: Optional[str] = Field(default=None, description="'thinking', 'tool', 'reply', 'plan', 'debug', or 'error'")
     source_id: Optional[str] = Field(default=None, description="Stable id from the agent transcript")
     image: Optional[str] = Field(default=None, description="Data URL for a browser annotation screenshot")
 
@@ -48,6 +48,7 @@ class SendMessageRequest(BaseModel):
     """Payload to send a message to the agent."""
     content: str = Field(description="User prompt text")
     llm_model: Optional[str] = Field(default=None, description="AI Gateway model name for Nova")
+    mode: Optional[str] = Field(default=None, description="Nova mode: agent, ask, plan, or debug")
 
 
 class BrowserOpenRequest(BaseModel):

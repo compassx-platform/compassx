@@ -35,9 +35,10 @@ class InboxServer:
                     continue
                 prompt = str(payload.get("prompt") or "").strip()
                 model = str(payload.get("model") or "").strip() or None
+                mode = str(payload.get("mode") or "").strip() or None
                 if prompt:
                     try:
-                        self.loop.handle_turn(prompt, model=model)
+                        self.loop.handle_turn(prompt, model=model, mode=mode)
                     except Exception as exc:
                         self.loop.transcript.append("error", str(exc))
                         print(f"Nova error: {exc}", flush=True)

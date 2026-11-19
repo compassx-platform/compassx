@@ -49,6 +49,19 @@ from app.sandbox.service import sandbox_service
 logger = logging.getLogger(__name__)
 
 
+def _turn_has_answer(session: AgentRuntimeSession) -> bool:
+    last_user = -1
+    for index, message in enumerate(session.messages):
+        if message.role == "user":
+            last_user = index
+    if last_user < 0:
+        return False
+    return any(
+        message.role == "assistant" and message.kind in (None, "", "reply", "plan", "debug", "error")
+        for message in session.messages[last_user + 1 :]
+    )
+
+
 def _notice_already_shown(notice: str, existing: list[str] | set[str]) -> bool:
     compact = " ".join((notice or "").split())
     if not compact:
@@ -280,10 +293,10 @@ print(json.dumps({"path": path, "bytes": len(raw)}))
         )
         return path
 
-    def deliver_prompt(self, session_id: str, content: str, image: str | None = None, llm_model: str | None = None) -> AgentChatMessage:
+    def deliver_prompt(self, session_id: str, content: str, image: str | None = None, llm_model: str | None = None, mode: str | None = None) -> AgentChatMessage:
         """Start the agent tmux session if needed, then type the prompt into it."""
         from app.agent_runtime.lifecycle.application.deliver_prompt import deliver_prompt as _action
-        return _action(self, session_id, content, image, llm_model)
+        return _action(self, session_id, content, image, llm_model, mode)
 
     def list_workspace_files(self, session_id: str) -> WorkspaceFilesResponse:
         from app.agent_runtime.lifecycle.application.list_workspace_files import list_workspace_files as _action
@@ -397,6 +410,28 @@ print(json.dumps({"path": path, "bytes": len(raw)}))
             raise RuntimeError(detail[:500])
         self._exec(session.sandbox_id, ensure_pane_log_command(session.id), timeout=10)
 
+    def stop_turn(self, session_id: str) -> AgentRuntimeSession:
+        """Stop the agent that is working. The session stays open for the next message."""
+        session = self._require_session(session_id)
+        self._require_running_sandbox(session.sandbox_id)
+        if is_nova_agent(session.agent_type):
+            from app.agent_runtime.sandbox_controller import nova_sandbox_controller
+
+            nova_sandbox_controller.stop(session, self._exec)
+        else:
+            from app.sandbox.agent_cli import tmux_session_name
+
+            name = tmux_session_name(session.id)
+            self._exec(session.sandbox_id, f"tmux send-keys -t {name} C-c", timeout=10)
+        try:
+            self.sync_terminal_notices(session_id)
+        except Exception:
+            logger.warning("[AgentRuntimeService] Could not sync after stop", exc_info=True)
+        current = self._require_session(session_id)
+        if not _turn_has_answer(current):
+            self._append_message(current, "assistant", "Stopped.", kind="error")
+        return self._require_session(session_id)
+
     def _wait_for_agent_pane(self, session: AgentRuntimeSession, timeout: float = 15.0) -> None:
         command = pane_capture_command(session.id)
         deadline = time.monotonic() + timeout
@@ -465,7 +500,7 @@ print(json.dumps({"path": path, "bytes": len(raw)}))
             kind = str(activity.get("kind") or "")
             content = str(activity.get("content") or "").strip()
             source_id = str(activity.get("source_id") or "").strip()
-            if kind not in ("thinking", "tool", "reply", "error") or not content:
+            if kind not in ("thinking", "tool", "reply", "plan", "debug", "error") or not content:
                 continue
             current = self._require_session(session.id)
             match = None
@@ -556,7 +591,7 @@ print(json.dumps({"path": path, "bytes": len(raw)}))
             message
             for message in session.messages
             if message.role == "assistant"
-            and message.kind not in ("thinking", "tool", "reply")
+            and message.kind not in ("thinking", "tool", "reply", "plan", "debug")
             and not (message.content or "").startswith("👋")
         ]
         for message in sorted(errors, key=lambda item: len(item.content or ""), reverse=True):
@@ -569,7 +604,7 @@ print(json.dumps({"path": path, "bytes": len(raw)}))
         for message in session.messages:
             if (
                 message.role == "assistant"
-                and message.kind not in ("thinking", "tool", "reply")
+                and message.kind not in ("thinking", "tool", "reply", "plan", "debug")
                 and not (message.content or "").startswith("👋")
                 and message.id not in kept_ids
             ):
@@ -646,11 +681,11 @@ print(json.dumps({"path": path, "bytes": len(raw)}))
             self._sessions[session.id] = session
             self._persist_sessions()
 
-    def _deliver_nova(self, session: AgentRuntimeSession, prompt: str, image: str | None = None, llm_model: str | None = None) -> AgentChatMessage:
+    def _deliver_nova(self, session: AgentRuntimeSession, prompt: str, image: str | None = None, llm_model: str | None = None, mode: str | None = None) -> AgentChatMessage:
         from app.agent_runtime.sandbox_controller import nova_sandbox_controller
 
         user_msg = self._append_message(session, "user", prompt, image=image)
-        nova_sandbox_controller.deliver(session, prompt, self._exec, llm_model=llm_model or session.llm_model)
+        nova_sandbox_controller.deliver(session, prompt, self._exec, llm_model=llm_model or session.llm_model, mode=mode)
         return user_msg
 
     def _append_message(

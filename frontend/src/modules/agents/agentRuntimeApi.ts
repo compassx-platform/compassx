@@ -6,7 +6,7 @@ export interface AgentChatMessage {
   content: string;
   timestamp: string;
   tool_calls?: any[];
-  kind?: 'thinking' | 'tool' | 'reply' | 'error' | null;
+  kind?: 'thinking' | 'tool' | 'reply' | 'plan' | 'debug' | 'error' | null;
   source_id?: string | null;
   image?: string | null;
 }
@@ -118,13 +118,18 @@ export const agentRuntimeApi = {
     return res.data;
   },
 
-  sendMessage: async (sessionId: string, content: string, llmModel?: string): Promise<AgentChatMessage> => {
-    const res = await api.post(`/agent-runtime/sessions/${sessionId}/messages`, { content, llm_model: llmModel || undefined }, { timeout: 120000 });
+  stopSession: async (sessionId: string): Promise<AgentRuntimeSession> => {
+    const res = await api.post(`/agent-runtime/sessions/${sessionId}/stop`, {}, { timeout: 30000 });
     return res.data;
   },
 
-  startSession: async (sessionId: string, content: string, llmModel?: string): Promise<AgentChatMessage> => {
-    const res = await api.post(`/agent-runtime/sessions/${sessionId}/start`, { content, llm_model: llmModel || undefined }, { timeout: 120000 });
+  sendMessage: async (sessionId: string, content: string, llmModel?: string, mode?: string): Promise<AgentChatMessage> => {
+    const res = await api.post(`/agent-runtime/sessions/${sessionId}/messages`, { content, llm_model: llmModel || undefined, mode: mode || undefined }, { timeout: 120000 });
+    return res.data;
+  },
+
+  startSession: async (sessionId: string, content: string, llmModel?: string, mode?: string): Promise<AgentChatMessage> => {
+    const res = await api.post(`/agent-runtime/sessions/${sessionId}/start`, { content, llm_model: llmModel || undefined, mode: mode || undefined }, { timeout: 120000 });
     return res.data;
   },
 

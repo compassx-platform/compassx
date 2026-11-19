@@ -597,9 +597,7 @@ export default function AgentSidePanel() {
         display: 'flex',
         flexDirection: 'column',
         background: '#ffffff',
-        borderLeft: '1px solid #e2e8f0',
         position: 'relative',
-        boxShadow: '-4px 0 16px rgba(0, 0, 0, 0.04)',
         zIndex: 50,
       }}
     >
@@ -609,7 +607,7 @@ export default function AgentSidePanel() {
         title="Drag to resize panel"
         style={{
           position: 'absolute',
-          left: -3,
+          left: 0,
           top: 0,
           bottom: 0,
           width: 6,

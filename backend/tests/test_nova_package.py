@@ -12,6 +12,7 @@ class TestNovaPackage(unittest.TestCase):
         self.assertIn("compassx/canvas", SYSTEM_PROMPT)
         self.assertIn("metrics breakdown", SYSTEM_PROMPT)
         self.assertIn("several canvases", SYSTEM_PROMPT)
+        self.assertNotIn("create_plan", SYSTEM_PROMPT)
 
     def test_matching_package_version_skips_install(self):
         calls = []
@@ -20,7 +21,7 @@ class TestNovaPackage(unittest.TestCase):
             calls.append(env)
             result = MagicMock()
             result.success = True
-            result.stdout = "canvas-3\n"
+            result.stdout = "modes-2\n"
             result.stderr = ""
             return result
 
