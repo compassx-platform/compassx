@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type MouseEvent } from 'react';
+import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
 import { NavLink } from 'react-router-dom';
 import { MoreHorizontal, Settings } from 'lucide-react';
 import { CURATED_TECH_DATA_ICONS } from '@/components/icons/TechDataIcons';
@@ -14,9 +14,11 @@ import {
 import { portalItemTo } from '../moduleFrame';
 import './portal-sidebar.css';
 
-type MenuTarget =
-  | { kind: 'group'; id: string; top: number; left: number }
-  | { kind: 'item'; id: string; sectionId: string; top: number; left: number };
+type MenuTargetInput =
+  | { kind: 'group'; id: string }
+  | { kind: 'item'; id: string; sectionId: string };
+
+type MenuTarget = MenuTargetInput & { top: number; left: number };
 
 type AddKind = 'app' | 'dashboard' | 'link';
 
@@ -130,7 +132,7 @@ export function PortalSidebar({ sections, canEdit, selectedItemId }: PortalSideb
     }
   }
 
-  function openMenu(event: MouseEvent<HTMLButtonElement>, next: Omit<MenuTarget, 'top' | 'left'>) {
+  function openMenu(event: ReactMouseEvent<HTMLButtonElement>, next: MenuTargetInput) {
     event.preventDefault();
     event.stopPropagation();
     const spot = placeMenu(event.currentTarget);
