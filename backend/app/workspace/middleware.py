@@ -332,6 +332,9 @@ def _product_api_requires_workspace(path: str) -> bool:
         return False
     if path.startswith("/api/v1/webhooks/") or path.startswith("/api/v1/internal/"):
         return False
+    # The portal sign-in screen reads the company logo before a session exists.
+    if path.startswith("/api/v1/portal/branding/"):
+        return False
     return True
 
 

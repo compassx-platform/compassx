@@ -75,6 +75,7 @@ const MonitoringPage   = lazy(() => import('@/modules/monitoring/pages/Monitorin
 import { isLoggedIn, getToken, getRefreshToken, isTokenExpired, refreshAccessToken } from '@/lib/auth';
 import { fetchSetupStatus, fetchEntryPoint } from '@/lib/userManagerApi';
 const LoginPage          = lazy(() => import('@/pages/auth/LoginPage'));
+const PortalLoginPage    = lazy(() => import('@/pages/auth/PortalLoginPage'));
 const SetupWizardPage    = lazy(() => import('@/pages/setup/SetupWizardPage'));
 const AccountConsolePage = lazy(() => import('@/pages/account/AccountConsolePage'));
 const AccountSettingsPage = lazy(() => import('@/pages/account/AccountSettingsPage'));
@@ -274,6 +275,7 @@ export default function App() {
             <Routes>
               {/* User Manager v1 routes */}
               <Route path="/login"               element={<UMSuspense><LoginPage /></UMSuspense>} />
+              <Route path="/login/portal/:workspaceSlug" element={<UMSuspense><PortalLoginPage /></UMSuspense>} />
               <Route path="/setup"               element={<UMSuspense><SetupWizardPage /></UMSuspense>} />
               <Route path="/invite/:token"        element={<UMSuspense><InviteAcceptancePage /></UMSuspense>} />
               <Route path="/workspace-picker"    element={<UMSuspense><WorkspacePickerPage /></UMSuspense>} />
@@ -293,6 +295,7 @@ export default function App() {
                 <Route path=":appId" element={<AppScopeGuard />}>
                   <Route index element={<AppHomeRedirect />} />
                   <Route path="home" element={<WorkspaceHomePage />} />
+                  <Route path="portal/settings" element={<PortalSettingsPage />} />
                   <Route path="portal" element={<PortalPage />} />
                   <Route path="portal/app/:portalAppId" element={<PortalPage />} />
                   <Route path="portal/dashboard/:dashboardId" element={<PortalPage />} />

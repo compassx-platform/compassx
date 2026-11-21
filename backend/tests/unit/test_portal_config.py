@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from fastapi import HTTPException
 
 from app.catalog.models import CatalogWorkspaceBinding, UnifiedCatalogDashboard
+from app.portal.application.get_portal_branding import get_portal_branding
 from app.portal.application.update_portal_settings import update_portal_settings
 from app.models.app import App
 from app.models.dashboard import Dashboard
@@ -105,10 +106,11 @@ def _account_rows(dashboards, bindings=None, registrations=None):
     }
 
 
-def test_router_keeps_the_three_portal_paths():
+def test_router_keeps_the_portal_paths():
     paths = sorted((route.path, tuple(sorted(route.methods))) for route in router.routes)
     assert paths == [
         ("/api/v1/portal/available-items", ("GET",)),
+        ("/api/v1/portal/branding/{workspace_slug}", ("GET",)),
         ("/api/v1/portal/config", ("GET",)),
         ("/api/v1/portal/config", ("PUT",)),
         ("/api/v1/portal/settings", ("PATCH",)),
@@ -333,3 +335,20 @@ def test_logo_save_keeps_the_sidebar_and_rejects_other_files():
         assert exc.status_code == 400
     else:
         raise AssertionError("a non-image logo was accepted")
+
+
+def test_branding_returns_only_the_configured_logo():
+    cfg = PortalConfig(
+        id="portal_cfg_existing",
+        workspace_id="ws_1",
+        workspace_slug="mitarsh",
+        sections=[{"id": "sec_apps", "title": "Applications", "items": []}],
+        settings={"logo": "data:image/png;base64,aaaa"},
+    )
+    result = get_portal_branding("mitarsh", _Session({PortalConfig: cfg}))
+    assert result.logo == "data:image/png;base64,aaaa"
+
+
+def test_branding_without_a_portal_has_no_logo():
+    result = get_portal_branding("missing", _Session({PortalConfig: None}))
+    assert result.logo is None

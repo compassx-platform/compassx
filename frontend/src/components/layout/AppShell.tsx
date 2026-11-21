@@ -750,7 +750,7 @@ export default function AppShell() {
                     onClick={() => {
                       setProfileMenuOpen(false);
                       import('@/lib/queryClient').then((m) => m.purgeAllClientState());
-                      rawNavigate('/login');
+                      rawNavigate(appId === 'portal' && workspaceSlug ? `/login/portal/${encodeURIComponent(workspaceSlug)}` : '/login');
                     }}
                     style={{
                       width: '100%',

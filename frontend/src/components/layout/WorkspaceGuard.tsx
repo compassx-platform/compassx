@@ -5,7 +5,8 @@
  * - Injects WorkspaceContext for child routes.
  */
 import { useEffect } from "react";
-import { Navigate, Outlet, useParams } from "react-router-dom";
+import { Navigate, Outlet, useLocation, useParams } from "react-router-dom";
+import { portalLoginPath } from "@/modules/portal/portalLogin";
 import { useQuery } from "@tanstack/react-query";
 import { Loader2 } from "lucide-react";
 import { getToken, getRefreshToken, isLoggedIn, refreshAccessToken } from "@/lib/auth";
@@ -15,9 +16,11 @@ import { setDefaultWorkspace } from "@/lib/userManagerApi";
 
 export default function WorkspaceGuard() {
   const { workspaceSlug } = useParams<{ workspaceSlug: string }>();
+  const location = useLocation();
 
   if (!isLoggedIn()) {
-    return <Navigate to="/login" replace />;
+    const portalLogin = portalLoginPath(location.pathname, location.search);
+    return <Navigate to={portalLogin || "/login"} replace />;
   }
 
   const { data, isLoading, error } = useQuery<WorkspaceInfo>({

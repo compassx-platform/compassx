@@ -36,6 +36,7 @@ for _name, _value in vars(_prelude).items():
     if not _name.startswith("__"):
         globals()[_name] = _value
 
+from app.portal.application.get_portal_branding import get_portal_branding as get_portal_branding_action
 from app.portal.application.get_portal_config import _bootstrap_default_config
 from app.portal.application.get_portal_config import get_portal_config as get_portal_config_action
 from app.portal.application.update_portal_config import update_portal_config as update_portal_config_action
@@ -45,6 +46,15 @@ from app.portal.application.get_available_items import get_available_items as ge
 logger = logging.getLogger("app.routes.portal_routes")
 
 router = APIRouter(prefix="/api/v1/portal", tags=["Portal"])
+
+
+@router.get("/branding/{workspace_slug}", response_model=PortalSettings)
+def get_portal_branding(
+    workspace_slug: str,
+    sdb: Session = Depends(get_system_db),
+):
+    """Return the portal logo for the sign-in screen. No session is required."""
+    return get_portal_branding_action(workspace_slug=workspace_slug, sdb=sdb)
 
 
 @router.get("/config", response_model=PortalConfigOut)

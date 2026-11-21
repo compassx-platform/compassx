@@ -2,6 +2,7 @@
  * Auth Helpers — real JWT token management.
  * Replaces the previous mock that always returned a dummy token.
  */
+import { portalLoginPath } from "@/modules/portal/portalLogin";
 
 export interface PrincipalInfo {
   principal_id: string;
@@ -133,7 +134,7 @@ export function refreshAccessToken(): Promise<string> {
       if (status && status >= 400 && status < 500) {
         clearSession();
         if (typeof window !== "undefined" && !window.location.pathname.startsWith("/login")) {
-          window.location.href = "/login";
+          window.location.href = portalLoginPath(window.location.pathname, window.location.search) || "/login";
         }
       }
       throw err;
