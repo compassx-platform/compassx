@@ -5,6 +5,26 @@ All notable changes to the CompassX Platform will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.17.2] - 2026-11-21
+
+### 🚀 Highlights
+
+CompassX `0.17.2` delivers **Dedicated Branded Portal Login Experience**, **Preserved Post-Login Portal Routing**, **Dedicated Portal Settings Navigation**, and **In-Pod Build Detector Shell Argument Handling**.
+
+### ✨ Features & Enhancements
+
+#### Portal Authentication & Navigation
+- **Dedicated Branded Portal Sign-In ([`PortalLoginPage.tsx`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/frontend/src/pages/auth/PortalLoginPage.tsx), [`get_portal_branding.py`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/backend/app/portal/application/get_portal_branding.py))**: Unauthenticated business users visiting portal URLs now see a streamlined branded sign-in screen with dynamic company logo and branding fetched from `/api/portal/branding`.
+- **Return Path Preservation ([`portalLogin.ts`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/frontend/src/modules/portal/portalLogin.ts), [`WorkspaceGuard.tsx`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/frontend/src/components/layout/WorkspaceGuard.tsx))**: Stores `portal_return_to` in session storage to redirect authenticated users back to their exact intended portal route upon successful login.
+- **Portal Settings Route Registration ([`portal_routes.py`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/backend/app/routes/portal_routes.py), [`App.tsx`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/frontend/src/App.tsx))**: Fixed settings link resolution so portal settings navigation no longer falls through to the first sidebar item.
+
+### 🐛 Bug Fixes
+
+#### Kubernetes Driver
+- **In-Pod Build Detector Shell Escaping ([`kubernetes_driver.py`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/backend/app/services/drivers/kubernetes_driver.py))**: Fixed nested quoting in the in-pod build detection shell invocation that previously stripped detector flags and prevented image build detection of frontend and backend workspaces.
+
+---
+
 ## [0.17.1] - 2026-11-20
 
 ### 🚀 Highlights
