@@ -5,6 +5,19 @@ All notable changes to the CompassX Platform will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.17.3] - 2026-11-25
+
+### 🚀 Highlights
+
+CompassX `0.17.3` ensures **Production In-Pod Gateway & App Driver Stability for Subfolder Backends and Frontends**.
+
+### 🐛 Bug Fixes
+
+#### Kubernetes App Driver
+- **Subfolder Path Evaluation & Gateway Preservation ([`kubernetes_driver.py`](file:///d:/vishal_vora/personal/external_compass/repos/compassx/backend/app/services/drivers/kubernetes_driver.py))**: Replaced inline conditional chaining with explicit `if/fi` block tests for `$FRONTEND_DIR` and `$BACKEND_DIR` resolution. This avoids non-zero conditional exit codes during in-pod build execution and ensures the production gateway and static asset directory resolutions remain intact when projects house backends or frontends in subfolders.
+
+---
+
 ## [0.17.2] - 2026-11-21
 
 ### 🚀 Highlights
